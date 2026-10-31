@@ -5,6 +5,11 @@ import kotlinx.serialization.Serializable
 data class AppSettings(
     val homeApiLineId: String = "liangzi",
     val customVideoApiLines: List<CustomVideoApiLine> = emptyList(),
+    val sourceOrder: List<String> = emptyList(),
+    val disabledBuiltInLineIds: List<String> = emptyList(),
+    val blockedSourceIds: List<String> = emptyList(),
+    val liveSourceUrls: List<String> = emptyList(),
+    val homeContinueWatchingEnabled: Boolean = false,
     val theme: TvTheme = TvTheme.Default,
     val fontScale: TvFontScale = TvFontScale.Normal,
     val aiProviderId: String = AiProviders.default.id,

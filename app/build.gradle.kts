@@ -44,7 +44,7 @@ android {
 
     defaultConfig {
         applicationId = "com.tvbox.app"
-        minSdk = 28
+        minSdk = 23
         targetSdk = 36
         versionCode = 10313
         versionName = "1.3.13"

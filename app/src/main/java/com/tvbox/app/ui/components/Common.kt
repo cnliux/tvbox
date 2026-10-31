@@ -70,6 +70,7 @@ fun AppHeader(
     onSettings: () -> Unit = {},
     showShortcutActions: Boolean = false,
     firstActionModifier: Modifier = Modifier,
+    titleContent: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -82,17 +83,21 @@ fun AppHeader(
         Column(
             modifier = Modifier.weight(1f),
         ) {
-            Text(
-                text = title,
-                style = if (showShortcutActions) {
-                    MaterialTheme.typography.headlineLarge
-                } else {
-                    MaterialTheme.typography.titleLarge
-                },
-                fontWeight = if (showShortcutActions) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (titleContent != null) {
+                titleContent()
+            } else {
+                Text(
+                    text = title,
+                    style = if (showShortcutActions) {
+                        MaterialTheme.typography.headlineLarge
+                    } else {
+                        MaterialTheme.typography.titleLarge
+                    },
+                    fontWeight = if (showShortcutActions) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
             Text(
                 text = subtitle,
                 color = TvColors.TextSecondary,

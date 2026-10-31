@@ -33,11 +33,13 @@ import kotlinx.coroutines.flow.collect
 import com.tvbox.app.data.DefaultAppUpdateRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
 import com.tvbox.app.data.DefaultMovieRepository
+import com.tvbox.app.data.DefaultSearchHotWordRepository
 import com.tvbox.app.data.SharedAppSettingsRepository
 import com.tvbox.app.data.SharedDoubanHotCache
 import com.tvbox.app.data.SharedHistoryRepository
 import com.tvbox.app.data.SharedPlaybackHealthRepository
 import com.tvbox.app.data.SharedPlatformLiveFavoritesRepository
+import com.tvbox.app.data.SharedSearchHotWordCache
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
@@ -419,10 +421,17 @@ private class TvBoxViewModelFactory(
 ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        val doubanHotRepository = DefaultDoubanHotRepository(
+            cache = SharedDoubanHotCache(activity.applicationContext),
+        )
         return TvBoxViewModel(
             repository = DefaultMovieRepository(),
-            doubanHotRepository = DefaultDoubanHotRepository(
-                cache = SharedDoubanHotCache(activity.applicationContext),
+            doubanHotRepository = doubanHotRepository,
+            searchHotWordRepository = DefaultSearchHotWordRepository(
+                cache = SharedSearchHotWordCache(activity.applicationContext),
+                doubanTitles = {
+                    doubanHotRepository.getRecentHot(page = 1).items.map { it.title }
+                },
             ),
             appUpdateRepository = DefaultAppUpdateRepository(activity.applicationContext),
             appSettingsRepository = SharedAppSettingsRepository(activity.applicationContext),

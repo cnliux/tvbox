@@ -1,47 +1,76 @@
 ﻿package com.tvbox.app.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
-import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvColors
-import com.tvbox.app.ui.theme.TvLayout
+
+private val FallbackSearchHotWords = listOf(
+    "庆余年",
+    "狂飙",
+    "繁花",
+    "与凤行",
+    "追风者",
+    "南来北往",
+    "漫长的季节",
+    "三体",
+)
 
 @Composable
 fun SearchScreen(
@@ -50,8 +79,11 @@ fun SearchScreen(
 ) {
     val grid = rememberLazyGridState()
     val returnFocus = rememberReturnFocus()
+    val searchFieldFocus = remember { FocusRequester() }
     var savedQuery by rememberSaveable { mutableStateOf(state.searchQuery) }
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
+    val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
+
     LaunchedEffect(state.searchQuery) {
         if (fieldValue.text != state.searchQuery) {
             fieldValue = queryFieldValue(state.searchQuery)
@@ -62,84 +94,616 @@ fun SearchScreen(
             savedQuery = state.searchQuery
         }
     }
+    LaunchedEffect(Unit) {
+        if (returnFocus.lastKey == null) runCatching { searchFieldFocus.requestFocus() }
+    }
     RestoreGridFocus(returnFocus, grid, state.searchResults.mapIndexed { index, item -> "${item.apiLineId}:${item.id}" to index })
+
+    fun setQuery(text: String) {
+        fieldValue = queryFieldValue(text)
+        actions.updateSearchQuery(text)
+    }
+
+    fun insertKey(key: String) {
+        val text = fieldValue.text
+        val start = fieldValue.selection.start.coerceIn(0, text.length)
+        val end = fieldValue.selection.end.coerceIn(start, text.length)
+        val next = text.replaceRange(start, end, key)
+        val caret = start + key.length
+        fieldValue = TextFieldValue(next, TextRange(caret))
+        actions.updateSearchQuery(next)
+    }
+
+    fun deleteKey() {
+        val text = fieldValue.text
+        val start = fieldValue.selection.start.coerceIn(0, text.length)
+        val end = fieldValue.selection.end.coerceIn(start, text.length)
+        val next = when {
+            start != end -> text.removeRange(start, end)
+            start > 0 -> text.removeRange(start - 1, start)
+            else -> text
+        }
+        val caret = if (start != end) start else (start - 1).coerceAtLeast(0)
+        fieldValue = TextFieldValue(next, TextRange(caret))
+        actions.updateSearchQuery(next)
+    }
+
+    fun clearQuery() {
+        fieldValue = queryFieldValue("")
+        actions.updateSearchQuery("")
+    }
+
+    fun searchHotWord(word: String) {
+        setQuery(word)
+        actions.submitSearch()
+    }
+
     PageSurface { padding ->
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            val wideLayout = maxWidth >= 860.dp
+            if (wideLayout) {
+                Row(modifier = Modifier.fillMaxSize()) {
+                    SearchControlPanel(
+                        state = state,
+                        fieldValue = fieldValue,
+                        fieldFocus = searchFieldFocus,
+                        onValueChange = {
+                            fieldValue = it
+                            actions.updateSearchQuery(it.text)
+                        },
+                        onSearch = actions::submitSearch,
+                        onClear = ::clearQuery,
+                        onBack = actions::goBack,
+                        onKey = ::insertKey,
+                        onDelete = ::deleteKey,
+                        modifier = Modifier
+                            .width(356.dp)
+                            .fillMaxHeight(),
+                    )
+                    Spacer(modifier = Modifier.width(20.dp))
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .padding(vertical = 4.dp)
+                            .background(TvColors.Border),
+                    )
+                    Spacer(modifier = Modifier.width(18.dp))
+                    HotSearchPanel(
+                        hotWords = hotWords,
+                        onSelect = ::searchHotWord,
+                        modifier = Modifier
+                            .width(164.dp)
+                            .fillMaxHeight(),
+                    )
+                    Spacer(modifier = Modifier.width(22.dp))
+                    SearchResultsPanel(
+                        state = state,
+                        actions = actions,
+                        grid = grid,
+                        returnFocus = returnFocus,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                    )
+                }
+            } else {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    SearchCompactBar(
+                        state = state,
+                        fieldValue = fieldValue,
+                        fieldFocus = searchFieldFocus,
+                        onValueChange = {
+                            fieldValue = it
+                            actions.updateSearchQuery(it.text)
+                        },
+                        onSearch = actions::submitSearch,
+                        onClear = ::clearQuery,
+                        onBack = actions::goBack,
+                    )
+                    if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        HotSearchStrip(hotWords = hotWords, onSelect = ::searchHotWord)
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    SearchResultsPanel(
+                        state = state,
+                        actions = actions,
+                        grid = grid,
+                        returnFocus = returnFocus,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchControlPanel(
+    state: TvBoxUiState,
+    fieldValue: TextFieldValue,
+    fieldFocus: FocusRequester,
+    onValueChange: (TextFieldValue) -> Unit,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
+    onBack: () -> Unit,
+    onKey: (String) -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text(
+            text = "搜索",
+            style = MaterialTheme.typography.headlineMedium,
+        )
+        OutlinedTextField(
+            value = fieldValue,
+            onValueChange = onValueChange,
+            modifier = Modifier
+                .fillMaxWidth()
+                .focusRequester(fieldFocus),
+            singleLine = true,
+            label = { Text("影片名称") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SearchActionButton(
+                text = if (state.searchLoading) "搜索中" else "搜索",
+                onClick = onSearch,
+                enabled = !state.searchLoading,
+                modifier = Modifier.weight(1.1f),
+            )
+            SearchActionButton(
+                text = "清空",
+                onClick = onClear,
+                modifier = Modifier.weight(1f),
+            )
+            SearchActionButton(
+                text = "返回",
+                onClick = onBack,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = "遥控器键盘",
+            style = MaterialTheme.typography.labelMedium,
+            color = TvColors.TextSecondary,
+        )
+        SearchKeyboard(
+            onKey = onKey,
+            onDelete = onDelete,
+            onClear = onClear,
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        Text(
+            text = "支持中文、拼音首字母（如 xclf）和遥控器输入，也可以点击热门搜索。",
+            style = MaterialTheme.typography.bodySmall,
+            color = TvColors.TextTertiary,
+        )
+    }
+}
+
+@Composable
+private fun SearchCompactBar(
+    state: TvBoxUiState,
+    fieldValue: TextFieldValue,
+    fieldFocus: FocusRequester,
+    onValueChange: (TextFieldValue) -> Unit,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
+    onBack: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 text = "搜索",
-                style = MaterialTheme.typography.headlineLarge,
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.weight(1f),
             )
-            Spacer(modifier = Modifier.height(18.dp))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = fieldValue,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(fieldFocus),
+                singleLine = true,
+                label = { Text("影片名称") },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(onSearch = { onSearch() }),
+            )
+            SearchActionButton(
+                text = if (state.searchLoading) "搜索中" else "搜索",
+                onClick = onSearch,
+                enabled = !state.searchLoading,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SearchActionButton(text = "清空", onClick = onClear, modifier = Modifier.weight(1f))
+            SearchActionButton(text = "返回", onClick = onBack, modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun HotSearchPanel(
+    hotWords: List<String>,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "热门搜索",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 2.dp),
+        )
+        if (hotWords.isEmpty()) {
+            Text(
+                text = "暂无热门搜索",
+                style = MaterialTheme.typography.bodySmall,
+                color = TvColors.TextTertiary,
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(bottom = 12.dp),
+            ) {
+                items(hotWords, key = { it }) { word ->
+                    HotSearchWord(
+                        word = word,
+                        onClick = { onSelect(word) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HotSearchStrip(
+    hotWords: List<String>,
+    onSelect: (String) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = "热门搜索",
+            style = MaterialTheme.typography.titleSmall,
+            color = TvColors.TextSecondary,
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(end = 8.dp),
+        ) {
+            items(hotWords, key = { it }) { word ->
+                HotSearchWord(
+                    word = word,
+                    onClick = { onSelect(word) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HotSearchWord(
+    word: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
+        contentColor = if (focused) TvColors.TextPrimary else TvColors.TextSecondary,
+    ) {
+        Text(
+            text = word,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun SearchKeyboard(
+    onKey: (String) -> Unit,
+    onDelete: () -> Unit,
+    onClear: () -> Unit,
+) {
+    val keys = remember { (('A'..'Z') + ('0'..'9')).map { it.toString() } }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            SearchKeyboardKey(
+                text = "清空",
+                onClick = onClear,
+                modifier = Modifier.weight(1f),
+            )
+            SearchKeyboardKey(
+                text = "删除",
+                onClick = onDelete,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        keys.chunked(6).forEach { rowKeys ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                OutlinedTextField(
-                    value = fieldValue,
-                    onValueChange = {
-                        fieldValue = it
-                        actions.updateSearchQuery(it.text)
-                    },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("影片名称") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { actions.submitSearch() }),
-                )
-                SearchActionButton(
-                    text = if (state.searchLoading) "搜索中" else "搜索",
-                    onClick = actions::submitSearch,
-                    enabled = !state.searchLoading,
-                )
-                SearchActionButton(text = "返回", onClick = actions::goBack)
+                rowKeys.forEach { key ->
+                    SearchKeyboardKey(
+                        text = key,
+                        onClick = { onKey(key) },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(22.dp))
-            val searchProgress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
-                "已完成 ${state.searchCompletedSources}/$total 条线路 · 找到 ${state.searchResults.size} 个结果"
+        }
+    }
+}
+
+@Composable
+private fun SearchKeyboardKey(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier
+            .height(44.dp)
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvColors.Accent else TvColors.SurfaceRaised,
+        contentColor = if (focused) TvColors.Background else TvColors.TextPrimary,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchResultsPanel(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    grid: androidx.compose.foundation.lazy.grid.LazyGridState,
+    returnFocus: ReturnFocus,
+    modifier: Modifier = Modifier,
+) {
+    val progress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
+        "已完成 ${state.searchCompletedSources}/$total 条线路 · 找到 ${state.searchResults.size} 个结果"
+    }
+
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "搜索结果",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.weight(1f),
+            )
+            if (state.searchResults.isNotEmpty()) {
+                Text(
+                    text = "${state.searchResults.size} 个",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TvColors.TextSecondary,
+                )
             }
+        }
+        progress?.let {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = it,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+        if (state.searchLoading && state.searchResults.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        if (state.searchError != null && state.searchResults.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = state.searchError,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+        ) {
             when {
                 state.searchLoading && state.searchResults.isEmpty() -> LoadingState(
-                    text = searchProgress ?: "正在搜索多个影视来源",
+                    text = progress ?: "正在搜索多个影视来源",
                 )
+
+                state.searchResults.isEmpty() && state.searchQuery.isBlank() ->
+                    SearchEmptyState(query = state.searchQuery)
+
                 state.searchError != null && state.searchResults.isEmpty() -> ErrorState(
                     message = state.searchError,
                     onRetry = actions::submitSearch,
                 )
-                else -> Column(modifier = Modifier.fillMaxSize()) {
-                    searchProgress?.let { progress ->
-                        Text(
-                            text = progress,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
+
+                state.searchResults.isEmpty() -> SearchEmptyState(query = state.searchQuery)
+
+                else -> LazyVerticalGrid(
+                    columns = GridCells.Fixed(1),
+                    state = grid,
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                        SearchResultRow(
+                            movie = movie,
+                            onClick = {
+                                returnFocus.mark("${movie.apiLineId}:${movie.id}", state.searchResults.indexOf(movie))
+                                actions.openDetail(movie.id, movie.apiLineId)
+                            },
+                            modifier = returnFocus.modifier(
+                                "${movie.apiLineId}:${movie.id}",
+                                state.searchResults.indexOf(movie),
+                            ),
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
-                    }
-                    LazyVerticalGrid(
-                        columns = GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
-                        state = grid,
-                        contentPadding = PaddingValues(bottom = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(22.dp),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
-                            MoviePosterCard(
-                                movie = movie,
-                                onClick = {
-                                    returnFocus.mark("${movie.apiLineId}:${movie.id}", state.searchResults.indexOf(movie))
-                                    actions.openDetail(movie.id, movie.apiLineId)
-                                },
-                                modifier = returnFocus.modifier("${movie.apiLineId}:${movie.id}", state.searchResults.indexOf(movie)),
-                            )
-                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SearchResultRow(
+    movie: Movie,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+                idleBorder = TvColors.Border,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
+        contentColor = TvColors.TextPrimary,
+        border = BorderStroke(1.dp, if (focused) TvColors.FocusRing else TvColors.Border),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = movie.apiLineName,
+                modifier = Modifier.widthIn(max = 136.dp),
+                color = if (focused) TvColors.AccentStrong else TvColors.Accent,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = movie.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val meta = listOf(movie.year, movie.typeName, movie.remarks)
+                    .filter { it.isNotBlank() }
+                    .joinToString(" · ")
+                if (meta.isNotBlank()) {
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TvColors.TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                text = "›",
+                style = MaterialTheme.typography.headlineSmall,
+                color = if (focused) TvColors.TextPrimary else TvColors.TextTertiary,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchEmptyState(query: String) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = if (query.isBlank()) "输入关键词开始搜索" else "没有找到相关影片",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = if (query.isBlank()) "也可以点击热门搜索快速查找" else "换个关键词再试试，拼音首字母请写全（如 xclf）",
+            style = MaterialTheme.typography.bodyMedium,
+            color = TvColors.TextSecondary,
+        )
     }
 }
 
@@ -154,13 +718,14 @@ private fun SearchActionButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
+    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(50)
     var focused by remember { mutableStateOf(false) }
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier
+        modifier = modifier
             .tvFocusScale(
                 shape = shape,
                 focusedBorder = TvColors.FocusRing,

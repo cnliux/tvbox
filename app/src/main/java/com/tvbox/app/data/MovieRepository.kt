@@ -20,6 +20,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 data class MultiSourceSearchUpdate(
     val movies: List<Movie>,
@@ -35,7 +36,10 @@ data class MovieDetailUpdate(
 
 interface MovieRepository {
     val apiLines: List<ApiLine>
+    val allApiLines: List<ApiLine>
     fun updateCustomApiLines(customApiLines: List<ApiLine>)
+    fun setDisabledLineIds(disabledIds: Set<String>)
+    suspend fun testSpeed(apiLineId: String): Long?
     suspend fun getCategories(apiLineId: String): List<Category>
     suspend fun getMovies(apiLineId: String, page: Int, typeId: Int? = null, keyword: String? = null): PagedMovies
     suspend fun getMoviesByTypeIds(apiLineId: String, page: Int, typeIds: List<Int>): PagedMovies
@@ -60,18 +64,47 @@ class DefaultMovieRepository(
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : MovieRepository {
     private var customApiLines: List<ApiLine> = emptyList()
+    private var disabledLineIds: Set<String> = emptySet()
     private val categoriesCache = TimedLruCache<List<Category>>(maxEntries = 24)
     private val moviesCache = TimedLruCache<PagedMovies>(maxEntries = 80)
     private val detailsCache = TimedLruCache<Movie?>(maxEntries = 60)
     private val sourceHealth = SourceHealthTracker(nowMs)
 
-    override val apiLines: List<ApiLine>
+    override val allApiLines: List<ApiLine>
         get() = builtInApiLines + customApiLines
+    override val apiLines: List<ApiLine>
+        get() = allApiLines.filter { it.id !in disabledLineIds }
 
     override fun updateCustomApiLines(customApiLines: List<ApiLine>) {
         this.customApiLines = customApiLines
             .filter { it.id.isNotBlank() && it.name.isNotBlank() && it.baseUrls.isNotEmpty() }
             .distinctBy { it.id }
+    }
+
+    override fun setDisabledLineIds(disabledIds: Set<String>) {
+        this.disabledLineIds = disabledIds.filter { it.isNotBlank() }.toSet()
+    }
+
+    override suspend fun testSpeed(apiLineId: String): Long? {
+        val line = apiLines.firstOrNull { it.id == apiLineId } ?: return null
+        for (baseUrl in line.baseUrls) {
+            val latencyMs = runCatching { testSpeedUrl(baseUrl) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+            if (latencyMs != null) return latencyMs
+        }
+        return null
+    }
+
+    private suspend fun testSpeedUrl(baseUrl: String): Long {
+        val api = apiFactory(baseUrl)
+        val startedAt = System.currentTimeMillis()
+        withContext(Dispatchers.IO) {
+            withTimeoutOrNull(SPEED_TEST_TIMEOUT_MS) {
+                api.getVod(action = "list", ids = "1")
+            }
+        } ?: throw IOException("测速超时")
+        return System.currentTimeMillis() - startedAt
     }
 
     override suspend fun getCategories(apiLineId: String): List<Category> = withContext(Dispatchers.IO) {
@@ -399,6 +432,7 @@ class DefaultMovieRepository(
         const val MAX_PARALLEL_SOURCE_REQUESTS = 3
         const val SEARCH_TIMEOUT_MS = 3_000L
         const val DETAIL_SOURCE_TIMEOUT_MS = 4_000L
+        const val SPEED_TEST_TIMEOUT_MS = 10_000L
         const val MOVIES_CACHE_TTL_MS = 5 * 60_000L
         const val DETAIL_CACHE_TTL_MS = 30 * 60_000L
     }

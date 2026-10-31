@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.parseLiveChannels
@@ -12,11 +12,17 @@ import java.util.concurrent.TimeUnit
 
 interface LiveRepository {
     suspend fun getChannels(): List<LiveChannel>
+    fun setCustomSourceUrls(urls: List<String>)
 }
 
 class DefaultLiveRepository(
-    private val sourceUrls: List<String> = LIVE_SOURCE_URLS,
+    initialSourceUrls: List<String> = LIVE_SOURCE_URLS,
 ) : LiveRepository {
+    private var sourceUrls: List<String> = initialSourceUrls.ifEmpty { LIVE_SOURCE_URLS }
+
+    override fun setCustomSourceUrls(urls: List<String>) {
+        this.sourceUrls = urls.ifEmpty { LIVE_SOURCE_URLS }
+    }
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -49,5 +55,4 @@ class DefaultLiveRepository(
 
 private val LIVE_SOURCE_URLS = listOf(
     "http://20.205.10.127:8787/tvbox/result.txt",
-    "https://tv.iill.top/m3u/Gather",
 )

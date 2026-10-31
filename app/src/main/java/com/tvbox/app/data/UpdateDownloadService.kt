@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -58,8 +59,10 @@ class UpdateDownloadService : Service() {
         val sha = intent.getStringExtra("sha").orEmpty()
         states[path] = AppDownloadStatus(total = size)
         try {
-            getSystemService(NotificationManager::class.java).createNotificationChannel(
-                NotificationChannel(CHANNEL, "应用更新下载", NotificationManager.IMPORTANCE_LOW))
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getSystemService(NotificationManager::class.java).createNotificationChannel(
+                    NotificationChannel(CHANNEL, "应用更新下载", NotificationManager.IMPORTANCE_LOW))
+            }
             startForeground(NOTIFICATION_ID, notification(0, size))
         } catch (error: Exception) {
             Log.e("TVBoxUpdate", "Unable to start foreground download", error)
@@ -140,7 +143,8 @@ class UpdateDownloadService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val progress = if (total > 0) ((received * 100) / total).toInt().coerceIn(0, 99) else 0
-        return Notification.Builder(this, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download)
+        return Notification.Builder(this, if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) CHANNEL else null)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle("TVBox 更新下载").setContentText(if (total > 0) "$progress%" else "正在下载")
             .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
             .setProgress(100, progress, total <= 0).build()

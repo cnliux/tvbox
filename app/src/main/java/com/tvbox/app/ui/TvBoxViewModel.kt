@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -10,6 +10,9 @@ import com.tvbox.app.data.AiRecommendationRepository
 import com.tvbox.app.data.AppUpdateRepository
 import com.tvbox.app.data.DefaultAiRecommendationRepository
 import com.tvbox.app.data.DefaultMovieRepository
+import com.tvbox.app.data.SourceConfigCodec
+import com.tvbox.app.data.SourceConfigFetcher
+import com.tvbox.app.data.SubscriptionDecoder
 import com.tvbox.app.data.DefaultLiveRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
 import com.tvbox.app.data.DoubanHotRepository
@@ -17,6 +20,10 @@ import com.tvbox.app.data.HistoryRepository
 import com.tvbox.app.data.LiveRepository
 import com.tvbox.app.data.MovieRepository
 import com.tvbox.app.data.PlaybackHealthRepository
+import com.tvbox.app.data.SearchHotWordRepository
+import com.tvbox.app.data.DefaultSearchHotWordRepository
+import com.tvbox.app.data.SearchKeywordExpander
+import com.tvbox.app.data.DefaultSearchKeywordExpander
 import com.tvbox.app.data.DefaultPlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
@@ -48,6 +55,7 @@ import com.tvbox.app.domain.findBestTitleMatchIndex
 import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.domain.toApiLines
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collect
@@ -58,6 +66,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 
 enum class TvScreen {
     Home,
@@ -69,6 +78,9 @@ enum class TvScreen {
     PlatformLive,
     Settings,
     AiRecommend,
+    SourceManager,
+    LiveSourceManager,
+    VideoSourceManager,
 }
 
 enum class HomeFeedMode {
@@ -92,6 +104,8 @@ data class AiRecommendationUiItem(
 data class TvBoxUiState(
     val screen: TvScreen = TvScreen.Home,
     val apiLines: List<ApiLine> = emptyList(),
+    // 包含已屏蔽/已删除的源，仅用于源管理页展示与恢复。
+    val allSourceLines: List<ApiLine> = emptyList(),
     val selectedApiLineId: String = "",
     val categories: List<Category> = emptyList(),
     val homeFeedMode: HomeFeedMode = HomeFeedMode.DoubanHot,
@@ -115,6 +129,8 @@ data class TvBoxUiState(
     val searchError: String? = null,
     val searchCompletedSources: Int = 0,
     val searchTotalSources: Int = 0,
+    val searchHotWords: List<String> = emptyList(),
+    val searchHotWordsLoading: Boolean = false,
     val detailMovie: Movie? = null,
     val detailLoading: Boolean = false,
     val detailError: String? = null,
@@ -180,6 +196,13 @@ data class TvBoxUiState(
     val videoApiConfigServerUrl: String? = null,
     val videoApiConfigServerError: String? = null,
     val videoApiConfigSavedMessage: String? = null,
+    val sourceLatencies: Map<String, Long?> = emptyMap(),
+    val sourceTesting: Boolean = false,
+    val sourceTestCompleted: Int = 0,
+    val sourceTestTotal: Int = 0,
+    val sourceManagerMessage: String? = null,
+    val sourceImporting: Boolean = false,
+    val sourceImportMessage: String? = null,
 ) {
     val canLoadMore: Boolean
         get() = page < pageCount && !homeLoading && !loadingMore
@@ -197,6 +220,8 @@ data class TvBoxUiState(
 class TvBoxViewModel(
     private val repository: MovieRepository = DefaultMovieRepository(),
     private val doubanHotRepository: DoubanHotRepository = DefaultDoubanHotRepository(),
+    private val searchHotWordRepository: SearchHotWordRepository = DefaultSearchHotWordRepository(),
+    private val searchKeywordExpander: SearchKeywordExpander = DefaultSearchKeywordExpander(),
     private val liveRepository: LiveRepository = DefaultLiveRepository(),
     private val platformLiveRepository: PlatformLiveRepository = DefaultPlatformLiveRepository(),
     private val aiRecommendationRepository: AiRecommendationRepository = DefaultAiRecommendationRepository(BuildConfig.AI_API_KEY),
@@ -212,6 +237,7 @@ class TvBoxViewModel(
     private var homeJob: Job? = null
     private var doubanHotResolveJob: Job? = null
     private var searchJob: Job? = null
+    private var searchHotWordsJob: Job? = null
     private var detailJob: Job? = null
     private var historyResumeJob: Job? = null
     private var liveJob: Job? = null
@@ -226,6 +252,8 @@ class TvBoxViewModel(
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
     private var settingsWriteJob: Job? = null
+    private var sourceTestJob: Job? = null
+    private var importJob: Job? = null
     private var aiConfigServer: AiConfigServer? = null
     private var videoApiConfigServer: VideoApiConfigServer? = null
     private val playbackAgent = PlaybackAgent()
@@ -236,6 +264,7 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 apiLines = repository.apiLines,
+                allSourceLines = repository.allApiLines,
                 selectedApiLineId = defaultApiLineId,
             )
         }
@@ -244,7 +273,12 @@ class TvBoxViewModel(
             val settings = runCatching { appSettingsRepository.getSettings() }
                 .getOrDefault(AppSettings())
             repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
-            val availableApiLines = repository.apiLines
+            repository.setDisabledLineIds(
+                (settings.disabledBuiltInLineIds + settings.blockedSourceIds).toSet(),
+            )
+            liveRepository.setCustomSourceUrls(settings.liveSourceUrls)
+            val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
+            val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
             val selectedApiLineId = settings.homeApiLineId
                 .takeIf { apiLineId -> availableApiLines.any { it.id == apiLineId } }
                 ?: defaultApiLineId
@@ -254,6 +288,7 @@ class TvBoxViewModel(
             _state.update {
                 it.copy(
                     apiLines = availableApiLines,
+                    allSourceLines = allApiLines,
                     selectedApiLineId = selectedApiLineId,
                     appSettings = normalizedSettings,
                     playbackHealth = playbackHealth,
@@ -390,6 +425,26 @@ class TvBoxViewModel(
 
     fun openSearch() {
         _state.update { it.copy(screen = TvScreen.Search, searchError = null) }
+        loadSearchHotWords()
+    }
+
+    fun refreshSearchHotWords() {
+        loadSearchHotWords(forceRefresh = true)
+    }
+
+    private fun loadSearchHotWords(forceRefresh: Boolean = false) {
+        if (searchHotWordsJob?.isActive == true) return
+        searchHotWordsJob = viewModelScope.launch {
+            _state.update { it.copy(searchHotWordsLoading = true) }
+            val words = runCatching { searchHotWordRepository.getHotWords(forceRefresh) }
+                .getOrDefault(emptyList())
+            _state.update {
+                it.copy(
+                    searchHotWords = words.ifEmpty { it.searchHotWords },
+                    searchHotWordsLoading = false,
+                )
+            }
+        }
     }
 
     fun openAiRecommend() {
@@ -424,6 +479,18 @@ class TvBoxViewModel(
     fun openSettings() {
         _state.update { it.copy(screen = TvScreen.Settings, updateError = null) }
         refreshPlaybackHealth()
+    }
+
+    fun openSourceManager() {
+        _state.update { it.copy(screen = TvScreen.SourceManager) }
+    }
+
+    fun openLiveSourceManager() {
+        _state.update { it.copy(screen = TvScreen.LiveSourceManager, liveChannels = emptyList(), liveError = null) }
+    }
+
+    fun openVideoSourceManager() {
+        _state.update { it.copy(screen = TvScreen.VideoSourceManager) }
     }
 
     fun refreshLive() {
@@ -631,6 +698,12 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
+    fun updateHomeContinueWatching(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(homeContinueWatchingEnabled = enabled)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
     fun updateVideoScaleMode(mode: com.tvbox.app.domain.VideoScaleMode) {
         val settings = _state.value.appSettings.copy(videoScaleMode = mode)
         saveSettings(settings)
@@ -817,9 +890,12 @@ class TvBoxViewModel(
         )
         saveSettings(settings)
         repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
+        val ordered = orderApiLines(repository.apiLines, settings.sourceOrder)
+        val allLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
         _state.update {
             it.copy(
-                apiLines = repository.apiLines,
+                apiLines = ordered,
+                allSourceLines = allLines,
                 selectedApiLineId = customLine.id,
                 appSettings = settings,
                 selectedParentCategoryId = null,
@@ -839,7 +915,7 @@ class TvBoxViewModel(
     }
 
     fun updateSearchQuery(query: String) {
-        _state.update { it.copy(searchQuery = query) }
+        _state.update { it.copy(searchQuery = query, searchError = null) }
     }
 
     fun updateAiQuery(query: String) {
@@ -1029,26 +1105,48 @@ class TvBoxViewModel(
                 )
             }
             try {
-                repository.searchProgressively(
-                    apiLineId = _state.value.selectedApiLineId,
-                    page = 1,
-                    keyword = query,
-                ).collect { update ->
-                    _state.update {
-                        it.copy(
-                            searchLoading = update.completedSources < update.totalSources,
-                            searchResults = update.movies,
-                            searchCompletedSources = update.completedSources,
-                            searchTotalSources = update.totalSources,
-                            searchError = if (
-                                update.completedSources == update.totalSources && update.movies.isEmpty()
-                            ) {
-                                "没有找到相关影片"
-                            } else {
-                                null
-                            },
-                        )
+                // 拼音首字母（如 xclf）无法在 MacCMS 服务端命中，先扩展为候选中文片名再搜索。
+                val keywords = searchKeywordExpander.expandInitials(query)
+                    .ifEmpty { listOf(query) }
+                    .distinct()
+                    .take(3)
+                var completedBase = 0
+                var totalSources = 0
+                var mergedResults: List<Movie> = emptyList()
+                for (keyword in keywords) {
+                    var keywordCompletedSources = 0
+                    repository.searchProgressively(
+                        apiLineId = _state.value.selectedApiLineId,
+                        page = 1,
+                        keyword = keyword,
+                    ).collect { update ->
+                        totalSources = maxOf(totalSources, update.totalSources)
+                        keywordCompletedSources = update.completedSources
+                        mergedResults = mergeSearchResults(mergedResults, update.movies)
+                        _state.update {
+                            it.copy(
+                                searchResults = mergedResults,
+                                searchCompletedSources = completedBase + update.completedSources,
+                                searchTotalSources = maxOf(
+                                    totalSources * keywords.size,
+                                    completedBase + update.completedSources,
+                                ),
+                            )
+                        }
                     }
+                    completedBase += totalSources.takeIf { it > 0 } ?: keywordCompletedSources
+                    // 候选片名通常按可信度排序，首个候选已有结果时无需继续扩大搜索。
+                    if (mergedResults.isNotEmpty()) {
+                        break
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        searchLoading = false,
+                        searchCompletedSources = completedBase,
+                        searchTotalSources = completedBase,
+                        searchError = if (mergedResults.isEmpty()) "没有找到相关影片" else null,
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -1058,6 +1156,18 @@ class TvBoxViewModel(
                 }
             }
         }
+    }
+
+    private fun mergeSearchResults(existing: List<Movie>, incoming: List<Movie>): List<Movie> {
+        if (incoming.isEmpty()) return existing
+        val seen = existing.mapTo(mutableSetOf()) { "${it.apiLineId}:${it.id}" }
+        val merged = existing.toMutableList()
+        incoming.forEach { movie ->
+            if (seen.add("${movie.apiLineId}:${movie.id}")) {
+                merged += movie
+            }
+        }
+        return merged
     }
 
     fun openDetail(movieId: Int, apiLineId: String = _state.value.selectedApiLineId) {
@@ -1686,6 +1796,7 @@ class TvBoxViewModel(
             TvScreen.PlatformLive -> retryPlatformLiveChannel()
             TvScreen.Settings -> checkForAppUpdate(showError = true)
             TvScreen.AiRecommend -> submitAiRecommendation()
+            TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager -> Unit
         }
     }
 
@@ -1758,9 +1869,457 @@ class TvBoxViewModel(
                 }
                 true
             }
+            TvScreen.SourceManager -> {
+                _state.update { it.copy(screen = TvScreen.Settings) }
+                true
+            }
+            TvScreen.LiveSourceManager -> {
+                _state.update { it.copy(screen = TvScreen.Settings) }
+                true
+            }
+            TvScreen.VideoSourceManager -> {
+                _state.update { it.copy(screen = TvScreen.Settings) }
+                true
+            }
             TvScreen.Home -> false
         }
     }
+
+    private fun orderApiLines(allLines: List<ApiLine>, preferredOrder: List<String>): List<ApiLine> {
+        val indexMap = preferredOrder.mapIndexed { i, id -> id to i }.toMap()
+        return allLines.sortedBy { line -> indexMap[line.id] ?: Int.MAX_VALUE }
+    }
+
+    private fun orderLinesByLatency(lines: List<ApiLine>, latencies: Map<String, Long?>): List<ApiLine> {
+        return lines.sortedWith(compareBy(
+            { latencies[it.id] == null },
+            { latencies[it.id] ?: 0L },
+        ))
+    }
+
+    private fun switchHomeApiLine(apiLineId: String) {
+        _state.update { it.copy(selectedApiLineId = apiLineId) }
+        loadHomePage(reset = true)
+    }
+
+
+    // ========== Source Management Methods ==========
+
+    fun testSourceSpeed(apiLineId: String) {
+        if (_state.value.sourceTesting) return
+        viewModelScope.launch {
+            val latency = runCatching { repository.testSpeed(apiLineId) }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+            _state.update { state ->
+                state.copy(sourceLatencies = state.sourceLatencies + (apiLineId to latency))
+            }
+            persistSourceLatencies()
+        }
+    }
+
+    fun testAllSources() {
+        val current = _state.value
+        if (current.sourceTesting) return
+        val srcLines = current.apiLines
+        if (srcLines.isEmpty()) return
+        sourceTestJob?.cancel()
+        sourceTestJob = viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    sourceTesting = true,
+                    sourceTestCompleted = 0,
+                    sourceTestTotal = srcLines.size,
+                    sourceManagerMessage = null,
+                    sourceImportMessage = null,
+                )
+            }
+            val semaphore = kotlinx.coroutines.sync.Semaphore(3)
+            val mutex = kotlinx.coroutines.sync.Mutex()
+            var completed = 0
+            coroutineScope {
+                for (line in srcLines) {
+                    launch {
+                        semaphore.withPermit {
+                            val latency = runCatching { repository.testSpeed(line.id) }
+                                .onFailure { if (it is CancellationException) throw it }
+                                .getOrNull()
+                            mutex.withLock {
+                                completed++
+                                _state.update {
+                                    it.copy(
+                                        sourceLatencies = it.sourceLatencies + (line.id to latency),
+                                        sourceTestCompleted = completed,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            _state.update { state ->
+                val okCount = srcLines.count { state.sourceLatencies[it.id] != null }
+                state.copy(
+                    sourceTesting = false,
+                    sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个。可点击“按测速排序”重新排列。",
+                )
+            }
+            persistSourceLatencies()
+        }
+    }
+
+    fun sortSourcesBySpeed() {
+        val current = _state.value
+        if (current.sourceTesting || current.sourceImporting) return
+        val sorted = orderLinesByLatency(current.apiLines, current.sourceLatencies)
+        if (sorted == current.apiLines) {
+            _state.update { it.copy(sourceManagerMessage = "尚未测速或顺序未变化，请先执行“全部测速”。") }
+            return
+        }
+        val settings = current.appSettings.copy(sourceOrder = sorted.map { it.id })
+        saveSettings(settings)
+        _state.update {
+            it.copy(
+                apiLines = sorted,
+                allSourceLines = orderApiLines(repository.allApiLines, settings.sourceOrder),
+                appSettings = settings,
+                sourceManagerMessage = "已按测速排序（最快在前）",
+            )
+        }
+    }
+
+    private fun applySourceSettings(settings: AppSettings) {
+        repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
+        repository.setDisabledLineIds(
+            (settings.disabledBuiltInLineIds + settings.blockedSourceIds).toSet(),
+        )
+    }
+
+    private fun availableApiLinesFor(settings: AppSettings): List<ApiLine> =
+        orderApiLines(repository.apiLines, settings.sourceOrder)
+
+    private fun allApiLinesFor(settings: AppSettings): List<ApiLine> =
+        orderApiLines(repository.allApiLines, settings.sourceOrder)
+
+    private fun resolveHomeSelection(
+        settings: AppSettings,
+        available: List<ApiLine>,
+    ): Pair<AppSettings, Boolean> {
+        val selectionMissing = available.none { it.id == settings.homeApiLineId }
+        val finalSettings = if (selectionMissing) {
+            settings.copy(homeApiLineId = available.firstOrNull()?.id.orEmpty())
+        } else {
+            settings
+        }
+        return finalSettings to selectionMissing
+    }
+
+    fun deleteApiLine(apiLineId: String) {
+        val current = _state.value
+        val line = current.allSourceLines.firstOrNull { it.id == apiLineId }
+            ?: current.apiLines.firstOrNull { it.id == apiLineId }
+            ?: return
+        val isBuiltIn = current.appSettings.customVideoApiLines.none { it.id == line.id }
+        val baseSettings = if (isBuiltIn) {
+            current.appSettings.copy(
+                disabledBuiltInLineIds = (current.appSettings.disabledBuiltInLineIds + line.id).distinct(),
+            )
+        } else {
+            current.appSettings.copy(
+                customVideoApiLines = current.appSettings.customVideoApiLines.filterNot { it.id == line.id },
+            )
+        }
+        val settings = baseSettings.copy(
+            blockedSourceIds = baseSettings.blockedSourceIds - line.id,
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceLatencies = it.sourceLatencies - line.id,
+                sourceManagerMessage = if (isBuiltIn) {
+                    "已删除内置源“${line.name}”，可在“恢复内置”中还原。"
+                } else {
+                    "已删除源“${line.name}”"
+                },
+            )
+        }
+        persistSourceLatencies()
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun blockSource(apiLineId: String) {
+        val current = _state.value
+        val line = current.allSourceLines.firstOrNull { it.id == apiLineId } ?: return
+        if (apiLineId in current.appSettings.blockedSourceIds) return
+        if (apiLineId in current.appSettings.disabledBuiltInLineIds) {
+            _state.update { it.copy(sourceManagerMessage = "该内置源已删除，请先点“恢复”再屏蔽。") }
+            return
+        }
+        val settings = current.appSettings.copy(
+            blockedSourceIds = (current.appSettings.blockedSourceIds + apiLineId).distinct(),
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceManagerMessage = "已屏蔽“${line.name}”，可随时取消屏蔽。",
+            )
+        }
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun unblockSource(apiLineId: String) {
+        val current = _state.value
+        if (apiLineId !in current.appSettings.blockedSourceIds) return
+        val line = current.allSourceLines.firstOrNull { it.id == apiLineId }
+        val settings = current.appSettings.copy(
+            blockedSourceIds = current.appSettings.blockedSourceIds - apiLineId,
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceManagerMessage = "已取消屏蔽${line?.let { "“${it.name}”" }.orEmpty()}",
+            )
+        }
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun deleteInvalidSources() {
+        val current = _state.value
+        if (current.sourceTesting || current.sourceImporting) return
+        val tested = current.sourceLatencies
+        val invalid = current.apiLines.filter { id -> tested.containsKey(id.id) && tested[id.id] == null }
+        if (invalid.isEmpty()) {
+            _state.update {
+                it.copy(
+                    sourceManagerMessage = if (tested.isEmpty()) {
+                        "尚未测速，请先点击“全部测速”，再删除无效源。"
+                    } else {
+                        "没有检测到无效源。"
+                    },
+                )
+            }
+            return
+        }
+        val invalidIds = invalid.map { it.id }.toSet()
+        val customIds = current.appSettings.customVideoApiLines.map { it.id }.toSet()
+        val deletedBuiltInIds = invalidIds.filter { it !in customIds }
+        val settings = current.appSettings.copy(
+            customVideoApiLines = current.appSettings.customVideoApiLines.filterNot { it.id in invalidIds },
+            disabledBuiltInLineIds = (current.appSettings.disabledBuiltInLineIds + deletedBuiltInIds).distinct(),
+            blockedSourceIds = current.appSettings.blockedSourceIds - invalidIds,
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceLatencies = it.sourceLatencies - invalidIds,
+                sourceManagerMessage = "已删除 ${invalid.size} 个无效源（测速失败或超时）。",
+            )
+        }
+        persistSourceLatencies()
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun restoreBuiltInLine(apiLineId: String) {
+        val current = _state.value
+        if (apiLineId !in current.appSettings.disabledBuiltInLineIds) return
+        val settings = current.appSettings.copy(
+            disabledBuiltInLineIds = current.appSettings.disabledBuiltInLineIds - apiLineId,
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceManagerMessage = "已恢复内置源",
+            )
+        }
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun restoreBuiltInLines() {
+        val current = _state.value
+        if (current.appSettings.disabledBuiltInLineIds.isEmpty()) {
+            _state.update { it.copy(sourceManagerMessage = "没有已删除的内置源") }
+            return
+        }
+        val settings = current.appSettings.copy(disabledBuiltInLineIds = emptyList())
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceManagerMessage = "已恢复全部内置源（已屏蔽的源保持屏蔽）",
+            )
+        }
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun importSourceConfig(input: String) {
+        val text = input.trim()
+        if (text.isBlank()) {
+            _state.update { it.copy(sourceImporting = false, sourceImportMessage = "请粘贴配置内容或输入订阅地址") }
+            return
+        }
+        if (_state.value.sourceImporting) return
+        importJob?.cancel()
+        importJob = viewModelScope.launch {
+            _state.update { it.copy(sourceImporting = true, sourceImportMessage = null) }
+            try {
+                val configFetcher = SourceConfigFetcher()
+                val isUrl = text.startsWith("http://", ignoreCase = true) ||
+                    text.startsWith("https://", ignoreCase = true)
+                val payload = if (isUrl) configFetcher.fetch(text) else text
+                val decoded = try {
+                    SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
+                } catch (error: IllegalArgumentException) {
+                    _state.update {
+                        it.copy(sourceImporting = false, sourceImportMessage = "订阅解码失败：${error.message ?: "格式不合法"}")
+                    }
+                    return@launch
+                }
+                val result = SourceConfigCodec.parseImport(decoded)
+                val imported = result.imported
+                if (result.error != null || imported == null) {
+                    _state.update {
+                        it.copy(sourceImporting = false, sourceImportMessage = result.error ?: "配置解析失败")
+                    }
+                    return@launch
+                }
+                val current = _state.value
+                val existingUrls = current.appSettings.customVideoApiLines
+                    .map { it.baseUrl.lowercase() }
+                    .toSet()
+                val newLines = imported.lines.filter { it.baseUrl.lowercase() !in existingUrls }
+                val mergedCustom = (current.appSettings.customVideoApiLines + newLines)
+                    .distinctBy { it.id }
+                val newLiveUrls = imported.liveUrls.filter { url ->
+                    url !in current.appSettings.liveSourceUrls
+                }
+                val settings = current.appSettings.copy(
+                    customVideoApiLines = mergedCustom,
+                    liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
+                )
+                applySourceSettings(settings)
+                liveRepository.setCustomSourceUrls(settings.liveSourceUrls)
+                val ordered = availableApiLinesFor(settings)
+                val allLines = allApiLinesFor(settings)
+                saveSettings(settings)
+                val message = buildString {
+                    val addedParts = mutableListOf<String>()
+                    if (newLines.isNotEmpty()) addedParts += "新增 ${newLines.size} 个视频源"
+                    if (newLiveUrls.isNotEmpty()) addedParts += "新增 ${newLiveUrls.size} 个直播源"
+                    if (addedParts.isEmpty()) {
+                        append("导入完成：没有可新增的源")
+                    } else {
+                        append(addedParts.joinToString("，"))
+                    }
+                    if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
+                }
+                _state.update {
+                    it.copy(
+                        sourceImporting = false,
+                        apiLines = ordered,
+                        allSourceLines = allLines,
+                        appSettings = settings,
+                        sourceManagerMessage = message,
+                    )
+                }
+            } catch (error: Exception) {
+                _state.update {
+                    it.copy(sourceImporting = false, sourceImportMessage = "导入失败：${error.message}")
+                }
+            }
+        }
+    }
+
+    fun dismissSourceImportMessage() {
+        _state.update { it.copy(sourceImportMessage = null) }
+    }
+
+    fun updateLiveSourceUrls(urls: List<String>) {
+        val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
+        val current = _state.value
+        val settings = current.appSettings.copy(liveSourceUrls = normalized)
+        liveRepository.setCustomSourceUrls(normalized)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    fun sourceConfigTvboxJson(): String {
+        return SourceConfigCodec.exportTvbox(
+            lines = _state.value.apiLines,
+            liveUrls = _state.value.appSettings.liveSourceUrls,
+        )
+    }
+
+    fun sourceConfigSourcesJson(): String {
+        return SourceConfigCodec.exportSourcesJson(
+            lines = _state.value.apiLines,
+        )
+    }
+
+    private fun persistSourceLatencies() {
+        viewModelScope.launch {
+            appSettingsRepository.saveSpeedLatencies(_state.value.sourceLatencies)
+        }
+    }
+
 
     private fun loadHomePage(reset: Boolean, forceRefresh: Boolean = false) {
         if (_state.value.isShowingDoubanHot) {

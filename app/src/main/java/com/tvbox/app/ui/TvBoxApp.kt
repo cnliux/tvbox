@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import android.view.KeyEvent as AndroidKeyEvent
 import android.graphics.Bitmap
@@ -46,6 +46,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
+import com.tvbox.app.data.TextFileExporter
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -244,6 +247,9 @@ private fun TvBoxScreen(
         TvScreen.Live -> LiveScreen(state = state, actions = actions)
         TvScreen.PlatformLive -> PlatformLiveScreen(state = state, actions = actions)
         TvScreen.Settings -> SettingsScreen(state = state, actions = actions)
+        TvScreen.SourceManager -> SourceManagementScreen(state = state, actions = actions)
+        TvScreen.LiveSourceManager -> LiveSourceManagementScreen(state = state, actions = actions)
+        TvScreen.VideoSourceManager -> VideoSourceManagementScreen(state = state, actions = actions)
         TvScreen.AiRecommend -> AiRecommendScreen(
             state = state,
             actions = actions,
@@ -445,6 +451,13 @@ private fun HomeScreen(
                         onSettings = actions::openSettings,
                         showShortcutActions = !cinemaTheme,
                         firstActionModifier = Modifier.focusRequester(navigationFocusRequester),
+                        titleContent = {
+                            HomeSourceDropdownTitle(
+                                state = state,
+                                actions = actions,
+                                cinemaTheme = cinemaTheme,
+                            )
+                        },
                     )
                     if (cinemaTheme && !state.isShowingDoubanHot) {
                         state.movies.firstOrNull()?.let { featuredMovie ->
@@ -791,6 +804,38 @@ private fun SettingsScreen(
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
+                        title = "首页",
+                        subtitle = "控制首页是否显示“继续观看”入口，默认关闭。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "继续观看",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                            Text(
+                                text = if (state.appSettings.homeContinueWatchingEnabled) {
+                                    "已开启，首页会显示最近观看记录"
+                                } else {
+                                    "已关闭，首页不显示继续观看"
+                                },
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = state.appSettings.homeContinueWatchingEnabled,
+                            onCheckedChange = actions::updateHomeContinueWatching,
+                        )
+                    }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
                         title = "视频接口",
                         subtitle = "内置接口保留不变，可扫码添加 MacCms 自定义视频接口。",
                     )
@@ -803,6 +848,29 @@ private fun SettingsScreen(
                         onSelect = actions::updateHomeApiLine,
                         onOpenConfig = actions::openVideoApiConfigDialog,
                     )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "源管理",
+                        subtitle = "直播源、自定义直播源与首页渲染数据均进入独立管理页，支持网页管理，并保留地址导入以解析视频源与直播源数据。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "源管理入口", style = MaterialTheme.typography.titleMedium)
+                            Text(text = "视频接口、直播源与首页渲染数据统一管理", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
+                            SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
+                            SettingsActionButton(text = "全部源管理", onClick = actions::openSourceManager)
+                        }
+                    }
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
@@ -1194,6 +1262,73 @@ private fun SettingsActionButton(
 }
 
 @Composable
+private fun HomeSourceDropdownTitle(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    cinemaTheme: Boolean,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var focused by remember { mutableStateOf(false) }
+    val currentLine = state.selectedApiLine
+    val lines = state.apiLines
+    val shape = RoundedCornerShape(12.dp)
+    Box {
+        Surface(
+            modifier = Modifier
+                .clip(shape)
+                .onFocusChanged { focused = it.isFocused || it.hasFocus }
+                .clickable(enabled = lines.isNotEmpty()) { expanded = true }
+                .focusable(enabled = lines.isNotEmpty()),
+            shape = shape,
+            color = if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
+            contentColor = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = currentLine?.name ?: "选择视频源",
+                    style = if (cinemaTheme) {
+                        MaterialTheme.typography.titleLarge
+                    } else {
+                        MaterialTheme.typography.headlineLarge
+                    },
+                    fontWeight = if (cinemaTheme) FontWeight.Medium else FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "▾",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TvColors.TextSecondary,
+                )
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (lines.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("暂无可切换的视频源") },
+                    onClick = { expanded = false },
+                )
+            } else {
+                lines.forEach { line ->
+                    val selected = line.id == currentLine?.id
+                    DropdownMenuItem(
+                        text = { Text(if (selected) "已选 · ${line.name}" else line.name) },
+                        onClick = {
+                            expanded = false
+                            actions.updateHomeApiLine(line.id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun HomeApiLineSetting(
     apiLines: List<ApiLine>,
     selectedApiLine: ApiLine?,
@@ -1355,7 +1490,11 @@ private fun MovieGrid(
         }
         loadMoreFocused = false
     }
-    val recent = state.historyItems.continueWatching()
+    val recent = if (state.appSettings.homeContinueWatchingEnabled) {
+        state.historyItems.continueWatching()
+    } else {
+        emptyList()
+    }
     val itemOffset = (if (recent.isNotEmpty()) 1 else 0) + (if (state.homeNotice != null) 1 else 0)
     val focusItems = recent.map { "continue:${it.apiLineId}:${it.movieId}" to 0 } +
         if (state.isShowingDoubanHot) state.doubanHotMovies.mapIndexed { index, item -> "douban:${item.doubanId}" to index + itemOffset }
@@ -1405,12 +1544,16 @@ private fun MovieGrid(
                             }.focusGroup(),
                         ) {
                             items(recent, key = { "${it.apiLineId}:${it.movieId}" }) { history ->
-                                HistoryItemCard(history, {
-                                    focus.mark("continue:${history.apiLineId}:${history.movieId}", 0)
-                                    onContinue(history)
-                                },
-                                    Modifier.width(220.dp).then(focus.modifier("continue:${history.apiLineId}:${history.movieId}", 0))
-                                        .onFocusChanged { if (it.hasFocus) onContentFocused() })
+                                HistoryItemCard(
+                                    item = history,
+                                    onClick = {
+                                        focus.mark("continue:${history.apiLineId}:${history.movieId}", 0)
+                                        onContinue(history)
+                                    },
+                                    modifier = Modifier.width(220.dp).then(
+                                        focus.modifier("continue:${history.apiLineId}:${history.movieId}", 0)
+                                    ).onFocusChanged { if (it.hasFocus) onContentFocused() },
+                                )
                             }
                         }
                     }
@@ -1609,4 +1752,448 @@ private fun createQrBitmap(content: String, size: Int): Bitmap {
         }
     }
     return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+}
+
+
+// ===== Source Management Screens =====
+
+@Composable
+private fun SourceManagerSetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var importDialogVisible by remember { mutableStateOf(false) }
+    var importDraft by remember { mutableStateOf("") }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+
+    fun exportToDownloads(fileName: String, content: String) {
+        scope.launch {
+            try {
+                val location = TextFileExporter(context).save(fileName, content)
+                exportMessage = "已导出到 $location"
+            } catch (error: Exception) {
+                exportMessage = "导出失败：${error.message ?: error.toString()}"
+            }
+        }
+    }
+
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SettingsActionButton(
+                text = if (state.sourceTesting) "测速 ${state.sourceTestCompleted}/${state.sourceTestTotal}" else "全部测速",
+                enabled = !state.sourceTesting && state.apiLines.isNotEmpty(),
+                onClick = actions::testAllSources,
+            )
+            SettingsActionButton(
+                text = "按测速排序",
+                enabled = !state.sourceTesting && !state.sourceImporting && state.apiLines.isNotEmpty(),
+                onClick = actions::sortSourcesBySpeed,
+            )
+            SettingsActionButton(
+                text = "删除无效源",
+                enabled = !state.sourceTesting && !state.sourceImporting && state.apiLines.isNotEmpty(),
+                onClick = actions::deleteInvalidSources,
+            )
+            SettingsActionButton(
+                text = "导入配置",
+                enabled = !state.sourceImporting,
+                onClick = { importDraft = ""; actions.dismissSourceImportMessage(); importDialogVisible = true },
+            )
+            SettingsActionButton(
+                text = "导出 TVBox",
+                enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
+                onClick = { exportToDownloads("tvbox_sources.json", actions.sourceConfigTvboxJson()) },
+            )
+            SettingsActionButton(
+                text = "导出 JSON",
+                enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
+                onClick = { exportToDownloads("sources.json", actions.sourceConfigSourcesJson()) },
+            )
+            SettingsActionButton(
+                text = "恢复内置",
+                enabled = !state.sourceImporting && state.appSettings.disabledBuiltInLineIds.isNotEmpty(),
+                onClick = actions::restoreBuiltInLines,
+            )
+        }
+        state.sourceManagerMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(text = msg, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+        exportMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(text = msg, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+        }
+        if (state.sourceTesting) {
+            Spacer(modifier = Modifier.height(8.dp))
+            LinearProgressIndicator(
+                progress = { if (state.sourceTestTotal <= 0) 0f else state.sourceTestCompleted.toFloat() / state.sourceTestTotal },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Spacer(modifier = Modifier.height(10.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (state.allSourceLines.isEmpty()) {
+                Text(
+                    text = "暂无可管理的视频源",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            state.allSourceLines.forEach { line ->
+                val isBuiltIn = state.appSettings.customVideoApiLines.none { it.id == line.id }
+                val deleted = isBuiltIn && line.id in state.appSettings.disabledBuiltInLineIds
+                val blocked = line.id in state.appSettings.blockedSourceIds
+                val selected = line.id == state.selectedApiLine?.id
+                val statusSuffix = when {
+                    deleted -> "（已删除）"
+                    blocked -> "（已屏蔽）"
+                    !isBuiltIn -> "（自定义）"
+                    else -> ""
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = (if (selected) "已选 " else "") + line.name + statusSuffix,
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = buildString {
+                                append(sourceLatencyLabel(line.id, state.sourceLatencies))
+                                append(" | ")
+                                append(line.baseUrls.firstOrNull() ?: "")
+                            },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (deleted) {
+                        SettingsActionButton(
+                            text = "恢复",
+                            onClick = { actions.restoreBuiltInLine(line.id) },
+                        )
+                    } else {
+                        if (!blocked) {
+                            SettingsActionButton(
+                                text = if (state.sourceTesting) "..." else "测速",
+                                enabled = !state.sourceTesting,
+                                onClick = { actions.testSourceSpeed(line.id) },
+                            )
+                            SettingsActionButton(
+                                text = "屏蔽",
+                                onClick = { actions.blockSource(line.id) },
+                            )
+                        } else {
+                            SettingsActionButton(
+                                text = "取消屏蔽",
+                                onClick = { actions.unblockSource(line.id) },
+                            )
+                        }
+                        SettingsActionButton(
+                            text = "删除",
+                            onClick = { actions.deleteApiLine(line.id) },
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (importDialogVisible) {
+        val importMessage = state.sourceImportMessage
+        AlertDialog(
+            onDismissRequest = { importDialogVisible = false; actions.dismissSourceImportMessage() },
+            title = { Text("导入源配置") },
+            text = {
+                Column {
+                    Text(
+                        text = "粘贴 TVBox JSON（含 sites 或加密壳 ** / 2423 AES）、storeHouse 或 sources.json 数组，也可直接输入订阅地址。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = importDraft,
+                        onValueChange = { importDraft = it },
+                        modifier = Modifier.fillMaxWidth().height(190.dp),
+                        placeholder = { Text("https://example.com/tvbox.json 或 {\"sites\":[...]}") },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = {
+                                importDraft = ""
+                            },
+                        ) { Text("清空草稿") }
+                    }
+                    if (importMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = importMessage,
+                            color = if (
+                                importMessage.contains("失败") ||
+                                importMessage.contains("错误") ||
+                                importMessage.contains("不合法") ||
+                                importMessage.contains("缺少")
+                            ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                SettingsActionButton(
+                    text = "导入",
+                    enabled = importDraft.isNotBlank() && !state.sourceImporting,
+                    onClick = { actions.importSourceConfig(importDraft); importDialogVisible = false },
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { importDialogVisible = false; actions.dismissSourceImportMessage() }) { Text("取消") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun LiveSourceSetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    var urlsText by remember { mutableStateOf(state.appSettings.liveSourceUrls.joinToString("\n")) }
+    var savedMessage by remember { mutableStateOf<String?>(null) }
+
+    Column {
+        Text(
+            text = "自定义直播源地址（每行一个，支持 M3U/TXT）",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        OutlinedTextField(
+            value = urlsText,
+            onValueChange = { urlsText = it },
+            modifier = Modifier.fillMaxWidth().height(120.dp),
+            placeholder = { Text("https://example.com/live.m3u\nhttps://example.com/live.txt") },
+            maxLines = 8,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SettingsActionButton(
+                text = "保存直播源",
+                onClick = {
+                    val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                    actions.updateLiveSourceUrls(urls)
+                    savedMessage = "已保存 ${urls.size} 个直播源"
+                },
+            )
+            SettingsActionButton(
+                text = "清空直播源",
+                enabled = state.appSettings.liveSourceUrls.isNotEmpty(),
+                onClick = {
+                    actions.updateLiveSourceUrls(emptyList())
+                    urlsText = ""
+                    savedMessage = "已清空直播源"
+                },
+            )
+        }
+        savedMessage?.let { msg ->
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(text = msg, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+private fun sourceLatencyLabel(lineId: String, latencies: Map<String, Long?>): String {
+    return when (val latency = latencies[lineId]) {
+        null -> if (lineId in latencies) "超时" else "未测速"
+        else -> "${latency}ms"
+    }
+}
+
+@Composable
+private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    PageSurface { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "源管理", style = MaterialTheme.typography.headlineLarge)
+                    Text(text = "视频接口、直播源与首页渲染数据统一管理（支持网页管理与地址导入）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
+                    SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
+                    SettingsActionButton(text = "返回", onClick = actions::goBack)
+                }
+            }
+            Spacer(modifier = Modifier.height(22.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "首页渲染数据（视频接口）",
+                        subtitle = "从这里进入独立的视频接口管理页，支持网页管理与地址导入以解析视频源数据。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "当前首页接口：${state.selectedApiLine?.name ?: "未选择"}", style = MaterialTheme.typography.titleMedium)
+                            Text(text = "视频接口总数：${state.apiLines.size}（自定义：${state.appSettings.customVideoApiLines.size}）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        SettingsActionButton(text = "进入视频接口管理", onClick = actions::openVideoSourceManager)
+                    }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "直播源",
+                        subtitle = "从这里进入独立的直播源管理页，支持网页管理与地址导入以解析直播源数据。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "自定义直播源：${state.appSettings.liveSourceUrls.size} 条", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = if (state.appSettings.liveSourceUrls.isEmpty()) "未配置自定义直播源（直播将使用导入的源）" else "已配置自定义直播源",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        SettingsActionButton(text = "进入直播源管理", onClick = actions::openLiveSourceManager)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    PageSurface { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "视频接口管理", style = MaterialTheme.typography.headlineLarge)
+                    Text(text = "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    SettingsActionButton(text = "打开视频接口配置（网页）", onClick = actions::openVideoApiConfigDialog)
+                    SettingsActionButton(text = "返回", onClick = actions::goBack)
+                }
+            }
+            Spacer(modifier = Modifier.height(22.dp))
+            if (state.videoApiConfigDialogVisible) {
+                VideoApiConfigDialog(state = state, actions = actions)
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    HomeApiLineSetting(
+                        apiLines = state.apiLines,
+                        selectedApiLine = state.selectedApiLine,
+                        customLineCount = state.appSettings.customVideoApiLines.size,
+                        onSelect = actions::updateHomeApiLine,
+                        onOpenConfig = actions::openVideoApiConfigDialog,
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "源管理",
+                        subtitle = "测速排序、删除/恢复、导入/导出，支持地址导入以解析视频源数据。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SourceManagerSetting(state = state, actions = actions)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    PageSurface { padding ->
+        Column(
+            modifier = Modifier.fillMaxSize().padding(padding),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = "直播源管理", style = MaterialTheme.typography.headlineLarge)
+                    Text(text = "直播源与自定义直播源管理（支持网页管理与地址导入以解析直播源数据）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                SettingsActionButton(text = "返回", onClick = actions::goBack)
+            }
+            Spacer(modifier = Modifier.height(22.dp))
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
+                contentPadding = PaddingValues(bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                modifier = Modifier.weight(1f),
+            ) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "直播源",
+                        subtitle = "自定义直播源地址（M3U/TXT），支持地址导入以解析直播源数据；留空则使用内置直播源。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    LiveSourceSetting(state = state, actions = actions)
+                }
+            }
+        }
+    }
 }
