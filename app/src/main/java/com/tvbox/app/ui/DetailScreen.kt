@@ -169,11 +169,29 @@ fun DetailScreen(
                         }
                     }
                     Spacer(modifier = Modifier.height(sectionGap))
-                    Text(
-                        text = "播放线路",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "播放线路",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(
+                            onClick = actions::testDetailSourceSpeeds,
+                            enabled = !state.detailSourceTesting && movie.playSources.isNotEmpty(),
+                        ) {
+                            Text(
+                                if (state.detailSourceTesting) {
+                                    "测速中 ${state.detailSourceTestCompleted}/${state.detailSourceTestTotal}"
+                                } else {
+                                    "线路测速"
+                                },
+                            )
+                        }
+                    }
                     if (
                         state.detailTotalSources > 1 &&
                         state.detailCompletedSources < state.detailTotalSources
@@ -184,12 +202,21 @@ fun DetailScreen(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
+                    state.detailSourceMessage?.let { message ->
+                        Text(
+                            text = message,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     Spacer(modifier = Modifier.height(10.dp))
                     PlaySourceTabs(
                         movie = movie,
+                        sources = orderPlaySourcesByLatency(movie.playSources, state.sourceLatencies),
                         selectedIndex = state.selectedSourceIndex,
                         selectedEpisodeIndex = state.selectedEpisodeIndex,
                         playbackHealth = state.playbackHealth,
+                        sourceLatencies = state.sourceLatencies,
                         onSelect = actions::selectPlaySource,
                     )
                     Spacer(modifier = Modifier.height(if (compact) 10.dp else 16.dp))
@@ -209,12 +236,13 @@ fun DetailScreen(
 @Composable
 private fun PlaySourceTabs(
     movie: Movie,
+    sources: List<IndexedValue<PlaySource>>,
     selectedIndex: Int,
     selectedEpisodeIndex: Int,
     playbackHealth: PlaybackHealthSnapshot,
+    sourceLatencies: Map<String, Long?>,
     onSelect: (Int) -> Unit,
 ) {
-    val sources = movie.playSources
     if (sources.isEmpty()) {
         Text("暂无可播放源", color = MaterialTheme.colorScheme.onSurfaceVariant)
         return
@@ -229,7 +257,9 @@ private fun PlaySourceTabs(
         nowMs = nowMs,
     )?.sourceIndex
     LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        itemsIndexed(sources) { index, source ->
+        itemsIndexed(sources) { _, indexedSource ->
+            val index = indexedSource.index
+            val source = indexedSource.value
             val statusLabel = playSourceStatusLabel(
                 movieId = movie.id,
                 source = source,
@@ -240,12 +270,35 @@ private fun PlaySourceTabs(
                 nowMs = nowMs,
             )
             CategoryPill(
-                label = listOfNotNull(source.name, statusLabel).joinToString(" · "),
+                label = listOfNotNull(
+                    source.name,
+                    lineLatencyLabel(source.lineId, sourceLatencies),
+                    statusLabel,
+                ).joinToString(" · "),
                 selected = index == selectedIndex,
                 onClick = { onSelect(index) },
             )
         }
     }
+}
+
+/** 已测速线路按延迟升序在前，未测速/失败线路保持原有顺序排在后面。 */
+private fun orderPlaySourcesByLatency(
+    sources: List<PlaySource>,
+    latencies: Map<String, Long?>,
+): List<IndexedValue<PlaySource>> {
+    return sources.withIndex().sortedWith(
+        compareBy(
+            { latencies[it.value.lineId] == null },
+            { latencies[it.value.lineId] ?: 0L },
+            { it.index },
+        ),
+    )
+}
+
+private fun lineLatencyLabel(lineId: String, latencies: Map<String, Long?>): String? {
+    if (lineId.isBlank() || !latencies.containsKey(lineId)) return null
+    return latencies[lineId]?.let { "${it}ms" } ?: "测速失败"
 }
 
 @Composable

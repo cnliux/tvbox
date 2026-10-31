@@ -31,6 +31,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import com.tvbox.app.data.DefaultAppUpdateRepository
+import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
 import com.tvbox.app.data.DefaultMovieRepository
 import com.tvbox.app.data.DefaultSearchHotWordRepository
@@ -433,6 +434,7 @@ private class TvBoxViewModelFactory(
                     doubanHotRepository.getRecentHot(page = 1).items.map { it.title }
                 },
             ),
+            platformLiveRepository = EmbeddedPlatformLiveRepository(activity.applicationContext),
             appUpdateRepository = DefaultAppUpdateRepository(activity.applicationContext),
             appSettingsRepository = SharedAppSettingsRepository(activity.applicationContext),
             playbackHealthRepository = SharedPlaybackHealthRepository(activity.applicationContext),

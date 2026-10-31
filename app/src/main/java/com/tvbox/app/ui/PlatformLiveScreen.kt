@@ -123,6 +123,17 @@ private fun PlatformLiveSitesScreen(
                 modifier = Modifier.focusRequester(firstCardFocusRequester),
             )
         }
+        itemsIndexed(
+            state.platformLiveQuickCategories,
+            key = { _, quick -> "quick_${quick.site.id}_${quick.category.id}" },
+        ) { _, quick ->
+            PlatformLiveTextCard(
+                title = "${quick.site.name}·${quick.category.name}",
+                subtitle = quick.category.parentName,
+                label = "常用分类",
+                onClick = { actions.openPlatformLiveQuickCategory(quick) },
+            )
+        }
         itemsIndexed(state.platformLiveSites, key = { _, site -> site.id }) { _, site ->
             PlatformLiveSiteCard(
                 site = site,

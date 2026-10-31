@@ -1,5 +1,61 @@
 ﻿# 平台直播（斗鱼）- 2026-08-01
 
+## 2026-10-31 19:05 - 直播首页常用分类直达（虎牙/斗鱼"一起看"）
+
+### 文件变更
+
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`：新增 `PlatformLiveQuickCategory`（site+category）、状态 `platformLiveQuickCategories`、`quickCategoryTargets`（huya/douyu → "一起看"）与分类树缓存 `quickCategoryTreeCache`；平台列表加载成功后由独立协程 `platformLiveQuickJob` 后台拉取分类树按名称匹配（失败静默）；新增 `openPlatformLiveQuickCategory()` 直达房间列表，并用缓存的分类树填充大类/二级分类状态，保证返回导航完整。
+- `app/src/main/java/com/tvbox/app/ui/PlatformLiveScreen.kt`：直播首页收藏卡片后新增"常用分类"文本卡片（标题 `平台·分类名`，副标题为父大类名）。
+
+### 验证
+
+- 分类名核对（PC 直连 resolver）：虎牙 `2135 一起看/娱乐`、斗鱼 `208 一起看/娱乐天地`，精确匹配成立。
+- `:app:assembleDebug`：通过；设备 `192.168.1.45:5555` 实机：
+  - 直播首页显示"虎牙·一起看""斗鱼·一起看"两张常用分类卡片；
+  - 点击直达对应房间列表（标题"一起看"，副标题正确）；
+  - 房间页返回进入"娱乐 → 选择二级分类"完整列表（分类树缓存生效）；
+  - 斗鱼·一起看直达同样通过。
+
+## 2026-10-31 18:30 - 平台直播 APK 内置化（远程服务停用）与回滚记录
+
+### 变更目标
+
+- 直播解析不再依赖远程服务：APK 通过 Chaquopy 内置 Python（`app/src/main/python/`）+ `DouyinSigner.kt` WebView JS 引擎完成斗鱼/虎牙/抖音等全部解析，设备无任何远程 URL 请求。
+
+### 文件变更
+
+- `app/src/main/java/com/tvbox/app/data/DouyinSigner.kt`（新增）：WebView JS 引擎。`sign()` 跑 `assets/douyin_sign.js` 生成抖音 a_bogus；`runJs()` 通用求值供斗鱼签名脚本使用（两段执行：先脚本后表达式，失败时 Log.e 输出脚本头尾与 new Function 编译诊断）。
+- `app/src/main/java/com/tvbox/app/data/PlatformLiveRepository.kt`：`EmbeddedPlatformLiveRepository`（内置 Python 实现，`Python.start` + `DouyinSigner.init`）。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`、`MainActivity.kt`、`app/src/debug/java/com/tvbox/app/AcceptanceActivity.kt`：全部默认/工厂构造切到 `EmbeddedPlatformLiveRepository`，删除 `BuildConfig.PLATFORM_LIVE_SERVICE_URL` 门槛检查（共 4 处）。
+- `app/src/main/python/douyu_resolver.py` 与 `platform_live_server/douyu_resolver.py`（同步）：新增 `RUNNER` 钩子（APK 注入 WebView 执行，服务端留空用 Node）；sign 函数头替换正则放宽为 `\(function\s*\(` 并在失配时抛"签名模板格式已变化"（原正则要求 `(function (` 带空格，斗鱼随机混淆变体 `(function(` 会失配导致括号失衡 SyntaxError）。
+- `app/src/main/python/tvbox_live_bridge.py`：`_install_android_signer()` 内把 `DouyinSigner.runJs` 注入 `douyu_resolver.RUNNER`。
+
+### 关键缺陷修复
+
+- 症状：内置版斗鱼报 `JS 执行无返回`，logcat `Uncaught SyntaxError: Invalid or unexpected token (about:blank 第1行)`。
+- 根因：`evaluateJavascript` 回调值会在 JSON 字面量外**再序列化一层**；表达式返回字符串时 `unwrapRaw` 解一层后仍是 JSON 字面量文本（含 `\"` 转义），拼接进第二段脚本后与 Python 插入的裸引号混排导致语法损坏。Node 路径（stdout + json.loads）无此问题，故仅设备端复现。
+- 修复：`runJs` 对以 `"` 开头的结果二次 JSON 解码（与 Node `json.loads` 等价）。
+
+### 远程服务地址记录（回滚用）
+
+- 生产远程解析服务：`http://20.205.10.127:8868`（历史构建参数 `TVBOX_PLATFORM_LIVE_SERVICE_URL`，未写入源码）。
+- 本机联调服务：`http://192.168.1.2:8868`（`platform_live_server`，会话结束时已停止；需要时在 `platform_live_server` 目录执行 `python server.py` 重启）。
+- 方案3 临时代理验证（已结束）：PC 代理 `192.168.1.2:8878` 转发到 8868，手机 `settings global http_proxy` 已恢复 `:0`。
+
+### 回滚方法
+
+1. 恢复远程模式构建：无需改代码——`RemotePlatformLiveRepository` 实现仍保留在 `PlatformLiveRepository.kt`；把 `TvBoxViewModel.kt`/`MainActivity.kt`/`AcceptanceActivity.kt` 中的 `EmbeddedPlatformLiveRepository()` 换回 `RemotePlatformLiveRepository(BuildConfig.PLATFORM_LIVE_SERVICE_URL)` 并恢复 4 处 URL 门槛检查，再以 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 构建即回到旧行为。
+2. 代码整体回滚：`git revert` 本次提交（涉及上述 Kotlin 文件 + `app/src/main/python/` + `DouyinSigner.kt` 新增文件）。
+3. 服务端独立可用：`platform_live_server` 未删改接口，`python server.py` 启动即可继续为旧 APK 提供解析（斗鱼签名需 Node.js）。
+
+### 验证
+
+- 设备 `192.168.1.45:5555`（MuMu x86_64，WebView 110）安装 `app-debug.apk`：
+  - 虎牙：分类→房间→播放正常，连续 60s+ 无断流、无 PyException。
+  - 斗鱼：修复后分类→房间→播放正常，画面持续推进 60s+（NBPL 电竞流）。
+  - 抖音：分类→房间→播放正常（sign()/douyin_sign.js WebView 路径，无错误日志）。
+- 内置解析全程无远程服务请求；`platform_live_server` 单测未受 RUNNER/正则变更影响（Node 路径保持原行为）。
+
 ## 2026-09-17 06:52 - 直播播放亮屏与房间收藏
 
 ### 文件变更

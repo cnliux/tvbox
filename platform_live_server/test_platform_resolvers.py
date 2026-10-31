@@ -80,6 +80,14 @@ class HuyaResolverTest(unittest.TestCase):
         _, payload = resolver._get_room_info("123")
         self.assertEqual(payload["roomInfo"]["x"]["n"], 1)
 
+    def test_game_id_normalizes_float_gid(self):
+        # bussLive 返回 1.0/862.0，cache.php 只接受 1/862。
+        self.assertEqual(HuyaResolver._game_id(1.0), "1")
+        self.assertEqual(HuyaResolver._game_id(862.0), "862")
+        self.assertEqual(HuyaResolver._game_id("1,2"), "1")
+        self.assertEqual(HuyaResolver._game_id({"value": "862,0"}), "862")
+        self.assertEqual(HuyaResolver._game_id(None), "")
+
 
 class DouyinResolverTest(unittest.TestCase):
     def test_escaped_category_data(self):

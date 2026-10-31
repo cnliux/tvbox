@@ -24,6 +24,10 @@ MOBILE_USER_AGENT = (
 )
 DEVICE_ID = "10000000000000000000000000001501"
 
+# APK 内置运行时会注入该 JS 执行函数（由 Kotlin 侧的 WebView 实现），
+# 服务端则保持留空，继续使用 Node.js 执行签名脚本。
+RUNNER = None
+
 
 class DouyuResolverError(RuntimeError):
     """斗鱼未开播、接口变更或无可用 CDN 时抛出的可展示错误。"""
@@ -376,7 +380,9 @@ class DouyuResolver:
         ).hexdigest()
 
         sign_js = re.sub(r"return rt;\}\);?", "return rt;}", signature_template)
-        sign_js = re.sub(r"\(function \(", "function sign(", sign_js)
+        if re.search(r"\(function\s*\(", sign_js) is None:
+            raise DouyuResolverError("斗鱼签名模板格式已变化：未找到 sign 函数头")
+        sign_js = re.sub(r"\(function\s*\(", "function sign(", sign_js)
         sign_js = re.sub(
             r"CryptoJS\.MD5\(cb\)\.toString\(\)",
             f'"{md5_value}"',
@@ -401,6 +407,8 @@ class DouyuResolver:
         }
 
     def _run_node(self, script: str, expression: str) -> str:
+        if RUNNER is not None:
+            return RUNNER(script, expression)
         node_script = (
             f"{script}\n"
             f"const tvboxResult = ({expression});\n"

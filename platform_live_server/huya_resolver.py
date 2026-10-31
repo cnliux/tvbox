@@ -206,7 +206,14 @@ class HuyaResolver:
             anchor=text(profile_info.get("sNick")),
             quality=quality,
             candidates=tuple(candidates),
-            headers={"Referer": f"https://www.huya.com/{room_id}", "User-Agent": HYSDK_UA},
+            # 移动端页面返回的 anti-code（ctype=tars_mobile、t=103）必须与
+            # 播放请求的 UA/Referer/Origin 保持一致，否则 CDN 会返回 403 或
+            # 只发送一小段 FLV 后主动关闭连接（表现为十几秒内断流）。
+            headers={
+                "Referer": f"https://m.huya.com/{room_id}",
+                "Origin": "https://m.huya.com",
+                "User-Agent": USER_AGENT,
+            },
         )
 
     def _get_room_info(self, room_id: str) -> tuple[str, dict]:
@@ -458,7 +465,12 @@ class HuyaResolver:
     def _game_id(value: object) -> str:
         if isinstance(value, dict):
             value = value.get("value")
-        return text(value).split(",", 1)[0]
+        raw = text(value).split(",", 1)[0].strip()
+        # 虎牙 bussLive 返回的 gid 是 JSON 浮点数（如 1.0、862.0），
+        # 而 cache.php 的 gameId 要求整数（1、862），否则会返回无关分类。
+        if raw.endswith(".0"):
+            raw = raw[:-2]
+        return raw
 
     @staticmethod
     def _positive_from_html(html: str, pattern: str) -> int:

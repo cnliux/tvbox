@@ -24,7 +24,8 @@ import com.tvbox.app.data.SearchHotWordRepository
 import com.tvbox.app.data.DefaultSearchHotWordRepository
 import com.tvbox.app.data.SearchKeywordExpander
 import com.tvbox.app.data.DefaultSearchKeywordExpander
-import com.tvbox.app.data.DefaultPlatformLiveRepository
+import com.tvbox.app.data.EmbeddedPlatformLiveRepository
+import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
 import com.tvbox.app.data.VideoApiConfigServer
@@ -97,6 +98,12 @@ enum class PlatformLiveDestination {
     Player,
 }
 
+/** 直播首页的常用分类直达入口：平台 + 该平台的二级分类。 */
+data class PlatformLiveQuickCategory(
+    val site: PlatformLiveSite,
+    val category: PlatformLiveCategory,
+)
+
 data class AiRecommendationUiItem(
     val recommendation: AiRecommendationItem,
 )
@@ -151,6 +158,7 @@ data class TvBoxUiState(
     val liveError: String? = null,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
+    val platformLiveQuickCategories: List<PlatformLiveQuickCategory> = emptyList(),
     val platformLiveFavorites: List<PlatformLiveRoom> = emptyList(),
     val platformLiveFavoriteError: String? = null,
     val platformLivePlayerReturnDestination: PlatformLiveDestination = PlatformLiveDestination.Rooms,
@@ -201,6 +209,10 @@ data class TvBoxUiState(
     val sourceTestCompleted: Int = 0,
     val sourceTestTotal: Int = 0,
     val sourceManagerMessage: String? = null,
+    val detailSourceTesting: Boolean = false,
+    val detailSourceTestCompleted: Int = 0,
+    val detailSourceTestTotal: Int = 0,
+    val detailSourceMessage: String? = null,
     val sourceImporting: Boolean = false,
     val sourceImportMessage: String? = null,
 ) {
@@ -223,7 +235,7 @@ class TvBoxViewModel(
     private val searchHotWordRepository: SearchHotWordRepository = DefaultSearchHotWordRepository(),
     private val searchKeywordExpander: SearchKeywordExpander = DefaultSearchKeywordExpander(),
     private val liveRepository: LiveRepository = DefaultLiveRepository(),
-    private val platformLiveRepository: PlatformLiveRepository = DefaultPlatformLiveRepository(),
+    private val platformLiveRepository: PlatformLiveRepository = EmbeddedPlatformLiveRepository(),
     private val aiRecommendationRepository: AiRecommendationRepository = DefaultAiRecommendationRepository(BuildConfig.AI_API_KEY),
     private val appUpdateRepository: AppUpdateRepository = DefaultAppUpdateRepositoryPlaceholder(),
     private val appSettingsRepository: AppSettingsRepository = DefaultAppSettingsRepositoryPlaceholder(),
@@ -243,6 +255,14 @@ class TvBoxViewModel(
     private var liveJob: Job? = null
     private var platformLiveJob: Job? = null
     private var platformLiveResolveJob: Job? = null
+    private var platformLiveQuickJob: Job? = null
+    private val quickCategoryTreeCache = mutableMapOf<String, PlatformLiveCategoryTree>()
+
+    /** 直播首页常用分类直达：平台 ID → 二级分类名称。 */
+    private val quickCategoryTargets = listOf(
+        "huya" to "一起看",
+        "douyu" to "一起看",
+    )
     private var platformLiveRecoveryCount = 0
     private var platformLiveRecoveryInProgress = false
     private val platformLiveFavoritesMutex = Mutex()
@@ -253,6 +273,8 @@ class TvBoxViewModel(
     private var updateInstallStateJob: Job? = null
     private var settingsWriteJob: Job? = null
     private var sourceTestJob: Job? = null
+    private var detailSourceTestJob: Job? = null
+    private var detailAutoTestedKey: String? = null
     private var importJob: Job? = null
     private var aiConfigServer: AiConfigServer? = null
     private var videoApiConfigServer: VideoApiConfigServer? = null
@@ -285,6 +307,8 @@ class TvBoxViewModel(
             val normalizedSettings = settings.copy(homeApiLineId = selectedApiLineId)
             val playbackHealth = runCatching { playbackHealthRepository.getSnapshot() }
                 .getOrDefault(PlaybackHealthSnapshot())
+            val speedLatencies = runCatching { appSettingsRepository.getSpeedLatencies() }
+                .getOrDefault(emptyMap())
             _state.update {
                 it.copy(
                     apiLines = availableApiLines,
@@ -292,6 +316,7 @@ class TvBoxViewModel(
                     selectedApiLineId = selectedApiLineId,
                     appSettings = normalizedSettings,
                     playbackHealth = playbackHealth,
+                    sourceLatencies = speedLatencies,
                 )
             }
             loadHistory()
@@ -467,11 +492,7 @@ class TvBoxViewModel(
                 platformLiveStream = null,
             )
         }
-        if (BuildConfig.PLATFORM_LIVE_SERVICE_URL.isBlank()) {
-            _state.update {
-                it.copy(platformLiveError = "测试服务未配置，请使用 TVBOX_PLATFORM_LIVE_SERVICE_URL 构建 APK")
-            }
-        } else if (_state.value.platformLiveSites.isEmpty()) {
+        if (_state.value.platformLiveSites.isEmpty()) {
             loadPlatformLiveSites()
         }
     }
@@ -1173,6 +1194,7 @@ class TvBoxViewModel(
     fun openDetail(movieId: Int, apiLineId: String = _state.value.selectedApiLineId) {
         historyResumeJob?.cancel()
         detailJob?.cancel()
+        detailSourceTestJob?.cancel()
         val current = _state.value
         val returnScreen = when (current.screen) {
             TvScreen.AiRecommend -> TvScreen.AiRecommend
@@ -1190,6 +1212,10 @@ class TvBoxViewModel(
                 detailError = null,
                 detailCompletedSources = 0,
                 detailTotalSources = 0,
+                detailSourceTesting = false,
+                detailSourceTestCompleted = 0,
+                detailSourceTestTotal = 0,
+                detailSourceMessage = null,
                 selectedSourceIndex = 0,
                 selectedEpisodeIndex = 0,
                 playerSourceIndex = 0,
@@ -1228,6 +1254,13 @@ class TvBoxViewModel(
                             playerEpisodeIndex = 0,
                             playerStartPositionMs = 0L,
                         )
+                    }
+                    if (update.completedSources >= update.totalSources) {
+                        val movieKey = "${update.movie.apiLineId}:${update.movie.id}"
+                        if (detailAutoTestedKey != movieKey) {
+                            detailAutoTestedKey = movieKey
+                            testDetailSourceSpeeds()
+                        }
                     }
                 }
                 if (!receivedPrimary) {
@@ -1302,6 +1335,7 @@ class TvBoxViewModel(
     fun resumeHistory(item: WatchHistoryItem, returnScreen: TvScreen = TvScreen.Home) {
         historyResumeJob?.cancel()
         detailJob?.cancel()
+        detailSourceTestJob?.cancel()
         _state.update {
             it.copy(
                 screen = TvScreen.Detail,
@@ -1309,6 +1343,10 @@ class TvBoxViewModel(
                 detailMovie = null,
                 detailLoading = true,
                 detailError = null,
+                detailSourceTesting = false,
+                detailSourceTestCompleted = 0,
+                detailSourceTestTotal = 0,
+                detailSourceMessage = null,
                 selectedSourceIndex = item.sourceIndex,
                 selectedEpisodeIndex = item.episodeIndex,
             )
@@ -1919,6 +1957,15 @@ class TvBoxViewModel(
     }
 
     fun testAllSources() {
+        runSourceSpeedTest(autoSort = false)
+    }
+
+    /** 一键测速并按延迟重排：测速完成后立即把最快线路放到前面并持久化。 */
+    fun testAllSourcesAndSort() {
+        runSourceSpeedTest(autoSort = true)
+    }
+
+    private fun runSourceSpeedTest(autoSort: Boolean) {
         val current = _state.value
         if (current.sourceTesting) return
         val srcLines = current.apiLines
@@ -1957,14 +2004,85 @@ class TvBoxViewModel(
                     }
                 }
             }
-            _state.update { state ->
-                val okCount = srcLines.count { state.sourceLatencies[it.id] != null }
-                state.copy(
-                    sourceTesting = false,
-                    sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个。可点击“按测速排序”重新排列。",
-                )
+            val latencies = _state.value.sourceLatencies
+            val okCount = srcLines.count { latencies[it.id] != null }
+            if (autoSort) {
+                val sorted = orderLinesByLatency(srcLines, latencies)
+                val settings = _state.value.appSettings.copy(sourceOrder = sorted.map { it.id })
+                saveSettings(settings)
+                _state.update {
+                    it.copy(
+                        sourceTesting = false,
+                        apiLines = sorted,
+                        allSourceLines = orderApiLines(repository.allApiLines, settings.sourceOrder),
+                        appSettings = settings,
+                        sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个；已按延迟排列（最快在前）。",
+                    )
+                }
+            } else {
+                _state.update {
+                    it.copy(
+                        sourceTesting = false,
+                        sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个。可点击“按测速排序”重新排列。",
+                    )
+                }
             }
             persistSourceLatencies()
+        }
+    }
+
+    /** 对当前详情页的所有播放线路测速，结果会持久化并用于按延迟排列线路。 */
+    fun testDetailSourceSpeeds() {
+        val current = _state.value
+        if (current.detailSourceTesting) return
+        val movie = current.detailMovie ?: return
+        val lineIds = movie.playSources
+            .map { it.lineId }
+            .filter { it.isNotBlank() }
+            .distinct()
+        if (lineIds.isEmpty()) return
+        detailSourceTestJob?.cancel()
+        detailSourceTestJob = viewModelScope.launch {
+            _state.update {
+                it.copy(
+                    detailSourceTesting = true,
+                    detailSourceTestCompleted = 0,
+                    detailSourceTestTotal = lineIds.size,
+                    detailSourceMessage = null,
+                )
+            }
+            val semaphore = kotlinx.coroutines.sync.Semaphore(3)
+            val mutex = kotlinx.coroutines.sync.Mutex()
+            var completed = 0
+            coroutineScope {
+                for (lineId in lineIds) {
+                    launch {
+                        semaphore.withPermit {
+                            val latency = runCatching { repository.testSpeed(lineId) }
+                                .onFailure { if (it is CancellationException) throw it }
+                                .getOrNull()
+                            mutex.withLock {
+                                completed++
+                                _state.update {
+                                    it.copy(
+                                        sourceLatencies = it.sourceLatencies + (lineId to latency),
+                                        detailSourceTestCompleted = completed,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            persistSourceLatencies()
+            val latencies = _state.value.sourceLatencies
+            val okCount = lineIds.count { latencies[it] != null }
+            _state.update {
+                it.copy(
+                    detailSourceTesting = false,
+                    detailSourceMessage = "线路测速完成：成功 $okCount/${lineIds.size}，已按延迟排序。",
+                )
+            }
         }
     }
 
@@ -2621,17 +2739,6 @@ class TvBoxViewModel(
     }
 
     private fun loadPlatformLiveSites() {
-        val serviceUrl = BuildConfig.PLATFORM_LIVE_SERVICE_URL
-        if (serviceUrl.isBlank()) {
-            _state.update {
-                it.copy(
-                    screen = TvScreen.PlatformLive,
-                    platformLiveLoading = false,
-                    platformLiveError = "测试服务未配置，请使用 TVBOX_PLATFORM_LIVE_SERVICE_URL 构建 APK",
-                )
-            }
-            return
-        }
         platformLiveJob?.cancel()
         platformLiveResolveJob?.cancel()
         platformLiveJob = viewModelScope.launch {
@@ -2646,7 +2753,7 @@ class TvBoxViewModel(
                     platformLiveStream = null,
                 )
             }
-            runCatching { platformLiveRepository.getSites(serviceUrl) }
+            runCatching { platformLiveRepository.getSites() }
                 .onSuccess { sites ->
                     _state.update {
                         if (it.platformLiveDestination != PlatformLiveDestination.Sites) it else it.copy(
@@ -2655,6 +2762,7 @@ class TvBoxViewModel(
                             platformLiveError = if (sites.isEmpty()) "没有可用平台直播服务" else null,
                         )
                     }
+                    loadPlatformLiveQuickCategories(sites)
                 }
                 .onFailure { error ->
                     if (error is CancellationException) return@onFailure
@@ -2666,6 +2774,49 @@ class TvBoxViewModel(
                     }
                 }
         }
+    }
+
+    /** 后台加载常用分类所在平台的分类树，按名称匹配生成直达入口；失败静默。 */
+    private fun loadPlatformLiveQuickCategories(sites: List<PlatformLiveSite>) {
+        platformLiveQuickJob?.cancel()
+        platformLiveQuickJob = viewModelScope.launch {
+            val quick = quickCategoryTargets.mapNotNull { (siteId, categoryName) ->
+                val site = sites.firstOrNull { it.id == siteId } ?: return@mapNotNull null
+                val tree = quickCategoryTreeCache[siteId]
+                    ?: runCatching { platformLiveRepository.getCategoryTree(siteId) }.getOrNull()
+                    ?.also { quickCategoryTreeCache[siteId] = it }
+                    ?: return@mapNotNull null
+                val category = tree.categories.firstOrNull { it.name == categoryName }
+                    ?: return@mapNotNull null
+                PlatformLiveQuickCategory(site = site, category = category)
+            }
+            if (quick.isNotEmpty()) {
+                _state.update { it.copy(platformLiveQuickCategories = quick) }
+            }
+        }
+    }
+
+    fun openPlatformLiveQuickCategory(quick: PlatformLiveQuickCategory) {
+        val tree = quickCategoryTreeCache[quick.site.id]
+        _state.update {
+            it.copy(
+                screen = TvScreen.PlatformLive,
+                platformLiveDestination = PlatformLiveDestination.Rooms,
+                platformLiveSelectedSite = quick.site,
+                platformLiveParentCategories = tree?.parentCategories ?: emptyList(),
+                platformLiveSelectedParentCategory = tree?.parentCategories
+                    ?.firstOrNull { parent -> parent.id == quick.category.parentId },
+                platformLiveCategories = tree?.categories ?: emptyList(),
+                platformLiveSelectedCategory = quick.category,
+                platformLiveRooms = emptyList(),
+                platformLiveRoomIndex = 0,
+                platformLiveRoomPage = 1,
+                platformLiveRoomPageCount = 1,
+                platformLiveError = null,
+                platformLiveStream = null,
+            )
+        }
+        loadPlatformLiveRooms(quick.category, reset = true)
     }
 
     private fun loadPlatformLiveFavorites() {
@@ -2690,8 +2841,6 @@ class TvBoxViewModel(
     }
 
     private fun loadPlatformLiveCategories(site: PlatformLiveSite) {
-        val serviceUrl = BuildConfig.PLATFORM_LIVE_SERVICE_URL
-        if (serviceUrl.isBlank()) return
         platformLiveJob?.cancel()
         platformLiveJob = viewModelScope.launch {
             _state.update {
@@ -2699,7 +2848,7 @@ class TvBoxViewModel(
                     it.copy(platformLiveLoading = true, platformLiveError = null)
                 }
             }
-            runCatching { platformLiveRepository.getCategoryTree(serviceUrl, site.id) }
+            runCatching { platformLiveRepository.getCategoryTree(site.id) }
                 .onSuccess { tree ->
                     _state.update {
                         if (it.platformLiveSelectedSite?.id != site.id) it else {
@@ -2726,9 +2875,7 @@ class TvBoxViewModel(
 
     private fun loadPlatformLiveRooms(category: PlatformLiveCategory, reset: Boolean) {
         val state = _state.value
-        val serviceUrl = BuildConfig.PLATFORM_LIVE_SERVICE_URL
         val site = state.platformLiveSelectedSite ?: return
-        if (serviceUrl.isBlank()) return
         val page = if (reset) 1 else state.platformLiveRoomPage + 1
         platformLiveJob?.cancel()
         platformLiveJob = viewModelScope.launch {
@@ -2741,7 +2888,7 @@ class TvBoxViewModel(
                     }
                 }
             }
-            runCatching { platformLiveRepository.getRooms(serviceUrl, site.id, category.id, page) }
+            runCatching { platformLiveRepository.getRooms(site.id, category.id, page) }
                 .onSuccess { result ->
                     _state.update {
                         if (it.platformLiveSelectedCategory?.id != category.id) it else {
@@ -2780,10 +2927,8 @@ class TvBoxViewModel(
         candidateIndex: Int = 0,
         isRecovery: Boolean = false,
     ) {
-        val serviceUrl = BuildConfig.PLATFORM_LIVE_SERVICE_URL
         val state = _state.value
         val room = state.platformLiveRooms.getOrNull(state.platformLiveRoomIndex) ?: return
-        if (serviceUrl.isBlank()) return
         if (!isRecovery) {
             platformLiveRecoveryCount = 0
             platformLiveRecoveryInProgress = false
@@ -2799,7 +2944,7 @@ class TvBoxViewModel(
                     it.copy(platformLiveResolving = true, platformLiveError = null, platformLiveStream = null)
                 }
             }
-            runCatching { platformLiveRepository.resolve(serviceUrl, room, forceRefresh) }
+            runCatching { platformLiveRepository.resolve(room, forceRefresh) }
                 .onSuccess { stream ->
                     _state.update {
                         if (it.platformLiveDestination != PlatformLiveDestination.Player ||

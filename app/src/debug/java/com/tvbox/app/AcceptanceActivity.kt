@@ -21,13 +21,7 @@ class AcceptanceActivity : ComponentActivity() {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 val service = "http://127.0.0.1:8766"
-                val platform = DefaultPlatformLiveRepository()
-                val localPlatform = object : PlatformLiveRepository by platform {
-                    override suspend fun getSites(serviceUrl: String) = platform.getSites(service)
-                    override suspend fun getCategoryTree(serviceUrl: String, site: String) = platform.getCategoryTree(service, site)
-                    override suspend fun getRooms(serviceUrl: String, site: String, categoryId: String, page: Int) = platform.getRooms(service, site, categoryId, page)
-                    override suspend fun resolve(serviceUrl: String, room: PlatformLiveRoom, forceRefresh: Boolean) = platform.resolve(service, room, forceRefresh)
-                }
+                val localPlatform = EmbeddedPlatformLiveRepository(this@AcceptanceActivity)
                 return TvBoxViewModel(
                     repository = DefaultMovieRepository(listOf(
                         ApiLine("acceptance", "验收接口", listOf("$service/api/")),

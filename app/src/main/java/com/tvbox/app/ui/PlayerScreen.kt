@@ -19,10 +19,18 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,6 +63,8 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.tvbox.app.data.DlnaCaster
+import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlaybackAttemptTracker
@@ -65,6 +76,7 @@ import com.tvbox.app.domain.PlaybackResumeAnchor
 import com.tvbox.app.domain.SlowBufferReason
 import com.tvbox.app.ui.components.ErrorState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -172,6 +184,52 @@ fun PlayerScreen(
         mutableStateOf(emptySet<Int>())
     }
     val latestState by rememberUpdatedState(state)
+
+    val canCast = !isTelevision
+    val dlnaCaster = remember(context) { DlnaCaster(context) }
+    val castScope = rememberCoroutineScope()
+    var castDialogVisible by remember { mutableStateOf(false) }
+    var castDevices by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
+    var castDiscovering by remember { mutableStateOf(false) }
+    var castError by remember { mutableStateOf<String?>(null) }
+    var castSearchNonce by remember { mutableIntStateOf(0) }
+    var castingDevice by remember { mutableStateOf<DlnaDevice?>(null) }
+    val stopCasting = {
+        castingDevice?.let(dlnaCaster::stopAsync)
+        if (castingDevice != null) {
+            castingDevice = null
+            seekGesturePrompt = "已停止投屏"
+            seekGesturePromptNonce++
+        }
+    }
+    val startCasting: (DlnaDevice) -> Unit = { device ->
+        castScope.launch {
+            castError = null
+            dlnaCaster.play(device, episode.url, "${movie.name} · ${episode.title}")
+                .onSuccess {
+                    castingDevice = device
+                    session.pause(player)
+                    castDialogVisible = false
+                    seekGesturePrompt = "已投屏到 ${device.name}"
+                    seekGesturePromptNonce++
+                }
+                .onFailure { error ->
+                    castError = error.message ?: "投屏失败"
+                }
+        }
+    }
+    LaunchedEffect(castDialogVisible, castSearchNonce) {
+        if (!canCast || !castDialogVisible) return@LaunchedEffect
+        castDiscovering = true
+        castError = null
+        runCatching { dlnaCaster.discover() }
+            .onSuccess { devices -> castDevices = devices }
+            .onFailure { error -> castError = error.message ?: "搜索投屏设备失败" }
+        castDiscovering = false
+    }
+    DisposableEffect(Unit) {
+        onDispose { castingDevice?.let(dlnaCaster::stopAsync) }
+    }
 
     val handlePlaybackIssue = issue@ { issueType: PlaybackIssueType, switchPrefix: String, finalPrefix: String, message: String ->
         val currentState = actions.state.value
@@ -362,6 +420,7 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(state.playerSourceIndex, source.episodes) {
+        if (castingDevice != null) stopCasting()
         loadedState = state
         resumeAnchor.update(state.playerStartPositionMs)
         playbackIssue = null
@@ -840,6 +899,16 @@ fun PlayerScreen(
                 },
                 onInteraction = { controlsInteraction++ },
                 onScrubbing = { scrubbing = it },
+                sourceLatencies = state.sourceLatencies,
+                castLabel = if (canCast) {
+                    if (castingDevice != null) "停止投屏" else "投屏"
+                } else {
+                    null
+                },
+                onCast = {
+                    if (castingDevice != null) stopCasting() else castDialogVisible = true
+                    controlsInteraction++
+                },
             )
         }
         val playbackStatus = playbackIssue?.message ?: playbackNotice
@@ -858,6 +927,44 @@ fun PlayerScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 164.dp),
+            )
+        }
+        if (canCast && castDialogVisible) {
+            AlertDialog(
+                onDismissRequest = { castDialogVisible = false },
+                title = { Text("投屏到电视") },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("仅手机端可用；请确保手机与电视连接同一 Wi-Fi，且电视已开启 DLNA/UPnP 投屏。")
+                        if (castDiscovering) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text("正在搜索 DLNA/UPnP 设备…")
+                        }
+                        castError?.let { message ->
+                            Text(message, color = MaterialTheme.colorScheme.error)
+                        }
+                        if (castDevices.isNotEmpty()) {
+                            castDevices.forEach { device ->
+                                ControlButton(
+                                    text = device.name,
+                                    onClick = { startCasting(device) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        } else if (!castDiscovering) {
+                            Text("未发现设备，请确认电视已开启 DLNA/UPnP 投屏后再重新搜索。")
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(onClick = { castSearchNonce++ }) { Text("重新搜索") }
+                },
+                dismissButton = {
+                    Button(onClick = { castDialogVisible = false }) { Text("关闭") }
+                },
             )
         }
     }

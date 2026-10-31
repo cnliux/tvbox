@@ -1,5 +1,8 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
+import android.content.Context
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
 import com.tvbox.app.domain.PlatformLiveChannel
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
@@ -7,30 +10,19 @@ import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.PlatformLiveStreamCandidate
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 interface PlatformLiveRepository {
-    suspend fun getChannels(serviceUrl: String): List<PlatformLiveChannel>
-    suspend fun getSites(serviceUrl: String): List<PlatformLiveSite>
-    suspend fun getCategoryTree(serviceUrl: String, site: String): PlatformLiveCategoryTree
-    suspend fun getRooms(
-        serviceUrl: String,
-        site: String,
-        categoryId: String,
-        page: Int,
-    ): PlatformLiveRoomsPage
-    suspend fun resolve(
-        serviceUrl: String,
-        room: PlatformLiveRoom,
-        forceRefresh: Boolean = false,
-    ): ResolvedPlatformLiveStream
+    suspend fun getChannels(): List<PlatformLiveChannel>
+    suspend fun getSites(): List<PlatformLiveSite>
+    suspend fun getCategoryTree(site: String): PlatformLiveCategoryTree
+    suspend fun getRooms(site: String, categoryId: String, page: Int): PlatformLiveRoomsPage
+    suspend fun resolve(room: PlatformLiveRoom, forceRefresh: Boolean = false): ResolvedPlatformLiveStream
 }
 
 data class PlatformLiveRoomsPage(
@@ -44,19 +36,25 @@ data class PlatformLiveCategoryTree(
     val categories: List<PlatformLiveCategory>,
 )
 
-class DefaultPlatformLiveRepository : PlatformLiveRepository {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(25, TimeUnit.SECONDS)
-        .build()
+/**
+ * APK 内置的平台直播解析器。
+ *
+ * 通过 Chaquopy 运行打包在 `assets` 资源中的 Python 解析脚本，
+ * 不再依赖外部 platform_live_server 服务。
+ */
+class EmbeddedPlatformLiveRepository(
+    context: Context? = null,
+) : PlatformLiveRepository {
+    private val appContext = context?.applicationContext
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
         explicitNulls = false
     }
+    private val pythonLock = Any()
 
-    override suspend fun getChannels(serviceUrl: String): List<PlatformLiveChannel> = withContext(Dispatchers.IO) {
-        val body = get(serviceUrl, "v1/live/catalog")
+    override suspend fun getChannels(): List<PlatformLiveChannel> = withContext(Dispatchers.IO) {
+        val body = call("channels_json")
         val response = runCatching { json.decodeFromString<PlatformLiveCatalogResponse>(body) }
             .getOrElse { throw IOException("平台直播频道目录格式错误", it) }
         response.channels
@@ -65,18 +63,15 @@ class DefaultPlatformLiveRepository : PlatformLiveRepository {
             .mapIndexed { index, channel -> channel.copy(number = index + 1) }
     }
 
-    override suspend fun getSites(serviceUrl: String): List<PlatformLiveSite> = withContext(Dispatchers.IO) {
-        val body = get(serviceUrl, "v1/live/sites")
+    override suspend fun getSites(): List<PlatformLiveSite> = withContext(Dispatchers.IO) {
+        val body = call("sites_json")
         val response = runCatching { json.decodeFromString<PlatformLiveSitesResponse>(body) }
             .getOrElse { throw IOException("平台直播平台列表格式错误", it) }
         response.sites.mapNotNull { it.toDomainOrNull() }
     }
 
-    override suspend fun getCategoryTree(
-        serviceUrl: String,
-        site: String,
-    ): PlatformLiveCategoryTree = withContext(Dispatchers.IO) {
-        val body = get(serviceUrl, "v1/live/categories?site=${site.urlEncode()}")
+    override suspend fun getCategoryTree(site: String): PlatformLiveCategoryTree = withContext(Dispatchers.IO) {
+        val body = call("categories_json", site)
         val response = runCatching { json.decodeFromString<PlatformLiveCategoriesResponse>(body) }
             .getOrElse { throw IOException("平台直播分类列表格式错误", it) }
         val categories = response.categories.mapNotNull { it.toDomainOrNull() }
@@ -101,15 +96,12 @@ class DefaultPlatformLiveRepository : PlatformLiveRepository {
     }
 
     override suspend fun getRooms(
-        serviceUrl: String,
         site: String,
         categoryId: String,
         page: Int,
     ): PlatformLiveRoomsPage = withContext(Dispatchers.IO) {
-        val body = get(
-            serviceUrl,
-            "v1/live/rooms?site=${site.urlEncode()}&categoryId=${categoryId.urlEncode()}&page=${page.coerceAtLeast(1)}",
-        )
+        val normalizedPage = page.coerceAtLeast(1)
+        val body = call("rooms_json", site, categoryId, normalizedPage.toString())
         val response = runCatching { json.decodeFromString<PlatformLiveRoomsResponse>(body) }
             .getOrElse { throw IOException("平台直播房间列表格式错误", it) }
         PlatformLiveRoomsPage(
@@ -120,14 +112,10 @@ class DefaultPlatformLiveRepository : PlatformLiveRepository {
     }
 
     override suspend fun resolve(
-        serviceUrl: String,
         room: PlatformLiveRoom,
         forceRefresh: Boolean,
     ): ResolvedPlatformLiveStream = withContext(Dispatchers.IO) {
-        val body = get(
-            serviceUrl = serviceUrl,
-            path = "v1/live/resolve?site=${room.site.urlEncode()}&roomId=${room.roomId.urlEncode()}&refresh=${if (forceRefresh) 1 else 0}",
-        )
+        val body = call("resolve_json", room.site, room.roomId, if (forceRefresh) "1" else "0")
         val response = runCatching { json.decodeFromString<PlatformLiveResolveResponse>(body) }
             .getOrElse { throw IOException("平台直播解析结果格式错误", it) }
         if (!response.live) throw IOException("该房间当前未开播")
@@ -161,21 +149,44 @@ class DefaultPlatformLiveRepository : PlatformLiveRepository {
         )
     }
 
-    private fun get(serviceUrl: String, path: String): String {
-        val url = serviceUrl.normalizedServiceUrlOrNull()
-            ?.let { "$it/$path" }
-            ?: throw IOException("平台直播服务地址无效")
-        val request = Request.Builder().url(url).build()
-        client.newCall(request).execute().use { response ->
-            val body = response.body.string()
-            if (!response.isSuccessful) {
-                val message = runCatching { json.decodeFromString<PlatformLiveErrorResponse>(body).error }
-                    .getOrDefault("")
-                    .trim()
-                throw IOException(message.ifBlank { "平台直播服务请求失败：${response.code}" })
-            }
-            return body
+    private fun call(function: String, vararg args: String): String {
+        ensurePythonStarted()
+        return try {
+            val module = Python.getInstance().getModule(BRIDGE_MODULE)
+            module.callAttr(function, *args).toString()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            throw IOException(pythonErrorMessage(error), error)
         }
+    }
+
+    private fun ensurePythonStarted() {
+        if (Python.isStarted()) return
+        synchronized(pythonLock) {
+            if (Python.isStarted()) return
+            val context = appContext ?: throw IOException("内置直播解析器未初始化")
+            Python.start(AndroidPlatform(context))
+            DouyinSigner.init(context)
+        }
+    }
+
+    private fun pythonErrorMessage(error: Throwable): String {
+        val raw = error.message?.trim().orEmpty()
+        if (raw.isBlank()) return "内置直播解析失败"
+        val lastLine = raw.lineSequence()
+            .map { it.trim() }
+            .lastOrNull { it.isNotBlank() }
+            .orEmpty()
+        return lastLine
+            .substringAfterLast("PyException: ", lastLine)
+            .substringAfterLast("Exception: ", lastLine)
+            .trim()
+            .ifBlank { "内置直播解析失败" }
+    }
+
+    private companion object {
+        const val BRIDGE_MODULE = "tvbox_live_bridge"
     }
 }
 
@@ -346,19 +357,3 @@ private data class PlatformLiveStreamCandidateDto(
         )
     }
 }
-
-@Serializable
-private data class PlatformLiveErrorResponse(
-    val error: String = "",
-)
-
-private fun String.normalizedServiceUrlOrNull(): String? {
-    val value = trim().trimEnd('/')
-    if (!value.startsWith("https://", ignoreCase = true) && !value.startsWith("http://", ignoreCase = true)) {
-        return null
-    }
-    return value.takeIf { it.length > "http://".length }
-}
-
-private fun String.urlEncode(): String = java.net.URLEncoder.encode(this, Charsets.UTF_8.name())
-

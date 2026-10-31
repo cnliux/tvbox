@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+    id("com.chaquo.python")
 }
 
 val localProperties = Properties().apply {
@@ -44,12 +45,16 @@ android {
 
     defaultConfig {
         applicationId = "com.tvbox.app"
-        minSdk = 23
+        minSdk = 24
         targetSdk = 36
         versionCode = 10313
         versionName = "1.3.13"
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         buildConfigField("String", "PLATFORM_LIVE_SERVICE_URL", platformLiveServiceUrl.toBuildConfigString())
+        ndk {
+            // Chaquopy 内置 Python 运行时，需要显式声明支持的 ABI。
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
 
     signingConfigs {
@@ -101,6 +106,20 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version = "3.11"
+        val buildPython = configProperty("TVBOX_BUILD_PYTHON")
+        if (buildPython.isNotBlank()) {
+            // 部分环境下 PATH 中混入了非标准 python 路径，允许显式指定构建用 Python。
+            buildPython(buildPython)
+        }
+        pip {
+            install("requests")
         }
     }
 }

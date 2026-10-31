@@ -1,6 +1,5 @@
 ﻿package com.tvbox.app.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -17,7 +16,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -57,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
+import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvColors
@@ -593,15 +592,15 @@ private fun SearchResultsPanel(
                 state.searchResults.isEmpty() -> SearchEmptyState(query = state.searchQuery)
 
                 else -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(1),
+                    columns = GridCells.Adaptive(minSize = 132.dp),
                     state = grid,
                     contentPadding = PaddingValues(bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(0.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
-                        SearchResultRow(
+                        SearchResultCard(
                             movie = movie,
                             onClick = {
                                 returnFocus.mark("${movie.apiLineId}:${movie.id}", state.searchResults.indexOf(movie))
@@ -620,68 +619,31 @@ private fun SearchResultsPanel(
 }
 
 @Composable
-private fun SearchResultRow(
+private fun SearchResultCard(
     movie: Movie,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(10.dp)
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-                idleBorder = TvColors.Border,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
-            .focusable(),
-        shape = shape,
-        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
-        contentColor = TvColors.TextPrimary,
-        border = BorderStroke(1.dp, if (focused) TvColors.FocusRing else TvColors.Border),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    Box(modifier = modifier) {
+        MoviePosterCard(
+            movie = movie,
+            onClick = onClick,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Surface(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(8.dp),
+            shape = RoundedCornerShape(6.dp),
+            color = TvColors.SurfaceOverlay,
+            contentColor = TvColors.AccentStrong,
         ) {
             Text(
                 text = movie.apiLineName,
-                modifier = Modifier.widthIn(max = 136.dp),
-                color = if (focused) TvColors.AccentStrong else TvColors.Accent,
-                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(modifier = Modifier.width(16.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = movie.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                val meta = listOf(movie.year, movie.typeName, movie.remarks)
-                    .filter { it.isNotBlank() }
-                    .joinToString(" · ")
-                if (meta.isNotBlank()) {
-                    Text(
-                        text = meta,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = TvColors.TextSecondary,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = "›",
-                style = MaterialTheme.typography.headlineSmall,
-                color = if (focused) TvColors.TextPrimary else TvColors.TextTertiary,
             )
         }
     }

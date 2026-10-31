@@ -58,6 +58,9 @@ internal fun PlayerControls(
     onSeek: (Long) -> Unit,
     onInteraction: () -> Unit,
     onScrubbing: (Boolean) -> Unit,
+    sourceLatencies: Map<String, Long?> = emptyMap(),
+    castLabel: String? = null,
+    onCast: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val source = sources[sourceIndex]
@@ -136,6 +139,7 @@ internal fun PlayerControls(
                     ControlButton("上一集", { onEpisode(episodeIndex - 1) }, enabled = episodeIndex > 0)
                     ControlButton("下一集", { onEpisode(episodeIndex + 1) }, enabled = episodeIndex < source.episodes.lastIndex)
                     if (!compact) Spacer(Modifier.weight(1f))
+                    if (castLabel != null) ControlButton(castLabel, onCast)
                     ControlButton("选集", { onPanel(PlayerPanel.Episodes) })
                     ControlButton("线路", { onPanel(PlayerPanel.Sources) })
                     ControlButton("${speed.toString().trimEnd('0').trimEnd('.')}x", { onPanel(PlayerPanel.Speeds) })
@@ -146,7 +150,7 @@ internal fun PlayerControls(
         if (panel != PlayerPanel.None) {
             val labels = when (panel) {
                 PlayerPanel.Episodes -> source.episodes.map { it.title }
-                PlayerPanel.Sources -> sources.map { it.name }
+                PlayerPanel.Sources -> sources.map { sourceTabLabel(it, sourceLatencies) }
                 PlayerPanel.Speeds -> playerSpeeds.map { "${it}x" }
                 PlayerPanel.Picture -> VideoScaleMode.entries.map { it.displayName }
                 PlayerPanel.None -> emptyList()
@@ -236,3 +240,9 @@ internal fun formatPlayerTime(ms: Long): String {
     else "%d:%02d".format(seconds / 60, seconds % 60)
 }
 private val playerSpeeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
+
+private fun sourceTabLabel(source: PlaySource, latencies: Map<String, Long?>): String {
+    if (source.lineId.isBlank() || !latencies.containsKey(source.lineId)) return source.name
+    val latency = latencies[source.lineId]
+    return source.name + " · " + (latency?.let { "${it}ms" } ?: "测速失败")
+}

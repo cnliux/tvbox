@@ -1786,9 +1786,9 @@ private fun SourceManagerSetting(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SettingsActionButton(
-                text = if (state.sourceTesting) "测速 ${state.sourceTestCompleted}/${state.sourceTestTotal}" else "全部测速",
+                text = if (state.sourceTesting) "测速 ${state.sourceTestCompleted}/${state.sourceTestTotal}" else "一键测速并排列",
                 enabled = !state.sourceTesting && state.apiLines.isNotEmpty(),
-                onClick = actions::testAllSources,
+                onClick = actions::testAllSourcesAndSort,
             )
             SettingsActionButton(
                 text = "按测速排序",
