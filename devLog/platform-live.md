@@ -1,5 +1,28 @@
 ﻿# 平台直播（斗鱼）- 2026-08-01
 
+## 2026-10-31 20:10 - 直播源可管控（内置电视源 + 平台站点）
+
+### 需求
+
+- 内置电视直播源（result.txt）与平台直播站点（斗鱼/虎牙等）都要能在管理页管控：是否与自定义源组合、逐条删除、随时恢复。
+
+### 文件变更
+
+- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`：新增 `BuiltInLiveSource(id/name/url)` 与内置清单 `BuiltInLiveSources`；`LiveRepository` 接口改为 `setSourceConfig(builtIn, customUrls, includeBuiltIn)`；`getChannels()` 按"内置（可开关）+ 自定义"组合拉取，全部为空时给出明确错误。
+- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`：新增 `includeBuiltInLiveSources`、`disabledBuiltInLiveSourceIds`、`blockedPlatformSiteIds`。
+- `app/src/main/java/com/tvbox/app/data/AppSettingsRepository.kt`：新增三个持久化 key。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`：新增 `applyLiveSourceConfig()`、`updateIncludeBuiltInLiveSources()`、`deleteBuiltInLiveSource()`、`restoreBuiltInLiveSource()`、`restoreBuiltInLiveSources()`、`togglePlatformLiveSiteBlocked()`；站点加载时按 `blockedPlatformSiteIds` 过滤；`platformLiveAllSites` 保存全量站点供恢复；`openLiveSourceManager()` 预拉取站点列表。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxApp.kt`：直播源管理页新增"内置电视直播源"（组合开关 + 逐条删除/恢复 + 恢复全部）与"平台直播站点"（逐条删除/恢复）两个区块。
+- `app/src/debug/java/com/tvbox/app/AcceptanceActivity.kt`：适配新的 `setSourceConfig` 构造参数。
+
+### 验证（设备 192.168.1.45:5555）
+
+- 直播源管理页正确显示：组合开关（已开启：内置源 + 0 个自定义源）、内置直播源条目及删除按钮、平台站点列表（斗鱼/虎牙/哔哩哔哩/抖音/快手）。
+- 删除内置直播源 → 显示"（已删除）"与"恢复"；顶部出现"恢复全部内置直播源"；恢复后回到正常状态。
+- 删除斗鱼 → 直播首页斗鱼卡片消失（保留虎牙/哔哩哔哩/抖音/快手）；本页显示"斗鱼（已删除）"；恢复后斗鱼卡片重新出现。
+- 组合开关、持久化（SharedPreferences）在重启后保持（同一会话内多次页面往返一致）。
+- `:app:assembleDebug` 与 `:app:assembleRelease` 均构建成功；release 产物为 `app-release-unsigned.apk`（本机未配置 `TVBOX_RELEASE_*` 签名，需签名后才能分发）。
+
 ## 2026-10-31 19:05 - 直播首页常用分类直达（虎牙/斗鱼"一起看"）
 
 ### 文件变更

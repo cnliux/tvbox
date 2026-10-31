@@ -39,6 +39,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             disabledBuiltInLineIds = readStringList(KEY_DISABLED_BUILT_IN_LINE_IDS),
             blockedSourceIds = readStringList(KEY_BLOCKED_SOURCE_IDS),
             liveSourceUrls = readStringList(KEY_LIVE_SOURCE_URLS),
+            includeBuiltInLiveSources = prefs.getBoolean(KEY_INCLUDE_BUILT_IN_LIVE_SOURCES, true),
+            disabledBuiltInLiveSourceIds = readStringList(KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS),
+            blockedPlatformSiteIds = readStringList(KEY_BLOCKED_PLATFORM_SITE_IDS),
             homeContinueWatchingEnabled = prefs.getBoolean(KEY_HOME_CONTINUE_WATCHING, false),
             theme = TvTheme.fromStorageKey(prefs.getString(KEY_THEME, TvTheme.Default.storageKey)),
             fontScale = TvFontScale.fromStorageKey(prefs.getString(KEY_FONT_SCALE, TvFontScale.Normal.storageKey)),
@@ -63,6 +66,12 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putString(KEY_DISABLED_BUILT_IN_LINE_IDS, json.encodeToString(settings.disabledBuiltInLineIds))
             .putString(KEY_BLOCKED_SOURCE_IDS, json.encodeToString(settings.blockedSourceIds))
             .putString(KEY_LIVE_SOURCE_URLS, json.encodeToString(settings.liveSourceUrls))
+            .putBoolean(KEY_INCLUDE_BUILT_IN_LIVE_SOURCES, settings.includeBuiltInLiveSources)
+            .putString(
+                KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS,
+                json.encodeToString(settings.disabledBuiltInLiveSourceIds),
+            )
+            .putString(KEY_BLOCKED_PLATFORM_SITE_IDS, json.encodeToString(settings.blockedPlatformSiteIds))
             .putBoolean(KEY_HOME_CONTINUE_WATCHING, settings.homeContinueWatchingEnabled)
             .putString(KEY_THEME, settings.theme.storageKey)
             .putString(KEY_FONT_SCALE, settings.fontScale.storageKey)
@@ -120,6 +129,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_DISABLED_BUILT_IN_LINE_IDS = "disabled_built_in_line_ids"
         const val KEY_BLOCKED_SOURCE_IDS = "blocked_source_ids"
         const val KEY_LIVE_SOURCE_URLS = "live_source_urls"
+        const val KEY_INCLUDE_BUILT_IN_LIVE_SOURCES = "include_built_in_live_sources"
+        const val KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS = "disabled_built_in_live_source_ids"
+        const val KEY_BLOCKED_PLATFORM_SITE_IDS = "blocked_platform_site_ids"
         const val KEY_HOME_CONTINUE_WATCHING = "home_continue_watching_enabled"
         const val KEY_SOURCE_SPEED_LATENCIES = "source_speed_latencies"
         const val KEY_THEME = "theme"

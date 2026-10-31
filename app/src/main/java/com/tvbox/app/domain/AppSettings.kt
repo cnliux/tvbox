@@ -9,6 +9,12 @@ data class AppSettings(
     val disabledBuiltInLineIds: List<String> = emptyList(),
     val blockedSourceIds: List<String> = emptyList(),
     val liveSourceUrls: List<String> = emptyList(),
+    /** 是否把内置电视直播源与自定义源组合使用；关闭后只使用自定义源。 */
+    val includeBuiltInLiveSources: Boolean = true,
+    /** 已删除的内置电视直播源 ID，可在源管理页恢复。 */
+    val disabledBuiltInLiveSourceIds: List<String> = emptyList(),
+    /** 已删除（屏蔽）的平台直播站点 ID，例如斗鱼、虎牙。 */
+    val blockedPlatformSiteIds: List<String> = emptyList(),
     val homeContinueWatchingEnabled: Boolean = false,
     val theme: TvTheme = TvTheme.Default,
     val fontScale: TvFontScale = TvFontScale.Normal,

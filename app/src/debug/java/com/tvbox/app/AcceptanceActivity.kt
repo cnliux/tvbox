@@ -27,7 +27,9 @@ class AcceptanceActivity : ComponentActivity() {
                         ApiLine("acceptance", "验收接口", listOf("$service/api/")),
                         ApiLine("acceptance-alt", "验收备用", listOf("$service/alt-api/")),
                     )),
-                    liveRepository = DefaultLiveRepository(listOf("$service/live.txt")),
+                    liveRepository = DefaultLiveRepository(
+                        listOf(BuiltInLiveSource("acceptance", "验收直播源", "$service/live.txt")),
+                    ),
                     platformLiveRepository = localPlatform,
                     appSettingsRepository = object : AppSettingsRepository {
                         var settings = AppSettings(homeApiLineId = "acceptance", checkUpdatesOnStartup = false,

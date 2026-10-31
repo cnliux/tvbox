@@ -3,6 +3,7 @@ package com.tvbox.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
+import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.AiConfigServer
 import com.tvbox.app.data.AiRequestConfig
@@ -158,6 +159,8 @@ data class TvBoxUiState(
     val liveError: String? = null,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
+    /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
+    val platformLiveAllSites: List<PlatformLiveSite> = emptyList(),
     val platformLiveQuickCategories: List<PlatformLiveQuickCategory> = emptyList(),
     val platformLiveFavorites: List<PlatformLiveRoom> = emptyList(),
     val platformLiveFavoriteError: String? = null,
@@ -256,6 +259,7 @@ class TvBoxViewModel(
     private var platformLiveJob: Job? = null
     private var platformLiveResolveJob: Job? = null
     private var platformLiveQuickJob: Job? = null
+    private var allPlatformLiveSites: List<PlatformLiveSite> = emptyList()
     private val quickCategoryTreeCache = mutableMapOf<String, PlatformLiveCategoryTree>()
 
     /** 直播首页常用分类直达：平台 ID → 二级分类名称。 */
@@ -298,7 +302,7 @@ class TvBoxViewModel(
             repository.setDisabledLineIds(
                 (settings.disabledBuiltInLineIds + settings.blockedSourceIds).toSet(),
             )
-            liveRepository.setCustomSourceUrls(settings.liveSourceUrls)
+            applyLiveSourceConfig(settings)
             val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
             val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
             val selectedApiLineId = settings.homeApiLineId
@@ -508,6 +512,13 @@ class TvBoxViewModel(
 
     fun openLiveSourceManager() {
         _state.update { it.copy(screen = TvScreen.LiveSourceManager, liveChannels = emptyList(), liveError = null) }
+        viewModelScope.launch {
+            runCatching { platformLiveRepository.getSites() }
+                .onSuccess { sites ->
+                    allPlatformLiveSites = sites
+                    _state.update { it.copy(platformLiveAllSites = sites) }
+                }
+        }
     }
 
     fun openVideoSourceManager() {
@@ -2374,7 +2385,7 @@ class TvBoxViewModel(
                     liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
                 )
                 applySourceSettings(settings)
-                liveRepository.setCustomSourceUrls(settings.liveSourceUrls)
+                applyLiveSourceConfig(settings)
                 val ordered = availableApiLinesFor(settings)
                 val allLines = allApiLinesFor(settings)
                 saveSettings(settings)
@@ -2414,9 +2425,88 @@ class TvBoxViewModel(
         val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
         val current = _state.value
         val settings = current.appSettings.copy(liveSourceUrls = normalized)
-        liveRepository.setCustomSourceUrls(normalized)
+        applyLiveSourceConfig(settings)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 把设置中的电视直播源组合应用到仓库：内置源（剔除已删除）+ 自定义源。 */
+    private fun applyLiveSourceConfig(settings: AppSettings) {
+        val builtIn = BuiltInLiveSources.all.filter { it.id !in settings.disabledBuiltInLiveSourceIds }
+        liveRepository.setSourceConfig(
+            builtIn = builtIn,
+            customUrls = settings.liveSourceUrls,
+            includeBuiltIn = settings.includeBuiltInLiveSources,
+        )
+    }
+
+    /** 开关"内置直播源与自定义源组合使用"。 */
+    fun updateIncludeBuiltInLiveSources(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(includeBuiltInLiveSources = enabled)
+        applyLiveSourceConfig(settings)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 删除单条内置电视直播源（可在"恢复内置直播源"中还原）。 */
+    fun deleteBuiltInLiveSource(sourceId: String) {
+        if (BuiltInLiveSources.byId(sourceId) == null) return
+        val current = _state.value
+        val settings = current.appSettings.copy(
+            disabledBuiltInLiveSourceIds =
+            (current.appSettings.disabledBuiltInLiveSourceIds + sourceId).distinct(),
+        )
+        applyLiveSourceConfig(settings)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    fun restoreBuiltInLiveSource(sourceId: String) {
+        val current = _state.value
+        if (sourceId !in current.appSettings.disabledBuiltInLiveSourceIds) return
+        val settings = current.appSettings.copy(
+            disabledBuiltInLiveSourceIds = current.appSettings.disabledBuiltInLiveSourceIds - sourceId,
+        )
+        applyLiveSourceConfig(settings)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    fun restoreBuiltInLiveSources() {
+        val current = _state.value
+        if (current.appSettings.disabledBuiltInLiveSourceIds.isEmpty()) return
+        val settings = current.appSettings.copy(disabledBuiltInLiveSourceIds = emptyList())
+        applyLiveSourceConfig(settings)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 删除（屏蔽）或恢复平台直播站点，例如斗鱼、虎牙。 */
+    fun togglePlatformLiveSiteBlocked(siteId: String) {
+        val current = _state.value
+        val blocked = current.appSettings.blockedPlatformSiteIds
+        val settings = current.appSettings.copy(
+            blockedPlatformSiteIds = if (siteId in blocked) blocked - siteId else (blocked + siteId).distinct(),
+        )
+        val visibleSites = allPlatformLiveSites.filter { it.id !in settings.blockedPlatformSiteIds }
+        saveSettings(settings)
+        _state.update { state ->
+            val staysOnBlockedSite = state.platformLiveDestination == PlatformLiveDestination.Rooms &&
+                state.platformLiveSelectedSite?.id == siteId
+            state.copy(
+                appSettings = settings,
+                platformLiveSites = visibleSites,
+                platformLiveAllSites = allPlatformLiveSites,
+                platformLiveQuickCategories = state.platformLiveQuickCategories
+                    .filter { it.site.id !in settings.blockedPlatformSiteIds },
+                platformLiveSelectedSite = if (staysOnBlockedSite) null else state.platformLiveSelectedSite,
+                platformLiveDestination = if (staysOnBlockedSite) {
+                    PlatformLiveDestination.Sites
+                } else {
+                    state.platformLiveDestination
+                },
+            )
+        }
     }
 
     fun sourceConfigTvboxJson(): String {
@@ -2755,14 +2845,22 @@ class TvBoxViewModel(
             }
             runCatching { platformLiveRepository.getSites() }
                 .onSuccess { sites ->
+                    allPlatformLiveSites = sites
+                    val blockedSiteIds = _state.value.appSettings.blockedPlatformSiteIds
+                    val visibleSites = sites.filter { it.id !in blockedSiteIds }
                     _state.update {
                         if (it.platformLiveDestination != PlatformLiveDestination.Sites) it else it.copy(
-                            platformLiveSites = sites,
+                            platformLiveSites = visibleSites,
+                            platformLiveAllSites = sites,
                             platformLiveLoading = false,
-                            platformLiveError = if (sites.isEmpty()) "没有可用平台直播服务" else null,
+                            platformLiveError = if (visibleSites.isEmpty()) {
+                                "所有平台直播站点均已删除，可在源管理页恢复"
+                            } else {
+                                null
+                            },
                         )
                     }
-                    loadPlatformLiveQuickCategories(sites)
+                    loadPlatformLiveQuickCategories(visibleSites)
                 }
                 .onFailure { error ->
                     if (error is CancellationException) return@onFailure

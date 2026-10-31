@@ -47,6 +47,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.data.TextFileExporter
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.runtime.Composable
@@ -2023,6 +2024,113 @@ private fun LiveSourceSetting(
     }
 }
 
+@Composable
+private fun BuiltInLiveSourceSetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val deletedIds = state.appSettings.disabledBuiltInLiveSourceIds
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = "内置源与自定义源组合使用", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = if (state.appSettings.includeBuiltInLiveSources) {
+                        "已开启：内置源 + ${state.appSettings.liveSourceUrls.size} 个自定义源"
+                    } else {
+                        "已关闭：仅使用自定义源"
+                    },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            Switch(
+                checked = state.appSettings.includeBuiltInLiveSources,
+                onCheckedChange = actions::updateIncludeBuiltInLiveSources,
+            )
+        }
+        BuiltInLiveSources.all.forEach { source ->
+            val deleted = source.id in deletedIds
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = source.name + if (deleted) "（已删除）" else "",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = source.url,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                SettingsActionButton(
+                    text = if (deleted) "恢复" else "删除",
+                    onClick = {
+                        if (deleted) {
+                            actions.restoreBuiltInLiveSource(source.id)
+                        } else {
+                            actions.deleteBuiltInLiveSource(source.id)
+                        }
+                    },
+                )
+            }
+        }
+        if (deletedIds.isNotEmpty()) {
+            SettingsActionButton(
+                text = "恢复全部内置直播源",
+                onClick = actions::restoreBuiltInLiveSources,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PlatformLiveSiteSetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val blockedIds = state.appSettings.blockedPlatformSiteIds
+    val sites = state.platformLiveAllSites.ifEmpty { state.platformLiveSites }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (sites.isEmpty()) {
+            Text(
+                text = "站点列表加载中或当前不可用",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        sites.forEach { site ->
+            val blocked = site.id in blockedIds
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = site.name + if (blocked) "（已删除）" else "",
+                        style = MaterialTheme.typography.titleSmall,
+                    )
+                    Text(
+                        text = if (blocked) "已删除，可在本页恢复" else site.description,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                SettingsActionButton(
+                    text = if (blocked) "恢复" else "删除",
+                    onClick = { actions.togglePlatformLiveSiteBlocked(site.id) },
+                )
+            }
+        }
+    }
+}
+
 private fun sourceLatencyLabel(lineId: String, latencies: Map<String, Long?>): String {
     return when (val latency = latencies[lineId]) {
         null -> if (lineId in latencies) "超时" else "未测速"
@@ -2192,6 +2300,24 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LiveSourceSetting(state = state, actions = actions)
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "内置电视直播源",
+                        subtitle = "内置源可与自定义源组合使用，也可逐条删除并随时恢复。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    BuiltInLiveSourceSetting(state = state, actions = actions)
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "平台直播站点",
+                        subtitle = "斗鱼、虎牙等平台直播站点；删除后可在本页恢复。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    PlatformLiveSiteSetting(state = state, actions = actions)
                 }
             }
         }
