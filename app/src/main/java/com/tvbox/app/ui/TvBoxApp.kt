@@ -838,7 +838,7 @@ private fun SettingsScreen(
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "视频接口",
-                        subtitle = "内置接口保留不变，可扫码添加 MacCms 自定义视频接口。",
+                        subtitle = "不内置视频接口，可扫码或导入添加 MacCms 自定义视频接口。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {

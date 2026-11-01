@@ -1,7 +1,6 @@
 ﻿package com.tvbox.app.domain
 
 import com.tvbox.app.data.MacCmsResponse
-import com.tvbox.app.data.ApiLines
 import com.tvbox.app.data.parseAppUpdateManifest
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -21,21 +20,6 @@ class PlaybackParserTest {
         ignoreUnknownKeys = true
         isLenient = true
         coerceInputValues = true
-    }
-
-    @Test
-    fun includesConfiguredPlaybackLines() {
-        val lines = ApiLines.defaults
-        assertEquals(listOf("量子", "如意", "360"), lines.take(3).map { it.name })
-        assertTrue(lines.any { it.id == "dyttzy" && it.name == "电影天堂" })
-        assertEquals(lines.size, lines.map { it.id }.distinct().size)
-        assertEquals(
-            listOf(
-                "https://api.ffzyapi.com/api.php/provide/vod/",
-                "http://api.ffzyapi.com/api.php/provide/vod/",
-            ),
-            lines.last().baseUrls,
-        )
     }
 
     @Test

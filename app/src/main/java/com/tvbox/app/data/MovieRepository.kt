@@ -59,7 +59,7 @@ interface MovieRepository {
 }
 
 class DefaultMovieRepository(
-    private val builtInApiLines: List<ApiLine> = ApiLines.defaults,
+    private val builtInApiLines: List<ApiLine> = emptyList(),
     private val apiFactory: (String) -> MacCmsApi = MacCmsNetwork::api,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : MovieRepository {

@@ -3,7 +3,7 @@
 import kotlinx.serialization.Serializable
 
 data class AppSettings(
-    val homeApiLineId: String = "liangzi",
+    val homeApiLineId: String = "",
     val customVideoApiLines: List<CustomVideoApiLine> = emptyList(),
     val sourceOrder: List<String> = emptyList(),
     val disabledBuiltInLineIds: List<String> = emptyList(),
