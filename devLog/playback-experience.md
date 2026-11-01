@@ -1,5 +1,37 @@
 ﻿# 播放体验、返回定位与继续观看
 
+## 2026-11-01 - 线路按测速延迟排序与片头/片尾跳过
+
+### 需求
+
+- 播放器线路面板按测速结果排列，延迟用绿色显示。
+- 播放器可设置“开始跳过”和“结束跳过”，用最简单的方式表达。
+
+### 文件与目的
+
+- `app/src/main/java/com/tvbox/app/ui/PlayerControls.kt`
+  - 线路面板按延迟升序排列：测速成功优先，其次超时，最后未测速；同组按延迟从低到高、原顺序稳定。
+  - 线路标签把延迟渲染为绿色（`0xFF4ADE80`），测速失败用灰白色；面板底部提示“可先在详情页测速，线路会按延迟从低到高排列”。
+  - 新增“跳过”面板按钮与 `SkipSettingsPanel`：开始跳过 `0/10/20/30/60` 秒、结束跳过 `0/15/30/60/90` 秒，当前值显示“✓”并用“关闭 / N秒”表述。
+- `app/src/main/java/com/tvbox/app/ui/PlayerScreen.kt`
+  - 换集或进入播放页时，按“开始跳过”秒数跳转一次（仅在起点位置有效，避免拖动进度后被再次拉回）。
+  - 播放中监控剩余时长，小于等于“结束跳过”秒数且正在播放时保存进度并自动进入下一集；同一集只处理一次。
+- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`、`app/src/main/java/com/tvbox/app/data/AppSettingsRepository.kt`
+  - 新增 `introSkipSeconds` / `outroSkipSeconds`，默认 0，本机持久化，范围限制 0..600。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`、`app/src/main/java/com/tvbox/app/ui/TvBoxApp.kt`
+  - `updateIntroSkipSeconds` / `updateOutroSkipSeconds` 立即更新状态并保存，播放页读取当前设置。
+
+### 验证
+
+- `.\gradlew.bat assembleDebug testDebugUnitTest --console=plain`：通过。
+- 192.168.1.37 真机：线路面板显示 `213ms / 333ms / 641ms` 并按延迟从低到高排列，“跳过”按钮出现在操作栏。
+- 片头/片尾跳过的实际时长效果由用户实测确认。
+
+### Navigation
+
+- Master doc: `devLog/README.md`
+- Branch doc: `devLog/playback-experience.md`
+
 ## 2026-10-08 12:01 - 设备模式正式发布 v1.3.12
 
 - 用户确认没有问题，授权发布 `10312 / 1.3.12`，设备模式、短剧横屏与现有 OTA 修复同时纳入。

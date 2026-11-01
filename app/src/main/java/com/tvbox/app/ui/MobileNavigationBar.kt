@@ -1,0 +1,317 @@
+package com.tvbox.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.tvbox.app.domain.DeviceMode
+
+/**
+ * 手机模式底部导航包装器：首页 / 历史 / 搜索 / 电视 / 直播。
+ * 其中“电视”为内置央视等直播源（TvScreen.Live），“直播”为斗鱼/虎牙等平台直播（TvScreen.PlatformLive），
+ * 与 TV 端导航命名保持一致。Player / Settings 等页面绕过底部导航直接渲染完整高度。
+ */
+@Composable
+fun MobileNavWrapper(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    onStartAiVoiceInput: () -> Unit,
+    content: @Composable (navScreen: MobileNavScreen) -> Unit,
+) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val tabs = listOf(
+        MobileNavScreen.Home to "首页",
+        MobileNavScreen.History to "历史",
+        MobileNavScreen.Search to "搜索",
+        MobileNavScreen.Live to "电视",
+        MobileNavScreen.PlatformLive to "直播",
+    )
+    val currentTab = when (state.screen) {
+        TvScreen.Home, TvScreen.Detail, TvScreen.AiRecommend -> MobileNavScreen.Home
+        TvScreen.History -> MobileNavScreen.History
+        TvScreen.Search -> MobileNavScreen.Search
+        TvScreen.Live -> MobileNavScreen.Live
+        TvScreen.PlatformLive -> MobileNavScreen.PlatformLive
+        TvScreen.Player, TvScreen.Settings,
+        TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
+        -> MobileNavScreen.Home
+    }
+    // 播放页、详情页、设置页与源管理页使用整页布局，不显示顶部搜索栏和底部导航。
+    val showChrome = when (state.screen) {
+        TvScreen.Player, TvScreen.Detail, TvScreen.Settings,
+        TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
+        -> false
+        else -> true
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        if (showChrome) {
+            MobileTopBar(state = state, actions = actions)
+        }
+        Box(modifier = Modifier.weight(1f)) {
+            content(currentTab)
+        }
+        // 底部导航：放在内容下方，避免遮挡首屏内容。
+        if (isMobile && showChrome) {
+            NavigationBar(
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                tonalElevation = 0.dp,
+                containerColor = Color(0xFF1A1A1A),
+            ) {
+                tabs.forEach { (screen, label) ->
+                    val isSelected = screen == currentTab
+                    NavigationBarItem(
+                        icon = { NavIcon(screen, isSelected) },
+                        label = {
+                            Text(
+                                label,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                color = if (isSelected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f),
+                            )
+                        },
+                        selected = isSelected,
+                        onClick = {
+                            if (!isSelected) actions.navigateToMobileScreen(screen)
+                        },
+                        colors = NavigationBarItemDefaults.colors(
+                            selectedIconColor = Color(0xFF1ED760),
+                            unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                            indicatorColor = Color.Transparent,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
+    val tint = if (selected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f)
+    val icon = when (screen) {
+        MobileNavScreen.Home -> Icons.Filled.Home
+        MobileNavScreen.History -> Icons.Filled.DateRange
+        MobileNavScreen.Search -> Icons.Filled.Search
+        MobileNavScreen.Live -> Icons.Filled.PlayArrow
+        MobileNavScreen.PlatformLive -> Icons.Filled.Star
+    }
+    Icon(
+        imageVector = icon,
+        contentDescription = screen.name,
+        tint = tint,
+        modifier = Modifier.size(22.dp),
+    )
+}
+
+public enum class MobileNavScreen { Home, History, Search, Live, PlatformLive }
+
+private fun TvBoxViewModel.navigateToMobileScreen(screen: MobileNavScreen) {
+    when (screen) {
+        MobileNavScreen.Home -> openHome()
+        MobileNavScreen.History -> openHistory()
+        MobileNavScreen.Search -> openSearch()
+        MobileNavScreen.Live -> openLive()
+        MobileNavScreen.PlatformLive -> openPlatformLive()
+    }
+}
+
+/**
+ * 手机模式顶部栏：左侧视频源下拉切换，右侧搜索入口，最右为设置入口。
+ */
+@Composable
+private fun MobileTopBar(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = Color(0xFF1E1E1E),
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MobileSourceDropdown(state = state, actions = actions)
+            Spacer(modifier = Modifier.width(8.dp))
+            MobileSearchEntry(
+                query = state.searchQuery,
+                onOpenSearch = actions::openSearch,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable { actions.openSettings() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Settings,
+                    contentDescription = "设置",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileSourceDropdown(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val lines = state.apiLines
+    val currentLine = state.selectedApiLine
+    val shape = RoundedCornerShape(18.dp)
+    Box {
+        Surface(
+            modifier = Modifier
+                .clip(shape)
+                .clickable(enabled = lines.isNotEmpty()) { expanded = true },
+            shape = shape,
+            color = Color(0xFF2C2C2C),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.List,
+                    contentDescription = null,
+                    tint = Color(0xFF1ED760),
+                    modifier = Modifier.size(15.dp),
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(
+                    text = currentLine?.name ?: "选择源",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 150.dp),
+                )
+                Icon(
+                    imageVector = Icons.Filled.ArrowDropDown,
+                    contentDescription = "切换视频源",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 200.dp, max = 320.dp),
+            containerColor = Color(0xFF232323),
+        ) {
+            if (lines.isEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("暂无可切换的视频源", color = Color.White.copy(alpha = 0.7f)) },
+                    onClick = { expanded = false },
+                )
+            } else {
+                lines.forEach { line ->
+                    val selected = line.id == currentLine?.id
+                    DropdownMenuItem(
+                        text = {
+                            Text(
+                                text = if (selected) "✓ ${line.name}" else line.name,
+                                color = if (selected) Color(0xFF1ED760) else Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        },
+                        onClick = {
+                            expanded = false
+                            actions.updateHomeApiLine(line.id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileSearchEntry(
+    query: String,
+    onOpenSearch: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(18.dp)
+    Surface(
+        modifier = modifier
+            .height(36.dp)
+            .clip(shape)
+            .clickable { onOpenSearch() },
+        shape = shape,
+        color = Color(0xFF2C2C2C),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = "搜索",
+                tint = Color.White.copy(alpha = 0.7f),
+                modifier = Modifier.size(16.dp),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (query.isNotBlank()) query else "搜索影片...",
+                color = if (query.isNotBlank()) Color.White else Color.White.copy(alpha = 0.4f),
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}

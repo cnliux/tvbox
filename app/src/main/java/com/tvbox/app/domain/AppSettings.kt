@@ -15,6 +15,12 @@ data class AppSettings(
     val disabledBuiltInLiveSourceIds: List<String> = emptyList(),
     /** 已删除（屏蔽）的平台直播站点 ID，例如斗鱼、虎牙。 */
     val blockedPlatformSiteIds: List<String> = emptyList(),
+    /** 已屏蔽的视频源分类（MacCms 分类名），例如“伦理片”。 */
+    val blockedVideoCategories: List<String> = emptyList(),
+    /** 开始播放时自动跳过的片头秒数；0 表示关闭。 */
+    val introSkipSeconds: Int = 0,
+    /** 临近片尾提前多少秒自动进入下一集；0 表示关闭。 */
+    val outroSkipSeconds: Int = 0,
     val homeContinueWatchingEnabled: Boolean = false,
     val theme: TvTheme = TvTheme.Default,
     val fontScale: TvFontScale = TvFontScale.Normal,

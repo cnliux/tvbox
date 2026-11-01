@@ -24,6 +24,7 @@ interface AppSettingsRepository {
 
 class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
     private val prefs = context.applicationContext.getSharedPreferences("app_settings", Context.MODE_PRIVATE)
+    private val blockedCategoriesStore = BlockedCategoriesStore(context.applicationContext)
     private val json = Json {
         ignoreUnknownKeys = true
         coerceInputValues = true
@@ -31,7 +32,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
     }
 
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
-        AppSettings(
+        val blockedFromFile = blockedCategoriesStore.read()
+        val settings = AppSettings(
             homeApiLineId = prefs.getString(KEY_HOME_API_LINE_ID, AppSettings().homeApiLineId)
                 ?: AppSettings().homeApiLineId,
             customVideoApiLines = readCustomVideoApiLines(),
@@ -42,6 +44,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             includeBuiltInLiveSources = prefs.getBoolean(KEY_INCLUDE_BUILT_IN_LIVE_SOURCES, true),
             disabledBuiltInLiveSourceIds = readStringList(KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS),
             blockedPlatformSiteIds = readStringList(KEY_BLOCKED_PLATFORM_SITE_IDS),
+            blockedVideoCategories = blockedFromFile ?: readStringList(KEY_BLOCKED_VIDEO_CATEGORIES),
+            introSkipSeconds = prefs.getInt(KEY_INTRO_SKIP_SECONDS, 0),
+            outroSkipSeconds = prefs.getInt(KEY_OUTRO_SKIP_SECONDS, 0),
             homeContinueWatchingEnabled = prefs.getBoolean(KEY_HOME_CONTINUE_WATCHING, false),
             theme = TvTheme.fromStorageKey(prefs.getString(KEY_THEME, TvTheme.Default.storageKey)),
             fontScale = TvFontScale.fromStorageKey(prefs.getString(KEY_FONT_SCALE, TvFontScale.Normal.storageKey)),
@@ -56,9 +61,15 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             videoScaleMode = VideoScaleMode.fromStorageKey(prefs.getString(KEY_VIDEO_SCALE_MODE, null)),
             deviceMode = DeviceMode.fromStorageKey(prefs.getString(KEY_DEVICE_MODE, null)),
         )
+        // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
+        if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
+            blockedCategoriesStore.write(settings.blockedVideoCategories)
+        }
+        settings
     }
 
     override suspend fun saveSettings(settings: AppSettings): AppSettings = withContext(Dispatchers.IO) {
+        blockedCategoriesStore.write(settings.blockedVideoCategories)
         prefs.edit()
             .putString(KEY_HOME_API_LINE_ID, settings.homeApiLineId)
             .putString(KEY_CUSTOM_VIDEO_API_LINES, json.encodeToString(settings.customVideoApiLines))
@@ -72,6 +83,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
                 json.encodeToString(settings.disabledBuiltInLiveSourceIds),
             )
             .putString(KEY_BLOCKED_PLATFORM_SITE_IDS, json.encodeToString(settings.blockedPlatformSiteIds))
+            .putString(KEY_BLOCKED_VIDEO_CATEGORIES, json.encodeToString(settings.blockedVideoCategories))
+            .putInt(KEY_INTRO_SKIP_SECONDS, settings.introSkipSeconds)
+            .putInt(KEY_OUTRO_SKIP_SECONDS, settings.outroSkipSeconds)
             .putBoolean(KEY_HOME_CONTINUE_WATCHING, settings.homeContinueWatchingEnabled)
             .putString(KEY_THEME, settings.theme.storageKey)
             .putString(KEY_FONT_SCALE, settings.fontScale.storageKey)
@@ -132,6 +146,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_INCLUDE_BUILT_IN_LIVE_SOURCES = "include_built_in_live_sources"
         const val KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS = "disabled_built_in_live_source_ids"
         const val KEY_BLOCKED_PLATFORM_SITE_IDS = "blocked_platform_site_ids"
+        const val KEY_BLOCKED_VIDEO_CATEGORIES = "blocked_video_categories"
+        const val KEY_INTRO_SKIP_SECONDS = "intro_skip_seconds"
+        const val KEY_OUTRO_SKIP_SECONDS = "outro_skip_seconds"
         const val KEY_HOME_CONTINUE_WATCHING = "home_continue_watching_enabled"
         const val KEY_SOURCE_SPEED_LATENCIES = "source_speed_latencies"
         const val KEY_THEME = "theme"

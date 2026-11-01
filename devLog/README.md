@@ -1,5 +1,33 @@
 ﻿# TVBox AI Dev Log
 
+### 2026-11-01 17:50 - 手机模式顶部栏、直播入口与搜索改版
+
+- Branch doc: `devLog/mobile-mode.md`
+- Summary:
+  - 手机底部导航调整为 首页/历史/搜索/电视/直播：AI 推荐下线，“电视”进入内置直播，“直播”进入斗鱼/虎牙等平台直播，与 TV 端命名一致。
+  - 顶部栏合并为一行：左侧视频源下拉切换，右侧搜索入口，最右设置齿轮；切换源后首页分类与内容刷新。
+  - 搜索页热搜改为“热门搜索”标题 + 流式标签 chips；搜索结果改为竖向大图卡片网格（横屏 3 列、竖屏 2 列）。
+  - 192.168.1.45 验证顶部栏切换源、热搜 chips、搜索结果与平台直播页，无崩溃；`assembleDebug` 通过。
+
+### 2026-11-01 17:05 - 手机模式逐页检查与修复
+
+- Branch doc: `devLog/mobile-mode.md`
+- Summary:
+  - 设备上先确认“手机模式无效”是 APK 过期（源码修改晚于上次构建），重建安装后手机模式生效。
+  - 修复底部导航位置与图标方块、补搜索栏设置入口；修复搜索页（`TextFieldValue` 不能写入 Bundle）与设置页（`SaveableStateProvider` key 重复）两处闪退。
+  - 修复点海报无反应（`Detail`/`PlatformLive` 被当成首页标签渲染）与手机设置页“手机远程管理（网页）”无弹窗。
+  - 手机播放页新增顶部返回/片名栏，“更多”面板展开时暂停 5 秒自动隐藏。
+  - 192.168.1.45 逐页验证首页、详情、播放、历史、搜索、直播、AI、设置与源管理，无崩溃；`assembleDebug testDebugUnitTest` 通过。
+
+### 2026-11-01 15:25 - 无 token 远程管理、视频分类屏蔽 JSON 与播放器线路/跳过
+
+- Branch docs: `devLog/remote-manage.md`、`devLog/playback-experience.md`
+- Summary:
+  - 删除旧的 `AiConfigServer` / `VideoApiConfigServer` token 服务，改为同一局域网无需 token 的远程管理页（端口 9978），统一管理视频源、直播源、平台直播站点与 AI 配置，并支持 URL 或粘贴内容导入 JSON / TVBox 订阅。
+  - 视频源管理内新增“分类”按钮：先获取该源分类，再以可点击 chips 开关屏蔽/恢复；屏蔽结果常驻保存到 `files/blocked_categories.json`，并提供 `http://<电视IP>:9978/blocked-categories.json` 查看，重启后仍生效。
+  - 播放器线路面板按测速延迟从低到高排列并用绿色显示延迟；新增“跳过”面板设置开始跳过（片头秒数）与结束跳过（片尾提前秒数）。
+  - 192.168.1.45 真机验证：获取 30 个分类、屏蔽“连续剧”后首页分类移除、JSON 文件与接口一致、重启保持、恢复后回到空列表；`assembleDebug testDebugUnitTest` 通过。
+
 ### 2026-11-01 09:30 - 发布 v1.3.14：移除内置点播接口并启用 GitHub Actions 自动发布
 
 - Branch docs: `devLog/release.md`、`devLog/live-source.md`、`devLog/platform-live.md`
@@ -746,6 +774,8 @@
 
 ## Navigation
 
+- Mobile Mode: `devLog/mobile-mode.md`
+- Remote Manage: `devLog/remote-manage.md`
 - Playback Agent: `devLog/playback-agent.md`
 - AI Recommend: `devLog/ai-recommend.md`
 - AI Recommend Focus: `devLog/ai-recommend-focus.md`

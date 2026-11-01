@@ -12,3 +12,6 @@ signing/
 # Python acceptance tooling caches
 __pycache__/
 *.py[cod]
+
+# Local verification screenshots
+.screenshots/

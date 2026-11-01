@@ -38,6 +38,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Divider
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
@@ -47,6 +50,12 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.collectAsState
+import androidx.compose.material3.Divider
 import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.data.TextFileExporter
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -79,6 +88,8 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.AiProvider
 import com.tvbox.app.domain.AiProviders
@@ -146,12 +157,29 @@ fun TvBoxApp(
                 }
             }
         } else {
-            TvBoxScreen(
-                holder = screenStateHolder,
-                state = state,
-                actions = actions,
-                onStartAiVoiceInput = onStartAiVoiceInput,
-            )
+            val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+            if (isMobile) {
+                MobileNavWrapper(
+                    state = state,
+                    actions = actions,
+                    onStartAiVoiceInput = onStartAiVoiceInput,
+                ) { navScreen ->
+                    MobileNavScreenContent(
+                        holder = screenStateHolder,
+                        state = state,
+                        actions = actions,
+                        navScreen = navScreen,
+                        onStartAiVoiceInput = onStartAiVoiceInput,
+                    )
+                }
+            } else {
+                TvBoxScreen(
+                    holder = screenStateHolder,
+                    state = state,
+                    actions = actions,
+                    onStartAiVoiceInput = onStartAiVoiceInput,
+                )
+            }
         }
         AppUpdateDialog(
             state = state,
@@ -362,6 +390,11 @@ private fun HomeScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    if (isMobile) {
+        MobileHomeFeed(state = state, actions = actions)
+        return
+    }
     PageSurface { padding ->
         val apiLineName = state.selectedApiLine?.name ?: "资源"
         val cinemaTheme = state.appSettings.theme == TvTheme.Cinema
@@ -713,6 +746,10 @@ private fun SettingsScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    if (state.appSettings.deviceMode == DeviceMode.Mobile) {
+        MobileSettingsScreen(state = state, actions = actions)
+        return
+    }
     PageSurface { padding ->
         var confirmClearPlaybackStats by remember { mutableStateOf(false) }
         if (confirmClearPlaybackStats) {
@@ -737,11 +774,8 @@ private fun SettingsScreen(
                 },
             )
         }
-        if (state.aiConfigDialogVisible) {
-            AiConfigDialog(state = state, actions = actions)
-        }
-        if (state.videoApiConfigDialogVisible) {
-            VideoApiConfigDialog(state = state, actions = actions)
+        if (state.remoteManageDialogVisible) {
+            RemoteManageDialog(state = state, actions = actions)
         }
         Column(
             modifier = Modifier
@@ -847,7 +881,7 @@ private fun SettingsScreen(
                         selectedApiLine = state.selectedApiLine,
                         customLineCount = state.appSettings.customVideoApiLines.size,
                         onSelect = actions::updateHomeApiLine,
-                        onOpenConfig = actions::openVideoApiConfigDialog,
+                        onOpenConfig = actions::openRemoteManageDialog,
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -874,6 +908,22 @@ private fun SettingsScreen(
                     }
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "手机远程管理", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                text = "无需 token，同一局域网手机浏览器可管理视频源与直播源、导入订阅、屏蔽视频分类",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
+                    }
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "大模型",
                         subtitle = "未填写 API Key 时使用 APK 内置 AI 配置。",
@@ -885,7 +935,7 @@ private fun SettingsScreen(
                         modelName = state.appSettings.aiModelName,
                         apiKey = state.appSettings.aiApiKey,
                         onProviderSelect = actions::updateAiProvider,
-                        onOpenConfig = actions::openAiConfigDialog,
+                        onOpenConfig = actions::openRemoteManageDialog,
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -991,14 +1041,14 @@ private fun SettingsScreen(
 }
 
 @Composable
-private fun AiConfigDialog(
+private fun RemoteManageDialog(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    val configUrl = state.aiConfigServerUrl
+    val configUrl = state.remoteManageServerUrl
     AlertDialog(
-        onDismissRequest = actions::closeAiConfigDialog,
-        title = { Text("手机扫码配置 AI") },
+        onDismissRequest = actions::closeRemoteManageDialog,
+        title = { Text("手机远程管理") },
         text = {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(22.dp),
@@ -1009,13 +1059,13 @@ private fun AiConfigDialog(
                         modifier = Modifier.size(220.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("正在启动配置服务...")
+                        Text("正在启动远程管理服务...")
                     }
                 } else {
                     val qrBitmap = remember(configUrl) { createQrBitmap(configUrl, 320) }
                     Image(
                         bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "AI 配置二维码",
+                        contentDescription = "远程管理二维码",
                         modifier = Modifier.size(220.dp),
                     )
                 }
@@ -1024,12 +1074,8 @@ private fun AiConfigDialog(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        text = "使用手机扫描二维码",
+                        text = "手机扫码，或同一局域网浏览器访问：",
                         style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = "或在同一局域网的手机浏览器访问地址：",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
                         text = configUrl ?: "正在生成地址...",
@@ -1038,19 +1084,24 @@ private fun AiConfigDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "手机页面里填写模型名称和 API Key，确认后会自动同步到电视。",
+                        text = "无需 token。可管理视频源与直播源、导入订阅、删除平台站点，并屏蔽视频分类。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    if (state.aiConfigSavedMessage != null) {
+                    Text(
+                        text = "页面里的修改会立即同步到电视；也可填写 AI 模型与 API Key。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    if (state.remoteManageMessage != null) {
                         Text(
-                            text = state.aiConfigSavedMessage,
+                            text = state.remoteManageMessage,
                             color = MaterialTheme.colorScheme.primary,
                             style = MaterialTheme.typography.bodyMedium,
                         )
                     }
-                    if (state.aiConfigServerError != null) {
+                    if (state.remoteManageServerError != null) {
                         Text(
-                            text = state.aiConfigServerError,
+                            text = state.remoteManageServerError,
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -1059,99 +1110,11 @@ private fun AiConfigDialog(
             }
         },
         confirmButton = {
-            SettingsActionButton(text = "完成", onClick = actions::closeAiConfigDialog)
-        },
-        dismissButton = {
-            TextButton(onClick = actions::closeAiConfigDialog) {
-                Text("取消")
-            }
+            SettingsActionButton(text = "完成", onClick = actions::closeRemoteManageDialog)
         },
     )
 }
 
-@Composable
-private fun VideoApiConfigDialog(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-) {
-    val configUrl = state.videoApiConfigServerUrl
-    AlertDialog(
-        onDismissRequest = actions::closeVideoApiConfigDialog,
-        title = { Text("手机扫码添加视频接口") },
-        text = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(22.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (configUrl == null) {
-                    Box(
-                        modifier = Modifier.size(220.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("正在启动配置服务...")
-                    }
-                } else {
-                    val qrBitmap = remember(configUrl) { createQrBitmap(configUrl, 320) }
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "视频接口配置二维码",
-                        modifier = Modifier.size(220.dp),
-                    )
-                }
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        text = "使用手机扫描二维码",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = "或在同一局域网的手机浏览器访问地址：",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = configUrl ?: "正在生成地址...",
-                        color = MaterialTheme.colorScheme.primary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "手机页面里填写接口名称和 MacCms 地址，确认后会自动添加到电视的视频接口列表。",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "示例：https://example.com/api.php/provide/vod",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    if (state.videoApiConfigSavedMessage != null) {
-                        Text(
-                            text = state.videoApiConfigSavedMessage,
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                    if (state.videoApiConfigServerError != null) {
-                        Text(
-                            text = state.videoApiConfigServerError,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            SettingsActionButton(text = "完成", onClick = actions::closeVideoApiConfigDialog)
-        },
-        dismissButton = {
-            TextButton(onClick = actions::closeVideoApiConfigDialog) {
-                Text("取消")
-            }
-        },
-    )
-}
 
 @Composable
 private fun AiProviderSetting(
@@ -1640,6 +1603,204 @@ private fun MovieGrid(
                         modifier = Modifier.padding(vertical = 16.dp),
                         color = TvColors.TextSecondary,
                     )
+                }
+            }
+        }
+    }
+}
+
+/** 手机模式首页竖向信息流：继续观看横滑卡片 + 分类切换 + 竖排电影卡片 + 触底加载更多 */
+@Composable
+private fun MobileHomeFeed(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val movieGridState = rememberLazyGridState()
+    val contextKey = "${state.selectedApiLineId}:${state.homeFeedMode}:${state.selectedParentCategoryId}:${state.selectedCategoryId}"
+    var savedContext by rememberSaveable { mutableStateOf(contextKey) }
+    LaunchedEffect(contextKey) {
+        if (savedContext != contextKey) {
+            movieGridState.scrollToItem(0)
+            savedContext = contextKey
+        }
+    }
+    // 触底加载更多
+    var canLoadMore by remember { mutableStateOf(false) }
+    LaunchedEffect(movieGridState.layoutInfo) {
+        val info = movieGridState.layoutInfo
+        canLoadMore = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 1 } == true
+    }
+    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore) {
+        if (canLoadMore && state.canLoadMore && !state.loadingMore) {
+            actions.loadNextPage()
+        }
+    }
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 分类标签（热播 / 目录）- 顶部横滑
+        val parentCategories = state.categories.filter { it.parentId == 0 }
+        val selectedParent = state.selectedParentCategoryId?.let { id -> state.categories.firstOrNull { it.id == id } }
+        val childCategories = selectedParent?.let { parent ->
+            state.categories.filter { it.parentId == parent.id }
+        }.orEmpty()
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        ) {
+            item {
+                CategoryPill(
+                    label = "热播",
+                    selected = state.homeFeedMode == HomeFeedMode.DoubanHot,
+                    onClick = actions::selectDoubanHot,
+                )
+            }
+            items(parentCategories, key = { it.id }) { cat ->
+                CategoryPill(
+                    label = cat.name,
+                    selected = state.selectedParentCategoryId == cat.id,
+                    onClick = { actions.selectParentCategory(cat.id) },
+                )
+            }
+        }
+        if (selectedParent != null && childCategories.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+            ) {
+                item {
+                    CategoryPill(
+                        label = selectedParent.allChildrenLabel(),
+                        selected = state.selectedCategoryId == null,
+                        onClick = { actions.selectParentCategory(selectedParent.id) },
+                    )
+                }
+                items(childCategories, key = { it.id }) { cat ->
+                    CategoryPill(
+                        label = cat.name,
+                        selected = state.selectedCategoryId == cat.id,
+                        onClick = { actions.selectChildCategory(cat.id) },
+                    )
+                }
+            }
+        }
+        // 继续观看
+        val recent = if (state.appSettings.homeContinueWatchingEnabled) {
+            state.historyItems.continueWatching()
+        } else emptyList()
+        if (recent.isNotEmpty()) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = "继续观看",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                )
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                ) {
+                    items(recent, key = { "${it.apiLineId}:${it.movieId}" }) { history ->
+                        HistoryItemCard(
+                            item = history,
+                            onClick = { actions.resumeHistory(history, TvScreen.Home) },
+                            modifier = Modifier.width(200.dp),
+                        )
+                    }
+                }
+            }
+        }
+        // 提示
+        state.homeNotice?.let { notice ->
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                color = TvColors.SurfaceRaised,
+                shape = RoundedCornerShape(6.dp),
+            ) {
+                Text(
+                    text = notice,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+        // 影片列表
+        when {
+            state.homeLoading -> LoadingState(text = "正在加载影片", modifier = Modifier.weight(1f))
+            state.homeError != null -> ErrorState(
+                message = state.homeError,
+                onRetry = { actions.refreshHome(forceRefresh = true) },
+                modifier = Modifier.weight(1f),
+            )
+            else -> {
+                val apiLineName = state.selectedApiLine?.name ?: "资源"
+                val feedTitle = when {
+                    state.isShowingDoubanHot -> "豆瓣热播 · 共 ${state.total} 部"
+                    state.doubanHotFallbackActive -> "$apiLineName 最近更新 · 共 ${state.total} 部"
+                    else -> "$apiLineName · 共 ${state.total} 部"
+                }
+                Text(
+                    text = feedTitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TvColors.TextSecondary,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                )
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 140.dp),
+                    state = movieGridState,
+                    contentPadding = PaddingValues(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f),
+                ) {
+                    if (state.isShowingDoubanHot) {
+                        items(state.doubanHotMovies, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                            DoubanHotPosterCard(
+                                item = item,
+                                resolving = state.resolvingDoubanHotId == item.doubanId,
+                                onClick = { actions.openDoubanHotDetail(item) },
+                                posterAspectRatio = 0.78f,
+                            )
+                        }
+                    } else {
+                        items(state.movies, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                            MoviePosterCard(
+                                movie = movie,
+                                onClick = { actions.openDetail(movie.id) },
+                                posterAspectRatio = 0.78f,
+                            )
+                        }
+                    }
+                    if (state.canLoadMore || state.loadingMore) {
+                        item {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                if (state.loadingMore) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                } else {
+                                    Button(onClick = actions::loadNextPage) { Text("加载更多") }
+                                }
+                            }
+                        }
+                    } else if (state.homeItemCount > 0) {
+                        item {
+                            Text(
+                                text = "已经到底了",
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                color = TvColors.TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -2229,13 +2390,13 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                     Text(text = "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SettingsActionButton(text = "打开视频接口配置（网页）", onClick = actions::openVideoApiConfigDialog)
+                    SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
                     SettingsActionButton(text = "返回", onClick = actions::goBack)
                 }
             }
             Spacer(modifier = Modifier.height(22.dp))
-            if (state.videoApiConfigDialogVisible) {
-                VideoApiConfigDialog(state = state, actions = actions)
+            if (state.remoteManageDialogVisible) {
+                RemoteManageDialog(state = state, actions = actions)
             }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
@@ -2250,7 +2411,7 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                         selectedApiLine = state.selectedApiLine,
                         customLineCount = state.appSettings.customVideoApiLines.size,
                         onSelect = actions::updateHomeApiLine,
-                        onOpenConfig = actions::openVideoApiConfigDialog,
+                        onOpenConfig = actions::openRemoteManageDialog,
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2261,6 +2422,15 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SourceManagerSetting(state = state, actions = actions)
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
+                        title = "屏蔽视频分类",
+                        subtitle = "屏蔽后该分类不再出现在电视首页的分类与影片列表；可随时恢复。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    BlockedVideoCategorySetting(state = state, actions = actions)
                 }
             }
         }
@@ -2319,6 +2489,506 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     PlatformLiveSiteSetting(state = state, actions = actions)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BlockedVideoCategorySetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    var categoryDraft by remember { mutableStateOf("") }
+    val blockedCategories = state.appSettings.blockedVideoCategories
+    val availableCategories = remember(state.categories, blockedCategories) {
+        state.categories.map { it.name }.distinct()
+            .filter { it.isNotBlank() && it !in blockedCategories }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (blockedCategories.isEmpty()) {
+            Text(
+                text = "尚未屏蔽任何视频分类，下方可直接添加分类名。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+        } else {
+            blockedCategories.forEach { category ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = category,
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    SettingsActionButton(
+                        text = "恢复显示",
+                        onClick = { actions.removeBlockedVideoCategory(category) },
+                    )
+                }
+            }
+            SettingsActionButton(
+                text = "全部恢复",
+                onClick = actions::clearBlockedVideoCategories,
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            OutlinedTextField(
+                value = categoryDraft,
+                onValueChange = { categoryDraft = it },
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text("输入要屏蔽的视频分类名，如 伦理片、福利") },
+            )
+            SettingsActionButton(
+                text = "添加屏蔽",
+                enabled = categoryDraft.isNotBlank(),
+                onClick = {
+                    actions.addBlockedVideoCategory(categoryDraft)
+                    categoryDraft = ""
+                },
+            )
+        }
+        if (availableCategories.isNotEmpty()) {
+            Text(
+                text = "快捷屏蔽当前视频源分类：",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(availableCategories) { category ->
+                    SettingsActionButton(
+                        text = category,
+                        onClick = { actions.addBlockedVideoCategory(category) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 手机模式下按底部导航标签分发内容。Detail / Player / Settings 等子页面
+ * 仍由 TvBoxScreen 直接渲染，不经过底部导航包装，以保持系统返回栈完整。
+ */
+@Composable
+private fun MobileNavScreenContent(
+    holder: SaveableStateHolder,
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    navScreen: MobileNavScreen,
+    onStartAiVoiceInput: () -> Unit,
+) {
+    when (state.screen) {
+        // 详情页、播放页、设置页与源管理页不是底部导航标签页，必须交给 TvBoxScreen 按 screen 渲染，
+        // 否则会被映射成 Home 标签页的内容（点海报后看起来像没反应）。
+        // 另外 TvBoxScreen 内部已经用同一个 key 注册 SaveableStateProvider，这里不能再包一层，否则 key 重复会崩溃。
+        TvScreen.Detail, TvScreen.Player, TvScreen.Settings,
+        TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
+        TvScreen.PlatformLive, TvScreen.AiRecommend,
+        -> TvBoxScreen(
+            holder = holder,
+            state = state,
+            actions = actions,
+            onStartAiVoiceInput = onStartAiVoiceInput,
+        )
+        else -> holder.SaveableStateProvider(state.screen.name) {
+            when (navScreen) {
+                MobileNavScreen.Home -> HomeScreen(state = state, actions = actions)
+                MobileNavScreen.History -> HistoryScreen(state = state, actions = actions)
+                MobileNavScreen.Search -> SearchScreen(state = state, actions = actions)
+                MobileNavScreen.Live -> LiveScreen(state = state, actions = actions)
+                // 平台直播在 TvBoxScreen 里整页渲染，这里只是保证 when 完整。
+                MobileNavScreen.PlatformLive -> PlatformLiveScreen(state = state, actions = actions)
+            }
+        }
+    }
+}
+
+// ── 手机模式设置页（竖向卡片列表）────────────────────────────────────────────────
+
+@Composable
+private fun MobileSettingsScreen(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    var confirmClearPlaybackStats by remember { mutableStateOf(false) }
+    // 手机设置页也要渲染远程管理弹窗，否则这里的入口点了没有任何反应。
+    if (state.remoteManageDialogVisible) {
+        RemoteManageDialog(state = state, actions = actions)
+    }
+    if (confirmClearPlaybackStats) {
+        AlertDialog(
+            onDismissRequest = { confirmClearPlaybackStats = false },
+            title = { Text("清空线路统计") },
+            text = { Text("确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmClearPlaybackStats = false
+                    actions.clearPlaybackStats()
+                }) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearPlaybackStats = false }) { Text("取消") }
+            },
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 顶部标题栏
+        Row(
+            modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("设置", style = MaterialTheme.typography.titleLarge)
+            Button(onClick = actions::goBack, shape = RoundedCornerShape(8.dp)) { Text("返回") }
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // 设备与外观
+            item { SettingsCardSection("设备与外观") }
+            item { MobileDeviceModeSetting(state.appSettings.deviceMode, actions::updateDeviceMode) }
+            item { MobileThemeSetting(state.appSettings.theme, actions::updateTheme) }
+            item { MobileFontScaleSetting(state.appSettings.fontScale, actions::updateFontScale) }
+
+            // 首页
+            item { SettingsCardSection("首页") }
+            item {
+                MobileSwitchRow(
+                    label = "继续观看",
+                    desc = if (state.appSettings.homeContinueWatchingEnabled) "首页显示最近观看记录" else "首页不显示继续观看",
+                    checked = state.appSettings.homeContinueWatchingEnabled,
+                    onCheck = actions::updateHomeContinueWatching,
+                )
+            }
+            item {
+                MobileHomeApiLineSetting(
+                    state.apiLines, state.selectedApiLine, state.appSettings.customVideoApiLines.size,
+                    actions::updateHomeApiLine, actions::openRemoteManageDialog,
+                )
+            }
+
+            // 源管理
+            item { SettingsCardSection("源管理") }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    MobileSettingButton("视频接口管理", onClick = actions::openVideoSourceManager)
+                    MobileSettingButton("直播源管理", onClick = actions::openLiveSourceManager)
+                    MobileSettingButton("全部源管理", onClick = actions::openSourceManager)
+                }
+            }
+            item {
+                MobileSettingButton(
+                    "手机远程管理（网页）",
+                    subtitle = "无需 token，同一局域网可管理",
+                    onClick = actions::openRemoteManageDialog,
+                )
+            }
+
+            // AI 配置
+            item { SettingsCardSection("AI 配置") }
+            item {
+                MobileAiProviderSetting(
+                    selectedProvider = AiProviders.find(state.appSettings.aiProviderId),
+                    modelName = state.appSettings.aiModelName,
+                    apiKey = state.appSettings.aiApiKey,
+                    onProviderSelect = actions::updateAiProvider,
+                    onOpenConfig = actions::openRemoteManageDialog,
+                )
+            }
+
+            // 播放设置
+            item { SettingsCardSection("播放设置") }
+            item {
+                MobileSwitchRow(
+                    label = "自动换线",
+                    desc = if (state.appSettings.playbackAgentAutoSwitchEnabled) "播放失败或缓冲过久时自动切换线路" else "已关闭，播放器仍可手动换线",
+                    checked = state.appSettings.playbackAgentAutoSwitchEnabled,
+                    onCheck = actions::updatePlaybackAgentAutoSwitch,
+                )
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("线路质量统计", style = MaterialTheme.typography.titleSmall)
+                        Text(state.playbackHealth.qualitySummaryText(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Button(
+                        onClick = { confirmClearPlaybackStats = true },
+                        enabled = state.playbackHealth.entryCount > 0,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.height(40.dp),
+                    ) { Text("清空") }
+                }
+            }
+
+            // 更新
+            item { SettingsCardSection("更新") }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("启动时检查更新", style = MaterialTheme.typography.titleSmall)
+                        Text(if (state.appSettings.checkUpdatesOnStartup) "已开启" else "已关闭", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                        if (state.updateError != null) {
+                            Text(state.updateError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(
+                            onClick = { actions.checkForAppUpdate(showError = true) },
+                            enabled = !state.updateChecking,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(40.dp),
+                        ) { Text(if (state.updateChecking) "检查中..." else "立即检查") }
+                        Switch(checked = state.appSettings.checkUpdatesOnStartup, onCheckedChange = actions::updateStartupUpdateCheck)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCardSection(title: String) {
+    Text(title, style = MaterialTheme.typography.titleMedium, color = Color(0xFF1ED760),
+        modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp))
+}
+
+@Composable
+private fun MobileDeviceModeSetting(selectedMode: DeviceMode, onModeSelect: (DeviceMode) -> Unit) {
+    val context = LocalContext.current
+    val detectedMode = remember(context) { context.detectDeviceMode() }
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("当前：${selectedMode.displayName}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text(selectedMode.description, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+        Text("系统自动识别：${detectedMode.displayName}。播放行为以你的选择为准。", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DeviceMode.entries.forEach { mode ->
+                Button(
+                    onClick = { onModeSelect(mode) },
+                    enabled = mode != selectedMode,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(38.dp).weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedMode == mode) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                        contentColor = if (selectedMode == mode) Color.Black else Color.White,
+                    ),
+                ) {
+                    Text(if (selectedMode == mode) "✓ ${mode.displayName}" else mode.displayName, fontSize = 13.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileThemeSetting(selectedTheme: TvTheme, onThemeSelect: (TvTheme) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("界面主题", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text("当前：${selectedTheme.displayName}。选择后立即生效，设置保存到本机。", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TvTheme.entries.forEach { theme ->
+                Button(
+                    onClick = { onThemeSelect(theme) },
+                    enabled = theme != selectedTheme,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(38.dp).weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selectedTheme == theme) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                        contentColor = if (selectedTheme == theme) Color.Black else Color.White,
+                    ),
+                ) { Text(theme.displayName, fontSize = 13.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileFontScaleSetting(selected: TvFontScale, onSelect: (TvFontScale) -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text("字体大小", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            TvFontScale.entries.forEach { fs ->
+                Button(
+                    onClick = { onSelect(fs) },
+                    enabled = fs != selected,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(38.dp).weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (selected == fs) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                        contentColor = if (selected == fs) Color.Black else Color.White,
+                    ),
+                ) { Text(fs.displayName, fontSize = 13.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileSwitchRow(
+    label: String, desc: String, checked: Boolean, onCheck: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+        }
+        Switch(checked = checked, onCheckedChange = onCheck)
+    }
+}
+
+@Composable
+private fun MobileSettingButton(text: String, subtitle: String? = null, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .clickable(onClick = onClick),
+        color = Color(0xFF1E1E1E),
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileHomeApiLineSetting(
+    apiLines: List<ApiLine>,
+    selectedApiLine: ApiLine?,
+    customLineCount: Int,
+    onSelect: (String) -> Unit,
+    onOpenConfig: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("首页渲染数据", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text("当前：${selectedApiLine?.name ?: "未选择"}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
+        if (customLineCount > 0) {
+            Text("已添加 $customLineCount 条自定义 MacCms 接口", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                Button(
+                    onClick = { expanded = true },
+                    enabled = apiLines.isNotEmpty(),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(40.dp).fillMaxWidth(),
+                ) { Text("${selectedApiLine?.name ?: "选择资源"} ▾", fontSize = 13.sp) }
+                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    apiLines.forEach { line ->
+                        DropdownMenuItem(
+                            text = { Text(if (line.id == selectedApiLine?.id) "已选 · ${line.name}" else line.name) },
+                            onClick = { expanded = false; onSelect(line.id) },
+                        )
+                    }
+                }
+            }
+            Button(onClick = onOpenConfig, shape = RoundedCornerShape(8.dp), modifier = Modifier.height(40.dp)) {
+                Text("添加接口", fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileAiProviderSetting(
+    selectedProvider: AiProvider,
+    modelName: String,
+    apiKey: String,
+    onProviderSelect: (String) -> Unit,
+    onOpenConfig: () -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val displayModelName = modelName.ifBlank { selectedProvider.defaultModel }
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("大模型选择", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text("未填写 API Key 时使用 APK 内置 AI 配置", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
+        Box {
+            Button(
+                onClick = { expanded = true },
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(40.dp).fillMaxWidth(),
+            ) { Text("${selectedProvider.name} ▾", fontSize = 13.sp) }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                AiProviders.all.forEach { provider ->
+                    val selected = provider.id == selectedProvider.id
+                    DropdownMenuItem(
+                        text = { Text(if (selected) "已选 · ${provider.name}" else provider.name) },
+                        onClick = { expanded = false; onProviderSelect(provider.id) },
+                    )
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = onOpenConfig,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(40.dp).weight(1f),
+            ) { Text("模型：$displayModelName", fontSize = 13.sp) }
+            Button(
+                onClick = onOpenConfig,
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.height(40.dp).weight(1f),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+            ) {
+                Text(if (apiKey.isBlank()) "API Key：未配置" else "API Key：已配置", fontSize = 13.sp)
             }
         }
     }

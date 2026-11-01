@@ -5,7 +5,6 @@ import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
 import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.BuildConfig
-import com.tvbox.app.data.AiConfigServer
 import com.tvbox.app.data.AiRequestConfig
 import com.tvbox.app.data.AiRecommendationRepository
 import com.tvbox.app.data.AppUpdateRepository
@@ -29,7 +28,12 @@ import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
-import com.tvbox.app.data.VideoApiConfigServer
+import com.tvbox.app.data.RemoteManageLiveSource
+import com.tvbox.app.data.RemoteManageRequest
+import com.tvbox.app.data.RemoteManageServer
+import com.tvbox.app.data.RemoteManageSite
+import com.tvbox.app.data.RemoteManageSnapshot
+import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AiRecommendationItem
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.DeviceMode
@@ -199,14 +203,10 @@ data class TvBoxUiState(
     val aiVoiceListening: Boolean = false,
     val aiError: String? = null,
     val aiResolvingKeyword: String? = null,
-    val aiConfigDialogVisible: Boolean = false,
-    val aiConfigServerUrl: String? = null,
-    val aiConfigServerError: String? = null,
-    val aiConfigSavedMessage: String? = null,
-    val videoApiConfigDialogVisible: Boolean = false,
-    val videoApiConfigServerUrl: String? = null,
-    val videoApiConfigServerError: String? = null,
-    val videoApiConfigSavedMessage: String? = null,
+    val remoteManageDialogVisible: Boolean = false,
+    val remoteManageServerUrl: String? = null,
+    val remoteManageServerError: String? = null,
+    val remoteManageMessage: String? = null,
     val sourceLatencies: Map<String, Long?> = emptyMap(),
     val sourceTesting: Boolean = false,
     val sourceTestCompleted: Int = 0,
@@ -279,9 +279,10 @@ class TvBoxViewModel(
     private var sourceTestJob: Job? = null
     private var detailSourceTestJob: Job? = null
     private var detailAutoTestedKey: String? = null
-    private var importJob: Job? = null
-    private var aiConfigServer: AiConfigServer? = null
-    private var videoApiConfigServer: VideoApiConfigServer? = null
+    private var remoteManageServer: RemoteManageServer? = null
+    /** 远程网页里最近一次“获取分类”的视频源与其分类列表。 */
+    private var remoteCategorySourceId: String = ""
+    private var remoteCategoryNames: List<String> = emptyList()
     private val playbackAgent = PlaybackAgent()
 
     init {
@@ -764,69 +765,20 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings, aiError = null) }
     }
 
-    fun openAiConfigDialog() {
-        closeAiConfigDialog(stopOnly = true)
-        val current = _state.value
-        val provider = AiProviders.find(current.appSettings.aiProviderId)
-        val modelName = current.appSettings.aiModelName.ifBlank { provider.defaultModel }
-        val server = AiConfigServer(viewModelScope) { submittedModelName, submittedApiKey ->
-            applyAiConfigFromPhone(
-                modelName = submittedModelName,
-                apiKey = submittedApiKey,
-            )
-        }
-        aiConfigServer = server
+    fun openRemoteManageDialog() {
+        closeRemoteManageDialog(stopOnly = true)
+        val server = RemoteManageServer(
+            scope = viewModelScope,
+            snapshot = ::buildRemoteManageSnapshot,
+            onSubmit = ::handleRemoteManageRequest,
+        )
+        remoteManageServer = server
         _state.update {
             it.copy(
-                aiConfigDialogVisible = true,
-                aiConfigServerUrl = null,
-                aiConfigServerError = null,
-                aiConfigSavedMessage = null,
-            )
-        }
-        viewModelScope.launch {
-            runCatching {
-                server.start(
-                    provider = provider,
-                    modelName = modelName,
-                )
-            }.onSuccess { session ->
-                _state.update {
-                    it.copy(
-                        aiConfigServerUrl = session.url,
-                        aiConfigServerError = null,
-                    )
-                }
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        aiConfigServerUrl = null,
-                        aiConfigServerError = "启动手机配置服务失败：${error.userMessage()}",
-                    )
-                }
-            }
-        }
-    }
-
-    fun closeAiConfigDialog() {
-        closeAiConfigDialog(stopOnly = false)
-    }
-
-    fun openVideoApiConfigDialog() {
-        closeVideoApiConfigDialog(stopOnly = true)
-        val server = VideoApiConfigServer(viewModelScope) { submittedLineName, submittedApiUrl ->
-            applyCustomVideoApiFromPhone(
-                lineName = submittedLineName,
-                apiUrl = submittedApiUrl,
-            )
-        }
-        videoApiConfigServer = server
-        _state.update {
-            it.copy(
-                videoApiConfigDialogVisible = true,
-                videoApiConfigServerUrl = null,
-                videoApiConfigServerError = null,
-                videoApiConfigSavedMessage = null,
+                remoteManageDialogVisible = true,
+                remoteManageServerUrl = null,
+                remoteManageServerError = null,
+                remoteManageMessage = null,
             )
         }
         viewModelScope.launch {
@@ -834,67 +786,254 @@ class TvBoxViewModel(
                 .onSuccess { session ->
                     _state.update {
                         it.copy(
-                            videoApiConfigServerUrl = session.url,
-                            videoApiConfigServerError = null,
+                            remoteManageServerUrl = session.url,
+                            remoteManageServerError = null,
                         )
                     }
                 }
                 .onFailure { error ->
                     _state.update {
                         it.copy(
-                            videoApiConfigServerUrl = null,
-                            videoApiConfigServerError = "启动视频接口配置服务失败：${error.userMessage()}",
+                            remoteManageServerUrl = null,
+                            remoteManageServerError = "启动远程管理服务失败：${error.userMessage()}",
                         )
                     }
                 }
         }
     }
 
-    fun closeVideoApiConfigDialog() {
-        closeVideoApiConfigDialog(stopOnly = false)
+    fun closeRemoteManageDialog() {
+        closeRemoteManageDialog(stopOnly = false)
     }
 
-    private fun closeAiConfigDialog(stopOnly: Boolean) {
-        aiConfigServer?.stop()
-        aiConfigServer = null
+    private fun closeRemoteManageDialog(stopOnly: Boolean) {
+        remoteManageServer?.stop()
+        remoteManageServer = null
         if (!stopOnly) {
             _state.update {
                 it.copy(
-                    aiConfigDialogVisible = false,
-                    aiConfigServerUrl = null,
-                    aiConfigServerError = null,
-                    aiConfigSavedMessage = null,
+                    remoteManageDialogVisible = false,
+                    remoteManageServerUrl = null,
+                    remoteManageServerError = null,
                 )
             }
         }
     }
 
-    private fun closeVideoApiConfigDialog(stopOnly: Boolean) {
-        videoApiConfigServer?.stop()
-        videoApiConfigServer = null
-        if (!stopOnly) {
-            _state.update {
-                it.copy(
-                    videoApiConfigDialogVisible = false,
-                    videoApiConfigServerUrl = null,
-                    videoApiConfigServerError = null,
-                    videoApiConfigSavedMessage = null,
-                )
+    private fun buildRemoteManageSnapshot(): RemoteManageSnapshot {
+        val current = _state.value
+        val settings = current.appSettings
+        val builtIn = BuiltInLiveSources.all.map { source ->
+            RemoteManageLiveSource(
+                id = source.id,
+                name = source.name,
+                url = source.url,
+                enabled = source.id !in settings.disabledBuiltInLiveSourceIds,
+            )
+        }
+        val sites = allPlatformLiveSites.ifEmpty { current.platformLiveAllSites }.map { site ->
+            RemoteManageSite(
+                id = site.id,
+                name = site.name,
+                blocked = site.id in settings.blockedPlatformSiteIds,
+            )
+        }
+        val customLineIds = settings.customVideoApiLines.map { it.id }.toSet()
+        val videoSources = current.allSourceLines.map { line ->
+            RemoteManageVideoSource(
+                id = line.id,
+                name = line.name,
+                url = line.baseUrls.firstOrNull().orEmpty(),
+                builtIn = line.id !in customLineIds,
+                enabled = line.id !in settings.disabledBuiltInLineIds,
+                blocked = line.id in settings.blockedSourceIds,
+                isHome = line.id == current.selectedApiLineId,
+                latencyMs = current.sourceLatencies[line.id],
+            )
+        }
+        return RemoteManageSnapshot(
+            videoSources = videoSources,
+            customLiveUrls = settings.liveSourceUrls,
+            builtInLiveSources = builtIn,
+            includeBuiltInLiveSources = settings.includeBuiltInLiveSources,
+            sites = sites,
+            blockedVideoCategories = settings.blockedVideoCategories,
+            knownVideoCategories = if (remoteCategorySourceId.isNotBlank()) {
+                remoteCategoryNames
+            } else {
+                current.categories.map { it.name }.distinct()
+            },
+            categorySourceId = remoteCategorySourceId,
+            categorySourceName = current.allSourceLines
+                .firstOrNull { it.id == remoteCategorySourceId }?.name.orEmpty(),
+            aiProviderName = AiProviders.find(settings.aiProviderId).name,
+            aiModelName = settings.aiModelName,
+            aiKeyConfigured = settings.aiApiKey.isNotBlank(),
+        )
+    }
+
+    private suspend fun handleRemoteManageRequest(request: RemoteManageRequest): String? {
+        return when (request.action) {
+            "source-import" -> {
+                val source = request.content.trim().ifBlank { request.url.trim() }
+                if (source.isBlank()) {
+                    "请填写订阅地址或粘贴 JSON / TVBox 配置内容。"
+                } else {
+                    importSourceConfigInternal(source)
+                }
             }
+            "source-home" -> {
+                val id = request.id.trim()
+                if (_state.value.apiLines.none { it.id == id }) {
+                    "该视频源已删除或已屏蔽，请先恢复。"
+                } else {
+                    updateHomeApiLine(id)
+                    "已把“${_state.value.allSourceLines.firstOrNull { it.id == id }?.name ?: id}”设为首页源。"
+                }
+            }
+            "source-block" -> {
+                blockSource(request.id.trim())
+                "已屏蔽该视频源。"
+            }
+            "source-unblock" -> {
+                unblockSource(request.id.trim())
+                "已取消屏蔽该视频源。"
+            }
+            "source-delete" -> {
+                deleteApiLine(request.id.trim())
+                "已删除该视频源。"
+            }
+            "source-restore" -> {
+                restoreBuiltInLine(request.id.trim())
+                "已恢复该视频源。"
+            }
+            "source-test" -> {
+                testAllSourcesAndSort()
+                "已开始测速，完成后刷新本页可按延迟排序查看。"
+            }
+            "source-categories" -> {
+                val id = request.id.trim()
+                val line = _state.value.allSourceLines.firstOrNull { it.id == id }
+                if (line == null) {
+                    "视频源不存在，可能已被删除。"
+                } else {
+                    val categories = runCatching { repository.getCategories(id) }.getOrNull()
+                    if (categories.isNullOrEmpty()) {
+                        "未获取到“${line.name}”的分类，请检查该源地址是否可用。"
+                    } else {
+                        remoteCategorySourceId = id
+                        remoteCategoryNames = categories.map { it.name }.distinct()
+                        "已获取“${line.name}”的分类 ${remoteCategoryNames.size} 个，点击分类即可屏蔽或恢复。"
+                    }
+                }
+            }
+            "category-toggle" -> {
+                val name = request.name.trim()
+                if (name.isBlank()) {
+                    "分类名称不能为空。"
+                } else if (name in _state.value.appSettings.blockedVideoCategories) {
+                    removeBlockedVideoCategory(name)
+                    "已恢复视频分类：$name"
+                } else {
+                    addBlockedVideoCategory(name)
+                    "已屏蔽视频分类：$name"
+                }
+            }
+            "video-add" -> {
+                val error = applyCustomVideoApiFromPhone(
+                    lineName = request.name,
+                    apiUrl = request.url,
+                )
+                error ?: "已添加视频接口：${request.name.trim()}"
+            }
+            "video-delete" -> {
+                val id = request.id.ifBlank {
+                    _state.value.appSettings.customVideoApiLines
+                        .firstOrNull { it.baseUrl.equals(request.url.trim(), ignoreCase = true) }
+                        ?.id.orEmpty()
+                }
+                if (id.isBlank()) {
+                    "未找到要删除的视频接口。"
+                } else {
+                    deleteApiLine(id)
+                    "已删除视频接口：${request.name.ifBlank { id }}"
+                }
+            }
+            "live-add" -> {
+                val url = request.url.trim()
+                if (!url.startsWith("http://") && !url.startsWith("https://")) {
+                    "直播源地址需要以 http:// 或 https:// 开头。"
+                } else if (url in _state.value.appSettings.liveSourceUrls) {
+                    "该直播源已存在。"
+                } else {
+                    updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls + url)
+                    "已添加直播源：$url"
+                }
+            }
+            "live-delete" -> {
+                val url = request.url.trim()
+                updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url)
+                "已删除直播源：$url"
+            }
+            "builtin-delete" -> {
+                deleteBuiltInLiveSource(request.id)
+                "已删除内置直播源。"
+            }
+            "builtin-restore" -> {
+                restoreBuiltInLiveSource(request.id)
+                "已恢复内置直播源。"
+            }
+            "include-builtin" -> {
+                val enabled = request.value == "true"
+                updateIncludeBuiltInLiveSources(enabled)
+                if (enabled) "已开启内置源与自定义源组合使用。" else "已关闭内置源组合，仅使用自定义源。"
+            }
+            "site-toggle" -> {
+                togglePlatformLiveSiteBlocked(request.id)
+                val blocked = request.id in _state.value.appSettings.blockedPlatformSiteIds
+                if (blocked) "已删除该平台站点。" else "已恢复该平台站点。"
+            }
+            "category-block" -> {
+                val name = request.name.trim()
+                if (name.isBlank()) {
+                    "分类名称不能为空。"
+                } else {
+                    addBlockedVideoCategory(name)
+                    "已屏蔽视频分类：$name"
+                }
+            }
+            "category-unblock" -> {
+                val name = request.name.trim()
+                removeBlockedVideoCategory(name)
+                "已恢复视频分类：$name"
+            }
+            "ai-save" -> {
+                val modelName = request.name.trim()
+                val apiKey = request.value.trim()
+                if (modelName.isBlank()) {
+                    "模型名称不能为空。"
+                } else {
+                    applyAiConfig(modelName = modelName, apiKey = apiKey.ifBlank { null })
+                    "AI 配置已保存。"
+                }
+            }
+            else -> "未知操作：${request.action}"
         }
     }
 
-    private fun applyAiConfigFromPhone(modelName: String, apiKey: String) {
-        val settings = _state.value.appSettings.copy(
-            aiModelName = modelName.trim(),
-            aiApiKey = apiKey.trim(),
+    /** 手机网页保存 AI 配置：apiKey 为 null 表示沿用原有 Key。 */
+    private fun applyAiConfig(modelName: String, apiKey: String?) {
+        val current = _state.value.appSettings
+        val settings = current.copy(
+            aiModelName = modelName,
+            aiApiKey = apiKey ?: current.aiApiKey,
         )
         saveSettings(settings)
         _state.update {
             it.copy(
                 appSettings = settings,
-                aiConfigServerError = null,
-                aiConfigSavedMessage = "已收到手机配置，模型和 API Key 已保存。",
+                aiError = null,
+                remoteManageMessage = "已收到手机配置，模型和 API Key 已保存。",
             )
         }
     }
@@ -938,8 +1077,7 @@ class TvBoxViewModel(
                 pageCount = 1,
                 total = 0,
                 homeError = null,
-                videoApiConfigServerError = null,
-                videoApiConfigSavedMessage = "已添加视频接口：${customLine.name}",
+                remoteManageMessage = "已添加视频接口：${customLine.name}",
             )
         }
         refreshHome()
@@ -2340,80 +2478,84 @@ class TvBoxViewModel(
     }
 
     fun importSourceConfig(input: String) {
+        viewModelScope.launch { importSourceConfigInternal(input) }
+    }
+
+    /** 导入 JSON / TVBox 订阅（地址或内容），返回可直接展示的提示文本。 */
+    private suspend fun importSourceConfigInternal(input: String): String {
         val text = input.trim()
         if (text.isBlank()) {
-            _state.update { it.copy(sourceImporting = false, sourceImportMessage = "请粘贴配置内容或输入订阅地址") }
-            return
+            val message = "请粘贴配置内容或输入订阅地址"
+            _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+            return message
         }
-        if (_state.value.sourceImporting) return
-        importJob?.cancel()
-        importJob = viewModelScope.launch {
-            _state.update { it.copy(sourceImporting = true, sourceImportMessage = null) }
-            try {
-                val configFetcher = SourceConfigFetcher()
-                val isUrl = text.startsWith("http://", ignoreCase = true) ||
-                    text.startsWith("https://", ignoreCase = true)
-                val payload = if (isUrl) configFetcher.fetch(text) else text
-                val decoded = try {
-                    SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
-                } catch (error: IllegalArgumentException) {
-                    _state.update {
-                        it.copy(sourceImporting = false, sourceImportMessage = "订阅解码失败：${error.message ?: "格式不合法"}")
-                    }
-                    return@launch
-                }
-                val result = SourceConfigCodec.parseImport(decoded)
-                val imported = result.imported
-                if (result.error != null || imported == null) {
-                    _state.update {
-                        it.copy(sourceImporting = false, sourceImportMessage = result.error ?: "配置解析失败")
-                    }
-                    return@launch
-                }
-                val current = _state.value
-                val existingUrls = current.appSettings.customVideoApiLines
-                    .map { it.baseUrl.lowercase() }
-                    .toSet()
-                val newLines = imported.lines.filter { it.baseUrl.lowercase() !in existingUrls }
-                val mergedCustom = (current.appSettings.customVideoApiLines + newLines)
-                    .distinctBy { it.id }
-                val newLiveUrls = imported.liveUrls.filter { url ->
-                    url !in current.appSettings.liveSourceUrls
-                }
-                val settings = current.appSettings.copy(
-                    customVideoApiLines = mergedCustom,
-                    liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
-                )
-                applySourceSettings(settings)
-                applyLiveSourceConfig(settings)
-                val ordered = availableApiLinesFor(settings)
-                val allLines = allApiLinesFor(settings)
-                saveSettings(settings)
-                val message = buildString {
-                    val addedParts = mutableListOf<String>()
-                    if (newLines.isNotEmpty()) addedParts += "新增 ${newLines.size} 个视频源"
-                    if (newLiveUrls.isNotEmpty()) addedParts += "新增 ${newLiveUrls.size} 个直播源"
-                    if (addedParts.isEmpty()) {
-                        append("导入完成：没有可新增的源")
-                    } else {
-                        append(addedParts.joinToString("，"))
-                    }
-                    if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
-                }
-                _state.update {
-                    it.copy(
-                        sourceImporting = false,
-                        apiLines = ordered,
-                        allSourceLines = allLines,
-                        appSettings = settings,
-                        sourceManagerMessage = message,
-                    )
-                }
-            } catch (error: Exception) {
-                _state.update {
-                    it.copy(sourceImporting = false, sourceImportMessage = "导入失败：${error.message}")
-                }
+        if (_state.value.sourceImporting) return "正在导入上一份配置，请稍候再试。"
+        _state.update { it.copy(sourceImporting = true, sourceImportMessage = null) }
+        return try {
+            val configFetcher = SourceConfigFetcher()
+            val isUrl = text.startsWith("http://", ignoreCase = true) ||
+                text.startsWith("https://", ignoreCase = true)
+            val payload = if (isUrl) configFetcher.fetch(text) else text
+            val decoded = try {
+                SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
+            } catch (error: IllegalArgumentException) {
+                val message = "订阅解码失败：${error.message ?: "格式不合法"}"
+                _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+                return message
             }
+            val result = SourceConfigCodec.parseImport(decoded)
+            val imported = result.imported
+            if (result.error != null || imported == null) {
+                val message = result.error ?: "配置解析失败"
+                _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+                return message
+            }
+            val current = _state.value
+            val existingUrls = current.appSettings.customVideoApiLines
+                .map { it.baseUrl.lowercase() }
+                .toSet()
+            val newLines = imported.lines.filter { it.baseUrl.lowercase() !in existingUrls }
+            val mergedCustom = (current.appSettings.customVideoApiLines + newLines)
+                .distinctBy { it.id }
+            val newLiveUrls = imported.liveUrls.filter { url ->
+                url !in current.appSettings.liveSourceUrls
+            }
+            val settings = current.appSettings.copy(
+                customVideoApiLines = mergedCustom,
+                liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
+            )
+            applySourceSettings(settings)
+            applyLiveSourceConfig(settings)
+            val ordered = availableApiLinesFor(settings)
+            val allLines = allApiLinesFor(settings)
+            saveSettings(settings)
+            val message = buildString {
+                val addedParts = mutableListOf<String>()
+                if (newLines.isNotEmpty()) addedParts += "新增 ${newLines.size} 个视频源"
+                if (newLiveUrls.isNotEmpty()) addedParts += "新增 ${newLiveUrls.size} 个直播源"
+                if (addedParts.isEmpty()) {
+                    append("导入完成：没有可新增的源")
+                } else {
+                    append(addedParts.joinToString("，"))
+                }
+                if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
+            }
+            _state.update {
+                it.copy(
+                    sourceImporting = false,
+                    apiLines = ordered,
+                    allSourceLines = allLines,
+                    appSettings = settings,
+                    sourceManagerMessage = message,
+                )
+            }
+            message
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val message = "导入失败：${error.message}"
+            _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+            message
         }
     }
 
@@ -2477,6 +2619,72 @@ class TvBoxViewModel(
         if (current.appSettings.disabledBuiltInLiveSourceIds.isEmpty()) return
         val settings = current.appSettings.copy(disabledBuiltInLiveSourceIds = emptyList())
         applyLiveSourceConfig(settings)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 屏蔽/恢复视频源分类：屏蔽后该分类不再出现在电视的分类与影片列表。 */
+    fun addBlockedVideoCategory(categoryName: String) {
+        val name = categoryName.trim()
+        if (name.isBlank()) return
+        val current = _state.value
+        if (name in current.appSettings.blockedVideoCategories) return
+        val settings = current.appSettings.copy(
+            blockedVideoCategories = (current.appSettings.blockedVideoCategories + name).distinct(),
+        )
+        saveSettings(settings)
+        val blockingCurrent = current.selectedCategoryId
+            ?.let { id -> current.categories.firstOrNull { it.id == id }?.name }
+            ?.let { it == name } == true
+        _state.update {
+            it.copy(
+                appSettings = settings,
+                categories = filterBlockedCategories(it.categories, settings.blockedVideoCategories),
+                movies = it.movies.filter { movie -> movie.typeName !in settings.blockedVideoCategories },
+                selectedCategoryId = if (blockingCurrent) null else it.selectedCategoryId,
+            )
+        }
+        if (blockingCurrent) refreshHome()
+    }
+
+    fun removeBlockedVideoCategory(categoryName: String) {
+        val name = categoryName.trim()
+        val current = _state.value
+        if (name !in current.appSettings.blockedVideoCategories) return
+        val settings = current.appSettings.copy(
+            blockedVideoCategories = current.appSettings.blockedVideoCategories - name,
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+        refreshHome()
+    }
+
+    fun clearBlockedVideoCategories() {
+        val current = _state.value
+        if (current.appSettings.blockedVideoCategories.isEmpty()) return
+        val settings = current.appSettings.copy(blockedVideoCategories = emptyList())
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+        refreshHome()
+    }
+
+    private fun filterBlockedCategories(
+        categories: List<Category>,
+        blockedNames: List<String>,
+    ): List<Category> {
+        if (blockedNames.isEmpty()) return categories
+        val blockedIds = categories.filter { it.name in blockedNames }.map { it.id }.toSet()
+        return categories.filter { it.name !in blockedNames && it.parentId !in blockedIds }
+    }
+
+    fun updateIntroSkipSeconds(seconds: Int) {
+        val settings = _state.value.appSettings.copy(introSkipSeconds = seconds.coerceIn(0, 600))
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    fun updateOutroSkipSeconds(seconds: Int) {
+        val settings = _state.value.appSettings.copy(outroSkipSeconds = seconds.coerceIn(0, 600))
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
     }
@@ -2666,13 +2874,19 @@ class TvBoxViewModel(
                 }
             }.onSuccess { result ->
                 _state.update {
+                    val blocked = it.appSettings.blockedVideoCategories
                     it.copy(
-                        categories = if (result.categories.isNotEmpty()) result.categories else it.categories,
-                        movies = if (reset) {
-                            result.movies
-                        } else {
-                            (it.movies + result.movies).distinctBy { movie -> "${movie.apiLineId}-${movie.id}" }
-                        },
+                        categories = filterBlockedCategories(
+                            if (result.categories.isNotEmpty()) result.categories else it.categories,
+                            blocked,
+                        ),
+                        movies = (
+                            if (reset) {
+                                result.movies
+                            } else {
+                                (it.movies + result.movies).distinctBy { movie -> "${movie.apiLineId}-${movie.id}" }
+                            }
+                            ).filter { movie -> movie.typeName !in blocked },
                         page = result.page,
                         pageCount = result.pageCount,
                         total = result.total,
@@ -2700,7 +2914,8 @@ class TvBoxViewModel(
         viewModelScope.launch {
             runCatching { repository.getCategories(apiLineId = _state.value.selectedApiLineId) }
                 .onSuccess { categories ->
-                    _state.update { it.copy(categories = categories) }
+                    val blocked = _state.value.appSettings.blockedVideoCategories
+                    _state.update { it.copy(categories = filterBlockedCategories(categories, blocked)) }
                 }
         }
     }
@@ -3121,10 +3336,8 @@ class TvBoxViewModel(
     }
 
     override fun onCleared() {
-        aiConfigServer?.stop()
-        aiConfigServer = null
-        videoApiConfigServer?.stop()
-        videoApiConfigServer = null
+        remoteManageServer?.stop()
+        remoteManageServer = null
         super.onCleared()
     }
 }

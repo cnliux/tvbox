@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,7 +26,9 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -31,6 +36,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -46,12 +52,20 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
+import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
@@ -76,6 +90,10 @@ fun SearchScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    if (state.appSettings.deviceMode == DeviceMode.Mobile) {
+        MobileSearchScreen(state = state, actions = actions)
+        return
+    }
     val grid = rememberLazyGridState()
     val returnFocus = rememberReturnFocus()
     val searchFieldFocus = remember { FocusRequester() }
@@ -707,5 +725,267 @@ private fun SearchActionButton(
             text = text,
             fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
         )
+    }
+}
+
+// ── 手机模式搜索页 ──────────────────────────────────────────────────────────────
+
+@Composable
+internal fun MobileSearchScreen(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    if (!isMobile) return
+    // 用 TextFieldValue 保留光标在末尾的语义（PR#5 修复的核心逻辑）。
+    // TextFieldValue 无法写入 Bundle，不能用 rememberSaveable，不然切换页面保存状态时会抛 IllegalArgumentException。
+    var fieldValue by remember(state.searchQuery) {
+        mutableStateOf(queryFieldValue(state.searchQuery))
+    }
+    val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
+
+    LaunchedEffect(state.searchQuery) {
+        if (fieldValue.text != state.searchQuery) {
+            fieldValue = queryFieldValue(state.searchQuery)
+        }
+    }
+
+    fun submit() {
+        val q = fieldValue.text.trim()
+        if (q.isEmpty()) return
+        actions.updateSearchQuery(q)
+        actions.submitSearch()
+    }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // 搜索输入区
+        Surface(
+            color = Color(0xFF1E1E1E),
+            shadowElevation = 2.dp,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = fieldValue,
+                    onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    label = { Text("搜索影片") },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { submit() }),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        unfocusedContainerColor = Color(0xFF2A2A2A),
+                        focusedContainerColor = Color(0xFF2A2A2A),
+                    ),
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = { submit() },
+                    enabled = !state.searchLoading,
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text(if (state.searchLoading) "搜索中…" else "搜索")
+                }
+            }
+        }
+
+        // 内容区
+        when {
+            state.searchLoading && state.searchResults.isEmpty() ->
+                LoadingState(text = "正在搜索多个来源…", modifier = Modifier.weight(1f))
+
+            state.searchError != null && state.searchResults.isEmpty() ->
+                ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.weight(1f))
+
+            state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
+                // 热门搜索：用标签流式排列，不再铺成整行的下拉列表
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Text(
+                        "热门搜索",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                    )
+                    HotSearchChips(hotWords = hotWords, onWordClick = { word ->
+                        fieldValue = queryFieldValue(word)
+                        actions.updateSearchQuery(word)
+                        actions.submitSearch()
+                    })
+                }
+            }
+
+            state.searchResults.isEmpty() ->
+                SearchEmptyState(query = state.searchQuery)
+
+            else -> {
+                // 进度提示
+                val progress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
+                    "已完成 ${state.searchCompletedSources}/$total 条线路 · 找到 ${state.searchResults.size} 个结果"
+                }
+                progress?.let {
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                }
+                state.searchError?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                }
+                if (state.searchLoading && state.searchResults.isNotEmpty()) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                // 卡片网格：横屏最多三列，铺满宽度并使用大尺寸海报
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val columns = if (maxWidth >= 560.dp) 3 else 2
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 16.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                            SearchResultCardMobile(movie = movie, onClick = {
+                                actions.openDetail(movie.id, movie.apiLineId)
+                            })
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun HotSearchChips(
+    hotWords: List<String>,
+    onWordClick: (String) -> Unit,
+) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        hotWords.forEach { word ->
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(18.dp))
+                    .clickable { onWordClick(word) },
+                shape = RoundedCornerShape(18.dp),
+                color = Color(0xFF2A2A2A),
+            ) {
+                Text(
+                    text = word,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCardMobile(
+    movie: Movie,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(0xFF1E1E1E))
+            .clickable(onClick = onClick),
+    ) {
+        // 大尺寸海报
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.72f)
+                .background(Color(0xFF2A2A2A)),
+        ) {
+            if (movie.posterUrl.isNotBlank()) {
+                Image(
+                    painter = rememberAsyncImagePainter(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(movie.posterUrl).build()
+                    ),
+                    contentDescription = movie.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    text = "无海报",
+                    color = Color.White.copy(alpha = 0.5f),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            // 来源角标
+            if (movie.apiLineName.isNotBlank()) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xCC1ED760),
+                ) {
+                    Text(
+                        movie.apiLineName,
+                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.Black,
+                        maxLines = 1,
+                    )
+                }
+            }
+            // 更新信息
+            if (movie.remarks.isNotBlank()) {
+                Text(
+                    text = movie.remarks,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .background(Color(0xCC000000))
+                        .padding(horizontal = 6.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
+        }
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                movie.name,
+                style = MaterialTheme.typography.titleSmall,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            val meta = movie.subtitle.ifBlank { movie.typeName }
+            if (meta.isNotBlank()) {
+                Text(
+                    meta,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.6f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }

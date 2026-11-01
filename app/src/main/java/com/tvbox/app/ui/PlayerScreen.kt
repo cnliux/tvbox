@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import android.app.Activity
 import android.content.Context
@@ -102,6 +102,7 @@ fun PlayerScreen(
     val activity = remember(context) { context.findActivity() }
     FullscreenWhilePlayingPageVisible(activity)
     val isTelevision = state.appSettings.deviceMode == DeviceMode.Television
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
@@ -136,11 +137,32 @@ fun PlayerScreen(
     var uiPosition by remember { mutableStateOf(0L) }
     var uiDuration by remember { mutableStateOf(0L) }
     var uiPlaying by remember { mutableStateOf(true) }
+    // 手机播放页“更多”面板展开时暂停自动隐藏，方便选集/切线路。
+    var mobileMoreOpen by remember { mutableStateOf(false) }
+    var lastBackPressTime by remember { mutableStateOf(0L) }
     BackHandler {
         when {
             controlsPanel != PlayerPanel.None -> controlsPanel = PlayerPanel.None
             controlsVisible -> { controlsVisible = false; playerFocusRequester.requestFocus() }
-            else -> actions.goBack()
+            else -> {
+                if (isMobile) {
+                    val now = System.currentTimeMillis()
+                    if (now - lastBackPressTime < 1500L) {
+                        lastBackPressTime = 0L
+                        actions.goBack()
+                    } else {
+                        lastBackPressTime = now
+                        val activity = context.findActivity()
+                        android.widget.Toast.makeText(
+                            activity ?: context,
+                            "再按一次退出播放",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                } else {
+                    actions.goBack()
+                }
+            }
         }
     }
     LaunchedEffect(player) {
@@ -154,8 +176,8 @@ fun PlayerScreen(
             delay(250)
         }
     }
-    LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing) {
-        if (controlsVisible && controlsPanel == PlayerPanel.None && uiPlaying && !scrubbing) {
+    LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing, mobileMoreOpen) {
+        if (controlsVisible && controlsPanel == PlayerPanel.None && uiPlaying && !scrubbing && !mobileMoreOpen) {
             delay(5_000)
             controlsVisible = false
             playerFocusRequester.requestFocus()
@@ -183,7 +205,42 @@ fun PlayerScreen(
     var failedSourceIndexes by remember(movie.apiLineId, movie.id) {
         mutableStateOf(emptySet<Int>())
     }
+    /** 新一集开始播放后等待 READY，再统一跳过片头。 */
+    var introSkipPending by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
+    /** 已触发过片尾跳过的那一集，避免重复触发。 */
+    var outroSkipHandledKey by remember(movie.apiLineId, movie.id) { mutableStateOf<String?>(null) }
     val latestState by rememberUpdatedState(state)
+
+    // 片尾跳过：剩 N 秒时自动进入下一集（每集只触发一次）。
+    LaunchedEffect(player) {
+        while (true) {
+            delay(250L)
+            if (!isCurrentPlayback()) continue
+            val outroSkipMs = actions.state.value.appSettings.outroSkipSeconds.toLong() * 1_000L
+            if (outroSkipMs <= 0) continue
+            val duration = player.duration
+            if (duration <= 0 || player.playbackState != Player.STATE_READY) continue
+            val remaining = duration - player.currentPosition
+            val playbackKey = actions.state.value
+                .copy(playerEpisodeIndex = player.currentMediaItemIndex)
+                .currentPlaybackKey()
+            if (remaining > outroSkipMs) {
+                // 回看或拖动离开片尾后，允许再次触发。
+                if (outroSkipHandledKey == playbackKey) outroSkipHandledKey = null
+                continue
+            }
+            val nextIndex = player.currentMediaItemIndex + 1
+            if (
+                remaining > 0 && player.isPlaying && playbackKey != null &&
+                outroSkipHandledKey != playbackKey && nextIndex < player.mediaItemCount
+            ) {
+                outroSkipHandledKey = playbackKey
+                saveCurrentProgress(player.currentPosition, duration)
+                player.seekTo(nextIndex, 0L)
+                session.play(player)
+            }
+        }
+    }
 
     val canCast = !isTelevision
     val dlnaCaster = remember(context) { DlnaCaster(context) }
@@ -331,6 +388,7 @@ fun PlayerScreen(
                 if (episodeIndex in episodes.indices && episodeIndex != currentState.playerEpisodeIndex) {
                     resumeAnchor.update(player.currentPosition)
                     failedSourceIndexes = emptySet()
+                    outroSkipHandledKey = null
                     playbackIssue = null
                     playbackNotice = null
                     bufferingPlaybackKey = null
@@ -369,6 +427,14 @@ fun PlayerScreen(
                     }
                     Player.STATE_READY -> {
                         bufferingPlaybackKey = null
+                        if (introSkipPending) {
+                            introSkipPending = false
+                            val skipMs = actions.state.value.appSettings.introSkipSeconds.toLong() * 1_000L
+                            val duration = player.duration
+                            if (skipMs > 0 && duration > 0 && player.currentPosition < skipMs) {
+                                player.seekTo(skipMs.coerceAtMost((duration - 1_000L).coerceAtLeast(0L)))
+                            }
+                        }
                         resumeAnchor.update(player.currentPosition)
                         playbackIssue = playbackIssue?.afterReady()
                         playbackNotice = null
@@ -427,6 +493,9 @@ fun PlayerScreen(
         bufferingPlaybackKey = null
         bufferMonitor.onMediaChanged()
         attemptTracker.onPlaybackChanged(state.currentPlaybackKey())
+        // 从头播放时应用“开始跳过”；恢复进度时保持原位置。
+        introSkipPending = state.playerStartPositionMs <= 0L
+        outroSkipHandledKey = null
         player.setMediaItems(
             source.episodes.mapIndexed { index, item ->
                 MediaItem.Builder().setUri(item.url)
@@ -869,47 +938,95 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
         if (controlsVisible) {
-            PlayerControls(
-                title = movie.name, sources = movie.playSources,
-                sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
-                positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
-                speed = state.playerSpeed, panel = controlsPanel,
-                videoScaleMode = state.appSettings.videoScaleMode,
-                onPanel = { controlsPanel = it; controlsInteraction++ },
-                onToggle = { togglePlaybackByGesture(); controlsInteraction++ },
-                onEpisode = { index ->
-                    if (index in source.episodes.indices) {
+            if (isMobile) {
+                PlayerControlsMobile(
+                    title = movie.name, sources = movie.playSources,
+                    sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
+                    positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
+                    speed = state.playerSpeed,
+                    videoScaleMode = state.appSettings.videoScaleMode,
+                    onToggle = { togglePlaybackByGesture() },
+                    onEpisode = { index ->
+                        if (index in source.episodes.indices) {
+                            saveCurrentProgress(player.currentPosition, uiDuration)
+                            val skipMs = state.appSettings.introSkipSeconds.toLong() * 1_000L
+                            player.seekTo(index, skipMs)
+                            introSkipPending = skipMs > 0L
+                            session.play(player)
+                        }
+                    },
+                    onSource = { index ->
                         saveCurrentProgress(player.currentPosition, uiDuration)
-                        player.seekTo(index, 0)
-                        session.play(player)
+                        actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
+                    },
+                    onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed) },
+                    onVideoScale = { mode -> actions.updateVideoScaleMode(mode) },
+                    onSeek = { position ->
+                        bufferMonitor.onSeekStarted(System.currentTimeMillis())
+                        player.seekTo(position)
+                        saveCurrentProgress(position, uiDuration)
+                    },
+                    castLabel = if (canCast) {
+                        if (castingDevice != null) "停止投屏" else "投屏"
+                    } else null,
+                    onCast = {
+                        if (castingDevice != null) stopCasting() else castDialogVisible = true
+                    },
+                    onBack = {
+                        saveCurrentProgress(player.currentPosition, uiDuration)
+                        actions.goBack()
+                    },
+                    onMorePanelChange = { mobileMoreOpen = it },
+                )
+            } else {
+                PlayerControls(
+                    title = movie.name, sources = movie.playSources,
+                    sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
+                    positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
+                    speed = state.playerSpeed, panel = controlsPanel,
+                    videoScaleMode = state.appSettings.videoScaleMode,
+                    onPanel = { controlsPanel = it; controlsInteraction++ },
+                    onToggle = { togglePlaybackByGesture(); controlsInteraction++ },
+                    onEpisode = { index ->
+                        if (index in source.episodes.indices) {
+                            saveCurrentProgress(player.currentPosition, uiDuration)
+                            val skipMs = state.appSettings.introSkipSeconds.toLong() * 1_000L
+                            player.seekTo(index, skipMs)
+                            introSkipPending = skipMs > 0L
+                            session.play(player)
+                            controlsInteraction++
+                        }
+                    },
+                    onSource = { index ->
+                        saveCurrentProgress(player.currentPosition, uiDuration)
+                        actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
                         controlsInteraction++
-                    }
-                },
-                onSource = { index ->
-                    saveCurrentProgress(player.currentPosition, uiDuration)
-                    actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
-                    controlsInteraction++
-                },
-                onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed); controlsInteraction++ },
-                onVideoScale = { mode -> actions.updateVideoScaleMode(mode); controlsInteraction++ },
-                onSeek = { position ->
-                    bufferMonitor.onSeekStarted(System.currentTimeMillis())
-                    player.seekTo(position)
-                    saveCurrentProgress(position, uiDuration)
-                },
-                onInteraction = { controlsInteraction++ },
-                onScrubbing = { scrubbing = it },
-                sourceLatencies = state.sourceLatencies,
-                castLabel = if (canCast) {
-                    if (castingDevice != null) "停止投屏" else "投屏"
-                } else {
-                    null
-                },
-                onCast = {
-                    if (castingDevice != null) stopCasting() else castDialogVisible = true
-                    controlsInteraction++
-                },
-            )
+                    },
+                    onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed); controlsInteraction++ },
+                    onVideoScale = { mode -> actions.updateVideoScaleMode(mode); controlsInteraction++ },
+                    onSeek = { position ->
+                        bufferMonitor.onSeekStarted(System.currentTimeMillis())
+                        player.seekTo(position)
+                        saveCurrentProgress(position, uiDuration)
+                    },
+                    onInteraction = { controlsInteraction++ },
+                    onScrubbing = { scrubbing = it },
+                    sourceLatencies = state.sourceLatencies,
+                    introSkipSeconds = state.appSettings.introSkipSeconds,
+                    outroSkipSeconds = state.appSettings.outroSkipSeconds,
+                    onIntroSkip = { seconds -> actions.updateIntroSkipSeconds(seconds); controlsInteraction++ },
+                    onOutroSkip = { seconds -> actions.updateOutroSkipSeconds(seconds); controlsInteraction++ },
+                    castLabel = if (canCast) {
+                        if (castingDevice != null) "停止投屏" else "投屏"
+                    } else {
+                        null
+                    },
+                    onCast = {
+                        if (castingDevice != null) stopCasting() else castDialogVisible = true
+                        controlsInteraction++
+                    },
+                )
+            }
         }
         val playbackStatus = playbackIssue?.message ?: playbackNotice
         if (playbackStatus != null) {
