@@ -1,5 +1,25 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-01 19:10 - 发布 v1.3.17：手机模式默认竖屏与移除内置源
+
+### 文件修改、原因与目的
+
+- `MainActivity.kt`、`ui/PlayerScreen.kt`、`domain/AppSettings.kt`：手机模式默认竖屏（启动同步读取设备模式设置基准方向并收集变化即时生效；点播转屏兜底/退出恢复方向按设备模式）；详见 `devLog/mobile-mode.md`。
+- `data/LiveRepository.kt`、`domain/AppSettings.kt`、`data/AppSettingsRepository.kt`、`ui/TvBoxViewModel.kt`、`TvBoxApp.kt`、`data/RemoteManageServer.kt`、`app/src/debug/.../AcceptanceActivity.kt`：删除内置电视直播源机制与全部内置源残留；详见 `devLog/platform-live.md`。
+- 文档：删除 `影视线路地址整理.md`、`devLog/video-source-addresses.md`、`devLog/live-source.md`、`docs/tvbox-live-source-nodejs-deployment.md`；README/CHANGELOG/devLog/release.yml 同步清除内置源与服务器地址信息。
+- `app/build.gradle.kts`：版本升级至 `10317 / 1.3.17`。
+- 提交：`dc56b8f`（移除内置源）、`238a8e7`（手机竖屏+v1.3.17）。
+
+### 构建与发布校验
+
+- 本地 `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过；192.168.1.45 真机验证竖屏首页/直播页无崩溃。
+- 推送 tag `v1.3.17` 触发 `.github/workflows/release.yml`（run `41299577446`）成功，发布 [TVBox v1.3.17](https://github.com/cnliux/tvbox/releases/tag/v1.3.17)。
+- Release 附件 `app-release.apk`：`50886826` 字节，下载后本地计算 SHA-256 `4e6b07638133c269556028dce52ee4fea9b72566e6f16d856b07cfe7b4ef8fcf`，与大小一致；`update.json` 与 README 示例按该附件实际值更新。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/platform-live.md`。
+
 ## 2026-11-01 17:50 - 发布 v1.3.16：手机模式二期与 OTA 指向本项目
 
 ### 文件修改、原因与目的

@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.16`（`versionCode=10316`）。本版本完善手机模式（顶部栏源切换、电视/平台直播入口、搜索热搜与卡片网格）、新增局域网远程管理与分类屏蔽，并把 OTA 更新清单指向本项目仓库。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.17`（`versionCode=10317`）。本版本手机模式默认竖屏（点播仍按影片比例智能转屏），并彻底移除内置电视直播源——直播与视频数据完全由用户在源管理中导入。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -100,18 +100,17 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10316,
-  "versionName": "1.3.16",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
-  "apkSha256": "ae9fa2a8847762f24ccd050af50ee245245cbf81d70432886471a9eb5885bd95",
-  "apkSize": 50886750,
+  "versionCode": 10317,
+  "versionName": "1.3.17",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.17/app-release.apk",
+  "apkSha256": "4e6b07638133c269556028dce52ee4fea9b72566e6f16d856b07cfe7b4ef8fcf",
+  "apkSize": 50886826,
   "force": false,
   "changelog": [
-    "手机模式顶部栏单行：左侧视频源下拉切换、右侧搜索入口、最右设置；切换源后首页分类与内容立即刷新。",
-    "手机底部导航改为 首页/历史/搜索/电视/直播：AI 推荐下线，“电视”为电视直播（自定义 M3U/TXT 源），“直播”为斗鱼/虎牙等平台直播。",
-    "手机搜索热搜改为流式标签，搜索结果改为大图卡片网格（横屏 3 列、竖屏 2 列）。",
-    "新增局域网无 token 远程管理与视频源分类屏蔽常驻 JSON；播放器线路按延迟排序，新增片头/片尾跳过。",
-    "修复手机模式设置页/搜索页闪退、详情页被当作首页渲染、底部导航位置与图标异常等问题。"
+    "手机模式默认竖屏：应用整体以竖屏为基准，点播仍按影片比例智能转屏，退出播放/直播页恢复竖屏；电视模式保持横屏。",
+    "移除内置电视直播源：直播完全依赖源管理中添加的自定义 M3U/TXT 源，未添加时给出明确提示。",
+    "清除内置源残留：管理页“内置电视直播源”区块、“恢复内置”按钮与远程管理“内置源组合使用”开关已删除。",
+    "文档与发布说明同步：删除内置源地址清单与服务器地址记录。"
   ]
 }
 ```
@@ -119,7 +118,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.16 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.17 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
