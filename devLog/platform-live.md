@@ -1,5 +1,21 @@
 ﻿# 平台直播（斗鱼）- 2026-08-01
 
+## 2026-11-01 10:10 - 修复 Release 包斗鱼解析失败（R8 混淆移除签名类）
+
+### Bug Record
+
+- 时间：2026-11-01
+- 症状：Release（混淆）包点击斗鱼房间后进入播放页，但直接显示错误 `DouyuResolverError: 执行斗鱼签名脚本失败：[Errno 2] No such file or directory: 'node'`，斗鱼无法播放；Debug 包正常。
+- 定位：`app/src/main/python/tvbox_live_bridge.py` 在导入时用 `jclass("com.tvbox.app.data.DouyinSigner")` 按字符串反射注入 WebView JS 引擎；`app/proguard-rules.pro` 没有保留该类，R8 在 `assembleRelease` 时把 `DouyinSigner` 改名，`jclass` 抛 `ClassNotFoundException` 被静默吞掉，`douyu_resolver.RUNNER` 保持 `None`，于是回退到 Node.js 进程（设备上没有 node）而失败。
+- 证据：修复前对 `app-release.apk` 的 `classes.dex` 检索不到 `DouyinSigner` 字符串；新增 keep 规则后同一检索命中。
+- 修复：`app/proguard-rules.pro` 增加 `-keep class com.tvbox.app.data.DouyinSigner { *; }`，同时保住类名与静态方法，供 Python 反射调用。抖音（a_bogus）走同一个类，一并修复。
+
+### 验证（设备 192.168.1.45:5555，Release 签名包）
+
+- `颜值（横屏）` 等分类房间列表加载正常；点击房间后 `ExoPlayerImpl Init` 出现，画面正常播放斗鱼直播（截图可见原画 60FPS 与弹幕列表），不再出现 Node.js 缺失错误。
+- 「常用分类 → 斗鱼·一起看」直达路径同样可浏览房间并成功取流播放。
+- 桌面端对照：`python douyu_resolver.py` 直连解析房间 `226037` 返回 `蓝光4M` 与 `hw-h5`、`hs-h5` 两条 CDN 候选，说明接口侧正常，问题只在内置反射链路。
+
 ## 2026-10-31 20:10 - 直播源可管控（内置电视源 + 平台站点）
 
 ### 需求
