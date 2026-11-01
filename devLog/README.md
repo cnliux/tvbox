@@ -7,6 +7,7 @@
   - 版本升级 `10316 / 1.3.16`：手机模式顶部栏源切换、电视/直播入口、搜索 chips 与卡片网格，远程管理与分类屏蔽、播放器线路/跳过同时纳入。
   - OTA 清单地址由 `ZxxXinI/tvbox` 改为 `cnliux/tvbox`，README 的 Release/OTA 链接同步更新。
   - 本地 `assembleRelease` 签名构建通过：`50887554` 字节，SHA-256 `cea2978c…`；推标签后由 GitHub Actions 发布。
+  - CI run `41295367055` 成功，发布 [TVBox v1.3.16](https://github.com/cnliux/tvbox/releases/tag/v1.3.16)，附件 `app-release.apk` `50886750` 字节、SHA-256 `ae9fa2a8…`。
   - `assembleDebug testDebugUnitTest` 通过；手机模式改动已在 192.168.1.45 验证。
 
 ### 2026-11-01 17:50 - 手机模式顶部栏、直播入口与搜索改版

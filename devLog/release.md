@@ -17,7 +17,9 @@
 - 本地签名 APK `app-release.apk`：`50887554` 字节；SHA-256 `cea2978c087f06bce6a81642832178b3212ed8a9577e9036ffd56bc1da00b8f2`；包内版本 `10316 / 1.3.16`。
 - v2 签名校验通过，证书 DN `CN=TVBox, OU=App, O=TVBox, L=Beijing, ST=Beijing, C=CN`（与 v1.3.14 起的正式签名一致）。
 - 手机模式改动已在 192.168.1.45 验证：顶部栏切换源、热搜 chips、搜索结果卡片、平台直播入口均正常，`logcat -s AndroidRuntime:E` 无崩溃。
-- CI 发布：推送 `v1.3.16` 标签触发 `.github/workflows/release.yml` 构建并创建 GitHub Release；发布完成后下载附件核对实际大小与 SHA-256，再提交 `update.json` 到 `main`。
+- CI 发布：推送 `v1.3.16` 标签触发 `.github/workflows/release.yml`（run `41295367055`），构建成功并创建 [TVBox v1.3.16](https://github.com/cnliux/tvbox/releases/tag/v1.3.16)。
+- Release 附件 `app-release.apk`：`50886750` 字节，SHA-256 `ae9fa2a8847762f24ccd050af50ee245245cbf81d70432886471a9eb5885bd95`，包内版本 `10316 / 1.3.16`；`update.json` 与 README 示例已按该附件实际值更新。
+- OTA 地址切换只对由本版本及之后版本内置的清单地址生效；此前版本仍读取上游 `ZxxXinI/tvbox` 清单，需要手动下载安装一次。
 
 ### 导航
 

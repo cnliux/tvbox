@@ -100,16 +100,18 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10313,
-  "versionName": "1.3.13",
-  "apkUrl": "https://gh-proxy.org/https://github.com/ZxxXinI/tvbox/releases/download/v1.3.13/TVBox-v1.3.13.apk",
-  "apkSha256": "2c69db103a867ed74d28481dcafd5f395f90d87b5cef6d0592ff12e167597edf",
-  "apkSize": 5034437,
+  "versionCode": 10316,
+  "versionName": "1.3.16",
+  "apkUrl": "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
+  "apkSha256": "ae9fa2a8847762f24ccd050af50ee245245cbf81d70432886471a9eb5885bd95",
+  "apkSize": 50886750,
   "force": false,
   "changelog": [
-    "修复重新进入搜索页后，遥控器无法退格删除旧关键词的问题。",
-    "搜索框重新进入时光标位于关键词末尾，正常编辑保留光标和输入法状态。",
-    "感谢 lliyuu520 提交 PR #5；保留搜索结果及返回定位逻辑。"
+    "手机模式顶部栏单行：左侧视频源下拉切换、右侧搜索入口、最右设置；切换源后首页分类与内容立即刷新。",
+    "手机底部导航改为 首页/历史/搜索/电视/直播：AI 推荐下线，“电视”为内置直播，“直播”为斗鱼/虎牙等平台直播。",
+    "手机搜索热搜改为流式标签，搜索结果改为大图卡片网格（横屏 3 列、竖屏 2 列）。",
+    "新增局域网无 token 远程管理与视频源分类屏蔽常驻 JSON；播放器线路按延迟排序，新增片头/片尾跳过。",
+    "修复手机模式设置页/搜索页闪退、详情页被当作首页渲染、底部导航位置与图标异常等问题。"
   ]
 }
 ```
@@ -117,7 +119,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.13 可通过旧版应用的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.16 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
