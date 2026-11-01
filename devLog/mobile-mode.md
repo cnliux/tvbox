@@ -1,10 +1,29 @@
 ﻿# 手机模式（DeviceMode.Mobile）
 
+## 2026-11-01 19:05 - 手机模式默认竖屏
+
+### 用户要求
+
+- 「手机版应该是竖屏」：手机模式应用整体以竖屏为默认方向，不再强制横屏。
+
+### 文件变更
+
+- `app/src/main/java/com/tvbox/app/MainActivity.kt`：`onCreate` 同步读取 `app_settings` 里的 `device_mode` 并调用 `applyBaseOrientation`（手机→`SCREEN_ORIENTATION_PORTRAIT`，电视→`LANDSCAPE`），避免冷启动闪错方向；新增 `STARTED` 生命周期收集器，设置页切换设备模式后立即生效。清单 `screenOrientation="landscape"` 保留，运行时 `requestedOrientation` 覆盖之。
+- `app/src/main/java/com/tvbox/app/ui/PlayerScreen.kt`：点播智能转屏的兜底方向与退出播放恢复方向由固定横屏改为按设备模式（手机竖屏/电视横屏）。
+- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`：手机模式描述改为「应用默认竖屏；点播按影片比例切换横竖屏，电视直播可手动横屏」。
+- `LiveScreen.kt` 不变：手机直播页仍为 `UNSPECIFIED`（跟随传感器），退出时恢复进入前的竖屏基准。
+
+### 验证（设备 192.168.1.45:5555，Debug 包）
+
+- 冷启动进入首页即为竖屏（`mRotation=ROTATION_0`、config `port`）：顶部源下拉+搜索单行、分类 chips、豆瓣热播 4 列海报、底部 首页/历史/搜索/电视/直播 导航均正常。
+- 点「电视」进入直播页保持竖屏；因服务器已不可达显示「所有直播源均加载失败」+重试（内置源已移除、无回退，行为正确）。
+- `logcat -s AndroidRuntime:E` 无崩溃；`:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
+
 ## 2026-11-01 17:50 - 顶部栏源切换、直播入口与搜索改版
 
 ### 用户要求与改动
 
-1. **手机版 AI 标签改为直播**：底部导航由 首页/历史/搜索/直播/AI 调整为 首页/历史/搜索/**电视**/**直播**；“电视”进入内置直播（`TvScreen.Live`，央视等），“直播”进入平台直播（`TvScreen.PlatformLive`，斗鱼/虎牙等），与 TV 端导航命名一致；AI 推荐不再出现在手机导航。
+1. **手机版 AI 标签改为直播**：底部导航由 首页/历史/搜索/直播/AI 调整为 首页/历史/搜索/**电视**/**直播**；“电视”进入电视直播（`TvScreen.Live`，用户导入的自定义 M3U/TXT 源），“直播”进入平台直播（`TvScreen.PlatformLive`，斗鱼/虎牙等），与 TV 端导航命名一致；AI 推荐不再出现在手机导航。
 2. **顶部栏单行合并**：视频源下拉放在左侧，搜索入口放在右侧，最右保留设置齿轮；切换源后首页分类与内容立即刷新，当前源名同步显示在顶部栏（`MobileNavigationBar.kt` 的 `MobileTopBar`）。
 3. **搜索页热搜改版**：不再把热搜词铺成整行下拉列表，改为“热门搜索”标题 + 流式标签 chips（`FlowRow`），点击标签直接搜索。
 4. **搜索结果卡片化**：`SearchResultCardMobile` 改为竖向大图卡片，`LazyVerticalGrid` 横屏 3 列、竖屏 2 列，铺满内容宽度；海报比例 0.72，左上角来源角标、右下角更新信息，标题与类型信息在海报下方。

@@ -473,7 +473,7 @@ fun PlayerScreen(
 
     LaunchedEffect(activity, isTelevision, videoDisplayMode) {
         val requested = if (isTelevision) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else videoDisplayMode.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else videoDisplayMode.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         if (activity != null && activity.requestedOrientation != requested) {
             if (isCurrentPlayback()) {
                 saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
@@ -481,8 +481,11 @@ fun PlayerScreen(
             activity.requestedOrientation = requested
         }
     }
-    DisposableEffect(activity) {
-        onDispose { activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+    DisposableEffect(activity, isTelevision) {
+        onDispose {
+            activity?.requestedOrientation = if (isTelevision) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
     }
 
     LaunchedEffect(state.playerSourceIndex, source.episodes) {

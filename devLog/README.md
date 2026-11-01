@@ -1,5 +1,22 @@
 ﻿# TVBox AI Dev Log
 
+### 2026-11-01 19:05 - 手机模式默认竖屏
+
+- Branch doc: `devLog/mobile-mode.md`
+- Summary:
+  - `MainActivity` 启动时同步读取设备模式并设置基准方向（手机→竖屏、电视→横屏），并收集 `deviceMode` 变化即时生效；清单仍声明 landscape，由运行时 `requestedOrientation` 覆盖。
+  - `PlayerScreen` 点播转屏兜底与退出恢复方向改为按设备模式；手机模式设置描述更新为"应用默认竖屏"。
+  - 192.168.1.45 真机验证：冷启动竖屏首页、电视直播页竖屏、无崩溃；`assembleDebug testDebugUnitTest` 通过。
+
+### 2026-11-01 18:30 - 移除内置电视直播源与内置源残留
+
+- Branch doc: `devLog/platform-live.md`
+- Summary:
+  - 按用户要求清除内置源的所有信息：删除 `BuiltInLiveSource`/`BuiltInLiveSources`，`LiveRepository.setSourceConfig` 只接收自定义源地址；`AppSettings` 删除 `includeBuiltInLiveSources`、`disabledBuiltInLiveSourceIds`、`disabledBuiltInLineIds` 及持久化 key。
+  - 管理页删除“内置电视直播源”区块与“恢复内置”按钮；远程管理页删除“内置源组合使用”开关与“删除/恢复内置”操作；验收 Activity 改为 `setSourceConfig` 注入。
+  - 文档：删除 `影视线路地址整理.md`、`devLog/video-source-addresses.md`、`devLog/live-source.md`、`docs/tvbox-live-source-nodejs-deployment.md`；README/CHANGELOG/update.json/devLog 中内置源、资源站名称与服务器地址信息同步清除。
+  - `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过；全局检索确认源码与文档不再包含内置源地址与机制描述。
+
 ### 2026-11-01 17:50 - 发布 v1.3.16：手机模式二期与 OTA 指向本项目
 
 - Branch doc: `devLog/release.md`、`devLog/mobile-mode.md`
@@ -14,7 +31,7 @@
 
 - Branch doc: `devLog/mobile-mode.md`
 - Summary:
-  - 手机底部导航调整为 首页/历史/搜索/电视/直播：AI 推荐下线，“电视”进入内置直播，“直播”进入斗鱼/虎牙等平台直播，与 TV 端命名一致。
+  - 手机底部导航调整为 首页/历史/搜索/电视/直播：AI 推荐下线，“电视”进入电视直播（自定义 M3U/TXT 源），“直播”进入斗鱼/虎牙等平台直播，与 TV 端命名一致。
   - 顶部栏合并为一行：左侧视频源下拉切换，右侧搜索入口，最右设置齿轮；切换源后首页分类与内容刷新。
   - 搜索页热搜改为“热门搜索”标题 + 流式标签 chips；搜索结果改为竖向大图卡片网格（横屏 3 列、竖屏 2 列）。
   - 192.168.1.45 验证顶部栏切换源、热搜 chips、搜索结果与平台直播页，无崩溃；`assembleDebug` 通过。
@@ -40,9 +57,9 @@
 
 ### 2026-11-01 09:30 - 发布 v1.3.14：移除内置点播接口并启用 GitHub Actions 自动发布
 
-- Branch docs: `devLog/release.md`、`devLog/live-source.md`、`devLog/platform-live.md`
+- Branch docs: `devLog/release.md`、`devLog/platform-live.md`
 - Summary:
-  - 删除全部内置点播接口，项目不再内置点播数据；电视直播内置源保留默认值且可在源管理中删除/恢复/组合，平台直播站点同样可管控。
+  - 删除全部内置点播接口，项目不再内置点播数据；平台直播站点可在源管理中删除/恢复。
   - 新增 `.github/workflows/release.yml`：推送 `v*` 标签自动构建签名 APK 并创建 GitHub Release；新生成 release keystore 与 secrets 配置完成，keystore 保存于仓库外。
   - 版本升级 `10314 / 1.3.14`；本地签名构建 + 模拟器实机启动验证通过，CI run 成功后发布 [TVBox v1.3.14](https://github.com/cnliux/tvbox/releases/tag/v1.3.14)。
   - 新签名证书与旧版不同，旧版无法覆盖安装或 OTA 升级到本版本，需卸载后全新安装；`update.json` 未指向 v1.3.14。
@@ -235,13 +252,13 @@
   - 保留手机端双击、滑动、亮度、音量和长按 2 倍速手势；操作结果继续通过临时提示层显示。
   - 原 `v1.3.8` 本地候选版本号按要求回退为 `v1.3.7 / 10307`；正式 Release 重新构建并完成签名校验，未执行功能测试。
 
-### 2026-09-15 21:38 - 发布 v1.3.7：遥控器焦点与影视线路扩充
+### 2026-09-15 21:38 - 发布 v1.3.7：遥控器焦点优化
 
-- Branch docs: `devLog/home-player-ui.md`、`devLog/video-source-addresses.md`、`devLog/release.md`
+- Branch docs: `devLog/home-player-ui.md`、`devLog/release.md`
 - Summary:
   - Media3 播放按钮、进度条和搜索页操作按钮增加高对比聚焦颜色、白色描边、放大与阴影反馈。
   - 进度条遥控器步长固定为 10 秒，支持长按左右键连续快退/快进。
-  - 补齐整理文档中的 32 个视频来源，重复接口合并为备用网址，并增加 YanG M3U 直播备用源与解析。
+  - 重复接口合并为备用网址，并增加 M3U 频道解析。
   - v1.3.7 正式签名 APK 已构建并覆盖安装到 `emulator-5554`；按用户要求未执行功能测试。
 
 ### 2026-08-25 07:46 - 发布 v1.3.6：多来源搜索与渐进补线
@@ -261,14 +278,6 @@
   - 详情页先展示主来源，再在后台补齐替代播放线路；慢源和失败源不会阻塞首屏。
   - 新增内存缓存、来源失败冷却和健康排序；协程取消不再被误判为线路失败。
   - 新增仓库测试覆盖缓存、并发上限、去重和渐进补线；Debug APK 构建成功，完整既有测试保留两项无关失败。
-
-### 2026-08-19 08:00 - 影视线路接口与加载优化整理
-
-- Branch doc: `devLog/video-source-addresses.md`
-- Summary:
-  - 将 `ZIP0-十条影视线路地址.md` 更名为 `影视线路地址整理.md`，保留 ZIP0 十条线路和连通性实测记录。
-  - 从 MoonTV 视频源页面整理 32 个影视采集源、1 个直播源及 `cache_time: 7200`，标注页面原文与此前实测地址的差异。
-  - 归档小体积首屏骨架、多线路并发、渐进渲染、后端短缓存、请求合并、CDN、海报懒加载、元数据延迟加载、去重和健康监控等优化方法。
 
 ### 2026-08-16 21:02 - 发布 v1.3.5：原生播放器与智能比例适配
 
@@ -340,7 +349,7 @@
 
 - Branch doc: `devLog/release.md`
 - Summary:
-  - 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 重新构建 Release APK。
+  - 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL` 构建参数（平台直播解析服务地址）重新构建 Release APK。
   - OTA `apkUrl` 增加 `https://gh-proxy.org/` 前缀并更新 APK SHA-256。
   - 覆盖 GitHub v1.3.1 Release 的 APK 和 `update.json` 资产。
 
@@ -422,7 +431,7 @@
 
 ### 2026-08-02 11:09 - 直播线路卡顿自动换线
 
-- Branch doc: `devLog/live-source.md`
+- Branch doc: `devLog/platform-live.md`
 - Summary:
   - 直播页复用缓冲监控，连续缓冲超过 6 秒、60 秒内累计缓冲超过 12 秒或发生 3 次短缓冲时自动切换线路。
   - 新增播放位置看门狗，播放状态正常但位置连续 4 秒不前进时自动切换线路。
@@ -477,7 +486,7 @@
 
 ### 2026-08-02 07:35 - 直播源分组、频道合并与线路切换
 
-- Branch doc: `devLog/live-source.md`
+- Branch doc: `devLog/platform-live.md`
 - Summary:
   - 旧的无分组直播格式直接忽略，仅解析 `分组名称,#genre#` 之后的频道行。
   - 支持带或不带 `$LR•IPV4•29『线路…』` 元数据的 URL，并在播放前移除元数据。
@@ -493,14 +502,6 @@
   - 平台直播的分类与房间网格固定为每行 5 张卡片；卡片按可用宽度保持 16:9 封面比例。
   - 房间列表向下滚动后自动隐藏标题和副标题，释放空间给直播卡片；返回顶部时自动恢复。
   - Python 单测、Android Debug 单测与构建通过；ADB 实机验证了分类过滤、五列网格、标题收起和房间播放。
-
-### 2026-08-01 21:10 - 直播源切换为 yanghanhanyingshi result.txt
-
-- Branch doc: `devLog/live-source.md`
-- Summary:
-  - 默认直播源切换为 `https://wget.la/https://raw.githubusercontent.com/yanghanhanyingshi/iptv/main/result.txt`。
-  - 直播解析器兼容 `频道,URL$LR…` 格式，忽略 `#genre#` 分组行和线路元数据。
-  - 新增三条线路示例的回归测试，确认播放请求只使用纯 URL。
 
 ### 2026-08-01 19:29 - 平台直播：斗鱼多 CDN 自动恢复测试
 
@@ -595,7 +596,7 @@
 
 - Branch doc: `devLog/settings.md`
 - Summary:
-  - 设置页“视频接口”保留内置线路不变，并支持扫码添加 MacCms 自定义接口。
+  - 设置页“视频接口”支持扫码添加 MacCms 自定义接口。
   - 手机页面填写接口名称和 MacCms 地址后，电视端自动保存并追加到线路列表。
   - 新增接口会作为当前首页资源使用，首页、搜索、详情和 AI 找片都会走同一套线路选择。
 
@@ -653,7 +654,7 @@
 
 - Branch docs: `devLog/settings.md`, `devLog/ai-recommend-focus.md`
 - Summary:
-  - 设置页新增“首页资源 / 首页渲染数据”下拉选择，可在量子、如意、360 等资源站之间切换首页默认数据。
+  - 设置页新增“首页资源 / 首页渲染数据”下拉选择，可在已启用的视频源之间切换首页默认数据。
   - 首页数据源选择会保存到本地设置，重启后继续使用上次选择。
   - AI 找片页顶部按钮和快捷推荐词按钮改为电视焦点样式：未选中为空底描边，选中时绿色填充并显示白色高亮边框。
 
@@ -794,7 +795,6 @@
 - Release: `devLog/release.md`
 - Home / Player UI: `devLog/home-player-ui.md`
 - Platform Live: `devLog/platform-live.md`
-- Video Source Addresses: `devLog/video-source-addresses.md`
 - Multi-source Loading: `devLog/multi-source-loading.md`
 
 ### 2026-08-03 06:44 - 首页方案归档、图标导航与主题切换

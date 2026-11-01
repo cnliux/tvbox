@@ -6,13 +6,8 @@ data class AppSettings(
     val homeApiLineId: String = "",
     val customVideoApiLines: List<CustomVideoApiLine> = emptyList(),
     val sourceOrder: List<String> = emptyList(),
-    val disabledBuiltInLineIds: List<String> = emptyList(),
     val blockedSourceIds: List<String> = emptyList(),
     val liveSourceUrls: List<String> = emptyList(),
-    /** 是否把内置电视直播源与自定义源组合使用；关闭后只使用自定义源。 */
-    val includeBuiltInLiveSources: Boolean = true,
-    /** 已删除的内置电视直播源 ID，可在源管理页恢复。 */
-    val disabledBuiltInLiveSourceIds: List<String> = emptyList(),
     /** 已删除（屏蔽）的平台直播站点 ID，例如斗鱼、虎牙。 */
     val blockedPlatformSiteIds: List<String> = emptyList(),
     /** 已屏蔽的视频源分类（MacCms 分类名），例如“伦理片”。 */
@@ -35,7 +30,7 @@ data class AppSettings(
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {
     Television("tv", "电视模式", "电视和盒子保持横屏，竖屏短剧在横屏窗口中显示。"),
-    Mobile("mobile", "手机模式", "点播按影片比例切换横竖屏，电视直播使用手机布局。"),
+    Mobile("mobile", "手机模式", "应用默认竖屏；点播按影片比例切换横竖屏，电视直播可手动横屏。"),
     ;
 
     companion object {

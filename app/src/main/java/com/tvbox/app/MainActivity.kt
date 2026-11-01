@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.ClipData
 import android.util.Log
+import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -41,6 +42,7 @@ import com.tvbox.app.data.SharedHistoryRepository
 import com.tvbox.app.data.SharedPlaybackHealthRepository
 import com.tvbox.app.data.SharedPlatformLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
+import com.tvbox.app.domain.DeviceMode
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
@@ -86,6 +88,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // 手机模式默认竖屏、电视模式横屏：先同步读取已保存的设备模式，避免冷启动闪一下错误方向。
+        applyBaseOrientation(readSavedDeviceMode())
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.state.map { it.appSettings.deviceMode }.distinctUntilChanged()
+                    .collect(::applyBaseOrientation)
+            }
+        }
         pendingExportApkPath = savedInstanceState?.getString("pendingExportApk")
         pendingInstallPermissionAction = savedInstanceState?.getString("pendingUpdateApk")
             ?.let { InstallPermissionAction.InstallDownloadedApk(it) }
@@ -120,6 +130,19 @@ class MainActivity : ComponentActivity() {
                     onSaveUpdateApk = ::saveUpdateApk,
                 )
             }
+        }
+    }
+
+    private fun readSavedDeviceMode(): DeviceMode =
+        DeviceMode.fromStorageKey(
+            getSharedPreferences("app_settings", MODE_PRIVATE).getString("device_mode", null),
+        )
+
+    private fun applyBaseOrientation(mode: DeviceMode) {
+        requestedOrientation = if (mode == DeviceMode.Mobile) {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
     }
 
