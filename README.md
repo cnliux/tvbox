@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.13`（`versionCode=10313`）。本版本合并 [PR #5](https://github.com/ZxxXinI/tvbox/pull/5)，修复重新进入搜索页后遥控器无法退格删除旧关键词的问题；感谢 [@lliyuu520](https://github.com/lliyuu520) 提交修复。保留此前设备模式与 OTA 安装包保存能力；服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.16`（`versionCode=10316`）。本版本完善手机模式（顶部栏源切换、电视/平台直播入口、搜索热搜与卡片网格）、新增局域网远程管理与分类屏蔽，并把 OTA 更新清单指向本项目仓库。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -73,8 +73,8 @@ TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Ko
 
 从 Release 下载最新 APK：
 
-- [Latest Release](https://github.com/ZxxXinI/tvbox/releases/latest)
-- OTA 更新清单：`https://raw.githubusercontent.com/ZxxXinI/tvbox/main/update.json`
+- [Latest Release](https://github.com/cnliux/tvbox/releases/latest)
+- OTA 更新清单：`https://raw.githubusercontent.com/cnliux/tvbox/main/update.json`
 
 通过 ADB 安装：
 
@@ -85,7 +85,7 @@ adb install -r app\build\outputs\apk\release\app-release.apk
 如果是从 Release 下载的 APK：
 
 ```powershell
-adb install -r TVBox-v1.3.13.apk
+adb install -r app-release.apk
 ```
 
 ## OTA 更新机制
@@ -93,7 +93,7 @@ adb install -r TVBox-v1.3.13.apk
 应用启动后会请求：
 
 ```text
-https://raw.githubusercontent.com/ZxxXinI/tvbox/main/update.json
+https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 ```
 
 `update.json` 示例：
@@ -232,13 +232,13 @@ git push origin v1.3.13
 3. 创建草稿 Release 并上传 APK 与相同版本的 OTA 清单，检查附件完整性。
 
 ```powershell
-gh release create v1.3.13 app\build\outputs\apk\release\TVBox-v1.3.13.apk app\build\outputs\apk\release\update.json --repo ZxxXinI/tvbox --verify-tag --draft --title "TVBox v1.3.13" --notes-file app\build\outputs\apk\release\release-notes.md
+gh release create v1.3.13 app\build\outputs\apk\release\TVBox-v1.3.13.apk app\build\outputs\apk\release\update.json --repo cnliux/tvbox --verify-tag --draft --title "TVBox v1.3.13" --notes-file app\build\outputs\apk\release\release-notes.md
 ```
 
 4. 公开 Release 后推送主分支，使 OTA 清单指向已经可下载的附件。
 
 ```powershell
-gh release edit v1.3.13 --repo ZxxXinI/tvbox --draft=false --latest
+gh release edit v1.3.13 --repo cnliux/tvbox --draft=false --latest
 git push origin main
 ```
 

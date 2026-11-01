@@ -1,5 +1,28 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-01 17:50 - 发布 v1.3.16：手机模式二期与 OTA 指向本项目
+
+### 文件修改、原因与目的
+
+- `app/src/main/java/com/tvbox/app/ui/MobileNavigationBar.kt`、`TvBoxApp.kt`、`SearchScreen.kt`：手机模式顶部栏单行（左源切换 / 右搜索 / 设置）、底部导航改为 首页/历史/搜索/电视/直播、搜索热搜 chips 与结果大图卡片网格；详见 `devLog/mobile-mode.md`。
+- `app/src/main/java/com/tvbox/app/data/RemoteManageServer.kt`、`BlockedCategoriesStore.kt`、`AppSettingsRepository.kt`、`domain/AppSettings.kt`、`ui/TvBoxViewModel.kt` 等：无 token 远程管理页与视频源分类屏蔽常驻 JSON；播放器线路按延迟排序与片头/片尾跳过；详见 `devLog/remote-manage.md`、`devLog/playback-experience.md`。
+- `app/src/main/java/com/tvbox/app/data/AppUpdateRepository.kt`：OTA 清单地址由 `ZxxXinI/tvbox` 改为本项目 `cnliux/tvbox`。
+- `app/build.gradle.kts`：版本升级至 `10316 / 1.3.16`。
+- `CHANGELOG.md`、`README.md`：同步 v1.3.16 说明，OTA 地址与 Release 链接改为 `cnliux/tvbox`，并把此前“未发布”条目归入 v1.3.15。
+- `update.json`：v1.3.16 的清单在 CI 产物生成后按实际附件大小与 SHA-256 更新。
+
+### 构建与发布校验
+
+- `:app:assembleDebug`、`:app:testDebugUnitTest`、`:app:assembleRelease` 均通过（R8 混淆 + 资源压缩 + Chaquopy）。
+- 本地签名 APK `app-release.apk`：`50887554` 字节；SHA-256 `cea2978c087f06bce6a81642832178b3212ed8a9577e9036ffd56bc1da00b8f2`；包内版本 `10316 / 1.3.16`。
+- v2 签名校验通过，证书 DN `CN=TVBox, OU=App, O=TVBox, L=Beijing, ST=Beijing, C=CN`（与 v1.3.14 起的正式签名一致）。
+- 手机模式改动已在 192.168.1.45 验证：顶部栏切换源、热搜 chips、搜索结果卡片、平台直播入口均正常，`logcat -s AndroidRuntime:E` 无崩溃。
+- CI 发布：推送 `v1.3.16` 标签触发 `.github/workflows/release.yml` 构建并创建 GitHub Release；发布完成后下载附件核对实际大小与 SHA-256，再提交 `update.json` 到 `main`。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/remote-manage.md`、`devLog/playback-experience.md`。
+
 ## 2026-11-01 09:30 - 发布 v1.3.14：移除内置点播接口并启用 GitHub Actions 自动发布
 
 ### 文件修改、原因与目的
