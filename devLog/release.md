@@ -15,7 +15,8 @@
 
 - 本地 `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
 - 192.168.1.45 真机验证：热播点击进《小城良方》详情页；电视直播/平台直播"全屏⇄还原"切换生效；平台直播错误显示"网络超时，请稍后重试"。
-- CI 发布与附件 SHA-256 核对结果见后续提交。
+- CI 发布：推送 `v1.3.18` 标签触发 `.github/workflows/release.yml`（run `41327454568`）成功，发布 [TVBox v1.3.18](https://github.com/cnliux/tvbox/releases/tag/v1.3.18)。
+- Release 附件 `app-release.apk`：`50886774` 字节，下载后本地计算 SHA-256 `5b59f4eac0fde59b7cebb08898e3cca0fc42f82adb2ef7de6ce04e31d37460b0`，与大小一致；`update.json` 与 README 示例按该附件实际值更新。
 
 ### 导航
 

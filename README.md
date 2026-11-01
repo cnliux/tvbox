@@ -103,8 +103,8 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
   "versionCode": 10318,
   "versionName": "1.3.18",
   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.18/app-release.apk",
-  "apkSha256": "（CI 产物生成后按实际附件更新）",
-  "apkSize": 0,
+  "apkSha256": "5b59f4eac0fde59b7cebb08898e3cca0fc42f82adb2ef7de6ce04e31d37460b0",
+  "apkSize": 50886774,
   "force": false,
   "changelog": [
     "热播详情对齐 TV 版：点击热播直接进详情页，当前源不支持搜索时自动回退其他源查找。",
