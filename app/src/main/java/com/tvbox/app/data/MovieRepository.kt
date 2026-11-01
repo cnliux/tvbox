@@ -59,7 +59,6 @@ interface MovieRepository {
 }
 
 class DefaultMovieRepository(
-    private val builtInApiLines: List<ApiLine> = emptyList(),
     private val apiFactory: (String) -> MacCmsApi = MacCmsNetwork::api,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : MovieRepository {
@@ -71,7 +70,7 @@ class DefaultMovieRepository(
     private val sourceHealth = SourceHealthTracker(nowMs)
 
     override val allApiLines: List<ApiLine>
-        get() = builtInApiLines + customApiLines
+        get() = customApiLines
     override val apiLines: List<ApiLine>
         get() = allApiLines.filter { it.id !in disabledLineIds }
 

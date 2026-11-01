@@ -38,11 +38,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
                 ?: AppSettings().homeApiLineId,
             customVideoApiLines = readCustomVideoApiLines(),
             sourceOrder = readStringList(KEY_SOURCE_ORDER),
-            disabledBuiltInLineIds = readStringList(KEY_DISABLED_BUILT_IN_LINE_IDS),
             blockedSourceIds = readStringList(KEY_BLOCKED_SOURCE_IDS),
             liveSourceUrls = readStringList(KEY_LIVE_SOURCE_URLS),
-            includeBuiltInLiveSources = prefs.getBoolean(KEY_INCLUDE_BUILT_IN_LIVE_SOURCES, true),
-            disabledBuiltInLiveSourceIds = readStringList(KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS),
             blockedPlatformSiteIds = readStringList(KEY_BLOCKED_PLATFORM_SITE_IDS),
             blockedVideoCategories = blockedFromFile ?: readStringList(KEY_BLOCKED_VIDEO_CATEGORIES),
             introSkipSeconds = prefs.getInt(KEY_INTRO_SKIP_SECONDS, 0),
@@ -74,14 +71,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putString(KEY_HOME_API_LINE_ID, settings.homeApiLineId)
             .putString(KEY_CUSTOM_VIDEO_API_LINES, json.encodeToString(settings.customVideoApiLines))
             .putString(KEY_SOURCE_ORDER, json.encodeToString(settings.sourceOrder))
-            .putString(KEY_DISABLED_BUILT_IN_LINE_IDS, json.encodeToString(settings.disabledBuiltInLineIds))
             .putString(KEY_BLOCKED_SOURCE_IDS, json.encodeToString(settings.blockedSourceIds))
             .putString(KEY_LIVE_SOURCE_URLS, json.encodeToString(settings.liveSourceUrls))
-            .putBoolean(KEY_INCLUDE_BUILT_IN_LIVE_SOURCES, settings.includeBuiltInLiveSources)
-            .putString(
-                KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS,
-                json.encodeToString(settings.disabledBuiltInLiveSourceIds),
-            )
             .putString(KEY_BLOCKED_PLATFORM_SITE_IDS, json.encodeToString(settings.blockedPlatformSiteIds))
             .putString(KEY_BLOCKED_VIDEO_CATEGORIES, json.encodeToString(settings.blockedVideoCategories))
             .putInt(KEY_INTRO_SKIP_SECONDS, settings.introSkipSeconds)
@@ -140,11 +131,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_HOME_API_LINE_ID = "home_api_line_id"
         const val KEY_CUSTOM_VIDEO_API_LINES = "custom_video_api_lines"
         const val KEY_SOURCE_ORDER = "source_order"
-        const val KEY_DISABLED_BUILT_IN_LINE_IDS = "disabled_built_in_line_ids"
         const val KEY_BLOCKED_SOURCE_IDS = "blocked_source_ids"
         const val KEY_LIVE_SOURCE_URLS = "live_source_urls"
-        const val KEY_INCLUDE_BUILT_IN_LIVE_SOURCES = "include_built_in_live_sources"
-        const val KEY_DISABLED_BUILT_IN_LIVE_SOURCE_IDS = "disabled_built_in_live_source_ids"
         const val KEY_BLOCKED_PLATFORM_SITE_IDS = "blocked_platform_site_ids"
         const val KEY_BLOCKED_VIDEO_CATEGORIES = "blocked_video_categories"
         const val KEY_INTRO_SKIP_SECONDS = "intro_skip_seconds"

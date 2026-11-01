@@ -1,5 +1,25 @@
 ﻿# 平台直播（斗鱼）- 2026-08-01
 
+## 2026-11-01 18:30 - 移除内置电视直播源与内置源残留
+
+### 变更目标
+
+- 按用户要求清除内置源的所有信息：项目不再内置任何电视直播源与点播接口，直播与视频数据完全由用户导入。
+
+### 文件变更
+
+- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`：删除 `BuiltInLiveSource`/`BuiltInLiveSources`；`LiveRepository.setSourceConfig(customUrls)` 只接收自定义源地址；无源时提示“未添加任何直播源，请在源管理中添加自定义源”。
+- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`：删除 `includeBuiltInLiveSources`、`disabledBuiltInLiveSourceIds`、`disabledBuiltInLineIds`；`AppSettingsRepository.kt` 同步删除三个持久化 key。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`、`TvBoxApp.kt`：删除内置直播源开关/删除/恢复方法与管理页“内置电视直播源”区块、“恢复内置”按钮；平台直播站点删除/恢复功能保留。
+- `app/src/main/java/com/tvbox/app/data/RemoteManageServer.kt`：远程管理页删除“内置源与自定义源组合使用”开关与视频源“删除/恢复内置”操作；自定义直播源与屏蔽功能不变。
+- `app/src/debug/java/com/tvbox/app/AcceptanceActivity.kt`：验收直播源改为 `setSourceConfig` 注入。
+- 文档：删除 `影视线路地址整理.md`、`devLog/video-source-addresses.md`、`devLog/live-source.md`、`docs/tvbox-live-source-nodejs-deployment.md`；README/CHANGELOG/update.json/devLog 中内置源与服务器地址信息同步清除。
+
+### 验证
+
+- `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
+- 全局检索确认源码与文档不再包含内置源地址与内置源机制描述。
+
 ## 2026-11-01 10:10 - 修复 Release 包斗鱼解析失败（R8 混淆移除签名类）
 
 ### Bug Record
@@ -16,27 +36,24 @@
 - 「常用分类 → 斗鱼·一起看」直达路径同样可浏览房间并成功取流播放。
 - 桌面端对照：`python douyu_resolver.py` 直连解析房间 `226037` 返回 `蓝光4M` 与 `hw-h5`、`hs-h5` 两条 CDN 候选，说明接口侧正常，问题只在内置反射链路。
 
-## 2026-10-31 20:10 - 直播源可管控（内置电视源 + 平台站点）
+## 2026-10-31 20:10 - 直播源可管控（平台站点）
 
 ### 需求
 
-- 内置电视直播源（result.txt）与平台直播站点（斗鱼/虎牙等）都要能在管理页管控：是否与自定义源组合、逐条删除、随时恢复。
+- 平台直播站点（斗鱼/虎牙等）要能在管理页管控：逐条删除、随时恢复。
 
 ### 文件变更
 
-- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`：新增 `BuiltInLiveSource(id/name/url)` 与内置清单 `BuiltInLiveSources`；`LiveRepository` 接口改为 `setSourceConfig(builtIn, customUrls, includeBuiltIn)`；`getChannels()` 按"内置（可开关）+ 自定义"组合拉取，全部为空时给出明确错误。
-- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`：新增 `includeBuiltInLiveSources`、`disabledBuiltInLiveSourceIds`、`blockedPlatformSiteIds`。
-- `app/src/main/java/com/tvbox/app/data/AppSettingsRepository.kt`：新增三个持久化 key。
-- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`：新增 `applyLiveSourceConfig()`、`updateIncludeBuiltInLiveSources()`、`deleteBuiltInLiveSource()`、`restoreBuiltInLiveSource()`、`restoreBuiltInLiveSources()`、`togglePlatformLiveSiteBlocked()`；站点加载时按 `blockedPlatformSiteIds` 过滤；`platformLiveAllSites` 保存全量站点供恢复；`openLiveSourceManager()` 预拉取站点列表。
-- `app/src/main/java/com/tvbox/app/ui/TvBoxApp.kt`：直播源管理页新增"内置电视直播源"（组合开关 + 逐条删除/恢复 + 恢复全部）与"平台直播站点"（逐条删除/恢复）两个区块。
-- `app/src/debug/java/com/tvbox/app/AcceptanceActivity.kt`：适配新的 `setSourceConfig` 构造参数。
+- `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`：新增 `blockedPlatformSiteIds`。
+- `app/src/main/java/com/tvbox/app/data/AppSettingsRepository.kt`：新增持久化 key。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt`：新增 `togglePlatformLiveSiteBlocked()`；站点加载时按 `blockedPlatformSiteIds` 过滤；`platformLiveAllSites` 保存全量站点供恢复；`openLiveSourceManager()` 预拉取站点列表。
+- `app/src/main/java/com/tvbox/app/ui/TvBoxApp.kt`：直播源管理页新增“平台直播站点”（逐条删除/恢复）区块。
 
 ### 验证（设备 192.168.1.45:5555）
 
-- 直播源管理页正确显示：组合开关（已开启：内置源 + 0 个自定义源）、内置直播源条目及删除按钮、平台站点列表（斗鱼/虎牙/哔哩哔哩/抖音/快手）。
-- 删除内置直播源 → 显示"（已删除）"与"恢复"；顶部出现"恢复全部内置直播源"；恢复后回到正常状态。
-- 删除斗鱼 → 直播首页斗鱼卡片消失（保留虎牙/哔哩哔哩/抖音/快手）；本页显示"斗鱼（已删除）"；恢复后斗鱼卡片重新出现。
-- 组合开关、持久化（SharedPreferences）在重启后保持（同一会话内多次页面往返一致）。
+- 直播源管理页正确显示平台站点列表（斗鱼/虎牙/哔哩哔哩/抖音/快手）。
+- 删除斗鱼 → 直播首页斗鱼卡片消失（保留虎牙/哔哩哔哩/抖音/快手）；本页显示“斗鱼（已删除）”；恢复后斗鱼卡片重新出现。
+- 持久化（SharedPreferences）在重启后保持（同一会话内多次页面往返一致）。
 - `:app:assembleDebug` 与 `:app:assembleRelease` 均构建成功；release 产物为 `app-release-unsigned.apk`（本机未配置 `TVBOX_RELEASE_*` 签名，需签名后才能分发）。
 
 ## 2026-10-31 19:05 - 直播首页常用分类直达（虎牙/斗鱼"一起看"）
@@ -77,13 +94,13 @@
 
 ### 远程服务地址记录（回滚用）
 
-- 生产远程解析服务：`http://20.205.10.127:8868`（历史构建参数 `TVBOX_PLATFORM_LIVE_SERVICE_URL`，未写入源码）。
+- 生产远程解析服务：历史构建参数 `TVBOX_PLATFORM_LIVE_SERVICE_URL` 指向的服务地址（未写入源码，已按要求移除记录）。
 - 本机联调服务：`http://192.168.1.2:8868`（`platform_live_server`，会话结束时已停止；需要时在 `platform_live_server` 目录执行 `python server.py` 重启）。
 - 方案3 临时代理验证（已结束）：PC 代理 `192.168.1.2:8878` 转发到 8868，手机 `settings global http_proxy` 已恢复 `:0`。
 
 ### 回滚方法
 
-1. 恢复远程模式构建：无需改代码——`RemotePlatformLiveRepository` 实现仍保留在 `PlatformLiveRepository.kt`；把 `TvBoxViewModel.kt`/`MainActivity.kt`/`AcceptanceActivity.kt` 中的 `EmbeddedPlatformLiveRepository()` 换回 `RemotePlatformLiveRepository(BuildConfig.PLATFORM_LIVE_SERVICE_URL)` 并恢复 4 处 URL 门槛检查，再以 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 构建即回到旧行为。
+1. 恢复远程模式构建：无需改代码——`RemotePlatformLiveRepository` 实现仍保留在 `PlatformLiveRepository.kt`；把 `TvBoxViewModel.kt`/`MainActivity.kt`/`AcceptanceActivity.kt` 中的 `EmbeddedPlatformLiveRepository()` 换回 `RemotePlatformLiveRepository(BuildConfig.PLATFORM_LIVE_SERVICE_URL)` 并恢复 4 处 URL 门槛检查，再以 `TVBOX_PLATFORM_LIVE_SERVICE_URL=<你的服务地址>` 构建即回到旧行为。
 2. 代码整体回滚：`git revert` 本次提交（涉及上述 Kotlin 文件 + `app/src/main/python/` + `DouyinSigner.kt` 新增文件）。
 3. 服务端独立可用：`platform_live_server` 未删改接口，`python server.py` 启动即可继续为旧 APK 提供解析（斗鱼签名需 Node.js）。
 
@@ -134,7 +151,7 @@
 
 ### 验证
 
-- 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 进行 Debug 构建。
+- 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=<你的服务地址>` 进行 Debug 构建。
 - 未将服务地址写入源码、Cookie 或服务器配置文件。
 
 ## 2026-08-02 13:31 - 无 Python 主机的部署路径说明

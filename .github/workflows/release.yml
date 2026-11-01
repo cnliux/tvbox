@@ -60,8 +60,7 @@ jobs:
           body: |
             TVBox Android TV 客户端 ${{ github.ref_name }} 版本。
 
-            - 不内置任何点播视频接口，视频源需自行导入
-            - 内置电视直播源保留默认值，可在直播源管理中删除/恢复/组合
+            - 不内置任何点播视频接口与电视直播源，视频源与直播源均需自行导入
             - 平台直播站点（斗鱼/虎牙等）可管控
             - APK 已使用 release keystore 签名
           generate_release_notes: true

@@ -3,7 +3,6 @@ package com.tvbox.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
-import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.AiRequestConfig
 import com.tvbox.app.data.AiRecommendationRepository
@@ -28,7 +27,6 @@ import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
-import com.tvbox.app.data.RemoteManageLiveSource
 import com.tvbox.app.data.RemoteManageRequest
 import com.tvbox.app.data.RemoteManageServer
 import com.tvbox.app.data.RemoteManageSite
@@ -300,9 +298,7 @@ class TvBoxViewModel(
             val settings = runCatching { appSettingsRepository.getSettings() }
                 .getOrDefault(AppSettings())
             repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
-            repository.setDisabledLineIds(
-                (settings.disabledBuiltInLineIds + settings.blockedSourceIds).toSet(),
-            )
+            repository.setDisabledLineIds(settings.blockedSourceIds.toSet())
             applyLiveSourceConfig(settings)
             val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
             val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
@@ -823,14 +819,6 @@ class TvBoxViewModel(
     private fun buildRemoteManageSnapshot(): RemoteManageSnapshot {
         val current = _state.value
         val settings = current.appSettings
-        val builtIn = BuiltInLiveSources.all.map { source ->
-            RemoteManageLiveSource(
-                id = source.id,
-                name = source.name,
-                url = source.url,
-                enabled = source.id !in settings.disabledBuiltInLiveSourceIds,
-            )
-        }
         val sites = allPlatformLiveSites.ifEmpty { current.platformLiveAllSites }.map { site ->
             RemoteManageSite(
                 id = site.id,
@@ -838,14 +826,11 @@ class TvBoxViewModel(
                 blocked = site.id in settings.blockedPlatformSiteIds,
             )
         }
-        val customLineIds = settings.customVideoApiLines.map { it.id }.toSet()
         val videoSources = current.allSourceLines.map { line ->
             RemoteManageVideoSource(
                 id = line.id,
                 name = line.name,
                 url = line.baseUrls.firstOrNull().orEmpty(),
-                builtIn = line.id !in customLineIds,
-                enabled = line.id !in settings.disabledBuiltInLineIds,
                 blocked = line.id in settings.blockedSourceIds,
                 isHome = line.id == current.selectedApiLineId,
                 latencyMs = current.sourceLatencies[line.id],
@@ -854,8 +839,6 @@ class TvBoxViewModel(
         return RemoteManageSnapshot(
             videoSources = videoSources,
             customLiveUrls = settings.liveSourceUrls,
-            builtInLiveSources = builtIn,
-            includeBuiltInLiveSources = settings.includeBuiltInLiveSources,
             sites = sites,
             blockedVideoCategories = settings.blockedVideoCategories,
             knownVideoCategories = if (remoteCategorySourceId.isNotBlank()) {
@@ -902,10 +885,6 @@ class TvBoxViewModel(
             "source-delete" -> {
                 deleteApiLine(request.id.trim())
                 "已删除该视频源。"
-            }
-            "source-restore" -> {
-                restoreBuiltInLine(request.id.trim())
-                "已恢复该视频源。"
             }
             "source-test" -> {
                 testAllSourcesAndSort()
@@ -974,19 +953,6 @@ class TvBoxViewModel(
                 val url = request.url.trim()
                 updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url)
                 "已删除直播源：$url"
-            }
-            "builtin-delete" -> {
-                deleteBuiltInLiveSource(request.id)
-                "已删除内置直播源。"
-            }
-            "builtin-restore" -> {
-                restoreBuiltInLiveSource(request.id)
-                "已恢复内置直播源。"
-            }
-            "include-builtin" -> {
-                val enabled = request.value == "true"
-                updateIncludeBuiltInLiveSources(enabled)
-                if (enabled) "已开启内置源与自定义源组合使用。" else "已关闭内置源组合，仅使用自定义源。"
             }
             "site-toggle" -> {
                 togglePlatformLiveSiteBlocked(request.id)
@@ -2257,9 +2223,7 @@ class TvBoxViewModel(
 
     private fun applySourceSettings(settings: AppSettings) {
         repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
-        repository.setDisabledLineIds(
-            (settings.disabledBuiltInLineIds + settings.blockedSourceIds).toSet(),
-        )
+        repository.setDisabledLineIds(settings.blockedSourceIds.toSet())
     }
 
     private fun availableApiLinesFor(settings: AppSettings): List<ApiLine> =
@@ -2286,18 +2250,9 @@ class TvBoxViewModel(
         val line = current.allSourceLines.firstOrNull { it.id == apiLineId }
             ?: current.apiLines.firstOrNull { it.id == apiLineId }
             ?: return
-        val isBuiltIn = current.appSettings.customVideoApiLines.none { it.id == line.id }
-        val baseSettings = if (isBuiltIn) {
-            current.appSettings.copy(
-                disabledBuiltInLineIds = (current.appSettings.disabledBuiltInLineIds + line.id).distinct(),
-            )
-        } else {
-            current.appSettings.copy(
-                customVideoApiLines = current.appSettings.customVideoApiLines.filterNot { it.id == line.id },
-            )
-        }
-        val settings = baseSettings.copy(
-            blockedSourceIds = baseSettings.blockedSourceIds - line.id,
+        val settings = current.appSettings.copy(
+            customVideoApiLines = current.appSettings.customVideoApiLines.filterNot { it.id == line.id },
+            blockedSourceIds = current.appSettings.blockedSourceIds - line.id,
         )
         applySourceSettings(settings)
         val available = availableApiLinesFor(settings)
@@ -2311,11 +2266,7 @@ class TvBoxViewModel(
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
                 sourceLatencies = it.sourceLatencies - line.id,
-                sourceManagerMessage = if (isBuiltIn) {
-                    "已删除内置源“${line.name}”，可在“恢复内置”中还原。"
-                } else {
-                    "已删除源“${line.name}”"
-                },
+                sourceManagerMessage = "已删除源“${line.name}”",
             )
         }
         persistSourceLatencies()
@@ -2328,10 +2279,6 @@ class TvBoxViewModel(
         val current = _state.value
         val line = current.allSourceLines.firstOrNull { it.id == apiLineId } ?: return
         if (apiLineId in current.appSettings.blockedSourceIds) return
-        if (apiLineId in current.appSettings.disabledBuiltInLineIds) {
-            _state.update { it.copy(sourceManagerMessage = "该内置源已删除，请先点“恢复”再屏蔽。") }
-            return
-        }
         val settings = current.appSettings.copy(
             blockedSourceIds = (current.appSettings.blockedSourceIds + apiLineId).distinct(),
         )
@@ -2398,11 +2345,8 @@ class TvBoxViewModel(
             return
         }
         val invalidIds = invalid.map { it.id }.toSet()
-        val customIds = current.appSettings.customVideoApiLines.map { it.id }.toSet()
-        val deletedBuiltInIds = invalidIds.filter { it !in customIds }
         val settings = current.appSettings.copy(
             customVideoApiLines = current.appSettings.customVideoApiLines.filterNot { it.id in invalidIds },
-            disabledBuiltInLineIds = (current.appSettings.disabledBuiltInLineIds + deletedBuiltInIds).distinct(),
             blockedSourceIds = current.appSettings.blockedSourceIds - invalidIds,
         )
         applySourceSettings(settings)
@@ -2421,57 +2365,6 @@ class TvBoxViewModel(
             )
         }
         persistSourceLatencies()
-        if (selectionMissing) {
-            switchHomeApiLine(finalSettings.homeApiLineId)
-        }
-    }
-
-    fun restoreBuiltInLine(apiLineId: String) {
-        val current = _state.value
-        if (apiLineId !in current.appSettings.disabledBuiltInLineIds) return
-        val settings = current.appSettings.copy(
-            disabledBuiltInLineIds = current.appSettings.disabledBuiltInLineIds - apiLineId,
-        )
-        applySourceSettings(settings)
-        val available = availableApiLinesFor(settings)
-        val allLines = allApiLinesFor(settings)
-        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
-        saveSettings(finalSettings)
-        _state.update {
-            it.copy(
-                apiLines = available,
-                allSourceLines = allLines,
-                selectedApiLineId = finalSettings.homeApiLineId,
-                appSettings = finalSettings,
-                sourceManagerMessage = "已恢复内置源",
-            )
-        }
-        if (selectionMissing) {
-            switchHomeApiLine(finalSettings.homeApiLineId)
-        }
-    }
-
-    fun restoreBuiltInLines() {
-        val current = _state.value
-        if (current.appSettings.disabledBuiltInLineIds.isEmpty()) {
-            _state.update { it.copy(sourceManagerMessage = "没有已删除的内置源") }
-            return
-        }
-        val settings = current.appSettings.copy(disabledBuiltInLineIds = emptyList())
-        applySourceSettings(settings)
-        val available = availableApiLinesFor(settings)
-        val allLines = allApiLinesFor(settings)
-        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
-        saveSettings(finalSettings)
-        _state.update {
-            it.copy(
-                apiLines = available,
-                allSourceLines = allLines,
-                selectedApiLineId = finalSettings.homeApiLineId,
-                appSettings = finalSettings,
-                sourceManagerMessage = "已恢复全部内置源（已屏蔽的源保持屏蔽）",
-            )
-        }
         if (selectionMissing) {
             switchHomeApiLine(finalSettings.homeApiLineId)
         }
@@ -2572,55 +2465,9 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
-    /** 把设置中的电视直播源组合应用到仓库：内置源（剔除已删除）+ 自定义源。 */
+    /** 把设置中的电视直播源应用到仓库。 */
     private fun applyLiveSourceConfig(settings: AppSettings) {
-        val builtIn = BuiltInLiveSources.all.filter { it.id !in settings.disabledBuiltInLiveSourceIds }
-        liveRepository.setSourceConfig(
-            builtIn = builtIn,
-            customUrls = settings.liveSourceUrls,
-            includeBuiltIn = settings.includeBuiltInLiveSources,
-        )
-    }
-
-    /** 开关"内置直播源与自定义源组合使用"。 */
-    fun updateIncludeBuiltInLiveSources(enabled: Boolean) {
-        val settings = _state.value.appSettings.copy(includeBuiltInLiveSources = enabled)
-        applyLiveSourceConfig(settings)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
-    /** 删除单条内置电视直播源（可在"恢复内置直播源"中还原）。 */
-    fun deleteBuiltInLiveSource(sourceId: String) {
-        if (BuiltInLiveSources.byId(sourceId) == null) return
-        val current = _state.value
-        val settings = current.appSettings.copy(
-            disabledBuiltInLiveSourceIds =
-            (current.appSettings.disabledBuiltInLiveSourceIds + sourceId).distinct(),
-        )
-        applyLiveSourceConfig(settings)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
-    fun restoreBuiltInLiveSource(sourceId: String) {
-        val current = _state.value
-        if (sourceId !in current.appSettings.disabledBuiltInLiveSourceIds) return
-        val settings = current.appSettings.copy(
-            disabledBuiltInLiveSourceIds = current.appSettings.disabledBuiltInLiveSourceIds - sourceId,
-        )
-        applyLiveSourceConfig(settings)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
-    fun restoreBuiltInLiveSources() {
-        val current = _state.value
-        if (current.appSettings.disabledBuiltInLiveSourceIds.isEmpty()) return
-        val settings = current.appSettings.copy(disabledBuiltInLiveSourceIds = emptyList())
-        applyLiveSourceConfig(settings)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        liveRepository.setSourceConfig(settings.liveSourceUrls)
     }
 
     /** 屏蔽/恢复视频源分类：屏蔽后该分类不再出现在电视的分类与影片列表。 */

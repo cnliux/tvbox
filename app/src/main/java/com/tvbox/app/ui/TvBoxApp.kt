@@ -56,7 +56,6 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.Divider
-import com.tvbox.app.data.BuiltInLiveSources
 import com.tvbox.app.data.TextFileExporter
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.runtime.Composable
@@ -1977,11 +1976,6 @@ private fun SourceManagerSetting(
                 enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
                 onClick = { exportToDownloads("sources.json", actions.sourceConfigSourcesJson()) },
             )
-            SettingsActionButton(
-                text = "恢复内置",
-                enabled = !state.sourceImporting && state.appSettings.disabledBuiltInLineIds.isNotEmpty(),
-                onClick = actions::restoreBuiltInLines,
-            )
         }
         state.sourceManagerMessage?.let { msg ->
             Spacer(modifier = Modifier.height(6.dp))
@@ -2008,16 +2002,9 @@ private fun SourceManagerSetting(
                 )
             }
             state.allSourceLines.forEach { line ->
-                val isBuiltIn = state.appSettings.customVideoApiLines.none { it.id == line.id }
-                val deleted = isBuiltIn && line.id in state.appSettings.disabledBuiltInLineIds
                 val blocked = line.id in state.appSettings.blockedSourceIds
                 val selected = line.id == state.selectedApiLine?.id
-                val statusSuffix = when {
-                    deleted -> "（已删除）"
-                    blocked -> "（已屏蔽）"
-                    !isBuiltIn -> "（自定义）"
-                    else -> ""
-                }
+                val statusSuffix = if (blocked) "（已屏蔽）" else ""
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -2045,33 +2032,26 @@ private fun SourceManagerSetting(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (deleted) {
+                    if (!blocked) {
                         SettingsActionButton(
-                            text = "恢复",
-                            onClick = { actions.restoreBuiltInLine(line.id) },
+                            text = if (state.sourceTesting) "..." else "测速",
+                            enabled = !state.sourceTesting,
+                            onClick = { actions.testSourceSpeed(line.id) },
+                        )
+                        SettingsActionButton(
+                            text = "屏蔽",
+                            onClick = { actions.blockSource(line.id) },
                         )
                     } else {
-                        if (!blocked) {
-                            SettingsActionButton(
-                                text = if (state.sourceTesting) "..." else "测速",
-                                enabled = !state.sourceTesting,
-                                onClick = { actions.testSourceSpeed(line.id) },
-                            )
-                            SettingsActionButton(
-                                text = "屏蔽",
-                                onClick = { actions.blockSource(line.id) },
-                            )
-                        } else {
-                            SettingsActionButton(
-                                text = "取消屏蔽",
-                                onClick = { actions.unblockSource(line.id) },
-                            )
-                        }
                         SettingsActionButton(
-                            text = "删除",
-                            onClick = { actions.deleteApiLine(line.id) },
+                            text = "取消屏蔽",
+                            onClick = { actions.unblockSource(line.id) },
                         )
                     }
+                    SettingsActionButton(
+                        text = "删除",
+                        onClick = { actions.deleteApiLine(line.id) },
+                    )
                 }
             }
         }
@@ -2181,72 +2161,6 @@ private fun LiveSourceSetting(
         savedMessage?.let { msg ->
             Spacer(modifier = Modifier.height(6.dp))
             Text(text = msg, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun BuiltInLiveSourceSetting(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-) {
-    val deletedIds = state.appSettings.disabledBuiltInLiveSourceIds
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = "内置源与自定义源组合使用", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    text = if (state.appSettings.includeBuiltInLiveSources) {
-                        "已开启：内置源 + ${state.appSettings.liveSourceUrls.size} 个自定义源"
-                    } else {
-                        "已关闭：仅使用自定义源"
-                    },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Switch(
-                checked = state.appSettings.includeBuiltInLiveSources,
-                onCheckedChange = actions::updateIncludeBuiltInLiveSources,
-            )
-        }
-        BuiltInLiveSources.all.forEach { source ->
-            val deleted = source.id in deletedIds
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = source.name + if (deleted) "（已删除）" else "",
-                        style = MaterialTheme.typography.titleSmall,
-                    )
-                    Text(
-                        text = source.url,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
-                SettingsActionButton(
-                    text = if (deleted) "恢复" else "删除",
-                    onClick = {
-                        if (deleted) {
-                            actions.restoreBuiltInLiveSource(source.id)
-                        } else {
-                            actions.deleteBuiltInLiveSource(source.id)
-                        }
-                    },
-                )
-            }
-        }
-        if (deletedIds.isNotEmpty()) {
-            SettingsActionButton(
-                text = "恢复全部内置直播源",
-                onClick = actions::restoreBuiltInLiveSources,
-            )
         }
     }
 }
@@ -2465,20 +2379,11 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "直播源",
-                        subtitle = "自定义直播源地址（M3U/TXT），支持地址导入以解析直播源数据；留空则使用内置直播源。",
+                        subtitle = "自定义直播源地址（M3U/TXT），支持地址导入以解析直播源数据。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     LiveSourceSetting(state = state, actions = actions)
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "内置电视直播源",
-                        subtitle = "内置源可与自定义源组合使用，也可逐条删除并随时恢复。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    BuiltInLiveSourceSetting(state = state, actions = actions)
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(

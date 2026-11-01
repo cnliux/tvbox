@@ -27,7 +27,7 @@ Docker 运行方式和 systemd 常驻配置请参阅 [DEPLOYMENT.md](DEPLOYMENT.
 TVBox 和服务端必须网络可达。构建或设置服务地址时使用服务端局域网、VPN 或 HTTPS 地址，例如：
 
 ```text
-TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868
+TVBOX_PLATFORM_LIVE_SERVICE_URL=http://<your-server>:8868
 ```
 
 不要填写 `localhost` 或 `127.0.0.1`。Windows 防火墙如提示是否允许 Python 访问网络，请仅勾选“专用网络”。

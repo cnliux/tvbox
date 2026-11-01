@@ -10,57 +10,22 @@ import okhttp3.Request
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
-/** 内置电视直播源：可在源管理页逐条删除/恢复，并决定是否与自定义源组合。 */
-data class BuiltInLiveSource(
-    val id: String,
-    val name: String,
-    val url: String,
-)
-
-object BuiltInLiveSources {
-    val all: List<BuiltInLiveSource> = listOf(
-        BuiltInLiveSource(
-            id = "tvbox-default",
-            name = "内置直播源",
-            url = "http://20.205.10.127:8787/tvbox/result.txt",
-        ),
-    )
-
-    fun byId(id: String): BuiltInLiveSource? = all.firstOrNull { it.id == id }
-}
-
 interface LiveRepository {
     suspend fun getChannels(): List<LiveChannel>
 
     /**
      * 更新电视直播源配置。
      *
-     * @param builtIn 参与组合的内置源（已排除被删除的条目）。
-     * @param customUrls 自定义 M3U/TXT 源地址。
-     * @param includeBuiltIn 是否把内置源与自定义源组合使用；关闭时只用自定义源。
+     * @param customUrls 用户添加的自定义 M3U/TXT 源地址。
      */
-    fun setSourceConfig(
-        builtIn: List<BuiltInLiveSource>,
-        customUrls: List<String>,
-        includeBuiltIn: Boolean,
-    )
+    fun setSourceConfig(customUrls: List<String>)
 }
 
-class DefaultLiveRepository(
-    initialBuiltInSources: List<BuiltInLiveSource> = BuiltInLiveSources.all,
-) : LiveRepository {
-    private var builtInSources: List<BuiltInLiveSource> = initialBuiltInSources
+class DefaultLiveRepository : LiveRepository {
     private var customSourceUrls: List<String> = emptyList()
-    private var includeBuiltInSources: Boolean = true
 
-    override fun setSourceConfig(
-        builtIn: List<BuiltInLiveSource>,
-        customUrls: List<String>,
-        includeBuiltIn: Boolean,
-    ) {
-        this.builtInSources = builtIn
+    override fun setSourceConfig(customUrls: List<String>) {
         this.customSourceUrls = customUrls
-        this.includeBuiltInSources = includeBuiltIn
     }
 
     private val client = OkHttpClient.Builder()
@@ -69,12 +34,9 @@ class DefaultLiveRepository(
         .build()
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
-        val sourceUrls = buildList {
-            if (includeBuiltInSources) addAll(builtInSources.map { it.url })
-            addAll(customSourceUrls)
-        }.distinct()
+        val sourceUrls = customSourceUrls.distinct()
         if (sourceUrls.isEmpty()) {
-            throw IOException("未启用任何直播源，请在源管理中启用内置源或添加自定义源")
+            throw IOException("未添加任何直播源，请在源管理中添加自定义源")
         }
         var lastError: Throwable? = null
         sourceUrls.forEach { sourceUrl ->

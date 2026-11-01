@@ -23,16 +23,16 @@ class AcceptanceActivity : ComponentActivity() {
                 val service = "http://127.0.0.1:8766"
                 val localPlatform = EmbeddedPlatformLiveRepository(this@AcceptanceActivity)
                 return TvBoxViewModel(
-                    repository = DefaultMovieRepository(listOf(
-                        ApiLine("acceptance", "验收接口", listOf("$service/api/")),
-                        ApiLine("acceptance-alt", "验收备用", listOf("$service/alt-api/")),
-                    )),
-                    liveRepository = DefaultLiveRepository(
-                        listOf(BuiltInLiveSource("acceptance", "验收直播源", "$service/live.txt")),
-                    ),
+                    repository = DefaultMovieRepository(),
+                    liveRepository = DefaultLiveRepository(),
                     platformLiveRepository = localPlatform,
                     appSettingsRepository = object : AppSettingsRepository {
                         var settings = AppSettings(homeApiLineId = "acceptance", checkUpdatesOnStartup = false,
+                            customVideoApiLines = listOf(
+                                CustomVideoApiLine("acceptance", "验收接口", "$service/api/"),
+                                CustomVideoApiLine("acceptance-alt", "验收备用", "$service/alt-api/"),
+                            ),
+                            liveSourceUrls = listOf("$service/live.txt"),
                             theme = if (intent.getStringExtra("theme") == "cinema") TvTheme.Cinema else TvTheme.Default)
                         override suspend fun getSettings() = settings
                         override suspend fun saveSettings(settings: AppSettings): AppSettings { this.settings = settings; return settings }

@@ -29,8 +29,8 @@
 
 ### 文件修改、原因与目的
 
-- `app/src/main/java/com/tvbox/app/data/MacCmsApi.kt`、`MovieRepository.kt`、`domain/AppSettings.kt` 及相关 UI（提交 `2fc90b9`）：删除全部内置点播接口（30+ 条 ApiLines），项目不再内置任何点播数据，视频源仅由用户导入；电视直播内置源保留默认值。
-- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`（提交 `df69a72`）：内置电视直播源与平台直播站点（斗鱼/虎牙等）可在管理页删除/恢复/组合，默认值可清除。
+- `app/src/main/java/com/tvbox/app/data/MacCmsApi.kt`、`MovieRepository.kt`、`domain/AppSettings.kt` 及相关 UI（提交 `2fc90b9`）：删除全部内置点播接口（30+ 条 ApiLines），项目不再内置任何点播数据，视频源仅由用户导入。
+- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`（提交 `df69a72`）：平台直播站点（斗鱼/虎牙等）可在管理页删除/恢复；电视直播源完全由用户导入（内置源已于后续版本移除）。
 - `.github/workflows/release.yml`：新增发布工作流，推送 `v*` 标签或手动触发时构建签名 Release APK 并自动创建 GitHub Release；签名材料从 Actions secrets 注入。
 - `gradlew`：补上可执行位（`100644 -> 100755`），修复 Linux runner `Permission denied`。
 - `app/build.gradle.kts`：版本升级至 `10314 / 1.3.14`。
@@ -50,7 +50,7 @@
 
 ### 导航
 
-- 主日志：`devLog/README.md`；模块日志：`devLog/live-source.md`、`devLog/platform-live.md`。
+- 主日志：`devLog/README.md`；模块日志：`devLog/platform-live.md`。
 
 ## 2026-10-13 11:37 - 发布 v1.3.13：合并搜索输入修复
 
@@ -303,15 +303,15 @@
 - File path: `app/build/outputs/apk/release/TVBox-v1.3.7.apk`、`app/build/outputs/apk/release/update.json`
   - Reason: 用户要求生成可安装的正式版本。
   - Purpose: 提供正式签名 APK 与配套 OTA 清单。
-- File path: `devLog/README.md`、`devLog/home-player-ui.md`、`devLog/video-source-addresses.md`、`devLog/release.md`
+- File path: `devLog/README.md`、`devLog/home-player-ui.md`、`devLog/release.md`
   - Reason: 项目要求每次代码修改具备主时间线与模块记录。
   - Purpose: 归档变更原因、实现范围、产物和验证边界。
 
 ## Bug Record
 
 - Time: 2026-09-15 21:38
-- Symptoms: 播放器与搜索操作的遥控器焦点难以辨认，进度条遥控器步长不明确；整理文档中的线路尚未全部内置。
-- Attempted fix: 增强焦点视觉状态、固定 10 秒 seek 步长、扩充视频源注册表并增加 M3U 直播回退。
+- Symptoms: 播放器与搜索操作的遥控器焦点难以辨认，进度条遥控器步长不明确。
+- Attempted fix: 增强焦点视觉状态、固定 10 秒 seek 步长、增加 M3U 直播回退。
 - Temporary solution: 无。
 
 ## Verification
@@ -328,7 +328,7 @@
 ## Navigation
 
 - Master doc: `devLog/README.md`
-- Branch docs: `devLog/home-player-ui.md`、`devLog/video-source-addresses.md`、`devLog/release.md`
+- Branch docs: `devLog/home-player-ui.md`、`devLog/release.md`
 
 ## 2026-08-25 07:46 - 发布 v1.3.6：多来源搜索与渐进补线
 
@@ -361,7 +361,7 @@
 
 - `./gradlew.bat :app:assembleRelease --console=plain --offline`：passed。
 - `apksigner verify --print-certs app\\build\\outputs\\apk\\release\\TVBox-v1.3.6.apk`：passed。Certificate DN: `CN=TVBox, OU=TVBox, O=TVBox, L=Unknown, ST=Unknown, C=CN`。
-- ADB `emulator-5554`：Debug v1.3.5 验证 8/8 条来源完成、16 个去重结果，并成功聚合量子、如意、红牛三条播放线路。
+- ADB `emulator-5554`：Debug v1.3.5 验证 8/8 条来源完成、16 个去重结果，并成功聚合三条播放线路。
 - Release assets:
   - APK: `app/build/outputs/apk/release/TVBox-v1.3.6.apk`
   - Size: `4870313`
@@ -447,7 +447,7 @@
 
 - `./gradlew.bat testDebugUnitTest assembleRelease`
   - Result: passed.
-- Android 9 设备：成功覆盖安装 `v1.3.4 / 10304`，豆瓣热播首屏返回 `243` 部；点击“这一秒过火”通过量子线路进入详情页；返回后仍为热播页；加载更多后显示 `40 / 243` 部。
+- Android 9 设备：成功覆盖安装 `v1.3.4 / 10304`，豆瓣热播首屏返回 `243` 部；点击“这一秒过火”通过任一播放线路进入详情页；返回后仍为热播页；加载更多后显示 `40 / 243` 部。
 - `apksigner verify --print-certs app\build\outputs\apk\release\TVBox-v1.3.4.apk`
   - Result: passed. Certificate DN: `CN=TVBox, OU=TVBox, O=TVBox, L=Unknown, ST=Unknown, C=CN`。
 - Release asset:
@@ -579,7 +579,7 @@
 
 - File path: `app/build.gradle.kts`
   - Reason: Release APK 需要连接统一平台直播服务。
-  - Purpose: 使用构建参数 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 注入 `BuildConfig.PLATFORM_LIVE_SERVICE_URL`。
+  - Purpose: 使用构建参数 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://<your-server>:8868` 注入 `BuildConfig.PLATFORM_LIVE_SERVICE_URL`。
 - File path: `update.json`
   - Reason: 代理下载地址和带服务配置的 APK 需要同步到 OTA 清单。
   - Purpose: 将 `apkUrl` 改为 `https://gh-proxy.org/` 前缀，并更新 APK SHA-256。
@@ -597,14 +597,14 @@
 
 - Time: 2026-08-03 08:40
 - Symptoms: 原 v1.3.1 APK 未注入平台直播服务地址，平台直播无法请求统一服务。
-- Attempted fix: 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 重新构建并覆盖 Release 资产。
+- Attempted fix: 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://<your-server>:8868` 重新构建并覆盖 Release 资产。
 - Temporary solution: 无。
 
 ## Verification
 
 - `.\gradlew.bat testDebugUnitTest assembleRelease --console=plain --no-daemon`
   - Result: passed.
-- Release `BuildConfig.PLATFORM_LIVE_SERVICE_URL`：`http://20.205.10.127:8868`。
+- Release `BuildConfig.PLATFORM_LIVE_SERVICE_URL`：`http://<your-server>:8868`。
 - `E:\Soft\Tools\AndroidSDK\build-tools\36.1.0\apksigner.bat verify --print-certs app\build\outputs\apk\release\app-release.apk`
   - Result: passed. Certificate DN: `CN=TVBox, OU=TVBox, O=TVBox, L=Unknown, ST=Unknown, C=CN`。
 - Release asset:
@@ -689,7 +689,7 @@
 
 ## Verification
 
-- 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://20.205.10.127:8868` 完成 Debug 构建参数验证。
+- 使用 `TVBOX_PLATFORM_LIVE_SERVICE_URL=http://<your-server>:8868` 完成 Debug 构建参数验证。
 - 未发布 GitHub Release，待后续正式发布时再更新 `update.json` 和 Release 资产。
 
 ## 2026-08-02 11:23 - OTA 更新地址切回 GitHub

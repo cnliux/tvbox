@@ -24,23 +24,14 @@ data class RemoteManageSession(
     val port: Int,
 )
 
-/** 视频源管理列表里的一行（包含已删除/已屏蔽的源）。 */
+/** 视频源管理列表里的一行（包含已屏蔽的源）。 */
 data class RemoteManageVideoSource(
     val id: String,
     val name: String,
     val url: String,
-    val builtIn: Boolean,
-    val enabled: Boolean,
     val blocked: Boolean,
     val isHome: Boolean,
     val latencyMs: Long?,
-)
-
-data class RemoteManageLiveSource(
-    val id: String,
-    val name: String,
-    val url: String,
-    val enabled: Boolean,
 )
 
 data class RemoteManageSite(
@@ -53,8 +44,6 @@ data class RemoteManageSite(
 data class RemoteManageSnapshot(
     val videoSources: List<RemoteManageVideoSource> = emptyList(),
     val customLiveUrls: List<String> = emptyList(),
-    val builtInLiveSources: List<RemoteManageLiveSource> = emptyList(),
-    val includeBuiltInLiveSources: Boolean = true,
     val sites: List<RemoteManageSite> = emptyList(),
     val blockedVideoCategories: List<String> = emptyList(),
     val knownVideoCategories: List<String> = emptyList(),
@@ -272,7 +261,7 @@ class RemoteManageServer(
 
                 <section class="panel">
                   <h2>视频源管理（共 ${data.videoSources.size} 个）</h2>
-                  <p class="empty">可设首页源、屏蔽/取消屏蔽、删除/恢复、测速排序，并支持订阅地址导入。</p>
+                  <p class="empty">可设首页源、屏蔽/取消屏蔽、删除、测速排序，并支持订阅地址导入。</p>
                   ${if (data.videoSources.isEmpty()) {
                       "<p class=\"empty\">暂无视频源，请在下方添加或导入。</p>"
                   } else {
@@ -301,28 +290,6 @@ class RemoteManageServer(
 
                 <section class="panel">
                   <h2>直播源</h2>
-                  ${itemRow(
-                      title = "内置源与自定义源组合使用",
-                      subtitle = if (data.includeBuiltInLiveSources) {
-                          "已开启：内置源 + ${data.customLiveUrls.size} 个自定义源"
-                      } else {
-                          "已关闭：仅使用自定义源"
-                      },
-                      tag = if (data.includeBuiltInLiveSources) "已开启" else "已关闭",
-                      actions = toggleForm(
-                          action = "include-builtin",
-                          value = if (data.includeBuiltInLiveSources) "false" else "true",
-                          label = if (data.includeBuiltInLiveSources) "关闭组合" else "开启组合",
-                      ),
-                  )}
-                  ${data.builtInLiveSources.joinToString("") { source ->
-                      itemRow(
-                          title = source.name,
-                          subtitle = source.url,
-                          tag = if (source.enabled) "启用" else "已删除",
-                          actions = builtInForm(source),
-                      )
-                  }}
                   ${if (data.customLiveUrls.isEmpty()) {
                       "<p class=\"empty\">暂无自定义直播源（M3U/TXT）。</p>"
                   } else {
@@ -388,30 +355,23 @@ class RemoteManageServer(
         val parts = mutableListOf<String>()
         if (source.isHome) parts += "首页"
         if (source.blocked) parts += "已屏蔽"
-        if (!source.enabled) parts += "已删除"
         if (source.latencyMs != null) parts += "${source.latencyMs}ms"
         return parts.joinToString(" · ")
     }
 
     private fun videoSourceActions(source: RemoteManageVideoSource): String = buildString {
-        if (source.enabled && !source.blocked && !source.isHome) {
+        if (!source.blocked && !source.isHome) {
             append(hiddenForm("source-home", source.id, "设为首页"))
         }
-        if (source.enabled) {
-            append(hiddenForm("source-categories", source.id, "分类"))
-        }
-        if (source.enabled) {
-            append(
-                hiddenForm(
-                    if (source.blocked) "source-unblock" else "source-block",
-                    source.id,
-                    if (source.blocked) "取消屏蔽" else "屏蔽",
-                ),
-            )
-            append(hiddenForm("source-delete", source.id, "删除"))
-        } else {
-            append(hiddenForm("source-restore", source.id, "恢复"))
-        }
+        append(hiddenForm("source-categories", source.id, "分类"))
+        append(
+            hiddenForm(
+                if (source.blocked) "source-unblock" else "source-block",
+                source.id,
+                if (source.blocked) "取消屏蔽" else "屏蔽",
+            ),
+        )
+        append(hiddenForm("source-delete", source.id, "删除"))
     }
 
     private fun itemRow(title: String, subtitle: String, tag: String, actions: String): String {
@@ -477,13 +437,6 @@ class RemoteManageServer(
             "<button class=\"ghost\">$label</button></form>"
     }
 
-
-    private fun builtInForm(source: RemoteManageLiveSource): String {
-        val action = if (source.enabled) "builtin-delete" else "builtin-restore"
-        return "<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"$action\" />" +
-            "<input type=\"hidden\" name=\"id\" value=\"${source.id.htmlEscape()}\" />" +
-            "<button class=\"ghost\">${if (source.enabled) "删除" else "恢复"}</button></form>"
-    }
 
     private fun toggleForm(
         action: String,

@@ -48,7 +48,7 @@ import com.tvbox.app.domain.DeviceMode
 
 /**
  * 手机模式底部导航包装器：首页 / 历史 / 搜索 / 电视 / 直播。
- * 其中“电视”为内置央视等直播源（TvScreen.Live），“直播”为斗鱼/虎牙等平台直播（TvScreen.PlatformLive），
+ * 其中“电视”为电视直播（用户自定义 M3U/TXT 源，TvScreen.Live），“直播”为斗鱼/虎牙等平台直播（TvScreen.PlatformLive），
  * 与 TV 端导航命名保持一致。Player / Settings 等页面绕过底部导航直接渲染完整高度。
  */
 @Composable

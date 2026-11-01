@@ -165,7 +165,7 @@ class EmbeddedPlatformLiveRepository(
         if (Python.isStarted()) return
         synchronized(pythonLock) {
             if (Python.isStarted()) return
-            val context = appContext ?: throw IOException("内置直播解析器未初始化")
+            val context = appContext ?: throw IOException("直播解析器未初始化")
             Python.start(AndroidPlatform(context))
             DouyinSigner.init(context)
         }
@@ -173,7 +173,7 @@ class EmbeddedPlatformLiveRepository(
 
     private fun pythonErrorMessage(error: Throwable): String {
         val raw = error.message?.trim().orEmpty()
-        if (raw.isBlank()) return "内置直播解析失败"
+        if (raw.isBlank()) return "直播解析失败"
         val lastLine = raw.lineSequence()
             .map { it.trim() }
             .lastOrNull { it.isNotBlank() }
@@ -182,7 +182,7 @@ class EmbeddedPlatformLiveRepository(
             .substringAfterLast("PyException: ", lastLine)
             .substringAfterLast("Exception: ", lastLine)
             .trim()
-            .ifBlank { "内置直播解析失败" }
+            .ifBlank { "直播解析失败" }
     }
 
     private companion object {

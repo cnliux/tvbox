@@ -206,10 +206,9 @@ class MovieRepositoryTest {
         apiByBaseUrl: Map<String, MacCmsApi>,
     ): DefaultMovieRepository {
         return DefaultMovieRepository(
-            builtInApiLines = lines,
             apiFactory = { baseUrl -> checkNotNull(apiByBaseUrl[baseUrl]) },
             nowMs = { 1_000L },
-        )
+        ).apply { updateCustomApiLines(lines) }
     }
 
     private fun line(id: String): ApiLine {

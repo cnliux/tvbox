@@ -101,7 +101,7 @@
 ## File Changes
 
 - File path: `app/src/main/java/com/tvbox/app/domain/AppSettings.kt`
-  - Reason: 用户希望在设置页添加自己的 MacCms 视频 API 接口，并且内置接口保持不变。
+  - Reason: 用户希望在设置页添加自己的 MacCms 视频 API 接口。
   - Purpose: 新增 `CustomVideoApiLine` 和 `customVideoApiLines` 设置项，用于保存用户自定义接口。
 
 - File path: `app/src/main/java/com/tvbox/app/data/AppSettingsRepository.kt`
@@ -110,7 +110,7 @@
 
 - File path: `app/src/main/java/com/tvbox/app/data/MovieRepository.kt`
   - Reason: 首页、搜索、详情和 AI 找片需要能查询用户新增的 MacCms 接口。
-  - Purpose: 保留内置 `ApiLines.defaults`，运行时追加设置页读取到的自定义接口。
+  - Purpose: 运行时使用设置页读取到的自定义接口作为视频数据源（内置接口已在后续版本移除）。
 
 - File path: `app/src/main/java/com/tvbox/app/data/VideoApiConfigServer.kt`
   - Reason: 电视端输入长 URL 不方便，需要像大模型配置一样用手机填写。
@@ -266,7 +266,7 @@
   - Purpose: 启动时读取 `homeApiLineId`，切换资源后保存设置、清空首页状态并重新加载首页。
 - File path: `app/src/main/java/com/tvbox/app/ui/TvBoxApp.kt`
   - Reason: 设置页需要暴露资源选择入口。
-  - Purpose: 新增“首页资源 / 首页渲染数据”设置项，并通过下拉菜单展示量子、如意、360 等线路。
+  - Purpose: 新增“首页资源 / 首页渲染数据”设置项，并通过下拉菜单展示当前可用的视频源线路。
 
 ## Verification
 
@@ -275,7 +275,7 @@
 - `./gradlew.bat testDebugUnitTest --console=plain`
   - Result: passed.
 - ADB debug install and screenshot
-  - Result: settings page rendered the new “首页资源 / 首页渲染数据” section with current source “量子”.
+  - Result: settings page rendered the new “首页资源 / 首页渲染数据” section with the current source name.
 
 ## Bug Record
 
