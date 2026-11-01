@@ -1,0 +1,60 @@
+name: Release build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore release keystore
+        env:
+          TVBOX_RELEASE_STORE_FILE_B64: ${{ secrets.TVBOX_RELEASE_STORE_FILE_B64 }}
+        run: |
+          if [ -n "$TVBOX_RELEASE_STORE_FILE_B64" ]; then
+            echo "$TVBOX_RELEASE_STORE_FILE_B64" | base64 -d > "$GITHUB_WORKSPACE/tvbox-release.jks"
+            echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build release APK
+        env:
+          TVBOX_RELEASE_STORE_PASSWORD: ${{ secrets.TVBOX_RELEASE_STORE_PASSWORD }}
+          TVBOX_RELEASE_KEY_ALIAS: ${{ secrets.TVBOX_RELEASE_KEY_ALIAS }}
+          TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
+          TVBOX_PLATFORM_LIVE_SERVICE_URL: ${{ secrets.TVBOX_PLATFORM_LIVE_SERVICE_URL }}
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
+          name: TVBox ${{ github.ref_name }}
+          body: |
+            TVBox Android TV 客户端 ${{ github.ref_name }} 版本。
+
+            - 不内置任何点播视频接口，视频源需自行导入
+            - 内置电视直播源保留默认值，可在直播源管理中删除/恢复/组合
+            - 平台直播站点（斗鱼/虎牙等）可管控
+            - APK 已使用 release keystore 签名
+          generate_release_notes: true
