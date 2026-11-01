@@ -1,7 +1,7 @@
 {
   "versionCode": 10316,
   "versionName": "1.3.16",
-  "apkUrl": "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
   "apkSha256": "ae9fa2a8847762f24ccd050af50ee245245cbf81d70432886471a9eb5885bd95",
   "apkSize": 50886750,
   "force": false,

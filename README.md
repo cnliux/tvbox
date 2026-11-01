@@ -102,7 +102,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 {
   "versionCode": 10316,
   "versionName": "1.3.16",
-  "apkUrl": "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.16/app-release.apk",
   "apkSha256": "ae9fa2a8847762f24ccd050af50ee245245cbf81d70432886471a9eb5885bd95",
   "apkSize": 50886750,
   "force": false,
@@ -124,7 +124,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
 - 下载开始后关闭弹窗或按返回不取消任务；后台下载完成时，回到应用后打开安装界面。系统安装仍需用户确认，取消后可从小型进度卡片手动安装；无需悬浮窗权限。
-- `apkUrl` 是 APK 下载地址，目前通过 `gh-proxy.org` 转发 GitHub Release 附件。
+- `apkUrl` 是 APK 下载地址，直接指向 GitHub Release 附件（需要能访问 GitHub Releases）。
 - `apkSha256` 用于下载完成后的完整性校验。
 - `force` 预留强制更新能力，当前普通更新可选择稍后再说。
 - `update.json` 放在 GitHub 仓库根目录，随 `main` 分支更新后，应用会通过 raw 地址读取。
