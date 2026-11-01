@@ -1,5 +1,32 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-01 09:30 - 发布 v1.3.14：移除内置点播接口并启用 GitHub Actions 自动发布
+
+### 文件修改、原因与目的
+
+- `app/src/main/java/com/tvbox/app/data/MacCmsApi.kt`、`MovieRepository.kt`、`domain/AppSettings.kt` 及相关 UI（提交 `2fc90b9`）：删除全部内置点播接口（30+ 条 ApiLines），项目不再内置任何点播数据，视频源仅由用户导入；电视直播内置源保留默认值。
+- `app/src/main/java/com/tvbox/app/data/LiveRepository.kt`（提交 `df69a72`）：内置电视直播源与平台直播站点（斗鱼/虎牙等）可在管理页删除/恢复/组合，默认值可清除。
+- `.github/workflows/release.yml`：新增发布工作流，推送 `v*` 标签或手动触发时构建签名 Release APK 并自动创建 GitHub Release；签名材料从 Actions secrets 注入。
+- `gradlew`：补上可执行位（`100644 -> 100755`），修复 Linux runner `Permission denied`。
+- `app/build.gradle.kts`：版本升级至 `10314 / 1.3.14`。
+
+### 签名与 CI 配置
+
+- 新生成 release keystore（证书 DN `CN=TVBox, OU=App, O=TVBox, L=Beijing, ST=Beijing, C=CN`），保存于仓库外 `%USERPROFILE%\.tvbox-release\`，口令备份同目录 `credentials.txt`，未入库。
+- GitHub Actions secrets：`TVBOX_RELEASE_STORE_FILE_B64`、`TVBOX_RELEASE_STORE_PASSWORD`、`TVBOX_RELEASE_KEY_ALIAS`、`TVBOX_RELEASE_KEY_PASSWORD`、`TVBOX_PLATFORM_LIVE_SERVICE_URL`。
+- 注意：新签名证书与旧版（`7244ed4d…`）不同，旧版 APK 无法覆盖安装或 OTA 升级本版本，需卸载后全新安装。
+- CI 排障三轮：`android-actions/setup-android@v3` 因 `tools` 包已从 SDK 仓库移除而失败，改用 runner 预装 SDK；`gradlew` 缺执行位；Chaquopy 需要 Python 3.11，增加 `actions/setup-python@v5` 并注入 `TVBOX_BUILD_PYTHON`。
+
+### 构建与发布校验
+
+- 本地 `:app:assembleRelease` 通过（R8 混淆 + 资源压缩 + Chaquopy），签名校验通过；`app-release.apk` 安装到 192.168.1.45 模拟器启动正常、无崩溃日志。
+- CI run `41259427842` 成功；Release：[TVBox v1.3.14](https://github.com/cnliux/tvbox/releases/tag/v1.3.14)，附件 `app-release.apk` 50788438 字节。
+- 本轮改动（`df69a72`、`2fc90b9`）此前已实机验证通过；`update.json` 未指向 v1.3.14，旧版 OTA 不会收到升级提示（签名不兼容，故不推送 OTA）。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/live-source.md`、`devLog/platform-live.md`。
+
 ## 2026-10-13 11:37 - 发布 v1.3.13：合并搜索输入修复
 
 ### 文件修改、原因与目的

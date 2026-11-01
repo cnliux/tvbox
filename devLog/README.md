@@ -1,5 +1,14 @@
 ﻿# TVBox AI Dev Log
 
+### 2026-11-01 09:30 - 发布 v1.3.14：移除内置点播接口并启用 GitHub Actions 自动发布
+
+- Branch docs: `devLog/release.md`、`devLog/live-source.md`、`devLog/platform-live.md`
+- Summary:
+  - 删除全部内置点播接口，项目不再内置点播数据；电视直播内置源保留默认值且可在源管理中删除/恢复/组合，平台直播站点同样可管控。
+  - 新增 `.github/workflows/release.yml`：推送 `v*` 标签自动构建签名 APK 并创建 GitHub Release；新生成 release keystore 与 secrets 配置完成，keystore 保存于仓库外。
+  - 版本升级 `10314 / 1.3.14`；本地签名构建 + 模拟器实机启动验证通过，CI run 成功后发布 [TVBox v1.3.14](https://github.com/cnliux/tvbox/releases/tag/v1.3.14)。
+  - 新签名证书与旧版不同，旧版无法覆盖安装或 OTA 升级到本版本，需卸载后全新安装；`update.json` 未指向 v1.3.14。
+
 ### 2026-10-13 11:37 - 合并 PR #5 并发布 v1.3.13：搜索输入光标
 
 - Branch docs: `devLog/home-player-ui.md`、`devLog/release.md`
