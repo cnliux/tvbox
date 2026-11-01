@@ -3,6 +3,7 @@
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -37,6 +38,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -53,6 +55,7 @@ import com.tvbox.app.data.DOUBAN_REFERER
 import com.tvbox.app.data.DOUBAN_USER_AGENT
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.Movie
+import com.tvbox.app.ui.LocalTouchMode
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.ui.TvScreen
 import com.tvbox.app.ui.theme.TvColors
@@ -323,7 +326,7 @@ fun ErrorState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(text = message, style = MaterialTheme.typography.titleMedium)
+        Text(text = message.ifBlank { "加载失败，请稍后重试" }, style = MaterialTheme.typography.titleMedium)
         Spacer(modifier = Modifier.height(16.dp))
         Button(onClick = onRetry) {
             Text("重试")
@@ -381,6 +384,7 @@ fun MoviePosterCard(
     posterAspectRatio: Float = 2f / 3f,
 ) {
     val shape = RoundedCornerShape(8.dp)
+    val touchMode = LocalTouchMode.current
     var focused by remember { mutableStateOf(false) }
     Column(
         modifier = modifier
@@ -392,8 +396,15 @@ fun MoviePosterCard(
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .background(if (focused) TvColors.SurfaceRaised else TvColors.Surface)
-            .clickable(onClick = onClick)
-            .focusable(),
+            .then(
+                if (touchMode) {
+                    // 手机触摸模式直接消费点击，避免焦点逻辑与点击手势竞争导致点击无响应。
+                    Modifier.pointerInput(onClick) { detectTapGestures { onClick() } }
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            )
+            .then(if (touchMode) Modifier else Modifier.focusable()),
     ) {
         Box(
             modifier = Modifier
@@ -464,6 +475,7 @@ fun DoubanHotPosterCard(
 ) {
     val shape = RoundedCornerShape(8.dp)
     val context = LocalContext.current
+    val touchMode = LocalTouchMode.current
     var focused by remember { mutableStateOf(false) }
     var posterFailed by remember(item.doubanId, item.posterUrl) { mutableStateOf(item.posterUrl.isBlank()) }
     val imageRequest = remember(item.posterUrl) {
@@ -489,8 +501,14 @@ fun DoubanHotPosterCard(
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .background(if (focused) TvColors.SurfaceRaised else TvColors.Surface)
-            .clickable(onClick = onClick)
-            .focusable(),
+            .then(
+                if (touchMode) {
+                    Modifier.pointerInput(onClick) { detectTapGestures { onClick() } }
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            )
+            .then(if (touchMode) Modifier else Modifier.focusable()),
     ) {
         Box(
             modifier = Modifier

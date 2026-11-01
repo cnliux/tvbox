@@ -14,6 +14,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import com.tvbox.app.ui.LocalTouchMode
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
 
@@ -23,6 +24,10 @@ fun Modifier.tvFocusScale(
     focusedBorder: Color? = null,
     idleBorder: Color? = null,
 ): Modifier = composed {
+    // 手机触摸模式下不显示遥控器焦点框：触摸后焦点不会自动消失，会造成"一直高亮"的错觉。
+    if (LocalTouchMode.current) {
+        return@composed border(width = 1.dp, color = idleBorder ?: TvColors.Border, shape = shape)
+    }
     val resolvedFocusedBorder = focusedBorder ?: TvColors.Accent
     val resolvedIdleBorder = idleBorder ?: TvColors.Border
     var focused by remember { mutableStateOf(false) }

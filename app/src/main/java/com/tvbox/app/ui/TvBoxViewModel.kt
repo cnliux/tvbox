@@ -1203,23 +1203,38 @@ class TvBoxViewModel(
                     resolvingDoubanHotId = item.doubanId,
                 )
             }
-            runCatching { findPlayableDoubanMovie(item.title, apiLineId) }
-                .onSuccess { movie ->
-                    _state.update { it.copy(resolvingDoubanHotId = null) }
-                    if (movie == null) {
-                        _state.update { it.copy(homeNotice = "暂无该视频资源") }
-                    } else {
-                        openDetail(movie.id, apiLineId)
+            // 与 TV 端保持一致：点击热播直接进入详情页。当前源不支持搜索或未命中时，
+            // 依次回退到其他视频源查找，保证任意源下热播卡片都能打开。
+            val candidateLineIds = buildList {
+                add(apiLineId)
+                addAll(current.apiLines.filter { line -> line.id != apiLineId }.map { line -> line.id })
+            }
+            if (candidateLineIds.isEmpty()) {
+                _state.update { it.copy(resolvingDoubanHotId = null, homeNotice = "请先添加视频源") }
+                return@launch
+            }
+            var movie: Movie? = null
+            var matchedLineId: String? = null
+            var lastError: Throwable? = null
+            for (lineId in candidateLineIds.take(MAX_DOUBAN_HOT_FALLBACK_LINES)) {
+                runCatching { findPlayableDoubanMovie(item.title, lineId) }
+                    .onSuccess { found ->
+                        if (found != null) {
+                            movie = found
+                            matchedLineId = lineId
+                        }
                     }
+                    .onFailure { lastError = it }
+                if (movie != null) break
+            }
+            _state.update { it.copy(resolvingDoubanHotId = null) }
+            if (movie == null) {
+                _state.update {
+                    it.copy(homeNotice = lastError?.userMessage() ?: "暂无该视频资源")
                 }
-                .onFailure { error ->
-                    _state.update {
-                        it.copy(
-                            resolvingDoubanHotId = null,
-                            homeNotice = error.userMessage(),
-                        )
-                    }
-                }
+            } else {
+                openDetail(movie!!.id, matchedLineId ?: apiLineId)
+            }
         }
     }
 
@@ -3190,7 +3205,25 @@ class TvBoxViewModel(
 }
 
 private fun Throwable.userMessage(): String {
-    return localizedMessage?.takeIf { it.isNotBlank() } ?: "网络请求失败，请稍后重试"
+    // 不把原始异常（如 "Unexpected JSON token at offset 0 ... JSON input: ..."）直接展示给用户，
+    // 统一转换成可读提示，原始内容仅用于本地排查。
+    // 先去掉内部异常类名前缀（如 "DouyuResolverError: WebView 初始化超时"），只保留可读部分。
+    val raw = localizedMessage.orEmpty().trim()
+        .replace(Regex("^[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\\s*"), "")
+        .trim()
+    val friendly = when {
+        raw.isBlank() -> "请求失败，请稍后重试"
+        raw.contains("timeout", ignoreCase = true) || raw.contains("超时") -> "网络超时，请稍后重试"
+        raw.contains("Unable to resolve host", ignoreCase = true) ||
+            raw.contains("Connection refused", ignoreCase = true) ||
+            raw.contains("Unable to connect", ignoreCase = true) -> "网络连接失败，请检查网络"
+        raw.contains("JSON input:", ignoreCase = true) ||
+            raw.contains("Unexpected JSON", ignoreCase = true) ||
+            raw.contains("Expected start of the object", ignoreCase = true) ->
+            "当前视频源不支持该操作，请在顶部切换到其他视频源后重试"
+        else -> raw
+    }
+    return friendly.take(80)
 }
 
 private fun TvBoxUiState.childCategoryIdsForSelectedParent(): List<Int> {
@@ -3249,6 +3282,8 @@ private fun customVideoApiLineId(baseUrl: String): String {
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
 private const val PLATFORM_LIVE_RETRY_PER_LINE = 2
 private const val PLATFORM_LIVE_SECOND_RETRY_DELAY_MS = 1_000L
+// 热播点击回退查找时最多尝试的视频源数量，避免逐个源串行搜索过慢。
+private const val MAX_DOUBAN_HOT_FALLBACK_LINES = 6
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null

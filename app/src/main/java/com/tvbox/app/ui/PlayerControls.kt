@@ -519,7 +519,7 @@ internal fun PlayerControlsMobile(
                                 )
                             }
                         },
-                        modifier = Modifier.weight(1f).height(36.dp),
+                        modifier = Modifier.weight(1f).height(48.dp),
                     )
                     Text(
                         if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
@@ -575,7 +575,7 @@ internal fun PlayerControlsMobile(
                                     Button(
                                         onClick = { onEpisode(source.episodes.indexOf(ep)); showMore = false },
                                         enabled = true,
-                                        modifier = Modifier.height(36.dp),
+                                        modifier = Modifier.height(48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
@@ -596,7 +596,7 @@ internal fun PlayerControlsMobile(
                                     Button(
                                         onClick = { onSource(idx); showMore = false },
                                         enabled = true,
-                                        modifier = Modifier.height(36.dp),
+                                        modifier = Modifier.height(48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
@@ -616,7 +616,7 @@ internal fun PlayerControlsMobile(
                                     Button(
                                         onClick = { onSpeed(sp); showMore = false },
                                         enabled = true,
-                                        modifier = Modifier.height(36.dp),
+                                        modifier = Modifier.height(48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
@@ -636,7 +636,7 @@ internal fun PlayerControlsMobile(
                                     Button(
                                         onClick = { onVideoScale(mode); showMore = false },
                                         enabled = true,
-                                        modifier = Modifier.height(36.dp),
+                                        modifier = Modifier.height(48.dp),
                                         shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
@@ -667,7 +667,7 @@ private fun ControlButtonMobile(
         onClick = onClick,
         enabled = enabled,
         modifier = Modifier
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .padding(horizontal = if (primary) 24.dp else 12.dp),
         shape = shape,
         colors = ButtonDefaults.buttonColors(

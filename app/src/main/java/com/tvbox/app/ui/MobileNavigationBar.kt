@@ -8,11 +8,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -33,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -76,49 +82,58 @@ fun MobileNavWrapper(
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
         -> MobileNavScreen.Home
     }
+    // 直播播放页（电视直播与平台直播）在手机模式下全屏展示，隐藏顶部栏与底部导航。
+    val liveImmersive = when (state.screen) {
+        TvScreen.Live -> state.liveChannels.isNotEmpty() && state.liveError == null
+        TvScreen.PlatformLive -> state.platformLiveDestination == PlatformLiveDestination.Player
+        else -> false
+    }
     // 播放页、详情页、设置页与源管理页使用整页布局，不显示顶部搜索栏和底部导航。
-    val showChrome = when (state.screen) {
+    val showChrome = !liveImmersive && when (state.screen) {
         TvScreen.Player, TvScreen.Detail, TvScreen.Settings,
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
         -> false
         else -> true
     }
-    Column(modifier = Modifier.fillMaxSize()) {
-        if (showChrome) {
-            MobileTopBar(state = state, actions = actions)
-        }
-        Box(modifier = Modifier.weight(1f)) {
-            content(currentTab)
-        }
-        // 底部导航：放在内容下方，避免遮挡首屏内容。
-        if (isMobile && showChrome) {
-            NavigationBar(
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                tonalElevation = 0.dp,
-                containerColor = Color(0xFF1A1A1A),
-            ) {
-                tabs.forEach { (screen, label) ->
-                    val isSelected = screen == currentTab
-                    NavigationBarItem(
-                        icon = { NavIcon(screen, isSelected) },
-                        label = {
-                            Text(
-                                label,
-                                fontSize = 11.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f),
-                            )
-                        },
-                        selected = isSelected,
-                        onClick = {
-                            if (!isSelected) actions.navigateToMobileScreen(screen)
-                        },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = Color(0xFF1ED760),
-                            unselectedIconColor = Color.White.copy(alpha = 0.6f),
-                            indicatorColor = Color.Transparent,
-                        ),
-                    )
+    // 手机模式统一按触摸界面渲染：关闭遥控器焦点框，避免触摸后高亮残留。
+    CompositionLocalProvider(LocalTouchMode provides true) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (showChrome) {
+                MobileTopBar(state = state, actions = actions)
+            }
+            Box(modifier = Modifier.weight(1f)) {
+                content(currentTab)
+            }
+            // 底部导航：放在内容下方，避免遮挡首屏内容。
+            if (isMobile && showChrome) {
+                NavigationBar(
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    tonalElevation = 0.dp,
+                    containerColor = Color(0xFF1A1A1A),
+                ) {
+                    tabs.forEach { (screen, label) ->
+                        val isSelected = screen == currentTab
+                        NavigationBarItem(
+                            icon = { NavIcon(screen, isSelected) },
+                            label = {
+                                Text(
+                                    label,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f),
+                                )
+                            },
+                            selected = isSelected,
+                            onClick = {
+                                if (!isSelected) actions.navigateToMobileScreen(screen)
+                            },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = Color(0xFF1ED760),
+                                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                                indicatorColor = Color.Transparent,
+                            ),
+                        )
+                    }
                 }
             }
         }
@@ -164,14 +179,15 @@ private fun MobileTopBar(
     actions: TvBoxViewModel,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        // 手机模式为 edge-to-edge 布局，顶部栏自己吸收状态栏高度，避免被状态栏遮挡。
+        modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars),
         color = Color(0xFF1E1E1E),
         shadowElevation = 2.dp,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(52.dp)
+                .height(56.dp)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -184,9 +200,10 @@ private fun MobileTopBar(
             )
             Spacer(modifier = Modifier.width(6.dp))
             Box(
+                // 触摸目标不小于 48dp，避免误触。
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(18.dp))
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .clickable { actions.openSettings() },
                 contentAlignment = Alignment.Center,
             ) {
@@ -213,13 +230,16 @@ private fun MobileSourceDropdown(
     Box {
         Surface(
             modifier = Modifier
+                .heightIn(min = 48.dp)
                 .clip(shape)
                 .clickable(enabled = lines.isNotEmpty()) { expanded = true },
             shape = shape,
             color = Color(0xFF2C2C2C),
         ) {
             Row(
-                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .padding(horizontal = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(
@@ -288,7 +308,7 @@ private fun MobileSearchEntry(
     val shape = RoundedCornerShape(18.dp)
     Surface(
         modifier = modifier
-            .height(36.dp)
+            .height(48.dp)
             .clip(shape)
             .clickable { onOpenSearch() },
         shape = shape,

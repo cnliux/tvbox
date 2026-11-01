@@ -1,5 +1,26 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.18：热播对齐 TV 版与直播全屏
+
+### 文件修改、原因与目的
+
+- `ui/TvBoxViewModel.kt`：热播点击多源回退查找（当前源不支持搜索时依次尝试其他源，上限 6 个），与 TV 版行为一致；`userMessage()` 剥离内部异常类名前缀（如 `DouyuResolverError:`）并识别中文"超时"，不再向用户暴露原始 JSON/异常文本。
+- `ui/LiveScreen.kt`、`ui/PlatformLiveScreen.kt`、`ui/MobileNavigationBar.kt`：直播播放页手机模式沉浸全屏（隐藏系统栏与顶底栏）；新增"全屏/还原"按钮（`RESIZE_MODE_ZOOM` 裁剪铺满消除黑边）；平台直播支持横竖屏切换；电视直播单线路频道无法播放自动切下一台；频道名徽标常驻与"返回"按钮。
+- `ui/TvBoxApp.kt`、`ui/components/Common.kt`、`ui/MobileTouchMode.kt`（新增）：触摸模式点按手势替代 clickable+focusable，消除焦点高亮残留；首页热播 3 列大图、平台直播房间 2 列大卡；通知文案截断。
+- `ui/PlayerScreen.kt`：ExoPlayer 播放错误按 `errorCode` 映射友好文案。
+- `data/LiveRepository.kt`：直播源 URL 归一化去重（仅对清单类扩展名 trim 尾部斜杠）。
+- `app/build.gradle.kts`：版本升级至 `10318 / 1.3.18`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- 本地 `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
+- 192.168.1.45 真机验证：热播点击进《小城良方》详情页；电视直播/平台直播"全屏⇄还原"切换生效；平台直播错误显示"网络超时，请稍后重试"。
+- CI 发布与附件 SHA-256 核对结果见后续提交。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/platform-live.md`。
+
 ## 2026-11-01 19:10 - 发布 v1.3.17：手机模式默认竖屏与移除内置源
 
 ### 文件修改、原因与目的

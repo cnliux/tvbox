@@ -73,11 +73,13 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.tvbox.app.domain.LivePlaybackWatchdog
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
+import android.widget.Toast
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
@@ -128,6 +130,7 @@ private fun LivePlayerScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivityForLive() }
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     val isTelevision = state.appSettings.deviceMode == DeviceMode.Television
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val initialRequestedOrientation = remember(activity) {
@@ -137,6 +140,10 @@ private fun LivePlayerScreen(
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
         }
+    }
+    // 手机模式下直播播放页全屏展示，隐藏状态栏与导航栏，退出时恢复。
+    if (isMobile) {
+        FullscreenWhilePlayingPageVisible(activity)
     }
     val playerFocusRequester = remember { FocusRequester() }
     BindPlaybackSession(session, player)
@@ -153,6 +160,8 @@ private fun LivePlayerScreen(
     var channelListInteraction by remember { mutableIntStateOf(0) }
     var mobileControlsVisible by remember(isTelevision) { mutableStateOf(!isTelevision) }
     var mobileControlsInteraction by remember { mutableIntStateOf(0) }
+    // 手机"全屏"：把横屏直播画面裁剪铺满整个屏幕，消除上下黑边。
+    var fullscreenZoom by remember { mutableStateOf(false) }
     var channelNumberInput by remember { mutableStateOf("") }
     var channelNumberNonce by remember { mutableIntStateOf(0) }
     var promptMessage by remember { mutableStateOf("") }
@@ -198,7 +207,13 @@ private fun LivePlayerScreen(
         val lineUrl = latestLineUrl.value
         if (latestAutomaticSwitchLineUrl.value == lineUrl) return
         automaticSwitchLineUrl = lineUrl
-        actions.advanceLiveLineAfterFailure()
+        if (currentChannel.lines.size <= 1) {
+            // 当前频道只有一条线路且反复缓冲，自动切到下一台，避免手机端长时间黑屏。
+            actions.playNextLiveChannel()
+            showPrompt("当前频道无法播放，已自动切换到下一台")
+        } else {
+            actions.advanceLiveLineAfterFailure()
+        }
     }
 
     fun handleBufferDecision(decision: PlaybackBufferDecision?) {
@@ -207,8 +222,21 @@ private fun LivePlayerScreen(
         }
     }
 
+    var lastExitBackPressTime by remember { mutableStateOf(0L) }
     BackHandler {
-        actions.goBack()
+        // 手机模式先关闭控件/提示，再要求 1.5 秒内二次确认，避免误触直接退出直播。
+        if (isMobile) {
+            val now = System.currentTimeMillis()
+            if (now - lastExitBackPressTime < 1500L) {
+                lastExitBackPressTime = 0L
+                actions.goBack()
+            } else {
+                lastExitBackPressTime = now
+                Toast.makeText(context, "再按一次退出直播", Toast.LENGTH_SHORT).show()
+            }
+        } else {
+            actions.goBack()
+        }
     }
 
     BackHandler(enabled = channelListVisible) {
@@ -470,7 +498,14 @@ private fun LivePlayerScreen(
                     setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                 }
             },
-            update = { it.player = player },
+            update = {
+                it.player = player
+                it.resizeMode = if (fullscreenZoom) {
+                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                } else {
+                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                }
+            },
             modifier = Modifier.fillMaxSize(),
         )
         if (session.interrupted) {
@@ -479,7 +514,8 @@ private fun LivePlayerScreen(
                 session.play(player)
             }, Modifier.align(Alignment.Center), primary = true)
         }
-        if (channelBadgeVisible && !channelListVisible && (isTelevision || !mobileControlsVisible)) {
+        // 手机模式常驻显示频道名与线路信息，方便全屏时确认当前频道。
+        if (!channelListVisible && (if (isTelevision) channelBadgeVisible else true)) {
             LiveChannelBadge(
                 channel = currentChannel,
                 lineIndex = state.liveLineIndex,
@@ -489,6 +525,16 @@ private fun LivePlayerScreen(
                     .align(Alignment.TopStart)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(20.dp),
+            )
+        }
+        if (!isTelevision) {
+            ControlButton(
+                text = "返回",
+                onClick = { actions.goBack() },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(12.dp),
             )
         }
         if (channelListVisible) {
@@ -553,6 +599,12 @@ private fun LivePlayerScreen(
                     showMobileControls()
                 },
                 onRefresh = actions::refreshLive,
+                onFullscreen = {
+                    fullscreenZoom = !fullscreenZoom
+                    showPrompt(if (fullscreenZoom) "全屏铺满" else "恢复原始比例")
+                    showMobileControls()
+                },
+                fullscreenActionLabel = if (fullscreenZoom) "还原" else "全屏",
                 onOrientation = {
                     activity?.requestedOrientation = if (isPortrait) {
                         ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
@@ -741,6 +793,8 @@ private fun MobileLiveControls(
     onNext: () -> Unit,
     onNextLine: () -> Unit,
     onRefresh: () -> Unit,
+    onFullscreen: () -> Unit,
+    fullscreenActionLabel: String,
     onOrientation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -767,6 +821,7 @@ private fun MobileLiveControls(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MobileLiveControlButton("换线", onNextLine, expand = true)
                 MobileLiveControlButton("刷新", onRefresh, expand = true)
+                MobileLiveControlButton(fullscreenActionLabel, onFullscreen, expand = true)
                 MobileLiveControlButton(orientationActionLabel, onOrientation, expand = true)
             }
         } else {
@@ -778,6 +833,7 @@ private fun MobileLiveControls(
                 Spacer(Modifier.weight(1f))
                 MobileLiveControlButton("换线", onNextLine)
                 MobileLiveControlButton("刷新", onRefresh)
+                MobileLiveControlButton(fullscreenActionLabel, onFullscreen)
                 MobileLiveControlButton(orientationActionLabel, onOrientation)
             }
         }
@@ -815,7 +871,7 @@ private fun LivePrompt(
     }
 }
 
-private fun Context.findActivityForLive(): Activity? = when (this) {
+internal fun Context.findActivityForLive(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivityForLive()
     else -> null

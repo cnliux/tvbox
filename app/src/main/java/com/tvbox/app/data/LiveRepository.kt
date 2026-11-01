@@ -34,7 +34,7 @@ class DefaultLiveRepository : LiveRepository {
         .build()
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
-        val sourceUrls = customSourceUrls.distinct()
+        val sourceUrls = customSourceUrls.map(::normalizeSourceUrl).distinct()
         if (sourceUrls.isEmpty()) {
             throw IOException("未添加任何直播源，请在源管理中添加自定义源")
         }
@@ -60,4 +60,19 @@ class DefaultLiveRepository : LiveRepository {
         }
         throw IOException("所有直播源均加载失败", lastError)
     }
+}
+
+/**
+ * 归一化用户输入的直播源地址：手填时常见把文件地址误写成目录（如 `xxx.m3u/`），
+ * 直接请求会返回 404。这里只对明显是具体文件（.m3u/.m3u8/.txt/.json）的地址去掉尾部斜杠。
+ */
+internal fun normalizeSourceUrl(raw: String): String {
+    val trimmed = raw.trim()
+    if (trimmed.isEmpty() || !trimmed.endsWith('/')) return trimmed
+    val withoutSlash = trimmed.trimEnd('/')
+    if (withoutSlash.isEmpty()) return trimmed
+    val path = withoutSlash.substringBefore('?').substringBefore('#').lowercase()
+    val isFile = path.endsWith(".m3u") || path.endsWith(".m3u8") ||
+        path.endsWith(".txt") || path.endsWith(".json")
+    return if (isFile) withoutSlash else trimmed
 }

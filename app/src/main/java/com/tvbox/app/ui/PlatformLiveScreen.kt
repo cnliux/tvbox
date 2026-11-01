@@ -45,6 +45,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -98,8 +99,12 @@ private fun PlatformLiveSitesScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { firstCardFocusRequester.requestFocus() }
+    LaunchedEffect(Unit) {
+        // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
+        if (!touchMode) firstCardFocusRequester.requestFocus()
+    }
     PlatformLiveBrowseSurface(
         title = "直播",
         subtitle = when {
@@ -158,9 +163,12 @@ private fun PlatformLiveParentCategoriesScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
     LaunchedEffect(state.platformLiveParentCategories) {
-        if (state.platformLiveParentCategories.isNotEmpty()) firstCardFocusRequester.requestFocus()
+        if (!touchMode && state.platformLiveParentCategories.isNotEmpty()) {
+            firstCardFocusRequester.requestFocus()
+        }
     }
     val site = state.platformLiveSelectedSite
     PlatformLiveBrowseSurface(
@@ -192,9 +200,12 @@ private fun PlatformLiveCategoriesScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
     LaunchedEffect(state.platformLiveCategories) {
-        if (state.platformLiveCategories.isNotEmpty()) firstCardFocusRequester.requestFocus()
+        if (!touchMode && state.platformLiveCategories.isNotEmpty()) {
+            firstCardFocusRequester.requestFocus()
+        }
     }
     val site = state.platformLiveSelectedSite
     val parentCategory = state.platformLiveSelectedParentCategory
@@ -224,6 +235,7 @@ private fun PlatformLiveRoomsScreen(
     actions: TvBoxViewModel,
     favoritesMode: Boolean = false,
 ) {
+    val touchMode = LocalTouchMode.current
     val gridState = rememberLazyGridState()
     val selectedRoomFocusRequester = remember { FocusRequester() }
     val emptyFavoriteFocusRequester = remember { FocusRequester() }
@@ -238,10 +250,12 @@ private fun PlatformLiveRoomsScreen(
     ) {
         if (state.platformLiveRooms.isEmpty()) return@LaunchedEffect
         gridState.scrollToItem(selectedRoomIndex)
+        if (touchMode) return@LaunchedEffect
         withFrameNanos { }
         runCatching { selectedRoomFocusRequester.requestFocus() }
     }
     LaunchedEffect(favoritesMode, state.platformLiveRooms.isEmpty()) {
+        if (touchMode) return@LaunchedEffect
         if (favoritesMode && state.platformLiveRooms.isEmpty()) {
             runCatching { emptyFavoriteFocusRequester.requestFocus() }
         }
@@ -352,9 +366,15 @@ private fun PlatformLiveBrowseSurface(
                             }
                         }
                     }
+                    val screenWidthDp = LocalConfiguration.current.screenWidthDp
                     LazyVerticalGrid(
                         state = resolvedGridState,
-                        columns = GridCells.Fixed(TvLayout.PlatformLiveColumns),
+                        // 手机触摸模式使用大卡片（封面 + 标题可读）：常规手机 2 列，平板 3 列。
+                        columns = if (LocalTouchMode.current) {
+                            GridCells.Fixed(if (screenWidthDp >= 720) 3 else 2)
+                        } else {
+                            GridCells.Fixed(TvLayout.PlatformLiveColumns)
+                        },
                         contentPadding = PaddingValues(8.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -601,6 +621,20 @@ private fun PlatformLivePlayerScreen(
     KeepScreenOnWhileVisible()
     val stream = state.platformLiveStream?.takeIf { it.channelId == room.id }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val isMobile = state.appSettings.deviceMode == com.tvbox.app.domain.DeviceMode.Mobile
+    val activity = remember(context) { context.findActivityForLive() }
+    var landscapeRequested by remember { mutableStateOf(false) }
+    val initialRequestedOrientation = remember(activity) { activity?.requestedOrientation }
+    if (isMobile) {
+        // 手机模式直播播放页沉浸全屏，退出时恢复系统栏与屏幕方向。
+        FullscreenWhilePlayingPageVisible(activity)
+    }
+    DisposableEffect(activity) {
+        onDispose {
+            activity?.requestedOrientation =
+                initialRequestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
+    }
     val player = remember(stream?.url, stream?.headers) {
         stream?.let { resolved ->
             val dataSourceFactory = DefaultHttpDataSource.Factory()
@@ -620,6 +654,8 @@ private fun PlatformLivePlayerScreen(
     var playbackError by remember(stream?.url) { mutableStateOf<String?>(null) }
     var playerState by remember(stream?.url) { mutableIntStateOf(Player.STATE_IDLE) }
     var badgeVisible by remember { mutableStateOf(true) }
+    // 手机"全屏"：裁剪铺满屏幕，消除横屏直播流的上下黑边。
+    var fullscreenZoom by remember { mutableStateOf(false) }
 
     DisposableEffect(player) {
         if (player == null) {
@@ -628,7 +664,8 @@ private fun PlatformLivePlayerScreen(
             val listener = object : androidx.media3.common.Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     if (!session.canPlay) return
-                    playbackError = error.localizedMessage ?: "平台直播播放失败"
+                    // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
+                    playbackError = "播放失败，正在尝试恢复"
                     badgeVisible = true
                     actions.recoverPlatformLiveChannel()
                 }
@@ -717,7 +754,14 @@ private fun PlatformLivePlayerScreen(
                         setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                     }
                 },
-                update = { it.player = player },
+                update = {
+                    it.player = player
+                    it.resizeMode = if (fullscreenZoom) {
+                        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                    } else {
+                        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    }
+                },
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -736,6 +780,34 @@ private fun PlatformLivePlayerScreen(
                     .align(Alignment.TopStart)
                     .padding(28.dp),
             )
+        }
+        if (isMobile) {
+            Row(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ControlButton(
+                    text = "返回",
+                    onClick = { actions.goBack() },
+                )
+                ControlButton(
+                    text = if (fullscreenZoom) "还原" else "全屏",
+                    onClick = { fullscreenZoom = !fullscreenZoom },
+                )
+                ControlButton(
+                    text = if (landscapeRequested) "竖屏" else "横屏",
+                    onClick = {
+                        landscapeRequested = !landscapeRequested
+                        activity?.requestedOrientation = if (landscapeRequested) {
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                        } else {
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                        }
+                    },
+                )
+            }
         }
         if (state.platformLiveResolving) {
             Column(

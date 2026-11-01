@@ -340,7 +340,18 @@ fun PlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 if (player.playerError != error) return
-                val message = error.localizedMessage ?: "播放失败"
+                // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示。
+                val message = when (error.errorCode) {
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "网络超时，请稍后重试"
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "网络连接失败，请检查网络"
+                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+                    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+                    -> "播放地址无效，正在尝试其他线路"
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+                    PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+                    -> "当前线路格式不支持，正在尝试其他线路"
+                    else -> "播放失败，正在尝试其他线路"
+                }
                 handlePlaybackIssue(
                     PlaybackIssueType.Error,
                     "播放管家：当前线路播放失败",

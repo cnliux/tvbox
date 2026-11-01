@@ -22,6 +22,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
@@ -56,6 +57,8 @@ class MainActivity : ComponentActivity() {
     private var pendingInstallPermissionAction: InstallPermissionAction? = null
     private var permissionSettingsOpen = false
     private var pendingExportApkPath: String? = null
+    // 首页连续按两次返回才退出应用。
+    private var lastHomeBackPressTime = 0L
     private val saveApkLauncher = registerForActivityResult(ActivityResultContracts.CreateDocument(APK_MIME_TYPE)) { uri ->
         val path = pendingExportApkPath ?: return@registerForActivityResult
         pendingExportApkPath = null
@@ -117,8 +120,20 @@ class MainActivity : ComponentActivity() {
                 theme = state.appSettings.theme,
                 fontScale = state.appSettings.fontScale,
             ) {
-                BackHandler(enabled = state.screen != com.tvbox.app.ui.TvScreen.Home) {
-                    viewModel.goBack()
+                // 首页没有可返回的上层页面：连续按两次返回才退出应用，避免误触直接关闭。
+                BackHandler {
+                    if (state.screen != com.tvbox.app.ui.TvScreen.Home) {
+                        viewModel.goBack()
+                    } else {
+                        val now = System.currentTimeMillis()
+                        if (now - lastHomeBackPressTime < HOME_BACK_EXIT_INTERVAL_MS) {
+                            lastHomeBackPressTime = 0L
+                            finish()
+                        } else {
+                            lastHomeBackPressTime = now
+                            Toast.makeText(this@MainActivity, "再按一次退出应用", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 }
                 TvBoxApp(
                     state = state,
@@ -144,6 +159,9 @@ class MainActivity : ComponentActivity() {
         } else {
             ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
         }
+        // 手机模式使用 edge-to-edge 布局，由各页面自行吸收状态栏/导航栏安全区；
+        // 电视模式保持原有的系统避让行为，避免盒子端画面被系统栏挤压。
+        WindowCompat.setDecorFitsSystemWindows(window, mode != DeviceMode.Mobile)
     }
 
     private fun startAiVoiceInput() {
@@ -468,6 +486,7 @@ private class TvBoxViewModelFactory(
 }
 
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
+private const val HOME_BACK_EXIT_INTERVAL_MS = 2000L
 
 private fun speechErrorMessage(error: Int): String {
     return when (error) {

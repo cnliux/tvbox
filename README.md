@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.17`（`versionCode=10317`）。本版本手机模式默认竖屏（点播仍按影片比例智能转屏），并彻底移除内置电视直播源——直播与视频数据完全由用户在源管理中导入。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.18`（`versionCode=10318`）。本版本热播详情对齐 TV 版（多源回退查找），直播播放页支持沉浸全屏与"全屏/还原"裁剪铺满，错误提示全面友好化。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -100,17 +100,18 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10317,
-  "versionName": "1.3.17",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.17/app-release.apk",
-  "apkSha256": "4e6b07638133c269556028dce52ee4fea9b72566e6f16d856b07cfe7b4ef8fcf",
-  "apkSize": 50886826,
+  "versionCode": 10318,
+  "versionName": "1.3.18",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.18/app-release.apk",
+  "apkSha256": "（CI 产物生成后按实际附件更新）",
+  "apkSize": 0,
   "force": false,
   "changelog": [
-    "手机模式默认竖屏：应用整体以竖屏为基准，点播仍按影片比例智能转屏，退出播放/直播页恢复竖屏；电视模式保持横屏。",
-    "移除内置电视直播源：直播完全依赖源管理中添加的自定义 M3U/TXT 源，未添加时给出明确提示。",
-    "清除内置源残留：管理页“内置电视直播源”区块、“恢复内置”按钮与远程管理“内置源组合使用”开关已删除。",
-    "文档与发布说明同步：删除内置源地址清单与服务器地址记录。"
+    "热播详情对齐 TV 版：点击热播直接进详情页，当前源不支持搜索时自动回退其他源查找。",
+    "直播播放页沉浸全屏：隐藏系统栏与顶底栏；新增全屏/还原按钮裁剪铺满消除黑边；平台直播支持横竖屏切换。",
+    "电视直播健壮性：单线路频道无法播放自动切下一台；频道名徽标常驻并新增返回按钮。",
+    "手机版布局修订：首页 3 列大图、直播房间 2 列大卡；触摸模式点按手势消除焦点残留；直播源地址归一化去重。",
+    "错误提示友好化：不再展示原始 JSON / 播放器异常文本，统一为可读提示。"
   ]
 }
 ```
@@ -118,7 +119,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.17 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.18 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。

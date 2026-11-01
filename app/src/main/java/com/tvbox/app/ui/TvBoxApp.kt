@@ -84,10 +84,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.AiProvider
@@ -1726,6 +1726,8 @@ private fun MobileHomeFeed(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     color = TvColors.TextSecondary,
                     style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
@@ -1750,12 +1752,14 @@ private fun MobileHomeFeed(
                     color = TvColors.TextSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
+                val screenWidthDp = LocalConfiguration.current.screenWidthDp
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 140.dp),
+                    // 手机竖屏按大卡片展示：常规手机 2 列，大屏/平板 3 列，避免出现 4 列以上的小图。
+                    columns = GridCells.Fixed(if (screenWidthDp >= 600) 3 else 2),
                     state = movieGridState,
                     contentPadding = PaddingValues(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.weight(1f),
                 ) {
                     if (state.isShowingDoubanHot) {
