@@ -1,8 +1,6 @@
 package com.tvbox.app.data
 
 import android.content.Context
-import com.chaquo.python.Python
-import com.chaquo.python.android.AndroidPlatform
 import com.tvbox.app.domain.PlatformLiveChannel
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
@@ -39,8 +37,9 @@ data class PlatformLiveCategoryTree(
 /**
  * APK 内置的平台直播解析器。
  *
- * 通过 Chaquopy 运行打包在 `assets` 资源中的 Python 解析脚本，
- * 不再依赖外部 platform_live_server 服务。
+ * 解析逻辑由 Go 实现（platform_live_go），通过 gomobile bind 产出的
+ * `libs/platformlive.aar` 提供，不再依赖外部 platform_live_server 服务。
+ * Go 侧接口返回的 JSON 结构与旧版 Python 桥接一致。
  */
 class EmbeddedPlatformLiveRepository(
     context: Context? = null,
@@ -51,10 +50,9 @@ class EmbeddedPlatformLiveRepository(
         coerceInputValues = true
         explicitNulls = false
     }
-    private val pythonLock = Any()
 
     override suspend fun getChannels(): List<PlatformLiveChannel> = withContext(Dispatchers.IO) {
-        val body = call("channels_json")
+        val body = callBridge { platformlive.Platformlive.channelsJson() }
         val response = runCatching { json.decodeFromString<PlatformLiveCatalogResponse>(body) }
             .getOrElse { throw IOException("平台直播频道目录格式错误", it) }
         response.channels
@@ -64,14 +62,14 @@ class EmbeddedPlatformLiveRepository(
     }
 
     override suspend fun getSites(): List<PlatformLiveSite> = withContext(Dispatchers.IO) {
-        val body = call("sites_json")
+        val body = callBridge { platformlive.Platformlive.sitesJson() }
         val response = runCatching { json.decodeFromString<PlatformLiveSitesResponse>(body) }
             .getOrElse { throw IOException("平台直播平台列表格式错误", it) }
         response.sites.mapNotNull { it.toDomainOrNull() }
     }
 
     override suspend fun getCategoryTree(site: String): PlatformLiveCategoryTree = withContext(Dispatchers.IO) {
-        val body = call("categories_json", site)
+        val body = callBridge { platformlive.Platformlive.categoriesJson(site) }
         val response = runCatching { json.decodeFromString<PlatformLiveCategoriesResponse>(body) }
             .getOrElse { throw IOException("平台直播分类列表格式错误", it) }
         val categories = response.categories.mapNotNull { it.toDomainOrNull() }
@@ -101,7 +99,7 @@ class EmbeddedPlatformLiveRepository(
         page: Int,
     ): PlatformLiveRoomsPage = withContext(Dispatchers.IO) {
         val normalizedPage = page.coerceAtLeast(1)
-        val body = call("rooms_json", site, categoryId, normalizedPage.toString())
+        val body = callBridge { platformlive.Platformlive.roomsJson(site, categoryId, normalizedPage.toString()) }
         val response = runCatching { json.decodeFromString<PlatformLiveRoomsResponse>(body) }
             .getOrElse { throw IOException("平台直播房间列表格式错误", it) }
         PlatformLiveRoomsPage(
@@ -115,7 +113,9 @@ class EmbeddedPlatformLiveRepository(
         room: PlatformLiveRoom,
         forceRefresh: Boolean,
     ): ResolvedPlatformLiveStream = withContext(Dispatchers.IO) {
-        val body = call("resolve_json", room.site, room.roomId, if (forceRefresh) "1" else "0")
+        val body = callBridge {
+            platformlive.Platformlive.resolveJson(room.site, room.roomId, if (forceRefresh) "1" else "0")
+        }
         val response = runCatching { json.decodeFromString<PlatformLiveResolveResponse>(body) }
             .getOrElse { throw IOException("平台直播解析结果格式错误", it) }
         if (!response.live) throw IOException("该房间当前未开播")
@@ -149,44 +149,31 @@ class EmbeddedPlatformLiveRepository(
         )
     }
 
-    private fun call(function: String, vararg args: String): String {
-        ensurePythonStarted()
+    /**
+     * 调用 Go 桥接（gomobile bind 的 platformlive 包）。
+     *
+     * 错误包装保持与旧版 Python 桥接一致的语义：解析异常取最后一行描述，
+     * 便于 UI 直接展示"斗鱼取流失败..." 等具体原因。
+     */
+    private fun callBridge(block: () -> String): String {
+        ensureBridgeStarted()
         return try {
-            val module = Python.getInstance().getModule(BRIDGE_MODULE)
-            module.callAttr(function, *args).toString()
+            block()
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            throw IOException(pythonErrorMessage(error), error)
+            throw IOException(bridgeErrorMessage(error), error)
         }
     }
 
-    private fun ensurePythonStarted() {
-        if (Python.isStarted()) return
-        synchronized(pythonLock) {
-            if (Python.isStarted()) return
-            val context = appContext ?: throw IOException("直播解析器未初始化")
-            Python.start(AndroidPlatform(context))
-            DouyinSigner.init(context)
-        }
+    private fun ensureBridgeStarted() {
+        PlatformLiveGoBridge.start(appContext)
     }
 
-    private fun pythonErrorMessage(error: Throwable): String {
+    private fun bridgeErrorMessage(error: Throwable): String {
         val raw = error.message?.trim().orEmpty()
         if (raw.isBlank()) return "直播解析失败"
-        val lastLine = raw.lineSequence()
-            .map { it.trim() }
-            .lastOrNull { it.isNotBlank() }
-            .orEmpty()
-        return lastLine
-            .substringAfterLast("PyException: ", lastLine)
-            .substringAfterLast("Exception: ", lastLine)
-            .trim()
-            .ifBlank { "直播解析失败" }
-    }
-
-    private companion object {
-        const val BRIDGE_MODULE = "tvbox_live_bridge"
+        return raw.ifBlank { "直播解析失败" }
     }
 }
 

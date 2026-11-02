@@ -15,3 +15,10 @@ __pycache__/
 
 # Local verification screenshots
 .screenshots/
+
+# gomobile 产物（CI 由 tools/bind-platform-live.* 重新生成）
+app/libs/
+
+# agent 本地工作目录
+.box-agent/
+.box-agent-scratch/

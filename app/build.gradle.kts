@@ -4,7 +4,6 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
-    id("com.chaquo.python")
 }
 
 val localProperties = Properties().apply {
@@ -52,8 +51,31 @@ android {
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         buildConfigField("String", "PLATFORM_LIVE_SERVICE_URL", platformLiveServiceUrl.toBuildConfigString())
         ndk {
-            // Chaquopy 内置 Python 运行时，需要显式声明支持的 ABI。
+            // 平台直播解析通过 gomobile 产出 .so（platformlive.aar），与以下 ABI 对齐。
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
+    }
+
+    // 三种发行版：universal（手机+电视）、tv（仅电视）、mobile（仅手机）
+    flavorDimensions += listOf("device")
+    productFlavors {
+        create("universal") {
+            dimension = "device"
+            applicationId = "com.tvbox.app"
+            versionNameSuffix = ""
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
+        }
+        create("tv") {
+            dimension = "device"
+            applicationId = "com.tvbox.app.tv"
+            versionNameSuffix = "-tv"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
+        }
+        create("mobile") {
+            dimension = "device"
+            applicationId = "com.tvbox.app.mobile"
+            versionNameSuffix = "-mobile"
+            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_mobile"
         }
     }
 
@@ -110,21 +132,44 @@ android {
     }
 }
 
-chaquopy {
-    defaultConfig {
-        version = "3.11"
-        val buildPython = configProperty("TVBOX_BUILD_PYTHON")
-        if (buildPython.isNotBlank()) {
-            // 部分环境下 PATH 中混入了非标准 python 路径，允许显式指定构建用 Python。
-            buildPython(buildPython)
-        }
-        pip {
-            install("requests")
-        }
+// 平台直播 Go 解析库（gomobile bind）。
+// preBuild 前自动执行 tools/bind-platform-live.*，产出 app/libs/platformlive.aar。
+// 无 Go 工具链时可用 -PtvboxSkipPlatformBind=true 跳过（需事先准备 app/libs/platformlive.aar）。
+val platformLiveAar = file("libs/platformlive.aar")
+val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
+    val scriptName = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+        "bind-platform-live.ps1"
+    } else {
+        "bind-platform-live.sh"
+    }
+    val script = rootProject.file("tools/$scriptName")
+    inputs.dir(rootProject.file("platform_live_go"))
+    if (platformLiveAar.exists()) {
+        outputs.file(platformLiveAar)
+    }
+    onlyIf { !project.hasProperty("tvboxSkipPlatformBind") }
+    if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
+        commandLine(
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script.absolutePath,
+        )
+    } else {
+        commandLine("bash", script.absolutePath)
     }
 }
 
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(bindPlatformLive)
+}
+
 dependencies {
+    // 平台直播解析（虎牙/斗鱼/B站/抖音/快手）由 Go 实现（platform_live_go），
+    // 以 gomobile bind 产出 AAR：tools/bind-platform-live.(ps1|sh)
+    implementation(files("libs/platformlive.aar"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.foundation)

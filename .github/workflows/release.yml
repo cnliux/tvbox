@@ -22,13 +22,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      # 平台直播解析为 Go 实现（platform_live_go），以 gomobile bind 产出 AAR。
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version-file: platform_live_go/go.mod
+          cache-dependency-path: platform_live_go/go.sum
 
-      - name: Point Chaquopy at setup Python
-        run: echo "TVBOX_BUILD_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+      - name: Install gomobile
+        run: go install golang.org/x/mobile/cmd/gomobile@latest
+
+      # gomobile 经 ANDROID_NDK_HOME 定位 NDK。
+      - name: Point gomobile at NDK
+        run: echo "ANDROID_NDK_HOME=$(ls -d ${ANDROID_HOME}/ndk/* | sort -V | tail -n 1)" >> "$GITHUB_ENV"
 
       # ubuntu-latest 自带 Android SDK（ANDROID_HOME 已设置），
       # 缺失的 platform/build-tools 由 AGP 自动下载，无需 setup-android。
@@ -52,10 +58,18 @@ jobs:
           TVBOX_PLATFORM_LIVE_SERVICE_URL: ${{ secrets.TVBOX_PLATFORM_LIVE_SERVICE_URL }}
         run: ./gradlew --no-daemon assembleRelease
 
+      # flavor 产物收敛：universal 版沿用旧资产名 app-release.apk，保持 OTA 兼容。
+      - name: Stage release artifacts
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/universal/release/app-universal-release.apk dist/app-release.apk
+          cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/app-tv-release.apk
+          cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/app-mobile-release.apk
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: app/build/outputs/apk/release/app-release.apk
+          files: dist/*.apk
           name: TVBox ${{ github.ref_name }}
           body: |
             TVBox Android TV 客户端 ${{ github.ref_name }} 版本。
