@@ -14,7 +14,7 @@
 
 - 本地 `:app:compileDebugKotlin` 通过。
 - CI 发布：推送 `v1.3.23` 标签触发 `.github/workflows/release.yml` 成功，发布 [TVBox v1.3.23](https://github.com/cnliux/tvbox/releases/tag/v1.3.23)。
-- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+- Release 附件 `app-release.apk`：`50886726` 字节，下载后本地计算 SHA-256 `401bf8d4e76ec188056e73a4690ff4bb7f5ff68715523f3cdbd804beb8d06138`，已回填 `update.json` 与 README 示例。
 
 ### 导航
 
