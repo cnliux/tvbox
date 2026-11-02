@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -107,7 +108,10 @@ fun MobileNavWrapper(
             // 底部导航：放在内容下方，避免遮挡首屏内容。
             if (isMobile && showChrome) {
                 NavigationBar(
-                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    // edge-to-edge 下吸收系统导航栏高度，避免三键/手势条遮挡导航内容。
+                    modifier = Modifier.fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.navigationBars)
+                        .height(56.dp),
                     tonalElevation = 0.dp,
                     containerColor = Color(0xFF1A1A1A),
                 ) {

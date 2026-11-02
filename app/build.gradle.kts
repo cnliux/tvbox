@@ -47,8 +47,8 @@ android {
         applicationId = "com.tvbox.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10318
-        versionName = "1.3.18"
+        versionCode = 10319
+        versionName = "1.3.19"
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         buildConfigField("String", "PLATFORM_LIVE_SERVICE_URL", platformLiveServiceUrl.toBuildConfigString())
         ndk {

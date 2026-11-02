@@ -350,7 +350,10 @@ private fun PlatformLiveBrowseSurface(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding)
-                        .padding(horizontal = 28.dp, vertical = 18.dp),
+                        .padding(
+                            horizontal = if (LocalTouchMode.current) 8.dp else 28.dp,
+                            vertical = if (LocalTouchMode.current) 10.dp else 18.dp,
+                        ),
                 ) {
                     AnimatedVisibility(visible = headerVisible) {
                         Column {
@@ -367,17 +370,18 @@ private fun PlatformLiveBrowseSurface(
                         }
                     }
                     val screenWidthDp = LocalConfiguration.current.screenWidthDp
+                    val touchMode = LocalTouchMode.current
                     LazyVerticalGrid(
                         state = resolvedGridState,
-                        // 手机触摸模式使用大卡片（封面 + 标题可读）：常规手机 2 列，平板 3 列。
-                        columns = if (LocalTouchMode.current) {
-                            GridCells.Fixed(if (screenWidthDp >= 720) 3 else 2)
+                        // 手机触摸模式铺满屏宽：竖屏 4 列、宽屏 6 列，保证两行至少 8 个卡片可见。
+                        columns = if (touchMode) {
+                            GridCells.Fixed(if (screenWidthDp >= 720) 6 else 4)
                         } else {
                             GridCells.Fixed(TvLayout.PlatformLiveColumns)
                         },
-                        contentPadding = PaddingValues(8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         content()
@@ -506,6 +510,7 @@ private fun PlatformLiveImageCard(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = MaterialTheme.shapes.medium
+    val touchMode = LocalTouchMode.current
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = modifier
@@ -540,16 +545,25 @@ private fun PlatformLiveImageCard(
             }
             Text(
                 text = title,
-                modifier = Modifier.padding(start = 12.dp, top = 10.dp, end = if (favorite == null) 12.dp else 62.dp),
-                style = MaterialTheme.typography.titleSmall,
+                modifier = Modifier.padding(
+                    start = if (touchMode) 6.dp else 12.dp,
+                    top = if (touchMode) 5.dp else 10.dp,
+                    end = if (favorite == null) (if (touchMode) 6.dp else 12.dp) else (if (touchMode) 34.dp else 62.dp),
+                ),
+                style = if (touchMode) MaterialTheme.typography.bodySmall else MaterialTheme.typography.titleSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = subtitle.ifBlank { "正在直播" },
-                modifier = Modifier.padding(start = 12.dp, top = 3.dp, end = if (favorite == null) 12.dp else 62.dp, bottom = 12.dp),
+                modifier = Modifier.padding(
+                    start = if (touchMode) 6.dp else 12.dp,
+                    top = 2.dp,
+                    end = if (favorite == null) (if (touchMode) 6.dp else 12.dp) else (if (touchMode) 34.dp else 62.dp),
+                    bottom = if (touchMode) 6.dp else 12.dp,
+                ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
+                style = if (touchMode) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -559,8 +573,8 @@ private fun PlatformLiveImageCard(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 8.dp, bottom = 8.dp)
-                    .size(44.dp)
+                    .padding(end = if (touchMode) 2.dp else 8.dp, bottom = if (touchMode) 2.dp else 8.dp)
+                    .size(if (touchMode) 28.dp else 44.dp)
                     .tvFocusScale(shape = MaterialTheme.shapes.small, focusedBorder = Color.White)
                     .clip(MaterialTheme.shapes.small)
                     .onFocusChanged { starFocused = it.isFocused }
@@ -572,7 +586,7 @@ private fun PlatformLiveImageCard(
                 Text(
                     text = if (favorite) "★" else "☆",
                     color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
                 )
             }
         }

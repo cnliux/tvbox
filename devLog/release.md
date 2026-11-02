@@ -1,5 +1,23 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.19：底部导航遮挡修复与直播列表 4 列铺满
+
+### 文件修改、原因与目的
+
+- `ui/MobileNavigationBar.kt`：edge-to-edge 下底部 `NavigationBar` 未吸收系统导航栏 insets，导致"首页/历史/搜索/电视/直播"被三键栏遮挡；增加 `windowInsetsPadding(WindowInsets.navigationBars)`（置于 `height(56.dp)` 之前，总高 = 56dp + inset）。
+- `ui/PlatformLiveScreen.kt`：触摸模式平台直播浏览页外层 padding 28dp→8dp、网格间距 14dp→8dp、contentPadding 8dp→2dp，消除两侧黑框；列数竖屏 2→4、宽屏 3→6，两行至少可见 8 个卡片；`PlatformLiveImageCard` 触摸模式压缩文字区（bodySmall/labelSmall、padding 6dp）与收藏按钮（44dp→28dp），标题、主播与人气清晰可读。
+- `app/build.gradle.kts`：版本升级至 `10319 / 1.3.19`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- 本地 `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
+- 192.168.1.45 真机验证：首页底部导航五标签完整可见不被遮挡；站点/分类/房间列表均 4 列铺满、无两侧黑框、卡片信息可读。
+- CI 发布与附件 SHA-256 核对结果见后续提交。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/platform-live.md`。
+
 ## 2026-11-02 - 发布 v1.3.18：热播对齐 TV 版与直播全屏
 
 ### 文件修改、原因与目的
