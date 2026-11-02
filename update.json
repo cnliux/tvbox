@@ -1,13 +1,15 @@
 {
-  "versionCode": 10325,
-  "versionName": "1.3.25",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.25/app-release.apk",
-  "apkSha256": "cbc84a33c87108fb67675e9bb894d6ce05651b42367ee820309050a443b9c411",
-  "apkSize": 50886726,
+  "versionCode": 10326,
+  "versionName": "1.3.26",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.26/app-release.apk",
+  "apkSha256": "9696cdea789ea04dd8ec355d95f1aecd4b59765702459b3ae9e2e9d519df6a6a",
+  "apkSize": 74540357,
   "force": false,
   "changelog": [
-    "手机模式 UX 专项修复：AI 推荐页操作栏改用 FlowRow 避免溢出；底部导航标签字号/图标增大；分类 Pill 和搜索按钮达到 48dp 最小触控目标；直播退出改为弹窗确认；首页新增一次性引导 Banner；搜索进度文案优化；详情页测速添加行内进度条。",
-    "历史页手机版卡片网格改为固定 2 列，避免窄屏算出 1 列。",
-    "虎牙/斗鱼直播断流修复：斗鱼播放器 headers 改用移动端 Referer/Origin/UA；虎牙 Referer/Origin/UA 统一为移动端与 anti-code 一致；断流恢复策略改为直接切换下一条候选 CDN（不再重试同一条无效线路），缓冲超时从 8s 降至 5s。"
+    "直播「无法播放」修复：无扩展名直播地址自动探测 MIME（HLS/FLV/TS）后再起播，黑屏报错大幅减少。",
+    "虎牙「自动换线路」修复：流正常关闭时先同线路原地重连（重新签名），不再误判为线路故障轮换 CDN；画面恢复即清零重连计数。",
+    "多线路模型：同频道多源聚合为一条频道（面板标注协议），M3U 逐线路 UA/Cookie 生效，线路记忆按「分组#频道」不再互相污染。",
+    "直播面板两级交互：分类→频道逐级进入，BACK 逐级返回；焦点自动落到正在播放频道，修复遥控器方向键失灵。",
+    "平台直播解析迁移 Go（移除 Python 运行时）；剧集列表支持倒序。注意本版 APK 体积增大（含 Go 原生库多架构）。"
   ]
 }
