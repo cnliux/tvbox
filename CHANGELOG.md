@@ -1,5 +1,19 @@
 # 更新记录
 
+## v1.3.26 - 2026-11-03
+
+- 直播「无法播放」根因修复 — 无扩展名地址 MIME 探测：约 1/3 直播地址无 .m3u8/.flv 扩展名（如 `…/play?id=cctv1`），旧版 ExoPlayer 无法按 URI 推断格式，走 progressive 嗅探报 `UnrecognizedInputFormatException` 直接黑屏。新增 `LiveStreamProbe`（Range 前 4KB + Content-Type/魔数识别 HLS/FLV/TS，结果缓存），取流前注入 `setMimeType`；探测失败自动回退旧行为。
+- 虎牙「自动切线路」修复 — ENDED 语义拆分：虎牙 FLV 签名（wsTime/wsSecret）约 125s 到期后服务端正常关流，旧版把 STATE_ENDED 一律当线路故障轮换 CDN，表现为"隔几分钟自动换线路"。现按 Error/Stall/Ended 分类处置：Ended/缓冲卡顿先同线路原地重连（虎牙重新解析即得新签名），仅硬错误或同线路重试耗尽才换候选；画面 READY 后清零重连计数；熔断 120s/6 次并给出可读提示。
+- 电视直播多线路数据模型：`LiveChannelLine` 增加 `headers`（M3U `#EXTVLCOPT` UA/Referer/Cookie 按线路生效）与 `protocolHint`（面板标注 `线路2 · hls`）；M3U 同 `tvg-name` 聚合为单频道多线路；TXT 支持 `频道名,线路1,线路2`、全角逗号、URL 内含逗号、`名$URL`/`URL$名` 双向；同 URL 去重；修复 `distinctBy{name}` 误吞不同分组同名频道。
+- 直播面板两级交互（分类→频道）：遥控器 D-pad+确定进入分类、BACK 频道→分类→关闭→退出逐级返回；焦点自动落到当前播放频道（分类不含当前频道时回落首行，修复遥控器"方向键失灵"）；Phone 触摸端为底部抽屉 + 点按进入，文案区分（「点按进入频道」）；面板内订阅切换，切换后保持同名分类，失效源兜底「已切换备用源」。
+- 线路记忆键改为 `分组#频道名`，修复不同分组同名频道互相污染（越界黑屏）。
+- 直播取流 UA 经 `DefaultHttpDataSource.setUserAgent` 设置（绕开 ExoPlayer 对受限请求头的限制），`#EXTVLCOPT` 其余头透传；连接/读取超时 8s/12s。
+- 播放器回调日志改用更新态引用，换台后【触发线路容错】等日志不再滞留旧频道名，便于排障。
+- 平台直播解析迁移 Go（platform_live_go + gomobile AAR），移除 Chaquopy/Python 运行时；CI 与本地由 `tools/bind-platform-live.*` 自动生成，`-PtvboxSkipPlatformBind=true` 跳过。
+- 三种发行 flavor：universal/tv/mobile；Release 工作流发布三个 APK（universal 沿用 `app-release.apk` 资产名保持 OTA 兼容）。
+- 剧集列表支持倒序（`↕ 倒序`，持久化）。
+- 新增 LiveMultiLineParserTest 9 例；域单元测试 75/75 通过。192.168.1.45 实机验证：两级交互/BACK 状态机/MIME 探测/虎牙两周期不换 CDN（详见 logcat 证据）。
+
 ## v1.3.25 - 2026-11-02
 
 - 电视直播默认源设置：每个直播源可单独设为默认，优先加载；默认源不可用时自动切换备用源并提示"默认直播源不可用，已切换备用源"；本机持久化，重启生效；导入新源或清空源时若旧默认已越界自动清除。
