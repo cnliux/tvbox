@@ -46,6 +46,9 @@ cd "$MODULE_DIR"
 go build ./...
 go test ./...
 
+# gomobile bind 依赖 gobind，须先 init（幂等）。
+gomobile init
+
 mkdir -p "$(dirname "$OUTPUT_AAR")"
 gomobile bind \
     -target=android/arm,android/arm64,android/amd64 \

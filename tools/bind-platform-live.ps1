@@ -1,4 +1,4 @@
-﻿# 将 platform_live_go 编译为 Android AAR（gomobile bind）。
+# 将 platform_live_go 编译为 Android AAR（gomobile bind）。
 #
 # 前置条件：
 # - 本机安装 Go（go.exe 可在 PATH，或用 -GoBin 指定完整路径）；
@@ -101,6 +101,10 @@ try {
     $env:PATH = "$goDir;$goBinDir;$env:PATH"
     $env:ANDROID_NDK_HOME = $ndkDir
     $env:ANDROID_SDK_ROOT = $androidSdk
+
+    # gomobile bind 依赖 gobind，须先 init（幂等）。
+    & $gomobileExe init
+    if ($LASTEXITCODE -ne 0) { throw "gomobile init 失败。" }
 
     $targetAar = Join-Path $moduleDir "..\app\libs\platformlive.aar"
     & $gomobileExe bind `
