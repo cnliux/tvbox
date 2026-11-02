@@ -2465,16 +2465,17 @@ class TvBoxViewModel(
         _state.update { it.copy(sourceImportMessage = null) }
     }
 
-    fun updateLiveSourceUrls(urls: List<String>, defaultGroup: String = "") {
+    fun updateLiveSourceUrls(urls: List<String>, defaultGroup: String = "", defaultIndex: Int = -1) {
         val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
         val current = _state.value
-        // 源列表变更时，若默认下标已越界则清除默认。
-        val defaultIndex = current.appSettings.liveSourceDefaultIndex
-            .takeIf { idx -> idx in normalized.indices } ?: -1
+        // 使用调用方传入的 defaultIndex；未传入时用当前设置（-1 表示无默认）。
+        val effectiveDefaultIndex = if (defaultIndex >= 0) defaultIndex
+            else current.appSettings.liveSourceDefaultIndex
+                .takeIf { idx -> idx in normalized.indices } ?: -1
         val settings = current.appSettings.copy(
             liveSourceUrls = normalized,
             liveSourceDefaultGroup = defaultGroup,
-            liveSourceDefaultIndex = defaultIndex,
+            liveSourceDefaultIndex = effectiveDefaultIndex,
         )
         applyLiveSourceConfig(settings)
         saveSettings(settings)
@@ -2492,6 +2493,8 @@ class TvBoxViewModel(
         if (index !in current.appSettings.liveSourceUrls.indices) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = index)
         _state.update { it.copy(appSettings = settings) }
+        // 立即同步提交，避免 apply() 异步延迟导致设置丢失。
+        appSettingsRepository.commitLiveSourceDefaultIndex(index)
         saveSettings(settings)
         applyLiveSourceConfig(settings)
     }
@@ -2502,6 +2505,7 @@ class TvBoxViewModel(
         if (current.appSettings.liveSourceDefaultIndex == -1) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = -1)
         _state.update { it.copy(appSettings = settings) }
+        appSettingsRepository.commitLiveSourceDefaultIndex(-1)
         saveSettings(settings)
         applyLiveSourceConfig(settings)
     }

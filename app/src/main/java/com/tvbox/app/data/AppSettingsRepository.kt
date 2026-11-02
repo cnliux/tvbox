@@ -20,6 +20,9 @@ interface AppSettingsRepository {
     /** 测速延迟持久化：value 为 null 表示测速失败，缺失的 key 表示未测速。 */
     suspend fun getSpeedLatencies(): Map<String, Long?> = emptyMap()
     suspend fun saveSpeedLatencies(latencies: Map<String, Long?>) {}
+
+    /** 立即同步提交直播默认源下标（commit 而非 apply），确保设置后立即生效。 */
+    fun commitLiveSourceDefaultIndex(index: Int) {}
 }
 
 class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
@@ -95,6 +98,11 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, settings.liveSourceDefaultIndex)
             .apply()
         settings
+    }
+
+    /** 立即同步提交指定键到 SharedPreferences，用于关键设置（如默认直播源）的即时持久化。 */
+    override fun commitLiveSourceDefaultIndex(index: Int) {
+        prefs.edit().putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, index).commit()
     }
 
     private fun readCustomVideoApiLines(): List<CustomVideoApiLine> {
