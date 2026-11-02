@@ -10,8 +10,8 @@
 ### 构建与发布校验
 
 - 本地 `:app:compileDebugKotlin` 通过。
-- CI 发布：推送 `v1.3.22` 标签触发 `.github/workflows/release.yml`，发布 [TVBox v1.3.22](https://github.com/cnliux/tvbox/releases/tag/v1.3.22)。
-- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+- CI 发布：推送 `v1.3.22` 标签触发 `.github/workflows/release.yml` 成功，发布 [TVBox v1.3.22](https://github.com/cnliux/tvbox/releases/tag/v1.3.22)。
+- Release 附件 `app-release.apk`：`50886786` 字节，下载后本地计算 SHA-256 `d398736d08555a345cf493ef894008cece0df489d2b81d46b7a1468c16904511`，与大小一致；`update.json` 与 README 示例按该附件实际值更新。
 
 ### 导航
 

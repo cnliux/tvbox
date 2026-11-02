@@ -2,8 +2,8 @@
   "versionCode": 10322,
   "versionName": "1.3.22",
   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.22/app-release.apk",
-  "apkSha256": "",
-  "apkSize": 0,
+  "apkSha256": "d398736d08555a345cf493ef894008cece0df489d2b81d46b7a1468c16904511",
+  "apkSize": 50886786,
   "force": false,
   "changelog": [
     "修复手机版首页/热播海报片名不可见：卡片标题显式使用 onSurface 前景色，深色卡片上片名清晰可读，保留最多两行自适应换行。"
