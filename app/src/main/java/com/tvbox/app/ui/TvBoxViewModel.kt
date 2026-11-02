@@ -2468,7 +2468,14 @@ class TvBoxViewModel(
     fun updateLiveSourceUrls(urls: List<String>, defaultGroup: String = "") {
         val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
         val current = _state.value
-        val settings = current.appSettings.copy(liveSourceUrls = normalized, liveSourceDefaultGroup = defaultGroup)
+        // 源列表变更时，若默认下标已越界则清除默认。
+        val defaultIndex = current.appSettings.liveSourceDefaultIndex
+            .takeIf { idx -> idx in normalized.indices } ?: -1
+        val settings = current.appSettings.copy(
+            liveSourceUrls = normalized,
+            liveSourceDefaultGroup = defaultGroup,
+            liveSourceDefaultIndex = defaultIndex,
+        )
         applyLiveSourceConfig(settings)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
@@ -2476,7 +2483,27 @@ class TvBoxViewModel(
 
     /** 把设置中的电视直播源应用到仓库。 */
     private fun applyLiveSourceConfig(settings: AppSettings) {
-        liveRepository.setSourceConfig(settings.liveSourceUrls, settings.liveSourceDefaultGroup)
+        liveRepository.setSourceConfig(settings.liveSourceUrls, settings.liveSourceDefaultGroup, settings.liveSourceDefaultIndex)
+    }
+
+    /** 设置电视直播默认源：为指定下标的源标记为默认（同一时间只有一个默认源）。 */
+    fun setLiveSourceDefaultIndex(index: Int) {
+        val current = _state.value
+        if (index !in current.appSettings.liveSourceUrls.indices) return
+        val settings = current.appSettings.copy(liveSourceDefaultIndex = index)
+        _state.update { it.copy(appSettings = settings) }
+        saveSettings(settings)
+        applyLiveSourceConfig(settings)
+    }
+
+    /** 清除电视直播默认源。 */
+    fun clearLiveSourceDefaultIndex() {
+        val current = _state.value
+        if (current.appSettings.liveSourceDefaultIndex == -1) return
+        val settings = current.appSettings.copy(liveSourceDefaultIndex = -1)
+        _state.update { it.copy(appSettings = settings) }
+        saveSettings(settings)
+        applyLiveSourceConfig(settings)
     }
 
     /** 屏蔽/恢复视频源分类：屏蔽后该分类不再出现在电视的分类与影片列表。 */

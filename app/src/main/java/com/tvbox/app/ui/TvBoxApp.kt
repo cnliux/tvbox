@@ -2160,7 +2160,15 @@ private fun LiveSourceSetting(
 ) {
     var urlsText by remember { mutableStateOf(state.appSettings.liveSourceUrls.joinToString("\n")) }
     var defaultGroup by remember { mutableStateOf(state.appSettings.liveSourceDefaultGroup) }
+    // 本地保存默认源下标，与 state 保持同步（state 在加载时从持久化读取）。
+    var defaultIndex by remember { mutableStateOf(state.appSettings.liveSourceDefaultIndex) }
     var savedMessage by remember { mutableStateOf<String?>(null) }
+
+    // 将当前文本区内容解析为 URL 列表（仅在首次渲染时计算）。
+    val currentUrls = remember(urlsText) {
+        urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+    }
+    val defaultIdx = currentUrls.getOrNull(defaultIndex)?.let { currentUrls.indexOf(it) } ?: -1
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -2175,6 +2183,77 @@ private fun LiveSourceSetting(
             placeholder = { Text("https://example.com/live.m3u\nhttps://example.com/live.txt") },
             maxLines = 8,
         )
+
+        // 默认直播源设置区
+        if (currentUrls.isNotEmpty()) {
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "默认直播源（优先使用；不可用时自动切换备用源）",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    if (defaultIdx >= 0) {
+                        Text(
+                            text = "取消默认",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .clickable {
+                                    actions.clearLiveSourceDefaultIndex()
+                                    defaultIndex = -1
+                                },
+                        )
+                    }
+                }
+                currentUrls.forEachIndexed { idx, url ->
+                    val isDefault = idx == defaultIdx
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (isDefault) TvColors.AccentSoft.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        ) {
+                            Text(
+                                text = if (isDefault) "✓ $url" else url,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                            )
+                        }
+                        if (isDefault) {
+                            SettingsActionButton(
+                                text = "✓ 默认",
+                                onClick = {},
+                                enabled = false,
+                                selected = true,
+                                modifier = Modifier.height(36.dp),
+                            )
+                        } else {
+                            SettingsActionButton(
+                                text = "设为默认",
+                                onClick = {
+                                    actions.setLiveSourceDefaultIndex(idx)
+                                    defaultIndex = idx
+                                },
+                                modifier = Modifier.height(36.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         Text(
             text = "默认频道分组名（可选，不填则保持源内分组）",
             style = MaterialTheme.typography.titleSmall,
@@ -2192,6 +2271,13 @@ private fun LiveSourceSetting(
                 text = "保存直播源",
                 onClick = {
                     val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                    // 编辑源列表后清除默认（若下标越界会自动处理，但显式清除更清晰）。
+                    if (defaultIndex !in urls.indices) {
+                        actions.clearLiveSourceDefaultIndex()
+                        defaultIndex = -1
+                    } else {
+                        actions.setLiveSourceDefaultIndex(defaultIndex)
+                    }
                     actions.updateLiveSourceUrls(urls, defaultGroup)
                     savedMessage = "已保存 ${urls.size} 个直播源"
                 },
@@ -2201,6 +2287,8 @@ private fun LiveSourceSetting(
                 enabled = state.appSettings.liveSourceUrls.isNotEmpty(),
                 onClick = {
                     actions.updateLiveSourceUrls(emptyList(), "")
+                    actions.clearLiveSourceDefaultIndex()
+                    defaultIndex = -1
                     urlsText = ""
                     defaultGroup = ""
                     savedMessage = "已清空直播源"

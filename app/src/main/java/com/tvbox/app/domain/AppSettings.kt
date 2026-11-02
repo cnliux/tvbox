@@ -30,6 +30,8 @@ data class AppSettings(
     val liveSourceDefaultGroup: String = "",
     /** 手机模式首次启动引导 Banner 是否已展示过。 */
     val mobileOnboarded: Boolean = false,
+    /** 电视直播默认源在 liveSourceUrls 中的下标；-1 表示无默认，按顺序尝试。 */
+    val liveSourceDefaultIndex: Int = -1,
 )
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

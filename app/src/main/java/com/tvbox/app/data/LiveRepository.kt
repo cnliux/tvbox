@@ -18,17 +18,20 @@ interface LiveRepository {
      *
      * @param customUrls 用户添加的自定义 M3U/TXT 源地址。
      * @param defaultGroup 解析成功后，默认将频道分组名改为该值（避免"电视直播"兜底名）。
+     * @param defaultIndex 默认源下标（-1 表示无默认，按顺序尝试）；默认源不可用时按原顺序回退备用源。
      */
-    fun setSourceConfig(customUrls: List<String>, defaultGroup: String)
+    fun setSourceConfig(customUrls: List<String>, defaultGroup: String, defaultIndex: Int)
 }
 
 class DefaultLiveRepository : LiveRepository {
     private var customSourceUrls: List<String> = emptyList()
     private var defaultGroup: String = ""
+    private var defaultIndex: Int = -1
 
-    override fun setSourceConfig(customUrls: List<String>, defaultGroup: String) {
+    override fun setSourceConfig(customUrls: List<String>, defaultGroup: String, defaultIndex: Int) {
         this.customSourceUrls = customUrls
         this.defaultGroup = defaultGroup
+        this.defaultIndex = if (defaultIndex in customUrls.indices) defaultIndex else -1
     }
 
     private val client = OkHttpClient.Builder()
@@ -45,14 +48,28 @@ class DefaultLiveRepository : LiveRepository {
             throw IOException("请添加自定义直播源地址后重试")
         }
         var lastError: Throwable? = null
-        sourceUrls.forEach { sourceUrl ->
+        var lastLoadError: String? = null
+
+        // 优先尝试默认源，再尝试其他源；确保默认源失败时有明确提示。
+        val orderedUrls = if (defaultIndex in sourceUrls.indices) {
+            buildList {
+                add(sourceUrls[defaultIndex])
+                addAll(sourceUrls.filterIndexed { i, _ -> i != defaultIndex })
+            }
+        } else {
+            sourceUrls
+        }
+
+        orderedUrls.forEach { sourceUrl ->
             try {
                 val request = Request.Builder()
                     .url(sourceUrl)
                     .build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
-                        throw IOException("直播源加载失败：${response.code}")
+                        lastError = IOException("直播源加载失败：${response.code}")
+                        lastLoadError = "直播源加载失败（HTTP ${response.code}）"
+                        return@forEach
                     }
                     val channels = parseLiveChannels(response.body.string())
                         .map { ch ->
@@ -62,6 +79,8 @@ class DefaultLiveRepository : LiveRepository {
                         .withIndex()
                         .map { (i, ch) -> ch.copy(number = i + 1) }
                     if (channels.isNotEmpty()) return@withContext channels
+                    lastError = IOException("直播源未返回可用频道")
+                    lastLoadError = "直播源未返回可用频道"
                     throw IOException("直播源未返回可用频道")
                 }
             } catch (error: CancellationException) {
@@ -70,7 +89,11 @@ class DefaultLiveRepository : LiveRepository {
                 lastError = error
             }
         }
-        throw IOException("所有直播源均加载失败", lastError)
+        throw IOException(
+            if (defaultIndex in sourceUrls.indices) "默认直播源不可用（${lastLoadError ?: "网络异常"}），已切换备用源"
+            else "所有直播源均加载失败",
+            lastError,
+        )
     }
 }
 
