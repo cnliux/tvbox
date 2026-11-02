@@ -1,4 +1,4 @@
-﻿package com.tvbox.app
+package com.tvbox.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -39,6 +39,7 @@ class AcceptanceActivity : ComponentActivity() {
                     },
                     historyRepository = SharedHistoryRepository(this@AcceptanceActivity),
                     platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(this@AcceptanceActivity),
+                    liveLinePrefs = LiveLinePreference(this@AcceptanceActivity),
                 ) as T
             }
         }

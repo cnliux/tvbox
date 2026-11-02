@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.domain
+package com.tvbox.app.domain
 
 data class Category(
     val id: Int,
@@ -71,13 +71,31 @@ data class LiveChannel(
     val number: Int,
     val groupName: String,
     val name: String,
+    /** 多线路列表；单线路即 size == 1，顺序与源文件中出现顺序一致。 */
     val lines: List<LiveChannelLine>,
 )
 
 data class LiveChannelLine(
     val name: String,
     val url: String,
-)
+    /**
+     * 该线路自带的取流请求头（来自 M3U 的 `#EXTVLCOPT:http-user-agent|http-referrer|cookie`）。
+     * 为空时由播放器使用全局默认请求头。
+     */
+    val headers: Map<String, String> = emptyMap(),
+) {
+    /** 线路协议提示（hls / flv / rtmp …），供播放器选择取流方式。 */
+    val protocolHint: String
+        get() {
+            val path = url.substringBefore('?').lowercase()
+            return when {
+                url.startsWith("rtmp", true) || url.startsWith("rtsp", true) -> "rtmp"
+                path.endsWith(".m3u8") || url.contains(".m3u8?", true) -> "hls"
+                path.endsWith(".flv") || url.contains(".flv?", true) -> "flv"
+                else -> ""
+            }
+        }
+}
 
 data class PlatformLiveChannel(
     val number: Int,

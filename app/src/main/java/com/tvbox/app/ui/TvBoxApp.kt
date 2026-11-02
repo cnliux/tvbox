@@ -2271,22 +2271,19 @@ private fun LiveSourceSetting(
                 text = "保存直播源",
                 onClick = {
                     val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                    // 编辑源列表后清除默认（若下标越界会自动处理，但显式清除更清晰）。
-                    if (defaultIndex !in urls.indices) {
-                        actions.clearLiveSourceDefaultIndex()
-                        defaultIndex = -1
-                    } else {
-                        actions.setLiveSourceDefaultIndex(defaultIndex)
+                    val effectiveIdx = if (defaultIndex in urls.indices) defaultIndex else -1
+                    if (effectiveIdx != defaultIndex) {
+                        defaultIndex = effectiveIdx
                     }
-                    actions.updateLiveSourceUrls(urls, defaultGroup)
+                    actions.updateLiveSourceUrls(urls, defaultGroup, effectiveIdx)
                     savedMessage = "已保存 ${urls.size} 个直播源"
                 },
             )
             SettingsActionButton(
                 text = "清空直播源",
-                enabled = state.appSettings.liveSourceUrls.isNotEmpty(),
+                enabled = state.appSettings.liveSourceUrls.isNotEmpty() || urlsText.isNotBlank(),
                 onClick = {
-                    actions.updateLiveSourceUrls(emptyList(), "")
+                    actions.updateLiveSourceUrls(emptyList(), "", -1)
                     actions.clearLiveSourceDefaultIndex()
                     defaultIndex = -1
                     urlsText = ""

@@ -30,10 +30,14 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,6 +76,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
@@ -709,7 +714,18 @@ private fun PlatformLivePlayerScreen(
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(20_000)
-                .setDefaultRequestProperties(resolved.headers)
+            // User-Agent 属于 ExoPlayer 受限请求头，必须走 setUserAgent，其余（Referer/Cookie）走通用请求头。
+            val userAgentEntry = resolved.headers.entries
+                .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) && it.value.isNotBlank() }
+            userAgentEntry?.let { dataSourceFactory.setUserAgent(it.value) }
+            val otherHeaders = resolved.headers.filter { !it.key.equals("User-Agent", ignoreCase = true) }
+            if (otherHeaders.isNotEmpty()) {
+                dataSourceFactory.setDefaultRequestProperties(otherHeaders)
+            }
+            android.util.Log.d(
+                PLATFORM_LIVE_LOG_TAG,
+                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.url}, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidate.cdn}, candidates=${resolved.candidates.size}"
+            )
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
                 .build()
@@ -722,6 +738,8 @@ private fun PlatformLivePlayerScreen(
     var playbackError by remember(stream?.url) { mutableStateOf<String?>(null) }
     var playerState by remember(stream?.url) { mutableIntStateOf(Player.STATE_IDLE) }
     var badgeVisible by remember { mutableStateOf(true) }
+    // 首帧是否已经出来过：用于区分"起播慢"和"播放中断流"，避免首帧前 5 秒误判卡死。
+    var hasReportedReady by remember(stream?.url) { mutableStateOf(false) }
     // 手机"全屏"：裁剪铺满屏幕，消除横屏直播流的上下黑边。
     var fullscreenZoom by remember { mutableStateOf(false) }
 
@@ -731,15 +749,37 @@ private fun PlatformLivePlayerScreen(
         } else {
             val listener = object : androidx.media3.common.Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
+                    android.util.Log.e(
+                        PLATFORM_LIVE_LOG_TAG,
+                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=${stream?.url}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
+                        error
+                    )
                     if (!session.canPlay) return
                     // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
                     playbackError = "播放失败，正在尝试恢复"
                     badgeVisible = true
-                    actions.recoverPlatformLiveChannel()
+                    hasReportedReady = false
+                    actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Error)
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
+                    val name = when (playbackState) {
+                        Player.STATE_IDLE -> "IDLE"
+                        Player.STATE_BUFFERING -> "BUFFERING"
+                        Player.STATE_READY -> "READY"
+                        Player.STATE_ENDED -> "ENDED"
+                        else -> "UNKNOWN"
+                    }
+                    android.util.Log.d(
+                        PLATFORM_LIVE_LOG_TAG,
+                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${stream?.url}"
+                    )
                     playerState = playbackState
+                    if (playbackState == Player.STATE_READY) {
+                        hasReportedReady = true
+                        // 画面恢复即认为当前 CDN 健康，清零自动恢复计数，避免周期性关流被累积成"换线路"。
+                        actions.notifyPlatformLivePlaybackReady()
+                    }
                 }
             }
             player.addListener(listener)
@@ -752,6 +792,10 @@ private fun PlatformLivePlayerScreen(
 
     LaunchedEffect(player, stream?.url) {
         if (player == null || stream == null) return@LaunchedEffect
+        android.util.Log.d(
+            PLATFORM_LIVE_LOG_TAG,
+            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${stream.url}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidate.cdn}, candidateIndex=${stream.activeCandidateIndex}/${stream.candidates.size}"
+        )
         playbackError = null
         badgeVisible = true
         player.setMediaItem(MediaItem.fromUri(stream.url))
@@ -770,19 +814,51 @@ private fun PlatformLivePlayerScreen(
     LaunchedEffect(playerState, player, stream?.url, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
         when (playerState) {
-            Player.STATE_ENDED -> actions.recoverPlatformLiveChannel()
+            Player.STATE_ENDED -> {
+                // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
+                // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。
+                android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
+                hasReportedReady = false
+                actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Ended)
+            }
             Player.STATE_BUFFERING -> {
-                delay(5_000L)
-                if (player.playbackState == Player.STATE_BUFFERING) {
-                    playbackError = "直播连接中断，正在重新获取播放地址"
-                    badgeVisible = true
-                    actions.recoverPlatformLiveChannel()
+                if (!hasReportedReady) {
+                    // 首帧之前：仅等待，给足起播时间；真正连不上会由 onPlayerError 兜底。
+                    android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【缓冲中】room=${room.id}, 首帧未出，等待 ${PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS}ms")
+                    delay(PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS)
+                    if (player.playbackState == Player.STATE_BUFFERING) {
+                        android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【起播超时】room=${room.id}, 首帧始终未出，走线路容错")
+                        playbackError = "直播连接较慢，正在重新获取播放地址"
+                        badgeVisible = true
+                        actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
+                    }
+                } else {
+                    android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【缓冲中】room=${room.id}, 播放中断流，等待 ${PLATFORM_LIVE_STALL_TIMEOUT_MS}ms")
+                    delay(PLATFORM_LIVE_STALL_TIMEOUT_MS)
+                    if (player.playbackState == Player.STATE_BUFFERING) {
+                        android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【缓冲超时】room=${room.id}, 判定卡住，走线路容错")
+                        playbackError = "直播连接中断，正在重新获取播放地址"
+                        badgeVisible = true
+                        actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
+                    }
                 }
             }
         }
     }
 
     LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
+
+    // 自动/手动切换线路的结果必须有明确可见提示：仅靠 2 秒角标在电视端几乎看不到。
+    LaunchedEffect(state.platformLiveNotice) {
+        val notice = state.platformLiveNotice ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
+        android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【线路提示】$notice")
+        badgeVisible = true
+        actions.consumePlatformLiveNotice()
+    }
+
+    var showUrlOverlay by remember { mutableStateOf(false) }
+    var showLineControl by remember { mutableStateOf(false) }
 
     Box(
         modifier = Modifier
@@ -807,7 +883,9 @@ private fun PlatformLivePlayerScreen(
                         if (session.interrupted && player != null) {
                             session.play(player)
                             actions.reconnectPlatformLiveChannel()
-                        } else if (state.platformLiveError != null) actions.reconnectPlatformLiveChannel()
+                        } else {
+                            showLineControl = true
+                        }
                         badgeVisible = true
                         true
                     }
@@ -905,6 +983,95 @@ private fun PlatformLivePlayerScreen(
                 Text("正在解析 ${room.title}", color = Color.White)
             }
         }
+
+        if (showUrlOverlay && stream != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.9f))
+                    .pointerInput(Unit) { detectTapGestures { showUrlOverlay = false } }
+                    .padding(40.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("当前播放真实 URL", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        text = stream.url,
+                        color = Color(0xFF7AE2BA),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .background(Color.White.copy(alpha = 0.1f))
+                            .padding(16.dp)
+                    )
+                    Text(
+                        text = "房间：${room.title} | 站点：${room.site} | 质量：${stream.quality} | 协议：${stream.protocol}",
+                        color = Color.White.copy(alpha = 0.7f),
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text("点击屏幕关闭", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        }
+
+        if (showLineControl && stream != null) {
+            BackHandler { showLineControl = false }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.7f))
+                    .pointerInput(Unit) { detectTapGestures { showLineControl = false } }
+            ) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .width(420.dp)
+                        .clip(MaterialTheme.shapes.medium),
+                    color = Color(0xFF1A1A1A),
+                    contentColor = Color.White
+                ) {
+                    Column(modifier = Modifier.padding(24.dp)) {
+                        Text("候选线路切换 - ${room.title}", style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            lazyItemsIndexed(stream.candidates) { index, candidate ->
+                                val selected = index == stream.activeCandidateIndex
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(MaterialTheme.shapes.small)
+                                        .background(if (selected) Color(0xFF7AE2BA).copy(alpha = 0.2f) else Color.Transparent)
+                                        .clickable {
+                                            android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${stream.activeCandidateIndex}, to=$index, cdn=${candidate.cdn}")
+                                            actions.switchPlatformLiveCandidate(index)
+                                            showLineControl = false
+                                            badgeVisible = true
+                                        }
+                                        .padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f))
+                                    Text("${candidate.cdn} | ${candidate.protocol.uppercase()}", modifier = Modifier.weight(1f), color = if (selected) Color.White else Color.White.copy(alpha = 0.8f))
+                                    if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = {
+                                val clip = android.content.ClipData.newPlainText("live_url", stream.url)
+                                (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                            }) { Text("复制 URL") }
+                            TextButton(onClick = { showUrlOverlay = true; showLineControl = false }) { Text("查看完整 URL") }
+                            TextButton(onClick = { showLineControl = false }) { Text("关闭") }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -958,5 +1125,10 @@ private fun formatOnline(value: Int): String {
     }
 }
 
-private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 2_000L
+private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 4_000L
+private const val PLATFORM_LIVE_LOG_TAG = "TVBoxPlatformLive"
+// 首帧未出时的起播等待：平台解析 + CDN 建连在弱网下常超过 5s，此前 5s 判定过激会误切线路。
+private const val PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS = 12_000L
+// 已经出过画面后再缓冲，判定为断流的等待时间。
+private const val PLATFORM_LIVE_STALL_TIMEOUT_MS = 6_000L
 

@@ -27,6 +27,8 @@ import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
+import com.tvbox.app.data.LiveLinePreference
+import com.tvbox.app.data.key
 import com.tvbox.app.data.RemoteManageRequest
 import com.tvbox.app.data.RemoteManageServer
 import com.tvbox.app.data.RemoteManageSite
@@ -42,6 +44,7 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlaybackAgent
 import com.tvbox.app.domain.PlaybackAgentDecision
@@ -101,6 +104,12 @@ enum class PlatformLiveDestination {
     Player,
 }
 
+/** 电视直播面板的两级层级：先分类、再频道。 */
+enum class LiveGroupStage {
+    Groups,
+    Channels,
+}
+
 /** 直播首页的常用分类直达入口：平台 + 该平台的二级分类。 */
 data class PlatformLiveQuickCategory(
     val site: PlatformLiveSite,
@@ -157,8 +166,18 @@ data class TvBoxUiState(
     val liveChannels: List<LiveChannel> = emptyList(),
     val liveChannelIndex: Int = 0,
     val liveLineIndex: Int = 0,
+    /** 直播分类在当前频道列表中的下标；0 表示“全部”，其余按下标过滤分组。 */
+    val liveGroupIndex: Int = 0,
+    /** 当前选中的订阅地址下标（-1 表示使用全部订阅地址合并加载）。 */
+    val liveSelectedSourceIndex: Int = -1,
     val liveLoading: Boolean = false,
     val liveError: String? = null,
+    /** 直播页轻提示（自动切线路结果、订阅切换结果等）；由 UI 消费后清空。 */
+    val liveNotice: String? = null,
+    /** 原地重连当前线路的触发计数（不改变 URL，仅让播放页重新 prepare）。 */
+    val liveReconnectNonce: Int = 0,
+    /** 直播面板两级层级：分类列表 / 频道列表。 */
+    val liveGroupPanelStage: LiveGroupStage = LiveGroupStage.Groups,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
     /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
@@ -180,6 +199,8 @@ data class TvBoxUiState(
     val platformLiveLoadingMore: Boolean = false,
     val platformLiveResolving: Boolean = false,
     val platformLiveError: String? = null,
+    /** 平台直播轻提示（自动切换线路结果等）；由 UI 消费后清空。 */
+    val platformLiveNotice: String? = null,
     val platformLiveStream: ResolvedPlatformLiveStream? = null,
     val availableUpdate: AppUpdate? = null,
     val updateDialogVisible: Boolean = false,
@@ -243,6 +264,7 @@ class TvBoxViewModel(
     private val playbackHealthRepository: PlaybackHealthRepository = DefaultPlaybackHealthRepositoryPlaceholder(),
     private val historyRepository: HistoryRepository,
     private val platformLiveFavoritesRepository: PlatformLiveFavoritesRepository,
+    private val liveLinePrefs: LiveLinePreference? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvBoxUiState())
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
@@ -265,8 +287,16 @@ class TvBoxViewModel(
         "huya" to "一起看",
         "douyu" to "一起看",
     )
-    private var platformLiveRecoveryCount = 0
     private var platformLiveRecoveryInProgress = false
+    // 平台直播恢复节流：连续失败窗口内限制次数，避免虎牙 FLV 周期性关流造成无限轮换/重解析。
+    private var platformLiveRecoveryWindowStartMs = 0L
+    private var platformLiveRecoveryWindowAttempts = 0
+    // 同一条候选线路的原地重连次数（缓冲卡死/被服务端正常关流时先用完再换线路）。
+    private var platformLiveSameLineRetries = 0
+    // 电视直播：缓冲/卡死类失败在当前线路上的原地重连次数。
+    private var liveStallRetries = 0
+    // 切换订阅后要恢复的分类名（新订阅没有该分类时回"全部"）。
+    private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
     private val historyWriteMutex = Mutex()
     private var aiJob: Job? = null
@@ -1603,9 +1633,28 @@ class TvBoxViewModel(
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state
+            val nextIndex = (state.liveChannelIndex + 1) % channels.size
+            val channel = channels[nextIndex]
+            val targetLineIndex = state.rememberedLineIndexOf(channel)
+            android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】next channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
             state.copy(
-                liveChannelIndex = (state.liveChannelIndex + 1) % channels.size,
-                liveLineIndex = 0,
+                liveChannelIndex = nextIndex,
+                liveLineIndex = targetLineIndex,
+            )
+        }
+    }
+
+    fun playPreviousLiveChannel() {
+        _state.update { state ->
+            val channels = state.liveChannels
+            if (channels.isEmpty()) return@update state
+            val previousIndex = if (state.liveChannelIndex <= 0) channels.lastIndex else state.liveChannelIndex - 1
+            val channel = channels[previousIndex]
+            val targetLineIndex = state.rememberedLineIndexOf(channel)
+            android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】previous channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
+            state.copy(
+                liveChannelIndex = previousIndex,
+                liveLineIndex = targetLineIndex,
             )
         }
     }
@@ -1639,46 +1688,104 @@ class TvBoxViewModel(
         saveSettings(settings)
     }
 
-    fun playPreviousLiveChannel() {
-        _state.update { state ->
-            val channels = state.liveChannels
-            if (channels.isEmpty()) return@update state
-            val previousIndex = if (state.liveChannelIndex <= 0) channels.lastIndex else state.liveChannelIndex - 1
-            state.copy(
-                liveChannelIndex = previousIndex,
-                liveLineIndex = 0,
-            )
-        }
-    }
 
     fun playNextLiveLine(): Boolean {
         val state = _state.value
-        val lines = state.liveChannels.getOrNull(state.liveChannelIndex)?.lines.orEmpty()
+        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val lines = channel.lines
         if (lines.size <= 1) return false
+        val newIndex = (state.liveLineIndex + 1) % lines.size
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.liveLineIndex}, to=$newIndex, url=${lines[newIndex].url}")
         _state.update {
-            it.copy(liveLineIndex = (it.liveLineIndex + 1) % lines.size)
+            it.copy(liveLineIndex = newIndex)
         }
+        liveLinePrefs?.saveLineIndex(channel.key(), newIndex)
         return true
     }
 
     fun playPreviousLiveLine(): Boolean {
         val state = _state.value
-        val lines = state.liveChannels.getOrNull(state.liveChannelIndex)?.lines.orEmpty()
+        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val lines = channel.lines
         if (lines.size <= 1) return false
+        val previousIndex = if (state.liveLineIndex <= 0) lines.lastIndex else state.liveLineIndex - 1
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.liveLineIndex}, to=$previousIndex, url=${lines[previousIndex].url}")
         _state.update {
-            val previousIndex = if (it.liveLineIndex <= 0) lines.lastIndex else it.liveLineIndex - 1
             it.copy(liveLineIndex = previousIndex)
         }
+        liveLinePrefs?.saveLineIndex(channel.key(), previousIndex)
         return true
     }
 
-    fun advanceLiveLineAfterFailure(): Boolean {
+    fun selectLiveLine(lineIndex: Int) {
         val state = _state.value
-        val lines = state.liveChannels.getOrNull(state.liveChannelIndex)?.lines.orEmpty()
+        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return
+        if (lineIndex !in channel.lines.indices) return
+        if (lineIndex == state.liveLineIndex) return
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.liveLineIndex}, to=$lineIndex, url=${channel.lines[lineIndex].url}")
+        _state.update { it.copy(liveLineIndex = lineIndex) }
+        liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
+    }
+
+    /**
+     * 电视直播播放异常后的自动线路容错：
+     * - [LiveLineFallbackReason.Error] 是确定性失败（播放器报错/容器不支持），直接切下一条，
+     *   并把"下一条"记为该频道的首选线路——下次进台不再先撞一次死线路；
+     * - 缓冲/卡死/结束类失败先原地重连当前线路（同一 URL 重新 prepare），
+     *   连续 [LIVE_STALL_RETRY_BEFORE_SWITCH] 次无效才真正切线路。
+     *   慢 CDN 首帧本就要几秒，一见缓冲就切线会把所有线路轮流点一遍，
+     *   表现为"没坏也自动切线路"。
+     */
+    fun advanceLiveLineAfterFailure(reason: LiveLineFallbackReason): Boolean {
+        val state = _state.value
+        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val lines = channel.lines
+        if (reason != LiveLineFallbackReason.Error) {
+            liveStallRetries += 1
+            if (liveStallRetries < LIVE_STALL_RETRY_BEFORE_SWITCH) {
+                android.util.Log.w(
+                    VM_LIVE_LOG_TAG,
+                    "【自动容错】reason=$reason 第 $liveStallRetries/$LIVE_STALL_RETRY_BEFORE_SWITCH 次原地重连当前线路 ${state.liveLineIndex + 1}",
+                )
+                _state.update { it.copy(liveReconnectNonce = it.liveReconnectNonce + 1) }
+                return true
+            }
+        }
+        liveStallRetries = 0
         val nextIndex = state.liveLineIndex + 1
-        if (nextIndex !in lines.indices) return false
+        android.util.Log.w(
+            VM_LIVE_LOG_TAG,
+            "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.liveLineIndex}, nextLine=$nextIndex, totalLines=${lines.size}",
+        )
+        if (nextIndex !in lines.indices) {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【自动容错】已是最后一条线路，回到线路 1 继续尝试")
+            _state.update { it.copy(liveLineIndex = 0, liveReconnectNonce = it.liveReconnectNonce + 1) }
+            if (reason == LiveLineFallbackReason.Error) {
+                liveLinePrefs?.saveLineIndex(channel.key(), 0)
+            }
+            return true
+        }
         _state.update { it.copy(liveLineIndex = nextIndex) }
+        if (reason == LiveLineFallbackReason.Error) {
+            liveLinePrefs?.saveLineIndex(channel.key(), nextIndex)
+        }
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【自动切换成功】切换到线路 ${nextIndex + 1}/${lines.size}, url=${lines[nextIndex].url}")
         return true
+    }
+
+    /** 播放中断后的原地重连（不换线路）：bump nonce 让播放页对当前 URL 重新 prepare。 */
+    fun reconnectLiveLine() {
+        _state.update { it.copy(liveReconnectNonce = it.liveReconnectNonce + 1) }
+    }
+
+    /** 消费一次性轻提示（自动切线路/订阅切换结果）。 */
+    fun consumeLiveNotice() {
+        if (_state.value.liveNotice == null) return
+        _state.update { it.copy(liveNotice = null) }
+    }
+
+    fun reportLiveNotice(message: String) {
+        _state.update { it.copy(liveNotice = message) }
     }
 
     fun selectPlatformLiveSite(site: PlatformLiveSite) {
@@ -1836,11 +1943,125 @@ class TvBoxViewModel(
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state
+            val safeIndex = index.coerceIn(0, channels.lastIndex)
+            val channel = channels[safeIndex]
             state.copy(
-                liveChannelIndex = index.coerceIn(0, channels.lastIndex),
-                liveLineIndex = 0,
+                liveChannelIndex = safeIndex,
+                liveLineIndex = state.rememberedLineIndexOf(channel),
             )
         }
+    }
+
+    /** 当前频道列表的分组名（按出现顺序去重），供两级面板展示。 */
+    fun liveGroupNames(): List<String> = _state.value.liveChannels
+        .map { it.groupName }
+        .distinct()
+
+    /**
+     * 切换直播分类（两级交互的第一级）。
+     *
+     * index=0 表示"全部"；1..groups 对应各分类，进入后把播放目标定位到该分类首个频道，
+     * 并恢复该频道上次成功播放的线路。
+     */
+    fun selectLiveGroup(index: Int) {
+        _state.update { state ->
+            val channels = state.liveChannels
+            val groups = channels.map { it.groupName }.distinct()
+            if (groups.isEmpty()) return@update state
+            val safeIndex = index.coerceIn(0, groups.size)
+            val targetChannel = if (safeIndex == 0) {
+                state.liveChannelIndex.coerceIn(0, channels.lastIndex)
+            } else {
+                val groupName = groups[safeIndex - 1]
+                channels.indexOfFirst { it.groupName == groupName }.coerceAtLeast(0)
+            }
+            val channel = channels.getOrNull(targetChannel)
+            state.copy(
+                liveGroupIndex = safeIndex,
+                liveChannelIndex = targetChannel,
+                liveLineIndex = channel?.let { state.rememberedLineIndexOf(it) } ?: 0,
+            )
+        }
+    }
+
+    /** 左右方向键切换分类（含"全部"）。 */
+    fun cycleLiveGroup(delta: Int) {
+        val groups = liveGroupNames()
+        if (groups.isEmpty()) return
+        val current = _state.value.liveGroupIndex
+        val total = groups.size + 1
+        val next = (((current + delta) % total) + total) % total
+        selectLiveGroup(next)
+    }
+
+    /**
+     * 两级交互：进入某个分类（第一级确认键）。
+     * 只改变面板层级，不动播放目标——分类页浏览期间当前频道继续播放。
+     */
+    fun enterLiveGroup(index: Int) {
+        val groups = liveGroupNames()
+        val safeIndex = index.coerceIn(0, groups.size)
+        android.util.Log.d(VM_LIVE_LOG_TAG, "【两级交互】进入分类 index=$safeIndex, name=${groups.getOrNull(safeIndex - 1) ?: "全部"}")
+        if (_state.value.liveGroupPanelStage == LiveGroupStage.Channels &&
+            _state.value.liveGroupIndex == safeIndex
+        ) {
+            return
+        }
+        _state.update {
+            it.copy(
+                liveGroupIndex = safeIndex,
+                liveGroupPanelStage = LiveGroupStage.Channels,
+            )
+        }
+    }
+
+    /** 两级交互：从频道列表返回分类列表。 */
+    fun backToLiveGroups() {
+        _state.update { it.copy(liveGroupPanelStage = LiveGroupStage.Groups) }
+    }
+
+    /** 两级交互：每次打开直播面板都从分类层级开始，避免直接落在频道长列表上。 */
+    fun showLivePanelGroups() {
+        if (_state.value.liveGroupPanelStage != LiveGroupStage.Groups) {
+            _state.update { it.copy(liveGroupPanelStage = LiveGroupStage.Groups) }
+        }
+    }
+
+    /** 订阅地址标签：第 0 项"全部"，之后为各订阅地址。 */
+    fun liveSourceLabels(): List<String> = buildList {
+        add("全部")
+        addAll(liveRepository.sourceUrls.mapIndexed { i, url ->
+            "源${i + 1} · ${url.substringAfterLast('/').take(18).ifBlank { url.take(18) }}"
+        })
+    }
+
+    /**
+     * 切换订阅地址并重新加载频道列表。
+     *
+     * 统一策略：保持当前选中的**分类名**（新订阅里不存在该分类时回"全部"），
+     * 分类内定位到该分类首个频道；分类也变了时播放目标随之改变。
+     */
+    fun selectLiveSource(index: Int) {
+        val labels = liveSourceLabels()
+        if (index !in labels.indices) return
+        if (index == _state.value.liveSelectedSourceIndex) return
+        val previousGroup = _state.value.let { state ->
+            val groups = state.liveChannels.map { it.groupName }.distinct()
+            groups.getOrNull(state.liveGroupIndex - 1)
+        }
+        pendingLiveGroupRestore = previousGroup
+        _state.update { it.copy(liveSelectedSourceIndex = index, liveNotice = "正在切换订阅：${labels[index]}") }
+        liveRepository.setSourceSelection(index - 1)
+        refreshLive()
+    }
+
+    /** 左右方向键切换订阅地址（循环）。 */
+    fun cycleLiveSource(delta: Int) {
+        val labels = liveSourceLabels()
+        if (labels.size <= 1) return
+        val current = _state.value.liveSelectedSourceIndex.coerceAtLeast(0)
+        val next = ((current + delta) % labels.size + labels.size) % labels.size
+        selectLiveSource(next)
     }
 
     fun selectLiveChannelNumber(number: Int): Boolean {
@@ -1856,33 +2077,156 @@ class TvBoxViewModel(
     }
 
     fun reconnectPlatformLiveChannel() {
+        android.util.Log.w(VM_LIVE_LOG_TAG, "【平台重新解析】forceRefresh=true")
         resolvePlatformLiveRoom(forceRefresh = true)
     }
 
-    fun recoverPlatformLiveChannel() {
+    fun switchPlatformLiveCandidate(index: Int) {
+        val stream = _state.value.platformLiveStream ?: return
+        if (index !in stream.candidates.indices) return
+        if (platformLiveRecoveryInProgress) {
+            // 用户明确的手动选择优先于自动恢复，不再静默丢弃。
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台手动切换候选】自动恢复进行中，仍以用户选择为准切换 to=$index")
+        }
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台手动切换候选】from=${stream.activeCandidateIndex}, to=$index, cdn=${stream.candidates[index].cdn}")
+        // 用户手动指定线路后，重置自动恢复计数，避免刚切完就被熔断拦下。
+        platformLiveRecoveryInProgress = false
+        platformLiveSameLineRetries = 0
+        platformLiveRecoveryWindowAttempts = 0
+        platformLiveRecoveryWindowStartMs = 0L
+        _state.update {
+            it.copy(
+                platformLiveError = null,
+                platformLiveNotice = "已切换到线路 ${index + 1}/${stream.candidates.size}（${stream.candidates[index].cdn}）",
+                platformLiveStream = stream.withActiveCandidate(index),
+            )
+        }
+    }
+
+    /** 消费平台直播轻提示。 */
+    fun consumePlatformLiveNotice() {
+        if (_state.value.platformLiveNotice != null) {
+            _state.update { it.copy(platformLiveNotice = null) }
+        }
+    }
+
+    /**
+     * 平台直播画面恢复（READY）后调用：清零同线路重连计数。
+     *
+     * 虎牙 FLV 每 ~125 秒被服务端正常关闭一次，属于常态而非线路故障。若不清零，
+     * 连续两次关流就会把健康房间切到别的 CDN，制造"隔几分钟自动换线路"的现象。
+     */
+    fun notifyPlatformLivePlaybackReady() {
+        if (platformLiveSameLineRetries != 0) {
+            android.util.Log.d(VM_LIVE_LOG_TAG, "【平台恢复】画面就绪，清零同线路重连计数（原 $platformLiveSameLineRetries）")
+            platformLiveSameLineRetries = 0
+        }
+    }
+
+    /**
+     * 平台直播断流恢复。
+     *
+     * 按失败性质分流（与电视直播同一套判据）：
+     * - [LiveLineFallbackReason.Ended]：虎牙等平台的 FLV 带签名有效期（约 125 秒）会被服务端**正常关闭**，
+     *   这不是 CDN 故障。此前把它当作换线路触发条件，导致候选线路被逐条轮询、用尽后再 forceRefresh，
+     *   形成"每隔两分钟自动切线路"的循环。现改为**保持当前候选**重新解析拿新的签名地址。
+     * - [LiveLineFallbackReason.Stall]：先原地重连同一条候选，用完次数再换候选。
+     * - [LiveLineFallbackReason.Error]：CDN/地址确实不可用，直接换下一条候选。
+     *
+     * 同时加限次与退避：一个时间窗内恢复次数超过上限后停止自动恢复并提示用户，
+     * 避免无限轮换导致持续后台请求与流量浪费。
+     */
+    fun recoverPlatformLiveChannel(reason: LiveLineFallbackReason = LiveLineFallbackReason.Error) {
         val state = _state.value
         val stream = state.platformLiveStream ?: run {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】无当前流，改为重新解析")
             reconnectPlatformLiveChannel()
             return
         }
-        if (platformLiveRecoveryInProgress || state.platformLiveResolving) return
-        platformLiveRecoveryInProgress = true
-        // 直接切换到下一条候选线路（CDN），而非重试同一条——
-        // 虎牙/斗鱼等平台的断流多为 anti-code 或 CDN 不匹配，同一线路重试不会恢复。
-        platformLiveRecoveryCount = 0
-        if (stream.activeCandidateIndex < stream.candidates.lastIndex) {
+        if (platformLiveRecoveryInProgress || state.platformLiveResolving) {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复跳过】恢复进行中或正在解析中")
+            return
+        }
+        val now = System.currentTimeMillis()
+        if (now - platformLiveRecoveryWindowStartMs > PLATFORM_LIVE_RECOVERY_WINDOW_MS) {
+            platformLiveRecoveryWindowStartMs = now
+            platformLiveRecoveryWindowAttempts = 0
+        }
+        if (platformLiveRecoveryWindowAttempts >= PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS) {
+            android.util.Log.e(
+                VM_LIVE_LOG_TAG,
+                "【平台恢复熔断】${PLATFORM_LIVE_RECOVERY_WINDOW_MS / 1000}s 内已尝试 $platformLiveRecoveryWindowAttempts 次仍未恢复，停止自动恢复, room=${roomTag()}",
+            )
             _state.update {
-                it.copy(
-                    platformLiveError = null,
-                    platformLiveStream = stream.withActiveCandidate(stream.activeCandidateIndex + 1),
-                )
+                it.copy(platformLiveError = "该房间线路连续失败，已停止自动重连。可手动切换线路或稍后重试。")
             }
-            platformLiveRecoveryInProgress = false
-        } else {
-            // 所有候选均已尝试过，强制重新解析获取新地址
+            return
+        }
+        platformLiveRecoveryWindowAttempts++
+        platformLiveRecoveryInProgress = true
+        android.util.Log.w(
+            VM_LIVE_LOG_TAG,
+            "【平台恢复】reason=$reason, attempt=$platformLiveRecoveryWindowAttempts/$PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS, active=${stream.activeCandidateIndex}, total=${stream.candidates.size}, cdn=${stream.activeCandidate.cdn}, protocol=${stream.activeCandidate.protocol}",
+        )
+        when (reason) {
+            LiveLineFallbackReason.Ended, LiveLineFallbackReason.Stall -> {
+                // 服务端正常关流 / 卡死：优先沿用当前候选重新解析（换地址不换 CDN）。
+                if (platformLiveSameLineRetries < PLATFORM_LIVE_SAME_LINE_RETRY_MAX) {
+                    platformLiveSameLineRetries++
+                    android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】保持候选 ${stream.activeCandidateIndex} 重新解析地址（第 $platformLiveSameLineRetries 次）")
+                    schedulePlatformLiveReResolve(delayMs = PLATFORM_LIVE_RECOVERY_BACKOFF_MS * platformLiveSameLineRetries)
+                    return
+                }
+                android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】当前候选重连已用尽，改为切换下一条候选")
+                platformLiveSameLineRetries = 0
+                rotatePlatformLiveCandidate(stream)
+            }
+            LiveLineFallbackReason.Error -> {
+                platformLiveSameLineRetries = 0
+                rotatePlatformLiveCandidate(stream)
+            }
+        }
+    }
+
+    /** 切换到下一条候选 CDN；已是最后一条则回到第一条并强制重新解析。 */
+    private fun rotatePlatformLiveCandidate(stream: ResolvedPlatformLiveStream) {
+        if (stream.candidates.isEmpty()) {
             platformLiveRecoveryInProgress = false
             reconnectPlatformLiveChannel()
+            return
         }
+        val nextIdx = (stream.activeCandidateIndex + 1) % stream.candidates.size
+        if (nextIdx == 0) {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈，强制重新解析")
+            platformLiveRecoveryInProgress = false
+            reconnectPlatformLiveChannel()
+            return
+        }
+        _state.update {
+            it.copy(
+                platformLiveError = null,
+                platformLiveNotice = "已切换到线路 ${nextIdx + 1}/${stream.candidates.size}（${stream.candidates[nextIdx].cdn}）",
+                platformLiveStream = stream.withActiveCandidate(nextIdx),
+            )
+        }
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】切换到候选线路 $nextIdx, cdn=${stream.candidates[nextIdx].cdn}")
+        platformLiveRecoveryInProgress = false
+    }
+
+    /** 退避后重新解析当前房间，保持当前候选下标。 */
+    private fun schedulePlatformLiveReResolve(delayMs: Long) {
+        val keepCandidate = _state.value.platformLiveStream?.activeCandidateIndex ?: 0
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(delayMs)
+            platformLiveRecoveryInProgress = false
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】退避 ${delayMs}ms 后重新解析（候选 $keepCandidate）")
+            resolvePlatformLiveRoom(forceRefresh = true, candidateIndex = keepCandidate, isRecovery = true)
+        }
+    }
+
+    private fun roomTag(): String {
+        val state = _state.value
+        return state.platformLiveRooms.getOrNull(state.platformLiveRoomIndex)?.let { "${it.site}/${it.id}" } ?: "none"
     }
 
     fun switchPlayerSource(index: Int, positionMs: Long, playWhenReady: Boolean): Boolean {
@@ -2510,6 +2854,15 @@ class TvBoxViewModel(
         applyLiveSourceConfig(settings)
     }
 
+    /** 切换剧集排序顺序（正序 ↔ 倒序），持久化到 SharedPreferences。 */
+    fun toggleEpisodeSortReverse() {
+        val current = _state.value
+        val settings = current.appSettings.copy(episodeSortReverse = !current.appSettings.episodeSortReverse)
+        _state.update { it.copy(appSettings = settings) }
+        appSettingsRepository.commitLiveSourceDefaultIndex(settings.liveSourceDefaultIndex)
+        saveSettings(settings)
+    }
+
     /** 屏蔽/恢复视频源分类：屏蔽后该分类不再出现在电视的分类与影片列表。 */
     fun addBlockedVideoCategory(categoryName: String) {
         val name = categoryName.trim()
@@ -2783,6 +3136,8 @@ class TvBoxViewModel(
                     )
                 }
             }.onFailure { error ->
+                // 取消异常（切换分类时旧 job 被 cancel）不做任何 UI 处理，避免显示错误。
+                if (error is CancellationException) return@onFailure
                 _state.update {
                     it.copy(
                         homeLoading = false,
@@ -2897,6 +3252,12 @@ class TvBoxViewModel(
         }
     }
 
+    /** 该频道上次成功播放的线路下标；无记忆或线路数变化时回第 1 条。 */
+    private fun TvBoxUiState.rememberedLineIndexOf(channel: com.tvbox.app.domain.LiveChannel): Int {
+        val saved = liveLinePrefs?.getSavedLineIndex(channel.key()) ?: -1
+        return if (saved in channel.lines.indices) saved else 0
+    }
+
     private fun loadLiveChannels() {
         liveJob?.cancel()
         liveJob = viewModelScope.launch {
@@ -2910,11 +3271,38 @@ class TvBoxViewModel(
             runCatching { liveRepository.getChannels() }
                 .onSuccess { channels ->
                     _state.update {
+                        // 重新加载后按频道恢复上次成功播放的线路；线路数变少时回退到第 1 条。
+                        val rememberedLine = channels.getOrNull(
+                            it.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0)),
+                        )?.let { channel ->
+                            liveLinePrefs?.getSavedLineIndex(channel.key()) ?: -1
+                        } ?: -1
+                        val lineCount = channels.getOrNull(it.liveChannelIndex)?.lines?.size ?: 0
+                        // 订阅切换：尽量保持原分类名；新订阅没有该分类时回"全部"。
+                        val groups = channels.map { channel -> channel.groupName }.distinct()
+                        val restoreGroup = pendingLiveGroupRestore
+                        pendingLiveGroupRestore = null
+                        val groupIndex = if (restoreGroup != null) {
+                            val idx = groups.indexOf(restoreGroup)
+                            if (idx >= 0) idx + 1 else 0
+                        } else {
+                            it.liveGroupIndex.coerceAtMost(groups.size)
+                        }
+                        val targetChannel = if (groupIndex == 0) {
+                            it.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0))
+                        } else {
+                            channels.indexOfFirst { channel -> channel.groupName == groups[groupIndex - 1] }
+                                .coerceAtLeast(0)
+                        }
+                        val targetLine = channels.getOrNull(targetChannel)
+                            ?.let { channel -> it.rememberedLineIndexOf(channel) } ?: 0
                         it.copy(
                             liveChannels = channels,
-                            liveChannelIndex = it.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0)),
-                            liveLineIndex = 0,
+                            liveChannelIndex = targetChannel,
+                            liveLineIndex = if (rememberedLine in 0 until lineCount && targetChannel == it.liveChannelIndex) rememberedLine else targetLine,
+                            liveGroupIndex = groupIndex,
                             liveLoading = false,
+                            liveNotice = restoreGroup?.let { _ -> "已切换订阅" } ?: it.liveNotice,
                             liveError = if (channels.isEmpty()) "没有可用直播频道" else null,
                         )
                     }
@@ -3130,8 +3518,11 @@ class TvBoxViewModel(
         val state = _state.value
         val room = state.platformLiveRooms.getOrNull(state.platformLiveRoomIndex) ?: return
         if (!isRecovery) {
-            platformLiveRecoveryCount = 0
+            // 用户主动换房间/手动重连：清空恢复熔断窗口与重连计数。
             platformLiveRecoveryInProgress = false
+            platformLiveSameLineRetries = 0
+            platformLiveRecoveryWindowAttempts = 0
+            platformLiveRecoveryWindowStartMs = 0L
         }
         platformLiveResolveJob?.cancel()
         platformLiveResolveJob = viewModelScope.launch {
@@ -3307,8 +3698,18 @@ private fun customVideoApiLineId(baseUrl: String): String {
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
 // 直播断流后切换到下一条候选线路前的最长等待时间（移动端 5s，避免在慢网络上误判）。
 private const val PLATFORM_LIVE_BUFFER_TIMEOUT_MS = 5_000L
+// 电视直播：缓冲/卡死类失败在同一线路上原地重连达到该次数后，才切下一条线路。
+private const val LIVE_STALL_RETRY_BEFORE_SWITCH = 2
+// 平台直播恢复熔断：该时间窗内最多自动恢复次数（虎牙 FLV 约 125s 关流一次，正常播放不该触顶）。
+private const val PLATFORM_LIVE_RECOVERY_WINDOW_MS = 120_000L
+private const val PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS = 6
+// 平台直播：同一条候选线路原地重连（重新解析地址）的最大次数，超过后换 CDN。
+private const val PLATFORM_LIVE_SAME_LINE_RETRY_MAX = 2
+// 平台直播重连退避基数，按重连次数线性递增，避免瞬时高频请求。
+private const val PLATFORM_LIVE_RECOVERY_BACKOFF_MS = 1_500L
 // 热播点击回退查找时最多尝试的视频源数量，避免逐个源串行搜索过慢。
 private const val MAX_DOUBAN_HOT_FALLBACK_LINES = 6
+private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null

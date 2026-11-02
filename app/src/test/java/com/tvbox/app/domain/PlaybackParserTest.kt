@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.domain
+package com.tvbox.app.domain
 
 import com.tvbox.app.data.MacCmsResponse
 import com.tvbox.app.data.parseAppUpdateManifest
@@ -85,7 +85,8 @@ class PlaybackParserTest {
         assertEquals(2, channels[1].lines.size)
         assertEquals("http://video.test/1/index.m3u8", channels[1].lines[0].url)
         assertEquals("https://video.test/2/index.m3u8", channels[1].lines[1].url)
-        assertEquals("LR•IPV4•29『线路2』", channels[1].lines[1].name)
+        // 线路元数据 `LR•IPV4•29『线路2』` 归一化为可辨的短名，而不是原样保留。
+        assertEquals("线路2", channels[1].lines[1].name)
         assertEquals("少儿动画", channels[2].groupName)
         assertEquals("http://video.test/kid/index.m3u8", channels[2].lines.single().url)
     }

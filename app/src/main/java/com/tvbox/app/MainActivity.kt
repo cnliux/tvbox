@@ -1,4 +1,4 @@
-﻿package com.tvbox.app
+package com.tvbox.app
 
 import android.Manifest
 import android.content.Intent
@@ -37,6 +37,7 @@ import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
 import com.tvbox.app.data.DefaultMovieRepository
 import com.tvbox.app.data.DefaultSearchHotWordRepository
+import com.tvbox.app.data.LiveLinePreference
 import com.tvbox.app.data.SharedAppSettingsRepository
 import com.tvbox.app.data.SharedDoubanHotCache
 import com.tvbox.app.data.SharedHistoryRepository
@@ -481,6 +482,7 @@ private class TvBoxViewModelFactory(
             playbackHealthRepository = SharedPlaybackHealthRepository(activity.applicationContext),
             historyRepository = SharedHistoryRepository(activity.applicationContext),
             platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(activity.applicationContext),
+            liveLinePrefs = LiveLinePreference(activity.applicationContext),
         ) as T
     }
 }
