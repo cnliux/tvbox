@@ -2,8 +2,8 @@
   "versionCode": 10321,
   "versionName": "1.3.21",
   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.21/app-release.apk",
-  "apkSha256": "",
-  "apkSize": 0,
+  "apkSha256": "701fb1146c8c99329aa09d4f82a55596c45a6e67f0d139d89f28b59f8d8e74e2",
+  "apkSize": 50886698,
   "force": false,
   "changelog": [
     "视频卡片只显示节目名称：首页、豆瓣热播与搜索结果卡片去掉年份/地区/语言/备注信息行，片名最多两行完整显示。",
