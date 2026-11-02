@@ -32,7 +32,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -55,10 +54,10 @@ import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlayEpisode
+import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.PlaybackAgent
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
-import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.ErrorState
@@ -109,148 +108,89 @@ fun DetailScreen(
                     val canPlay = selectedSource?.episodes?.isNotEmpty() == true
 
                     Column(modifier = Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = headerMaxHeight),
-                    ) {
-                        PosterImage(
-                            movie = movie,
+                        Row(
                             modifier = Modifier
-                                .width(posterWidth)
-                                .aspectRatio(2f / 3f),
-                        )
-                        Spacer(modifier = Modifier.width(horizontalGap))
-                        Column(
-                            modifier = Modifier
-                                .weight(1f)
-                                .verticalScroll(rememberScrollState()),
+                                .fillMaxWidth()
+                                .heightIn(max = headerMaxHeight),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Top,
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = movie.name,
-                                        // 手机版窄屏用较小标题，避免片名被右侧按钮挤成竖排单字。
-                                        style = if (compact) {
-                                            MaterialTheme.typography.titleLarge
-                                        } else {
-                                            MaterialTheme.typography.headlineLarge
-                                        },
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        SmallMeta(movie.typeName)
-                                        SmallMeta(movie.year)
-                                        SmallMeta(movie.remarks)
-                                    }
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Button(
-                                        onClick = {
-                                            actions.openPlayer(
-                                                state.selectedSourceIndex,
-                                                state.selectedEpisodeIndex,
-                                            )
-                                        },
-                                        enabled = canPlay,
-                                    ) {
-                                        Text("立即播放")
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Button(onClick = actions::goBack) {
-                                        Text("返回")
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
-                            InfoLine(label = "主演", value = movie.actor)
-                            InfoLine(label = "导演", value = movie.director)
-                            InfoLine(label = "地区", value = movie.area)
-                            InfoLine(label = "语言", value = movie.language)
-                            Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
-                            Text(
-                                text = movie.description.ifBlank { "暂无简介" },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodyMedium,
-                                maxLines = descriptionLines,
-                                overflow = TextOverflow.Ellipsis,
+                            PosterImage(
+                                movie = movie,
+                                modifier = Modifier
+                                    .width(posterWidth)
+                                    .aspectRatio(2f / 3f),
                             )
+                            Spacer(modifier = Modifier.width(horizontalGap))
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.Top,
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = movie.name,
+                                            style = if (compact) {
+                                                MaterialTheme.typography.titleLarge
+                                            } else {
+                                                MaterialTheme.typography.headlineLarge
+                                            },
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SmallMeta(movie.typeName)
+                                            SmallMeta(movie.year)
+                                            SmallMeta(movie.remarks)
+                                        }
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Button(
+                                            onClick = {
+                                                actions.openPlayer(
+                                                    state.selectedSourceIndex,
+                                                    state.selectedEpisodeIndex,
+                                                )
+                                            },
+                                            enabled = canPlay,
+                                        ) {
+                                            Text("立即播放")
+                                        }
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Button(onClick = actions::goBack) {
+                                            Text("返回")
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
+                                InfoLine(label = "主演", value = movie.actor)
+                                InfoLine(label = "导演", value = movie.director)
+                                InfoLine(label = "地区", value = movie.area)
+                                InfoLine(label = "语言", value = movie.language)
+                                Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
+                                Text(
+                                    text = movie.description.ifBlank { "暂无简介" },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = descriptionLines,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
                         }
-                    }
-                    Spacer(modifier = Modifier.height(sectionGap))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "播放线路",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                        Spacer(modifier = Modifier.height(sectionGap))
+                        EpisodeGrid(
+                            source = movie.playSources.getOrNull(state.selectedSourceIndex),
+                            selectedEpisodeIndex = state.selectedEpisodeIndex,
+                            episodeSortReverse = state.appSettings.episodeSortReverse,
+                            onToggleSort = { actions.toggleEpisodeSortReverse() },
+                            onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
                             modifier = Modifier.weight(1f),
                         )
-                        Button(
-                            onClick = actions::testDetailSourceSpeeds,
-                            enabled = !state.detailSourceTesting && movie.playSources.isNotEmpty(),
-                        ) {
-                            Text(
-                                if (state.detailSourceTesting) {
-                                    "测速中 ${state.detailSourceTestCompleted}/${state.detailSourceTestTotal}"
-                                } else {
-                                    "线路测速"
-                                },
-                            )
-                        }
-                    }
-                    if (
-                        state.detailTotalSources > 1 &&
-                        state.detailCompletedSources < state.detailTotalSources
-                    ) {
-                        // 测速/补充线路中：显示行内进度条，让用户感知进展。
-                        LinearProgressIndicator(
-                            progress = {
-                                state.detailTotalSources.toFloat() / state.detailTotalSources.toFloat()
-                                    .coerceAtLeast(1f) *
-                                state.detailCompletedSources.toFloat() / state.detailTotalSources.toFloat()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Text(
-                            text = "正在补充播放线路（${state.detailCompletedSources}/${state.detailTotalSources}）",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    state.detailSourceMessage?.let { message ->
-                        Text(
-                            text = message,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    PlaySourceTabs(
-                        movie = movie,
-                        sources = orderPlaySourcesByLatency(movie.playSources, state.sourceLatencies),
-                        selectedIndex = state.selectedSourceIndex,
-                        selectedEpisodeIndex = state.selectedEpisodeIndex,
-                        playbackHealth = state.playbackHealth,
-                        sourceLatencies = state.sourceLatencies,
-                        onSelect = actions::selectPlaySource,
-                    )
-                    Spacer(modifier = Modifier.height(if (compact) 10.dp else 16.dp))
-                    EpisodeGrid(
-                        source = movie.playSources.getOrNull(state.selectedSourceIndex),
-                        selectedEpisodeIndex = state.selectedEpisodeIndex,
-                        onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
-                        modifier = Modifier.weight(1f),
-                    )
                     }
                 }
             }
@@ -330,6 +270,8 @@ private fun lineLatencyLabel(lineId: String, latencies: Map<String, Long?>): Str
 private fun EpisodeGrid(
     source: PlaySource?,
     selectedEpisodeIndex: Int,
+    episodeSortReverse: Boolean = false,
+    onToggleSort: () -> Unit = {},
     onEpisode: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -340,10 +282,15 @@ private fun EpisodeGrid(
         }
         return
     }
-    val safeSelectedEpisodeIndex = selectedEpisodeIndex.coerceIn(0, episodes.lastIndex)
+    val displayedEpisodes = if (episodeSortReverse) episodes.asReversed() else episodes
+    val safeSelectedEpisodeIndex = if (episodeSortReverse) {
+        (episodes.size - 1 - selectedEpisodeIndex).coerceIn(0, displayedEpisodes.lastIndex)
+    } else {
+        selectedEpisodeIndex.coerceIn(0, episodes.lastIndex)
+    }
     val gridState = rememberLazyGridState()
-    val focusRequesters = remember(episodes.map { it.title }) {
-        List(episodes.size) { FocusRequester() }
+    val focusRequesters = remember(displayedEpisodes.map { it.title }) {
+        List(displayedEpisodes.size) { FocusRequester() }
     }
 
     LaunchedEffect(safeSelectedEpisodeIndex) {
@@ -365,15 +312,26 @@ private fun EpisodeGrid(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = modifier.fillMaxSize(),
     ) {
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("选集（共 ${episodes.size} 集）", style = MaterialTheme.typography.titleSmall)
+                CategoryPill(label = if (episodeSortReverse) "正序" else "倒序", selected = false, onClick = onToggleSort)
+            }
+        }
         itemsIndexed(
-            items = episodes,
+            items = displayedEpisodes,
             key = { index, episode -> "$index-${episode.url}" },
         ) { index, episode ->
+            val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
             EpisodeButton(
                 episode = episode,
-                selected = index == safeSelectedEpisodeIndex,
+                selected = realIndex == selectedEpisodeIndex,
                 focusRequester = focusRequesters[index],
-                onClick = { onEpisode(index) },
+                onClick = { onEpisode(realIndex) },
             )
         }
     }

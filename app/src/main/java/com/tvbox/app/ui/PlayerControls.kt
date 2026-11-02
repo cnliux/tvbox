@@ -90,6 +90,9 @@ internal fun PlayerControls(
     onOutroSkip: (Int) -> Unit = {},
     castLabel: String? = null,
     onCast: () -> Unit = {},
+    // 剧集排序：false=正序（1,2,3…），true=倒序（…,3,2,1）。
+    episodeSortReverse: Boolean = false,
+    onSortReverse: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val source = sources[sourceIndex]
@@ -215,11 +218,14 @@ internal fun PlayerControls(
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(when (panel) {
-                            PlayerPanel.Episodes -> "选择集数"
+                            PlayerPanel.Episodes -> "选择集数${if (episodeSortReverse) "（倒序）" else ""}"
                             PlayerPanel.Sources -> "选择线路 · 已按测速排序"
                             PlayerPanel.Picture -> "画面比例 · ${videoScaleMode.displayName}"
                             else -> "播放倍速"
                         }, Modifier.weight(1f))
+                        if (panel == PlayerPanel.Episodes) {
+                            ControlButton("↕ 倒序", { onSortReverse() })
+                        }
                         ControlButton("关闭", { onPanel(PlayerPanel.None) })
                     }
                     if (panel == PlayerPanel.Picture) {
@@ -426,6 +432,9 @@ internal fun PlayerControlsMobile(
     onBack: () -> Unit = {},
     // 通知外层“面板是否展开”：面板展开时不能自动隐藏控件，否则来不及选集。
     onMorePanelChange: (Boolean) -> Unit = {},
+    // 剧集排序
+    episodeSortReverse: Boolean = false,
+    onSortReverse: () -> Unit = {},
 ) {
     val source = sources[sourceIndex]
     val wide = LocalConfiguration.current.screenWidthDp >= 600
@@ -505,6 +514,8 @@ internal fun PlayerControlsMobile(
                         onSpeed = onSpeed,
                         onVideoScale = onVideoScale,
                         onClose = { openSection = null },
+                        episodeSortReverse = episodeSortReverse,
+                        onSortReverse = onSortReverse,
                     )
                 }
                 MobileProgressRow(positionMs = positionMs, durationMs = durationMs, onSeek = onSeek)
@@ -731,6 +742,8 @@ private fun MobileSectionPanel(
     onSpeed: (Float) -> Unit,
     onVideoScale: (VideoScaleMode) -> Unit,
     onClose: () -> Unit,
+    episodeSortReverse: Boolean = false,
+    onSortReverse: () -> Unit = {},
 ) {
     val episodes = sources[sourceIndex].episodes
     Surface(
@@ -763,13 +776,24 @@ private fun MobileSectionPanel(
                 }
             }
             when (section) {
-                MobilePlayerSection.Episodes -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(episodes.size) { index ->
-                        MobileChip(
-                            text = "${index + 1}. ${episodes[index].title}",
-                            selected = index == episodeIndex,
-                            onClick = { onEpisode(index); onClose() },
-                        )
+                MobilePlayerSection.Episodes -> {
+                    val epList = if (episodeSortReverse) episodes.asReversed() else episodes
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                            TextButton(onClick = onSortReverse) {
+                                Text(if (episodeSortReverse) "正序" else "倒序", color = Color.White.copy(alpha = 0.8f))
+                            }
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(epList.size) { index ->
+                                val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
+                                MobileChip(
+                                    text = "${realIndex + 1}. ${epList[index].title}",
+                                    selected = realIndex == episodeIndex,
+                                    onClick = { onEpisode(realIndex); onClose() },
+                                )
+                            }
+                        }
                     }
                 }
                 MobilePlayerSection.Sources -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

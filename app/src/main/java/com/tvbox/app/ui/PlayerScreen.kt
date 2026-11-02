@@ -984,6 +984,8 @@ fun PlayerScreen(
                         actions.goBack()
                     },
                     onMorePanelChange = { mobileMoreOpen = it },
+                    episodeSortReverse = state.appSettings.episodeSortReverse,
+                    onSortReverse = { actions.toggleEpisodeSortReverse() },
                 )
             } else {
                 PlayerControls(

@@ -32,6 +32,8 @@ data class AppSettings(
     val mobileOnboarded: Boolean = false,
     /** 电视直播默认源在 liveSourceUrls 中的下标；-1 表示无默认，按顺序尝试。 */
     val liveSourceDefaultIndex: Int = -1,
+    /** 剧集排序顺序：false=正序（1,2,3…），true=倒序（…,3,2,1）。 */
+    val episodeSortReverse: Boolean = false,
 )
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {
