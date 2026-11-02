@@ -1866,24 +1866,9 @@ class TvBoxViewModel(
             return
         }
         if (platformLiveRecoveryInProgress || state.platformLiveResolving) return
-
-        if (platformLiveRecoveryCount < PLATFORM_LIVE_RETRY_PER_LINE) {
-            val retryCount = platformLiveRecoveryCount
-            platformLiveRecoveryCount++
-            platformLiveRecoveryInProgress = true
-            viewModelScope.launch {
-                if (retryCount == PLATFORM_LIVE_RETRY_PER_LINE - 1) {
-                    delay(PLATFORM_LIVE_SECOND_RETRY_DELAY_MS)
-                }
-                resolvePlatformLiveRoom(
-                    forceRefresh = true,
-                    candidateIndex = stream.activeCandidateIndex,
-                    isRecovery = true,
-                )
-            }
-            return
-        }
-
+        platformLiveRecoveryInProgress = true
+        // 直接切换到下一条候选线路（CDN），而非重试同一条——
+        // 虎牙/斗鱼等平台的断流多为 anti-code 或 CDN 不匹配，同一线路重试不会恢复。
         platformLiveRecoveryCount = 0
         if (stream.activeCandidateIndex < stream.candidates.lastIndex) {
             _state.update {
@@ -1892,10 +1877,11 @@ class TvBoxViewModel(
                     platformLiveStream = stream.withActiveCandidate(stream.activeCandidateIndex + 1),
                 )
             }
+            platformLiveRecoveryInProgress = false
         } else {
-            _state.update {
-                it.copy(platformLiveError = "全部 CDN 线路均播放失败，请稍后重试")
-            }
+            // 所有候选均已尝试过，强制重新解析获取新地址
+            platformLiveRecoveryInProgress = false
+            reconnectPlatformLiveChannel()
         }
     }
 
@@ -3288,8 +3274,8 @@ private fun customVideoApiLineId(baseUrl: String): String {
 }
 
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
-private const val PLATFORM_LIVE_RETRY_PER_LINE = 2
-private const val PLATFORM_LIVE_SECOND_RETRY_DELAY_MS = 1_000L
+// 直播断流后切换到下一条候选线路前的最长等待时间（移动端 5s，避免在慢网络上误判）。
+private const val PLATFORM_LIVE_BUFFER_TIMEOUT_MS = 5_000L
 // 热播点击回退查找时最多尝试的视频源数量，避免逐个源串行搜索过慢。
 private const val MAX_DOUBAN_HOT_FALLBACK_LINES = 6
 

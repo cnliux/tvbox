@@ -772,7 +772,7 @@ private fun PlatformLivePlayerScreen(
         when (playerState) {
             Player.STATE_ENDED -> actions.recoverPlatformLiveChannel()
             Player.STATE_BUFFERING -> {
-                delay(8_000L)
+                delay(5_000L)
                 if (player.playbackState == Player.STATE_BUFFERING) {
                     playbackError = "直播连接中断，正在重新获取播放地址"
                     badgeVisible = true
