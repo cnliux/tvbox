@@ -13,8 +13,8 @@
 
 ### 构建与发布校验
 
-- CI 发布：推送 `v1.3.20` 标签触发 `.github/workflows/release.yml`，发布 [TVBox v1.3.20](https://github.com/cnliux/tvbox/releases/tag/v1.3.20)。
-- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+- CI 发布：推送 `v1.3.20` 标签触发 `.github/workflows/release.yml`（run `41385200451`）成功，发布 [TVBox v1.3.20](https://github.com/cnliux/tvbox/releases/tag/v1.3.20)。
+- Release 附件 `app-release.apk`：`50886750` 字节，下载后本地计算 SHA-256 `b386d0877b042ce7e89e8a7238a5a068fd7aa1a4533e405f0d320364b47ea098`，与大小一致；`update.json` 与 README 示例按该附件实际值更新。
 
 ### 导航
 

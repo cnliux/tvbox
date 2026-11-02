@@ -2,8 +2,8 @@
   "versionCode": 10320,
   "versionName": "1.3.20",
   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.20/app-release.apk",
-  "apkSha256": "",
-  "apkSize": 0,
+  "apkSha256": "b386d0877b042ce7e89e8a7238a5a068fd7aa1a4533e405f0d320364b47ea098",
+  "apkSize": 50886750,
   "force": false,
   "changelog": [
     "清理内置电视直播源：仅保留项目最初的 iptv.txt 源，自定义源按顺序探测、首个成功即用。",
