@@ -1,8 +1,6 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.view.KeyEvent as AndroidKeyEvent
@@ -129,7 +127,7 @@ private fun LivePlayerScreen(
 
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
-    val activity = remember(context) { context.findActivityForLive() }
+    val activity = remember(context) { context.findActivity() }
     val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     val isTelevision = state.appSettings.deviceMode == DeviceMode.Television
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
@@ -378,11 +376,7 @@ private fun LivePlayerScreen(
         }
     }
 
-    LaunchedEffect(promptNonce) {
-        if (promptNonce == 0) return@LaunchedEffect
-        delay(PROMPT_HIDE_DELAY_MS)
-        promptVisible = false
-    }
+    PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -869,12 +863,6 @@ private fun LivePrompt(
             fontWeight = FontWeight.Medium,
         )
     }
-}
-
-internal fun Context.findActivityForLive(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivityForLive()
-    else -> null
 }
 
 private const val CHANNEL_LIST_HIDE_DELAY_MS = 2_000L

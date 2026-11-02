@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui.components
+package com.tvbox.app.ui.components
 
 import android.net.Uri
 import androidx.compose.foundation.background
@@ -58,6 +58,7 @@ import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.LocalTouchMode
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.ui.TvScreen
+import com.tvbox.app.ui.formatPlayerTime
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
 
@@ -640,8 +641,8 @@ fun HistoryItemCard(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = if (item.durationMs > 0) "${item.sourceName} / ${formatPlaybackPosition(item.positionMs)} / ${item.progressPercent}%"
-                else "${item.sourceName} / 已看到 ${formatPlaybackPosition(item.positionMs)}",
+            text = if (item.durationMs > 0) "${item.sourceName} / ${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
+                else "${item.sourceName} / 已看到 ${formatPlayerTime(item.positionMs)}",
             modifier = Modifier.padding(start = 10.dp, top = 3.dp, end = 10.dp, bottom = 12.dp),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall,
@@ -726,16 +727,4 @@ fun SmallMeta(text: String, modifier: Modifier = Modifier) {
 @Composable
 fun TinySpacer() {
     Spacer(modifier = Modifier.size(8.dp))
-}
-
-private fun formatPlaybackPosition(positionMs: Long): String {
-    val totalSeconds = (positionMs / 1000).coerceAtLeast(0)
-    val hours = totalSeconds / 3600
-    val minutes = (totalSeconds % 3600) / 60
-    val seconds = totalSeconds % 60
-    return if (hours > 0) {
-        "%d:%02d:%02d".format(hours, minutes, seconds)
-    } else {
-        "%02d:%02d".format(minutes, seconds)
-    }
 }

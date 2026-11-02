@@ -47,6 +47,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.*
@@ -274,12 +275,13 @@ internal fun ControlButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     primary: Boolean = false,
+    minHeight: Dp = 48.dp,
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(if (primary) 24.dp else 10.dp)
     Button(
         onClick = onClick, enabled = enabled,
-        modifier = modifier.heightIn(min = 48.dp).onFocusChanged { focused = it.isFocused }
+        modifier = modifier.heightIn(min = minHeight).onFocusChanged { focused = it.isFocused }
             .border(2.dp, if (focused && enabled) Color(0xFF7AE2BA) else Color.Transparent, shape),
         shape = shape,
         colors = ButtonDefaults.buttonColors(
@@ -363,12 +365,6 @@ private fun SkipOptionRow(
             )
         }
     }
-}
-
-internal fun formatPlayerTime(ms: Long): String {
-    val seconds = ms.coerceAtLeast(0) / 1000
-    return if (seconds >= 3600) "%d:%02d:%02d".format(seconds / 3600, seconds / 60 % 60, seconds % 60)
-    else "%d:%02d".format(seconds / 60, seconds % 60)
 }
 private val playerSpeeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
 

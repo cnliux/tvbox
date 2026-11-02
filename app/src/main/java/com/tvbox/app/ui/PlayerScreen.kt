@@ -1,8 +1,6 @@
 package com.tvbox.app.ui
 
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.provider.Settings
@@ -197,6 +195,7 @@ fun PlayerScreen(
     var playbackIssue by remember { mutableStateOf<PlaybackIssueNotice?>(null) }
     var seekGesturePrompt by remember { mutableStateOf<String?>(null) }
     var seekGesturePromptNonce by remember { mutableIntStateOf(0) }
+    var playbackNoticeNonce by remember { mutableIntStateOf(0) }
     var playbackNotice by remember { mutableStateOf<String?>(null) }
     val bufferMonitor = remember { PlaybackBufferMonitor() }
     val attemptTracker = remember { PlaybackAttemptTracker() }
@@ -311,6 +310,7 @@ fun PlayerScreen(
             bufferingPlaybackKey = null
             playbackIssue = null
             playbackNotice = decision.toPlaybackNotice(switchPrefix)
+            playbackNoticeNonce++
         } else {
             playbackNotice = null
             val errorMessage = if (!currentState.appSettings.playbackAgentAutoSwitchEnabled) {
@@ -402,6 +402,7 @@ fun PlayerScreen(
                     outroSkipHandledKey = null
                     playbackIssue = null
                     playbackNotice = null
+                    playbackNoticeNonce = 0
                     bufferingPlaybackKey = null
                     bufferMonitor.onMediaChanged()
                     actions.syncPlayerEpisode(episodeIndex)
@@ -449,6 +450,7 @@ fun PlayerScreen(
                         resumeAnchor.update(player.currentPosition)
                         playbackIssue = playbackIssue?.afterReady()
                         playbackNotice = null
+                        playbackNoticeNonce = 0
                         failedSourceIndexes = emptySet()
                         val result = bufferMonitor.onReady(
                             playWhenReady = player.playWhenReady,
@@ -527,12 +529,7 @@ fun PlayerScreen(
         )
     }
 
-    LaunchedEffect(playbackNotice) {
-        if (playbackNotice == null) return@LaunchedEffect
-        delay(2_000L)
-        playbackNotice = null
-    }
-
+    PromptTimer(nonce = playbackNoticeNonce, hideDelayMs = 2_000L) { playbackNotice = null; playbackNoticeNonce = 0 }
     LaunchedEffect(bufferingCheckNonce, bufferingPlaybackKey) {
         val watchedPlaybackKey = bufferingPlaybackKey ?: return@LaunchedEffect
         delay(PlaybackBufferMonitor.DEFAULT_CONTINUOUS_BUFFER_THRESHOLD_MS)
@@ -568,11 +565,7 @@ fun PlayerScreen(
         runCatching { playerFocusRequester.requestFocus() }
     }
 
-    LaunchedEffect(seekGesturePromptNonce) {
-        if (seekGesturePromptNonce == 0) return@LaunchedEffect
-        delay(1_000L)
-        seekGesturePrompt = null
-    }
+    PromptTimer(nonce = seekGesturePromptNonce, hideDelayMs = 1_000L) { seekGesturePrompt = null }
 
     val showLongPressSpeedPrompt = {
         seekGesturePrompt = "2x 倍速播放"
@@ -630,7 +623,7 @@ fun PlayerScreen(
         cancelPendingSingleTap()
         bufferMonitor.onSeekStarted(System.currentTimeMillis())
         val targetPosition = player.seekByOffset(deltaMs)
-        seekGesturePrompt = "$label  ${formatPlaybackPosition(targetPosition)}"
+        seekGesturePrompt = "$label  ${formatPlayerTime(targetPosition)}"
         seekGesturePromptNonce++
         saveCurrentProgress(
             positionMs = targetPosition,
@@ -643,9 +636,9 @@ fun PlayerScreen(
         val action = if (deltaMs < 0L) "快退 10 秒" else "快进 10 秒"
         val durationMs = player.duration.takeIf { it > 0L }
         seekGesturePrompt = if (durationMs == null) {
-            "$action  ${formatPlaybackPosition(targetPosition)}"
+            "$action  ${formatPlayerTime(targetPosition)}"
         } else {
-            "$action  ${formatPlaybackPosition(targetPosition)} / ${formatPlaybackPosition(durationMs)}"
+            "$action  ${formatPlayerTime(targetPosition)} / ${formatPlayerTime(durationMs)}"
         }
         seekGesturePromptNonce++
         remoteKeyState.seekChanged = true
@@ -857,7 +850,7 @@ fun PlayerScreen(
                                         durationMs = durationMs,
                                     )
                                     touchGesture.seekTargetMs = targetPosition
-                                    seekGesturePrompt = "进度 ${formatPlaybackPosition(targetPosition)} / ${formatPlaybackPosition(durationMs)}"
+                                    seekGesturePrompt = "进度 ${formatPlayerTime(targetPosition)} / ${formatPlayerTime(durationMs)}"
                                     seekGesturePromptNonce++
                                 } else if (touchGesture.swipeMode == PlayerSwipeMode.Brightness) {
                                     cancelLongPressSpeed()
@@ -1159,18 +1152,6 @@ private fun PlaybackBufferDecision.toPlaybackIssueMessages(): PlaybackIssueMessa
     }
 }
 
-private fun formatPlaybackPosition(positionMs: Long): String {
-    val totalSeconds = (positionMs / 1_000L).coerceAtLeast(0L)
-    val hours = totalSeconds / 3_600L
-    val minutes = (totalSeconds % 3_600L) / 60L
-    val seconds = totalSeconds % 60L
-    return if (hours > 0L) {
-        "${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}"
-    } else {
-        "${minutes}:${seconds.toString().padStart(2, '0')}"
-    }
-}
-
 private fun ExoPlayer.seekByOffset(deltaMs: Long): Long {
     val durationMs = duration.takeIf { it > 0L }
     val targetPosition = (currentPosition + deltaMs)
@@ -1200,12 +1181,6 @@ private fun squaredDistance(
     val dx = x1 - x2
     val dy = y1 - y2
     return dx * dx + dy * dy
-}
-
-private fun Context.findActivity(): Activity? = when (this) {
-    is Activity -> this
-    is ContextWrapper -> baseContext.findActivity()
-    else -> null
 }
 
 private fun VideoSize.toVideoDisplayMode(): VideoDisplayMode {

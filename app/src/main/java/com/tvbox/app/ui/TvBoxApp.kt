@@ -2762,82 +2762,69 @@ private fun SettingsCardSection(title: String) {
 private fun MobileDeviceModeSetting(selectedMode: DeviceMode, onModeSelect: (DeviceMode) -> Unit) {
     val context = LocalContext.current
     val detectedMode = remember(context) { context.detectDeviceMode() }
-    Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text("当前：${selectedMode.displayName}", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        Text(selectedMode.description, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
-        Text("系统自动识别：${detectedMode.displayName}。播放行为以你的选择为准。", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            DeviceMode.entries.forEach { mode ->
-                Button(
-                    onClick = { onModeSelect(mode) },
-                    enabled = mode != selectedMode,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(38.dp).weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedMode == mode) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                        contentColor = if (selectedMode == mode) Color.Black else Color.White,
-                    ),
-                ) {
-                    Text(if (selectedMode == mode) "✓ ${mode.displayName}" else mode.displayName, fontSize = 13.sp)
-                }
-            }
-        }
-    }
+    MobileEnumSelector(
+        title = "设备模式",
+        description = "当前：${selectedMode.displayName}\n系统自动识别：${detectedMode.displayName}。播放行为以你的选择为准。",
+        entries = DeviceMode.entries,
+        selected = selectedMode,
+        onSelect = onModeSelect,
+        displayName = { mode -> if (selectedMode == mode) "✓ ${mode.displayName}" else mode.displayName },
+    )
 }
 
 @Composable
 private fun MobileThemeSetting(selectedTheme: TvTheme, onThemeSelect: (TvTheme) -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text("界面主题", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        Text("当前：${selectedTheme.displayName}。选择后立即生效，设置保存到本机。", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TvTheme.entries.forEach { theme ->
-                Button(
-                    onClick = { onThemeSelect(theme) },
-                    enabled = theme != selectedTheme,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(38.dp).weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selectedTheme == theme) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                        contentColor = if (selectedTheme == theme) Color.Black else Color.White,
-                    ),
-                ) { Text(theme.displayName, fontSize = 13.sp) }
-            }
-        }
-    }
+    MobileEnumSelector(
+        title = "界面主题",
+        description = "当前：${selectedTheme.displayName}。选择后立即生效，设置保存到本机。",
+        entries = TvTheme.entries,
+        selected = selectedTheme,
+        onSelect = onThemeSelect,
+        displayName = { it.displayName },
+    )
 }
 
 @Composable
 private fun MobileFontScaleSetting(selected: TvFontScale, onSelect: (TvFontScale) -> Unit) {
+    MobileEnumSelector(
+        title = "字体大小",
+        description = "调整应用内文字显示大小，设置立即生效。",
+        entries = TvFontScale.entries,
+        selected = selected,
+        onSelect = onSelect,
+        displayName = { it.displayName },
+    )
+}
+
+@Composable
+private fun <T : Enum<T>> MobileEnumSelector(
+    title: String,
+    description: String,
+    entries: List<T>,
+    selected: T,
+    onSelect: (T) -> Unit,
+    displayName: (T) -> String = { it.toString() },
+) {
     Column(
         modifier = Modifier.fillMaxWidth()
             .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
             .padding(14.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text("字体大小", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+        Text(description, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TvFontScale.entries.forEach { fs ->
+            entries.forEach { entry ->
                 Button(
-                    onClick = { onSelect(fs) },
-                    enabled = fs != selected,
+                    onClick = { onSelect(entry) },
+                    enabled = entry != selected,
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.height(38.dp).weight(1f),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selected == fs) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                        contentColor = if (selected == fs) Color.Black else Color.White,
+                        containerColor = if (selected == entry) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                        contentColor = if (selected == entry) Color.Black else Color.White,
                     ),
-                ) { Text(fs.displayName, fontSize = 13.sp) }
+                ) { Text(displayName(entry), fontSize = 13.sp) }
             }
         }
     }

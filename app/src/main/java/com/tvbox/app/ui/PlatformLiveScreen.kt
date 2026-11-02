@@ -690,7 +690,7 @@ private fun PlatformLivePlayerScreen(
     val stream = state.platformLiveStream?.takeIf { it.channelId == room.id }
     val context = androidx.compose.ui.platform.LocalContext.current
     val isMobile = state.appSettings.deviceMode == com.tvbox.app.domain.DeviceMode.Mobile
-    val activity = remember(context) { context.findActivityForLive() }
+    val activity = remember(context) { context.findActivity() }
     var landscapeRequested by remember { mutableStateOf(false) }
     val initialRequestedOrientation = remember(activity) { activity?.requestedOrientation }
     if (isMobile) {
