@@ -727,9 +727,10 @@ private fun HistoryScreen(
                 }
             } else {
                 val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
-                val gridMinWidth = if (isMobile) 140.dp else TvLayout.HistoryGridMinWidth
+                // 手机模式固定 2 列，避免 Adaptive 在窄屏下算出 1 列或间距过大导致布局异常。
+                val columns = if (isMobile) GridCells.Fixed(2) else GridCells.Adaptive(minSize = TvLayout.HistoryGridMinWidth)
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = gridMinWidth),
+                    columns = columns,
                     state = historyGrid,
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 24.dp),
                     horizontalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 18.dp),

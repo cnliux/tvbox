@@ -1,4 +1,4 @@
-﻿"""斗鱼直播间解析：稳定房间号转换为带防盗链参数的临时播放地址。"""
+"""斗鱼直播间解析：稳定房间号转换为带防盗链参数的临时播放地址。"""
 
 from __future__ import annotations
 
@@ -92,9 +92,12 @@ class ResolvedDouyuStream:
 
     @property
     def headers(self) -> dict[str, str]:
+        # 必须使用移动端域名作为 Referer/Origin，与 MOBILE_USER_AGENT 匹配；
+        # 桌面域名的 Referer 会导致手机 CDN 拒绝请求或播放中途断流。
         return {
-            "Referer": f"https://www.douyu.com/{self.room_id}",
-            "User-Agent": USER_AGENT,
+            "Referer": f"https://m.douyu.com/{self.room_id}",
+            "Origin": "https://m.douyu.com",
+            "User-Agent": MOBILE_USER_AGENT,
         }
 
 
