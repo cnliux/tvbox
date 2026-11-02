@@ -1,3 +1,7 @@
 # CI 在 ubuntu 上执行 shell 脚本，必须保持 LF（本机 core.autocrlf=true 会在工作区转 CRLF）。
 *.sh text eol=lf
 *.py text eol=lf
+
+# GitHub 语言统计排除：Windows 构建脚本与验收辅助 Java（工具文件，非项目主体语言）。
+tools/acceptance/*.java linguist-vendored
+tools/*.ps1 linguist-vendored
