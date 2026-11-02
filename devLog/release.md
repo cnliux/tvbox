@@ -1,5 +1,24 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.21：视频卡片只显示节目名称与手机版直播大卡片自适应
+
+### 文件修改、原因与目的
+
+- `ui/components/Common.kt`：`MoviePosterCard` 与 `DoubanHotPosterCard` 删除第二行"年份 / 地区 / 语言 / 备注"信息（用户反馈卡片应显示节目名称而不是年份等信息），片名改最多两行完整显示；更新状态仍保留在海报角标。
+- `ui/SearchScreen.kt`：搜索结果卡片同样去掉 `movie.subtitle` 年份信息行，保留来源角标与更新状态角标。
+- `ui/PlatformLiveScreen.kt`：手机版房间列表基准列数 4→2（大卡片、标题不再挤成单字）；触摸模式列数按屏宽分级自适应（≥500dp +1、≥720dp +2），站点/分类页同步受益。
+- `app/build.gradle.kts`：版本升级至 `10321 / 1.3.21`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- 本地 `:app:compileDebugKotlin` 通过。
+- CI 发布：推送 `v1.3.21` 标签触发 `.github/workflows/release.yml`，发布 [TVBox v1.3.21](https://github.com/cnliux/tvbox/releases/tag/v1.3.21)。
+- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/platform-live.md`。
+
 ## 2026-11-02 - 发布 v1.3.20：内置直播源清理、平台直播手机版重构与安全区修复
 
 ### 文件修改、原因与目的

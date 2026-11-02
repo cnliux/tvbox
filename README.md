@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.20`（`versionCode=10320`）。本版本清理内置电视直播源只保留最初 `iptv.txt`，重构平台直播手机版布局与播放控件，并修复手机版安全区遮挡与不可见文字。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.21`（`versionCode=10321`）。本版本视频卡片只显示节目名称（去掉年份/地区等信息行），手机版平台直播改大卡片并按屏宽自适应列数。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -100,17 +100,15 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10320,
-  "versionName": "1.3.20",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.20/app-release.apk",
-  "apkSha256": "b386d0877b042ce7e89e8a7238a5a068fd7aa1a4533e405f0d320364b47ea098",
-  "apkSize": 50886750,
+  "versionCode": 10321,
+  "versionName": "1.3.21",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.21/app-release.apk",
+  "apkSha256": "",
+  "apkSize": 0,
   "force": false,
   "changelog": [
-    "清理内置电视直播源：仅保留项目最初的 iptv.txt 源，自定义源按顺序探测、首个成功即用。",
-    "电视直播解析：TXT 源无分组时不再丢台，统一归入默认“电视直播”分组。",
-    "平台直播手机版重构：列数按屏幕分级、竖版 3:4 房间卡、播放控件 4 秒自动隐藏点击唤出。",
-    "手机版安全区与可读性修复：设置/直播源管理/详情页不再被遮挡，修复不可见文字。"
+    "视频卡片只显示节目名称：首页、豆瓣热播与搜索结果卡片去掉年份/地区/语言/备注信息行，片名最多两行完整显示。",
+    "手机版平台直播大卡片：房间列表竖屏 2 列起步，列数按屏宽自适应（≥500dp 3 列、≥720dp 4 列），标题不再被挤成单字。"
   ]
 }
 ```
@@ -118,7 +116,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.20 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.21 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
