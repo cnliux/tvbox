@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.22`（`versionCode=10322`）。本版本修复手机版首页/热播海报片名在深色卡片上不可见的问题。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.23`（`versionCode=10323`）。本版本手机版源管理改为页内管理、多个窄屏页面自适应换行，并重做手机版播放控件与系统栏隐藏。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -100,14 +100,17 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10322,
-  "versionName": "1.3.22",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.22/app-release.apk",
-  "apkSha256": "d398736d08555a345cf493ef894008cece0df489d2b81d46b7a1468c16904511",
-  "apkSize": 50886786,
+  "versionCode": 10323,
+  "versionName": "1.3.23",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.23/app-release.apk",
+  "apkSha256": "",
+  "apkSize": 0,
   "force": false,
   "changelog": [
-    "修复手机版首页/热播海报片名不可见：卡片标题显式使用 onSurface 前景色，深色卡片上片名清晰可读，保留最多两行自适应换行。"
+    "手机版源管理改为页内管理：设置页移除网页远程管理入口，改为在页内导入配置与增删源。",
+    "视频接口/直播源/全部源管理页与源卡片在窄屏自动换行，不再把标题和按钮挤出屏幕。",
+    "重做手机版播放控件：进度条、上一集/播放暂停/下一集与选集·线路·倍速·画面·投屏分层等宽排布，按钮不再被折叠。",
+    "播放页系统状态栏/导航栏在旋转、下拉通知栏或切后台返回后自动重新隐藏，控件同时吸收安全区。"
   ]
 }
 ```
@@ -115,7 +118,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.22 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.23 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。

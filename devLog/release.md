@@ -1,5 +1,25 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.23：手机版源管理页内化、窄屏自适应与播放控件重做
+
+### 文件修改、原因与目的
+
+- `ui/TvBoxApp.kt`：手机设置页删除"手机远程管理（网页）"入口，"首页渲染数据"卡的添加入口改为进入视频接口管理页；视频接口管理页在手机版隐藏网页配置入口与"添加接口"按钮，改由页内"导入配置"粘贴订阅地址/JSON（`HomeApiLineSetting.onOpenConfig` 改为可空）。新增 `ManageScreenHeader`：三个管理页头部在手机版竖向堆叠、按钮 `FlowRow` 换行；`SourceManagerSetting` 工具按钮流式换行，手机版源卡片把测速/屏蔽/删除放到源名下方；手机版源选择下拉补 `weight(1f)`。
+- `ui/DetailScreen.kt`：手机版片名 `headlineLarge → titleLarge`，类型/年份/备注标签改 `FlowRow` 换行，避免与右侧按钮抢空间。
+- `ui/PlayerControls.kt`：重写 `PlayerControlsMobile`——顶部返回/片名栏，底部"进度条 → 上一集/圆形播放暂停/下一集 → 选集·线路·倍速·画面·投屏"三层；竖屏等宽均分、横屏横滑；新增 `MobileSectionPanel` 单面板（选集/线路/倍速/画面可切换收起）、`MobileChip`、`MobilePlayPauseButton`（Canvas 绘制，免新增图标依赖）；进度条拖动改为本地预览、松手才 seek。根因：原实现 6 个按钮挤在一行 `SpaceEvenly`，窄屏被折叠成一字宽。
+- `ui/PlayerViewport.kt`：新增每 3 秒系统栏巡检（`IMMERSIVE_REHIDE_INTERVAL_MS`），旋转、下拉通知栏、切后台返回后重新出现的状态栏/导航栏会再次隐藏；退出仍恢复原状态。配合控件 `safeDrawing`，系统导航栏不再压住底部按钮。
+- `app/build.gradle.kts`：版本升级至 `10323 / 1.3.23`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- 本地 `:app:compileDebugKotlin` 通过。
+- CI 发布：推送 `v1.3.23` 标签触发 `.github/workflows/release.yml` 成功，发布 [TVBox v1.3.23](https://github.com/cnliux/tvbox/releases/tag/v1.3.23)。
+- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`。
+
 ## 2026-11-02 - 发布 v1.3.22：手机版海报片名不可见修复
 
 ### 文件修改、原因与目的
