@@ -58,6 +58,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             videoScaleMode = VideoScaleMode.fromStorageKey(prefs.getString(KEY_VIDEO_SCALE_MODE, null)),
             deviceMode = DeviceMode.fromStorageKey(prefs.getString(KEY_DEVICE_MODE, null)),
             liveSourceDefaultGroup = prefs.getString(KEY_LIVE_SOURCE_DEFAULT_GROUP, "") ?: "",
+            mobileOnboarded = prefs.getBoolean(KEY_MOBILE_ONBOARDED, false),
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
         if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
@@ -89,6 +90,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putString(KEY_VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
             .putString(KEY_DEVICE_MODE, settings.deviceMode.storageKey)
             .putString(KEY_LIVE_SOURCE_DEFAULT_GROUP, settings.liveSourceDefaultGroup)
+            .putBoolean(KEY_MOBILE_ONBOARDED, settings.mobileOnboarded)
             .apply()
         settings
     }
@@ -151,5 +153,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
         const val KEY_DEVICE_MODE = "device_mode"
         const val KEY_LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
+        const val KEY_MOBILE_ONBOARDED = "mobile_onboarded"
     }
 }

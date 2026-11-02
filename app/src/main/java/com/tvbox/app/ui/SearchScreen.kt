@@ -788,6 +788,7 @@ internal fun MobileSearchScreen(
                     onClick = { submit() },
                     enabled = !state.searchLoading,
                     shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.height(48.dp),
                 ) {
                     Text(if (state.searchLoading) "搜索中…" else "搜索")
                 }
@@ -828,11 +829,11 @@ internal fun MobileSearchScreen(
                 SearchEmptyState(query = state.searchQuery)
 
             else -> {
-                // 进度提示
-                val progress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
-                    "已完成 ${state.searchCompletedSources}/$total 条线路 · 找到 ${state.searchResults.size} 个结果"
-                }
-                progress?.let {
+                // 进度提示：正在异步搜索多个来源，实时显示当前完成进度。
+                val progressText = if (state.searchTotalSources > 0) {
+                    "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
+                } else null
+                progressText?.let {
                     Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))

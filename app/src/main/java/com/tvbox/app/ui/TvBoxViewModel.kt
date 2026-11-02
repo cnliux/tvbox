@@ -1631,6 +1631,14 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
+    /** 手机模式首次启动引导 Banner 已展示，记录该状态避免重复弹出。 */
+    fun updateMobileOnboarded() {
+        if (_state.value.appSettings.mobileOnboarded) return
+        val settings = _state.value.appSettings.copy(mobileOnboarded = true)
+        _state.update { it.copy(appSettings = settings) }
+        saveSettings(settings)
+    }
+
     fun playPreviousLiveChannel() {
         _state.update { state ->
             val channels = state.liveChannels

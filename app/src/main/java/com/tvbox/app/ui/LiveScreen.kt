@@ -36,9 +36,13 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -221,17 +225,31 @@ private fun LivePlayerScreen(
     }
 
     var lastExitBackPressTime by remember { mutableStateOf(0L) }
+    var showExitLiveConfirm by remember { mutableStateOf(false) }
+    // 在 Compose 树顶层渲染确认弹窗，避免在 LaunchedEffect/BackHandler 回调里直接调 showDialog。
+    if (showExitLiveConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExitLiveConfirm = false },
+            title = { Text("退出直播") },
+            text = { Text("确定要退出当前直播吗？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitLiveConfirm = false
+                        actions.goBack()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1ED760)),
+                ) { Text("退出") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitLiveConfirm = false }) { Text("取消") }
+            },
+        )
+    }
     BackHandler {
-        // 手机模式先关闭控件/提示，再要求 1.5 秒内二次确认，避免误触直接退出直播。
+        // 手机模式用确认弹窗代替 Toast，避免误触退出。
         if (isMobile) {
-            val now = System.currentTimeMillis()
-            if (now - lastExitBackPressTime < 1500L) {
-                lastExitBackPressTime = 0L
-                actions.goBack()
-            } else {
-                lastExitBackPressTime = now
-                Toast.makeText(context, "再按一次退出直播", Toast.LENGTH_SHORT).show()
-            }
+            showExitLiveConfirm = true
         } else {
             actions.goBack()
         }

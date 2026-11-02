@@ -1647,6 +1647,7 @@ private fun MobileHomeFeed(
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
+        MobileOnboardingBanner(state = state, actions = actions)
         // 分类标签（热播 / 目录）- 顶部横滑
         val parentCategories = state.categories.filter { it.parentId == 0 }
         val selectedParent = state.selectedParentCategoryId?.let { id -> state.categories.firstOrNull { it.id == id } }
@@ -2756,6 +2757,48 @@ private fun MobileSettingsScreen(
 private fun SettingsCardSection(title: String) {
     Text(title, style = MaterialTheme.typography.titleMedium, color = Color(0xFF1ED760),
         modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp))
+}
+
+/**
+ * 手机模式首次启动引导 Banner：展示一次，告知用户当前为手机模式并快速跳转设置。
+ * 已展示过时返回 null，不占据空间。
+ */
+@Composable
+private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel) {
+    if (state.appSettings.deviceMode != DeviceMode.Mobile || state.appSettings.mobileOnboarded) return
+    var dismissed by remember { mutableStateOf(false) }
+    if (dismissed) return
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        color = Color(0xFF1A3A2A),
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("📱", fontSize = 20.sp)
+            Column(modifier = Modifier.weight(1f)) {
+                Text("手机模式已启用", style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text("可在设置中调整主题、字体大小或切换回电视模式",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.7f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(
+                    onClick = { actions.openSettings(); actions.updateMobileOnboarded() },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) { Text("设置", fontSize = 12.sp) }
+                TextButton(
+                    onClick = { dismissed = true },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                ) { Text("关闭", fontSize = 12.sp) }
+            }
+        }
+    }
 }
 
 @Composable

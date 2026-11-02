@@ -28,6 +28,8 @@ data class AppSettings(
     val deviceMode: DeviceMode = DeviceMode.Television,
     /** 每个直播源地址默认添加到的频道组合名。空字符串表示不自动加入任何组合。 */
     val liveSourceDefaultGroup: String = "",
+    /** 手机模式首次启动引导 Banner 是否已展示过。 */
+    val mobileOnboarded: Boolean = false,
 )
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

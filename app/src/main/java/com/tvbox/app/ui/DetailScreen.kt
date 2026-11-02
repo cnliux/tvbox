@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -211,10 +212,19 @@ fun DetailScreen(
                         state.detailTotalSources > 1 &&
                         state.detailCompletedSources < state.detailTotalSources
                     ) {
+                        // 测速/补充线路中：显示行内进度条，让用户感知进展。
+                        LinearProgressIndicator(
+                            progress = {
+                                state.detailTotalSources.toFloat() / state.detailTotalSources.toFloat()
+                                    .coerceAtLeast(1f) *
+                                state.detailCompletedSources.toFloat() / state.detailTotalSources.toFloat()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         Text(
                             text = "正在补充播放线路（${state.detailCompletedSources}/${state.detailTotalSources}）",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium,
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     state.detailSourceMessage?.let { message ->

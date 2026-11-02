@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -6,6 +6,8 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +24,11 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -73,10 +79,11 @@ fun AiRecommendScreen(
                 style = MaterialTheme.typography.headlineLarge,
             )
             Spacer(modifier = Modifier.height(18.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth(),
             ) {
                 OutlinedTextField(
                     value = state.aiQuery,
@@ -99,10 +106,14 @@ fun AiRecommendScreen(
                     onClick = { actions.refreshAiRecommendationBatch() },
                     enabled = inputEnabled && state.aiResults.isNotEmpty(),
                 )
-                AiActionButton(
-                    text = "返回",
+                OutlinedButton(
                     onClick = actions::goBack,
-                )
+                    enabled = inputEnabled,
+                    shape = RoundedCornerShape(50),
+                    modifier = Modifier.height(44.dp),
+                ) {
+                    Text("返回", style = MaterialTheme.typography.titleSmall)
+                }
             }
             Spacer(modifier = Modifier.height(12.dp))
             AiQuickPromptRow(

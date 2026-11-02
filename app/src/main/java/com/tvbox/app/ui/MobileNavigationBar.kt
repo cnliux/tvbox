@@ -122,7 +122,7 @@ fun MobileNavWrapper(
                             label = {
                                 Text(
                                     label,
-                                    fontSize = 11.sp,
+                                    fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     color = if (isSelected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f),
                                 )
@@ -158,7 +158,7 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
         imageVector = icon,
         contentDescription = screen.name,
         tint = tint,
-        modifier = Modifier.size(22.dp),
+        modifier = Modifier.size(24.dp),
     )
 }
 
