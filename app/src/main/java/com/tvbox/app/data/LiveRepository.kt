@@ -17,18 +17,18 @@ interface LiveRepository {
      * 更新电视直播源配置。
      *
      * @param customUrls 用户添加的自定义 M3U/TXT 源地址。
+     * @param defaultGroup 解析成功后，默认将频道分组名改为该值（避免"电视直播"兜底名）。
      */
-    fun setSourceConfig(customUrls: List<String>)
+    fun setSourceConfig(customUrls: List<String>, defaultGroup: String)
 }
-
-/** 项目最初的电视直播源（首个直播提交 dcd67a4 引入），作为唯一内置源始终参与加载。 */
-const val BUILT_IN_LIVE_SOURCE_URL = "https://nav.zhenxx.de5.net/iptv.txt"
 
 class DefaultLiveRepository : LiveRepository {
     private var customSourceUrls: List<String> = emptyList()
+    private var defaultGroup: String = ""
 
-    override fun setSourceConfig(customUrls: List<String>) {
+    override fun setSourceConfig(customUrls: List<String>, defaultGroup: String) {
         this.customSourceUrls = customUrls
+        this.defaultGroup = defaultGroup
     }
 
     private val client = OkHttpClient.Builder()
@@ -37,10 +37,13 @@ class DefaultLiveRepository : LiveRepository {
         .build()
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
-        val sourceUrls = (listOf(BUILT_IN_LIVE_SOURCE_URL) + customSourceUrls)
+        val sourceUrls = customSourceUrls
             .map(::normalizeSourceUrl)
             .filter { it.isNotBlank() }
             .distinct()
+        if (sourceUrls.isEmpty()) {
+            throw IOException("请添加自定义直播源地址后重试")
+        }
         var lastError: Throwable? = null
         sourceUrls.forEach { sourceUrl ->
             try {
@@ -52,6 +55,12 @@ class DefaultLiveRepository : LiveRepository {
                         throw IOException("直播源加载失败：${response.code}")
                     }
                     val channels = parseLiveChannels(response.body.string())
+                        .map { ch ->
+                            if (ch.groupName == "电视直播" && defaultGroup.isNotBlank()) ch.copy(groupName = defaultGroup) else ch
+                        }
+                        .distinctBy { ch -> ch.name }
+                        .withIndex()
+                        .map { (i, ch) -> ch.copy(number = i + 1) }
                     if (channels.isNotEmpty()) return@withContext channels
                     throw IOException("直播源未返回可用频道")
                 }

@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.ViewGroup

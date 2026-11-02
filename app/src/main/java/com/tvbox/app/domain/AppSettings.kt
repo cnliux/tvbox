@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.domain
+package com.tvbox.app.domain
 
 import kotlinx.serialization.Serializable
 
@@ -26,6 +26,8 @@ data class AppSettings(
     val playbackAgentAutoSwitchEnabled: Boolean = true,
     val videoScaleMode: VideoScaleMode = VideoScaleMode.Fit,
     val deviceMode: DeviceMode = DeviceMode.Television,
+    /** 每个直播源地址默认添加到的频道组合名。空字符串表示不自动加入任何组合。 */
+    val liveSourceDefaultGroup: String = "",
 )
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

@@ -945,13 +945,13 @@ class TvBoxViewModel(
                 } else if (url in _state.value.appSettings.liveSourceUrls) {
                     "该直播源已存在。"
                 } else {
-                    updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls + url)
+                    updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls + url, _state.value.appSettings.liveSourceDefaultGroup)
                     "已添加直播源：$url"
                 }
             }
             "live-delete" -> {
                 val url = request.url.trim()
-                updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url)
+                updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url, _state.value.appSettings.liveSourceDefaultGroup)
                 "已删除直播源：$url"
             }
             "site-toggle" -> {
@@ -2471,10 +2471,10 @@ class TvBoxViewModel(
         _state.update { it.copy(sourceImportMessage = null) }
     }
 
-    fun updateLiveSourceUrls(urls: List<String>) {
+    fun updateLiveSourceUrls(urls: List<String>, defaultGroup: String = "") {
         val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
         val current = _state.value
-        val settings = current.appSettings.copy(liveSourceUrls = normalized)
+        val settings = current.appSettings.copy(liveSourceUrls = normalized, liveSourceDefaultGroup = defaultGroup)
         applyLiveSourceConfig(settings)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
@@ -2482,7 +2482,7 @@ class TvBoxViewModel(
 
     /** 把设置中的电视直播源应用到仓库。 */
     private fun applyLiveSourceConfig(settings: AppSettings) {
-        liveRepository.setSourceConfig(settings.liveSourceUrls)
+        liveRepository.setSourceConfig(settings.liveSourceUrls, settings.liveSourceDefaultGroup)
     }
 
     /** 屏蔽/恢复视频源分类：屏蔽后该分类不再出现在电视的分类与影片列表。 */

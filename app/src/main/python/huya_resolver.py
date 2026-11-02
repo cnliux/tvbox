@@ -1,4 +1,4 @@
-﻿"""虎牙直播解析：网页房间信息、anti-code 和 TUP3 CDN token。"""
+"""虎牙直播解析：网页房间信息、anti-code 和 TUP3 CDN token。"""
 
 from __future__ import annotations
 
@@ -192,10 +192,21 @@ class HuyaResolver:
                     signed = self._build_anti_code(stream_name, presenter_uid, token)
                 except (PlatformResolverError, ValueError, KeyError):
                     continue
-                url = f"{base_url}/{stream_name}.flv?{signed}&codec=264"
+                url = f"{base_url}/{stream_name}.flv?{signed}"
                 if rate > 0:
                     url += f"&ratio={rate}"
                 candidates.append(LiveStreamCandidate(text(line.get("sCdnType"), "默认"), url, "flv"))
+                # 移动端使用桌面客户端 anti-code 时，CDN 常只发一小段 FLV 后主动断开（十几秒断流）。
+                # 额外生成一份 mobile 候选：将 ctype 改为 tars_mobile、t 改为 103，兼容手机端播放。
+                try:
+                    mobile_signed = self._build_anti_code(stream_name, presenter_uid, token)
+                    mobile_signed = mobile_signed.replace("ctype=huya_pc_exe", "ctype=tars_mobile").replace("t=0", "t=103")
+                    mobile_url = f"{base_url}/{stream_name}.flv?{mobile_signed}"
+                    if rate > 0:
+                        mobile_url += f"&ratio={rate}"
+                    candidates.append(LiveStreamCandidate("移动端", mobile_url, "flv"))
+                except Exception:
+                    pass
         candidates = list(unique_candidates(candidates))
         if not candidates:
             raise PlatformResolverError("虎牙未返回可播放地址")

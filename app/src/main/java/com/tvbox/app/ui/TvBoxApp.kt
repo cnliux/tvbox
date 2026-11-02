@@ -678,8 +678,10 @@ private fun HistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(padding),
         ) {
+            val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -688,21 +690,24 @@ private fun HistoryScreen(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "历史",
-                        style = MaterialTheme.typography.headlineLarge,
+                        style = if (isMobile) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineLarge,
                     )
                     Text(
                         text = "观看记录：继续上次的线路、集数和播放进度",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                     )
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         enabled = state.historyItems.isNotEmpty(),
                         onClick = { confirmClearHistory = true },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = if (isMobile) Modifier.height(36.dp) else Modifier,
                     ) {
-                        Text("清空历史")
+                        Text("清空")
                     }
-                    Button(onClick = actions::goBack) {
+                    Button(onClick = actions::goBack, shape = RoundedCornerShape(8.dp), modifier = if (isMobile) Modifier.height(36.dp) else Modifier) {
                         Text("返回")
                     }
                 }
@@ -721,12 +726,14 @@ private fun HistoryScreen(
                     }
                 }
             } else {
+                val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+                val gridMinWidth = if (isMobile) 140.dp else TvLayout.HistoryGridMinWidth
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = TvLayout.HistoryGridMinWidth),
+                    columns = GridCells.Adaptive(minSize = gridMinWidth),
                     state = historyGrid,
-                    contentPadding = PaddingValues(bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(22.dp),
+                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (isMobile) 12.dp else 22.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     items(state.historyItems, key = { "${it.apiLineId}:${it.movieId}" }) { item ->
@@ -2150,29 +2157,40 @@ private fun LiveSourceSetting(
     actions: TvBoxViewModel,
 ) {
     var urlsText by remember { mutableStateOf(state.appSettings.liveSourceUrls.joinToString("\n")) }
+    var defaultGroup by remember { mutableStateOf(state.appSettings.liveSourceDefaultGroup) }
     var savedMessage by remember { mutableStateOf<String?>(null) }
 
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "自定义直播源地址（每行一个，支持 M3U/TXT）",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(modifier = Modifier.height(6.dp))
         OutlinedTextField(
             value = urlsText,
             onValueChange = { urlsText = it },
-            modifier = Modifier.fillMaxWidth().height(120.dp),
+            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 160.dp),
             placeholder = { Text("https://example.com/live.m3u\nhttps://example.com/live.txt") },
             maxLines = 8,
         )
-        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "默认频道分组名（可选，不填则保持源内分组）",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        OutlinedTextField(
+            value = defaultGroup,
+            onValueChange = { defaultGroup = it },
+            modifier = Modifier.fillMaxWidth(),
+            placeholder = { Text("例如：体育、新闻、综合") },
+            singleLine = true,
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SettingsActionButton(
                 text = "保存直播源",
                 onClick = {
                     val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                    actions.updateLiveSourceUrls(urls)
+                    actions.updateLiveSourceUrls(urls, defaultGroup)
                     savedMessage = "已保存 ${urls.size} 个直播源"
                 },
             )
@@ -2180,14 +2198,14 @@ private fun LiveSourceSetting(
                 text = "清空直播源",
                 enabled = state.appSettings.liveSourceUrls.isNotEmpty(),
                 onClick = {
-                    actions.updateLiveSourceUrls(emptyList())
+                    actions.updateLiveSourceUrls(emptyList(), "")
                     urlsText = ""
+                    defaultGroup = ""
                     savedMessage = "已清空直播源"
                 },
             )
         }
         savedMessage?.let { msg ->
-            Spacer(modifier = Modifier.height(6.dp))
             Text(text = msg, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
         }
     }
@@ -2444,7 +2462,7 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "直播源",
-                        subtitle = "内置项目最初的电视直播源，可再添加自定义地址（M3U/TXT），支持地址导入以解析直播源数据。",
+                        subtitle = "请添加电视直播源地址（M3U/TXT），支持地址导入以解析直播源数据；可设置默认频道分组名，为空则保持源内分组。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {

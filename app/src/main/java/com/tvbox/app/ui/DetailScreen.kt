@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.ui
+package com.tvbox.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -51,6 +51,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlayEpisode
 import com.tvbox.app.domain.PlaybackAgent
@@ -96,7 +97,8 @@ fun DetailScreen(
                         .windowInsetsPadding(WindowInsets.safeDrawing)
                         .padding(padding),
                 ) {
-                    val compact = maxHeight < 560.dp
+                    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+                    val compact = isMobile || maxHeight < 560.dp
                     val posterWidth = if (compact) 118.dp else 210.dp
                     val horizontalGap = if (compact) 16.dp else 28.dp
                     val headerMaxHeight = if (compact) 190.dp else 320.dp

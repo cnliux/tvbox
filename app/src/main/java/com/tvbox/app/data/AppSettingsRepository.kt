@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import android.content.Context
 import com.tvbox.app.domain.AppSettings
@@ -57,6 +57,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             playbackAgentAutoSwitchEnabled = prefs.getBoolean(KEY_PLAYBACK_AGENT_AUTO_SWITCH, true),
             videoScaleMode = VideoScaleMode.fromStorageKey(prefs.getString(KEY_VIDEO_SCALE_MODE, null)),
             deviceMode = DeviceMode.fromStorageKey(prefs.getString(KEY_DEVICE_MODE, null)),
+            liveSourceDefaultGroup = prefs.getString(KEY_LIVE_SOURCE_DEFAULT_GROUP, "") ?: "",
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
         if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
@@ -87,6 +88,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putBoolean(KEY_PLAYBACK_AGENT_AUTO_SWITCH, settings.playbackAgentAutoSwitchEnabled)
             .putString(KEY_VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
             .putString(KEY_DEVICE_MODE, settings.deviceMode.storageKey)
+            .putString(KEY_LIVE_SOURCE_DEFAULT_GROUP, settings.liveSourceDefaultGroup)
             .apply()
         settings
     }
@@ -148,5 +150,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
         const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
         const val KEY_DEVICE_MODE = "device_mode"
+        const val KEY_LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
     }
 }
