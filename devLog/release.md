@@ -1,5 +1,25 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.20：内置直播源清理、平台直播手机版重构与安全区修复
+
+### 文件修改、原因与目的
+
+- `data/LiveRepository.kt`：清理内置电视直播源，仅保留项目最初的 `https://nav.zhenxx.de5.net/iptv.txt`（`BUILT_IN_LIVE_SOURCE_URL`）；多源按顺序探测、首个成功即用；新增 `normalizeSourceUrl` 地址归一化去重。
+- `domain/LiveParser.kt`：TXT 源没有 `#genre#` 分组标记时不再丢台，统一归入默认"电视直播"分组；`test/PlaybackParserTest.kt` 同步用例。
+- `ui/PlatformLiveScreen.kt`：手机版列表列数按屏幕宽度分级（2/2/3/4 列）；房间卡改竖版 3:4 封面、收藏星标叠在封面上；播放页控制栏 4 秒无操作自动隐藏、点击唤出并吸收安全区；"加载更多"改通栏按钮。
+- `ui/TvBoxApp.kt`：直播源文案更新；`MobileSettingsScreen` 与三个源管理页增加 `safeDrawing` 内边距；"启动时检查更新"、线路质量统计等文字显式设置 `onSurface` 前景色，修复深色底上不可见。
+- `ui/DetailScreen.kt`：手机版详情页吸收状态栏/导航栏安全区。
+- `app/build.gradle.kts`：版本升级至 `10320 / 1.3.20`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- CI 发布：推送 `v1.3.20` 标签触发 `.github/workflows/release.yml`，发布 [TVBox v1.3.20](https://github.com/cnliux/tvbox/releases/tag/v1.3.20)。
+- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`、`devLog/platform-live.md`。
+
 ## 2026-11-02 - 发布 v1.3.19：底部导航遮挡修复与直播列表 4 列铺满
 
 ### 文件修改、原因与目的
