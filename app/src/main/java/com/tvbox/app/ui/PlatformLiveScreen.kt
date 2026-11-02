@@ -341,7 +341,7 @@ private fun PlatformLiveBrowseSurface(
     onRetry: () -> Unit,
     gridState: LazyGridState? = null,
     notice: String? = null,
-    touchColumns: Int = 4,
+    touchColumns: Int = 2,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
     PageSurface { padding ->
@@ -383,9 +383,14 @@ private fun PlatformLiveBrowseSurface(
                     val touchMode = LocalTouchMode.current
                     LazyVerticalGrid(
                         state = resolvedGridState,
-                        // 手机触摸模式铺满屏宽：房间等图片卡片 4 列（宽屏 6 列），文字卡片由调用方收窄列数，避免竖排换行。
+                        // 手机触摸模式大卡片自适应：竖屏按基准列数（房间 2 列），屏越宽列数越多（≥500dp +1、≥720dp +2），卡片保持可读尺寸。
                         columns = if (touchMode) {
-                            GridCells.Fixed(if (screenWidthDp >= 720) touchColumns + 2 else touchColumns)
+                            val extra = when {
+                                screenWidthDp >= 720 -> 2
+                                screenWidthDp >= 500 -> 1
+                                else -> 0
+                            }
+                            GridCells.Fixed(touchColumns + extra)
                         } else {
                             GridCells.Fixed(TvLayout.PlatformLiveColumns)
                         },

@@ -976,16 +976,6 @@ private fun SearchResultCardMobile(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            val meta = movie.subtitle.ifBlank { movie.typeName }
-            if (meta.isNotBlank()) {
-                Text(
-                    meta,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.6f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
     }
 }

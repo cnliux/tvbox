@@ -449,17 +449,9 @@ fun MoviePosterCard(
         }
         Text(
             text = movie.name,
-            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp),
+            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 12.dp),
             style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = movie.subtitle.ifBlank { movie.typeName.ifBlank { "影视" } },
-            modifier = Modifier.padding(start = 10.dp, top = 3.dp, end = 10.dp, bottom = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -570,17 +562,9 @@ fun DoubanHotPosterCard(
         }
         Text(
             text = item.title,
-            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp),
+            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 12.dp),
             style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = item.subtitle.ifBlank { "豆瓣热播" },
-            modifier = Modifier.padding(start = 10.dp, top = 3.dp, end = 10.dp, bottom = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
     }
