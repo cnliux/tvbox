@@ -1,15 +1,13 @@
 {
-  "versionCode": 10324,
-  "versionName": "1.3.24",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.24/app-release.apk",
-  "apkSha256": "87b6ba0a99f42f71e64fec5cd5a4f01281255023a8cf07b99604a146ccf7157e",
-  "apkSize": 50886726,
+  "versionCode": 10325,
+  "versionName": "1.3.25",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.25/app-release.apk",
+  "apkSha256": "9587c4aa9612f50fa61c4fd1991c8aa8352cefd431cca122037d83a5c2c395b9",
+  "apkSize": 50887558,
   "force": false,
   "changelog": [
-    "删除内置电视直播源：用户需自行在直播源管理页添加自定义地址；支持设置默认频道分组名。",
-    "手机版详情页自适应：片名缩小、海报缩窄、信息区可滚动，选集网格按屏宽自适应。",
-    "手机版历史页自适应：标题字号、按钮高度、卡片网格均适配窄屏。",
-    "虎牙直播断流修复：移除 &codec=264 后缀，新增移动端 anti-code 候选，避免 CDN 提前断流。",
-    "平台直播播放生命周期修复：修正重复 BindPlaybackSession 问题，手机切后台后恢复播放正确。"
+    "手机模式 UX 专项修复：AI 推荐页操作栏改用 FlowRow 避免溢出；底部导航标签字号/图标增大；分类 Pill 和搜索按钮达到 48dp 最小触控目标；直播退出改为弹窗确认；首页新增一次性引导 Banner；搜索进度文案优化；详情页测速添加行内进度条。",
+    "历史页手机版卡片网格改为固定 2 列，避免窄屏算出 1 列。",
+    "虎牙/斗鱼直播断流修复：斗鱼播放器 headers 改用移动端 Referer/Origin/UA；虎牙 Referer/Origin/UA 统一为移动端与 anti-code 一致；断流恢复策略改为直接切换下一条候选 CDN（不再重试同一条无效线路），缓冲超时从 8s 降至 5s。"
   ]
 }

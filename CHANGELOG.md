@@ -1,5 +1,20 @@
 # 更新记录
 
+## v1.3.25 - 2026-11-02
+
+- 手机模式 UX 专项修复：
+  - AI 推荐页操作栏改为 FlowRow 布局，"返回"按钮独立为 OutlinedButton，避免窄屏溢出。
+  - 底部导航标签字号 11sp→12sp，图标尺寸 22dp→24dp；分类 Pill 内边距 vertical 8dp→12dp，搜索按钮高度 48dp。
+  - 直播退出改为 AlertDialog 确认弹窗，替代 Toast 双击，避免误触退出。
+  - 首页首次进入手机模式时展示一次性引导 Banner，可跳转设置或关闭。
+  - 搜索进度文案优化："已完成 X/Y"改为"正在搜索 N 个来源（已完成 X，找到 Y 条结果）"。
+  - 详情页线路测速添加行内 LinearProgressIndicator。
+- 历史页手机版卡片网格改为固定 2 列（原 Adaptive 140dp 在小屏可能算出 1 列）。
+- 虎牙/斗鱼直播断流修复：
+  - 斗鱼播放器 headers 改用移动端 Referer（m.douyu.com）、Origin 和 iPhone Safari UA，避免 CDN 拒流。
+  - 虎牙播放器 headers 中 Referer/Origin/UA 三者统一为移动端，与 anti-code 生成来源一致。
+  - 断流恢复策略改为直接切换下一条候选 CDN 线路，不再重试同一条（同一 anti-code 对手机无效，重试无意义）；缓冲超时从 8s 降至 5s。
+
 ## v1.3.24 - 2026-11-02
 
 - 删除内置电视直播源：移除原有的 `iptv.txt` 内置地址，用户需自行在"直播源管理"页添加自定义 M3U/TXT 地址；支持设置默认频道分组名，解析后自动替换"电视直播"兜底分组。
