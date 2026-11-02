@@ -26,7 +26,7 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
             return@forEach
         }
 
-        val groupName = currentGroupName ?: return@forEach
+        val groupName = currentGroupName ?: DEFAULT_TXT_GROUP_NAME
         val parsedLine = sourcePart.toLiveChannelLineOrNull(channelName = name) ?: return@forEach
         val key = LiveChannelKey(groupName = groupName, channelName = parsedLine.channelName)
         val lines = channels.getOrPut(key) { mutableListOf() }
@@ -141,3 +141,6 @@ private fun String.toLiveChannelLineOrNull(channelName: String): ParsedLiveChann
 }
 
 private const val LIVE_LINE_METADATA_PREFIX = "LR•IPV4•29『线路"
+
+/** TXT 源没有 `#genre#` 分组头（如内置的 iptv.txt）时的默认分组名。 */
+private const val DEFAULT_TXT_GROUP_NAME = "电视直播"

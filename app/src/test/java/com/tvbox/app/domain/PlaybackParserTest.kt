@@ -61,10 +61,10 @@ class PlaybackParserTest {
     }
 
     @Test
-    fun ignoresUngroupedLegacyLinesAndMergesGroupedChannels() {
+    fun groupsUngroupedLinesUnderDefaultNameAndMergesGroupedChannels() {
         val channels = parseLiveChannels(
             """
-            CCTV9,http://legacy.test/ignored
+            CCTV9,http://legacy.test/ungrouped
             央视卫视,#genre#
             CCTV1,http://video.test/1/index.m3u8
             CCTV1,https://video.test/2/index.m3u8${'$'}LR•IPV4•29『线路2』${'$'}LR•IPV4•29『线路2』
@@ -74,16 +74,20 @@ class PlaybackParserTest {
             """.trimIndent(),
         )
 
-        assertEquals(2, channels.size)
+        assertEquals(3, channels.size)
         assertEquals(1, channels[0].number)
-        assertEquals("央视卫视", channels[0].groupName)
-        assertEquals("CCTV1", channels[0].name)
-        assertEquals(2, channels[0].lines.size)
-        assertEquals("http://video.test/1/index.m3u8", channels[0].lines[0].url)
-        assertEquals("https://video.test/2/index.m3u8", channels[0].lines[1].url)
-        assertEquals("LR•IPV4•29『线路2』", channels[0].lines[1].name)
-        assertEquals("少儿动画", channels[1].groupName)
-        assertEquals("http://video.test/kid/index.m3u8", channels[1].lines.single().url)
+        assertEquals("电视直播", channels[0].groupName)
+        assertEquals("CCTV9", channels[0].name)
+        assertEquals("http://legacy.test/ungrouped", channels[0].lines.single().url)
+        assertEquals(2, channels[1].number)
+        assertEquals("央视卫视", channels[1].groupName)
+        assertEquals("CCTV1", channels[1].name)
+        assertEquals(2, channels[1].lines.size)
+        assertEquals("http://video.test/1/index.m3u8", channels[1].lines[0].url)
+        assertEquals("https://video.test/2/index.m3u8", channels[1].lines[1].url)
+        assertEquals("LR•IPV4•29『线路2』", channels[1].lines[1].name)
+        assertEquals("少儿动画", channels[2].groupName)
+        assertEquals("http://video.test/kid/index.m3u8", channels[2].lines.single().url)
     }
 
     @Test

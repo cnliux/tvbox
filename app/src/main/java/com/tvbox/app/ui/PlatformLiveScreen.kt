@@ -8,19 +8,24 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -45,6 +50,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -118,6 +124,7 @@ private fun PlatformLiveSitesScreen(
         isEmpty = false,
         emptyMessage = "没有可用平台直播服务",
         onRetry = actions::refreshPlatformLive,
+        touchColumns = 2,
     ) {
         item(key = "favorites") {
             PlatformLiveTextCard(
@@ -179,6 +186,7 @@ private fun PlatformLiveParentCategoriesScreen(
         isEmpty = state.platformLiveParentCategories.isEmpty(),
         emptyMessage = "没有可用直播大分类",
         onRetry = actions::refreshPlatformLive,
+        touchColumns = 2,
     ) {
         itemsIndexed(
             state.platformLiveParentCategories,
@@ -218,6 +226,7 @@ private fun PlatformLiveCategoriesScreen(
         isEmpty = categories.isEmpty(),
         emptyMessage = "没有可用二级分类",
         onRetry = actions::refreshPlatformLive,
+        touchColumns = 3,
     ) {
         itemsIndexed(categories, key = { _, category -> category.id }) { index, category ->
             PlatformLiveCategoryCard(
@@ -310,7 +319,7 @@ private fun PlatformLiveRoomsScreen(
             )
         }
         if (!favoritesMode && state.platformLiveRoomPage < state.platformLiveRoomPageCount) {
-            item(key = "load-more") {
+            item(key = "load-more", span = { GridItemSpan(maxLineSpan) }) {
                 PlatformLiveLoadMoreCard(
                     loading = state.platformLiveLoadingMore,
                     text = "加载更多（${state.platformLiveRoomPage}/${state.platformLiveRoomPageCount}）",
@@ -332,6 +341,7 @@ private fun PlatformLiveBrowseSurface(
     onRetry: () -> Unit,
     gridState: LazyGridState? = null,
     notice: String? = null,
+    touchColumns: Int = 4,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
     PageSurface { padding ->
@@ -373,9 +383,9 @@ private fun PlatformLiveBrowseSurface(
                     val touchMode = LocalTouchMode.current
                     LazyVerticalGrid(
                         state = resolvedGridState,
-                        // 手机触摸模式铺满屏宽：竖屏 4 列、宽屏 6 列，保证两行至少 8 个卡片可见。
+                        // 手机触摸模式铺满屏宽：房间等图片卡片 4 列（宽屏 6 列），文字卡片由调用方收窄列数，避免竖排换行。
                         columns = if (touchMode) {
-                            GridCells.Fixed(if (screenWidthDp >= 720) 6 else 4)
+                            GridCells.Fixed(if (screenWidthDp >= 720) touchColumns + 2 else touchColumns)
                         } else {
                             GridCells.Fixed(TvLayout.PlatformLiveColumns)
                         },
@@ -472,6 +482,7 @@ private fun PlatformLiveTextCard(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = MaterialTheme.shapes.medium
+    val touchMode = LocalTouchMode.current
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -481,17 +492,27 @@ private fun PlatformLiveTextCard(
             .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
             .clickable(onClick = onClick)
             .focusable()
-            .padding(22.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(if (touchMode) 14.dp else 22.dp),
+        verticalArrangement = Arrangement.spacedBy(if (touchMode) 4.dp else 8.dp),
     ) {
         if (label.isNotBlank()) {
-            Text(text = label, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+            Text(
+                text = label,
+                color = MaterialTheme.colorScheme.primary,
+                style = if (touchMode) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+            )
         }
-        Text(text = title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text(
+            text = title,
+            style = if (touchMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
         Text(
             text = subtitle,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodyMedium,
+            style = if (touchMode) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
@@ -511,6 +532,8 @@ private fun PlatformLiveImageCard(
     var focused by remember { mutableStateOf(false) }
     val shape = MaterialTheme.shapes.medium
     val touchMode = LocalTouchMode.current
+    // 触摸模式：竖版 3:4 封面 + 封面右上角收藏星，文字占满卡宽，保证 4 列 × 3 行铺满屏幕且标题可读。
+    val hasFavorite = favorite != null && onFavoriteClick != null
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = modifier
@@ -525,7 +548,7 @@ private fun PlatformLiveImageCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .aspectRatio(if (touchMode) 3f / 4f else 16f / 9f)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 if (imageUrl.isNotBlank()) {
@@ -542,25 +565,35 @@ private fun PlatformLiveImageCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                if (touchMode && hasFavorite) {
+                    PlatformLiveFavoriteStar(
+                        favorite = favorite!!,
+                        onFavoriteClick = onFavoriteClick!!,
+                        title = title,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(5.dp),
+                        size = 26.dp,
+                    )
+                }
             }
             Text(
                 text = title,
                 modifier = Modifier.padding(
-                    start = if (touchMode) 6.dp else 12.dp,
-                    top = if (touchMode) 5.dp else 10.dp,
-                    end = if (favorite == null) (if (touchMode) 6.dp else 12.dp) else (if (touchMode) 34.dp else 62.dp),
+                    start = if (touchMode) 8.dp else 12.dp,
+                    top = if (touchMode) 6.dp else 10.dp,
+                    end = if (touchMode || favorite == null) (if (touchMode) 8.dp else 12.dp) else 62.dp,
                 ),
-                style = if (touchMode) MaterialTheme.typography.bodySmall else MaterialTheme.typography.titleSmall,
+                style = if (touchMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                fontWeight = if (touchMode) FontWeight.Medium else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = subtitle.ifBlank { "正在直播" },
                 modifier = Modifier.padding(
-                    start = if (touchMode) 6.dp else 12.dp,
+                    start = if (touchMode) 8.dp else 12.dp,
                     top = 2.dp,
-                    end = if (favorite == null) (if (touchMode) 6.dp else 12.dp) else (if (touchMode) 34.dp else 62.dp),
-                    bottom = if (touchMode) 6.dp else 12.dp,
+                    end = if (touchMode || favorite == null) (if (touchMode) 8.dp else 12.dp) else 62.dp,
+                    bottom = if (touchMode) 7.dp else 12.dp,
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = if (touchMode) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
@@ -568,28 +601,44 @@ private fun PlatformLiveImageCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (favorite != null && onFavoriteClick != null) {
-            var starFocused by remember { mutableStateOf(false) }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = if (touchMode) 2.dp else 8.dp, bottom = if (touchMode) 2.dp else 8.dp)
-                    .size(if (touchMode) 28.dp else 44.dp)
-                    .tvFocusScale(shape = MaterialTheme.shapes.small, focusedBorder = Color.White)
-                    .clip(MaterialTheme.shapes.small)
-                    .onFocusChanged { starFocused = it.isFocused }
-                    .background(if (starFocused) MaterialTheme.colorScheme.primary else Color(0xCC101010))
-                    .semantics { contentDescription = if (favorite) "取消收藏 $title" else "收藏 $title" }
-                    .clickable(onClick = onFavoriteClick),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = if (favorite) "★" else "☆",
-                    color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
-                    style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
-                )
-            }
+        if (!touchMode && hasFavorite) {
+            PlatformLiveFavoriteStar(
+                favorite = favorite!!,
+                onFavoriteClick = onFavoriteClick!!,
+                title = title,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                size = 44.dp,
+            )
         }
+    }
+}
+
+@Composable
+private fun PlatformLiveFavoriteStar(
+    favorite: Boolean,
+    onFavoriteClick: () -> Unit,
+    title: String,
+    modifier: Modifier = Modifier,
+    size: androidx.compose.ui.unit.Dp,
+) {
+    var starFocused by remember { mutableStateOf(false) }
+    val touchMode = LocalTouchMode.current
+    Box(
+        modifier = modifier
+            .size(size)
+            .tvFocusScale(shape = MaterialTheme.shapes.small, focusedBorder = Color.White)
+            .clip(MaterialTheme.shapes.small)
+            .onFocusChanged { starFocused = it.isFocused }
+            .background(if (starFocused) MaterialTheme.colorScheme.primary else Color(0xCC101010))
+            .semantics { contentDescription = if (favorite) "取消收藏 $title" else "收藏 $title" }
+            .clickable(onClick = onFavoriteClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = if (favorite) "★" else "☆",
+            color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
+            style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
+        )
     }
 }
 
@@ -703,8 +752,14 @@ private fun PlatformLivePlayerScreen(
         player.setMediaItem(MediaItem.fromUri(stream.url))
         player.prepare()
         session.preparePlayback(player)
-        delay(PLATFORM_LIVE_BADGE_HIDE_DELAY_MS)
-        badgeVisible = false
+    }
+
+    // 控制条与角标显示 4 秒后自动隐藏，点击画面可再次唤出（与电视直播页一致）。
+    LaunchedEffect(badgeVisible) {
+        if (badgeVisible) {
+            delay(PLATFORM_LIVE_BADGE_HIDE_DELAY_MS)
+            badgeVisible = false
+        }
     }
 
     LaunchedEffect(playerState, player, stream?.url, session.canPlay) {
@@ -779,6 +834,16 @@ private fun PlatformLivePlayerScreen(
                 modifier = Modifier.fillMaxSize(),
             )
         }
+        if (isMobile) {
+            // 点击画面切换控制条显隐；覆盖层位于按钮与角标之下，不拦截它们的手势。
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures { badgeVisible = !badgeVisible }
+                    },
+            )
+        }
         if (session.interrupted && player != null) {
             ControlButton("继续播放", {
                 session.play(player)
@@ -792,13 +857,15 @@ private fun PlatformLivePlayerScreen(
                 error = state.platformLiveError ?: playbackError,
                 modifier = Modifier
                     .align(Alignment.TopStart)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(28.dp),
             )
         }
-        if (isMobile) {
+        if (isMobile && badgeVisible) {
             Row(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {

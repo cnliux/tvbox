@@ -2221,7 +2221,8 @@ private fun sourceLatencyLabel(lineId: String, latencies: Map<String, Long?>): S
 private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
     PageSurface { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2296,7 +2297,8 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
 private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
     PageSurface { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2359,7 +2361,8 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
 private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
     PageSurface { padding ->
         Column(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2383,7 +2386,7 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "直播源",
-                        subtitle = "自定义直播源地址（M3U/TXT），支持地址导入以解析直播源数据。",
+                        subtitle = "内置项目最初的电视直播源，可再添加自定义地址（M3U/TXT），支持地址导入以解析直播源数据。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2549,14 +2552,18 @@ private fun MobileSettingsScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(
+        // 手机版为 edge-to-edge 全屏页：吸收状态栏/手势条安全区，
+        // 否则底部"更新"区（立即检查/开关）会被系统手势条遮挡。
+        modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing),
+    ) {
         // 顶部标题栏
         Row(
             modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("设置", style = MaterialTheme.typography.titleLarge)
+            Text("设置", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
             Button(onClick = actions::goBack, shape = RoundedCornerShape(8.dp)) { Text("返回") }
         }
 
@@ -2634,7 +2641,7 @@ private fun MobileSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("线路质量统计", style = MaterialTheme.typography.titleSmall)
+                        Text("线路质量统计", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                         Text(state.playbackHealth.qualitySummaryText(), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                     }
                     Button(
@@ -2655,7 +2662,7 @@ private fun MobileSettingsScreen(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("启动时检查更新", style = MaterialTheme.typography.titleSmall)
+                        Text("启动时检查更新", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface)
                         Text(if (state.appSettings.checkUpdatesOnStartup) "已开启" else "已关闭", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
                         if (state.updateError != null) {
                             Text(state.updateError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)

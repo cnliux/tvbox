@@ -21,6 +21,9 @@ interface LiveRepository {
     fun setSourceConfig(customUrls: List<String>)
 }
 
+/** 项目最初的电视直播源（首个直播提交 dcd67a4 引入），作为唯一内置源始终参与加载。 */
+const val BUILT_IN_LIVE_SOURCE_URL = "https://nav.zhenxx.de5.net/iptv.txt"
+
 class DefaultLiveRepository : LiveRepository {
     private var customSourceUrls: List<String> = emptyList()
 
@@ -34,10 +37,10 @@ class DefaultLiveRepository : LiveRepository {
         .build()
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
-        val sourceUrls = customSourceUrls.map(::normalizeSourceUrl).distinct()
-        if (sourceUrls.isEmpty()) {
-            throw IOException("未添加任何直播源，请在源管理中添加自定义源")
-        }
+        val sourceUrls = (listOf(BUILT_IN_LIVE_SOURCE_URL) + customSourceUrls)
+            .map(::normalizeSourceUrl)
+            .filter { it.isNotBlank() }
+            .distinct()
         var lastError: Throwable? = null
         sourceUrls.forEach { sourceUrl ->
             try {
