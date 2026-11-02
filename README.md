@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.21`（`versionCode=10321`）。本版本视频卡片只显示节目名称（去掉年份/地区等信息行），手机版平台直播改大卡片并按屏宽自适应列数。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
+当前源码版本为 `1.3.22`（`versionCode=10322`）。本版本修复手机版首页/热播海报片名在深色卡片上不可见的问题。服务端部署方式见 [多平台直播服务部署说明](platform_live_server/DEPLOYMENT.md)。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -100,15 +100,14 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 
 ```json
 {
-  "versionCode": 10321,
-  "versionName": "1.3.21",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.21/app-release.apk",
-  "apkSha256": "701fb1146c8c99329aa09d4f82a55596c45a6e67f0d139d89f28b59f8d8e74e2",
-  "apkSize": 50886698,
+  "versionCode": 10322,
+  "versionName": "1.3.22",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.22/app-release.apk",
+  "apkSha256": "",
+  "apkSize": 0,
   "force": false,
   "changelog": [
-    "视频卡片只显示节目名称：首页、豆瓣热播与搜索结果卡片去掉年份/地区/语言/备注信息行，片名最多两行完整显示。",
-    "手机版平台直播大卡片：房间列表竖屏 2 列起步，列数按屏宽自适应（≥500dp 3 列、≥720dp 4 列），标题不再被挤成单字。"
+    "修复手机版首页/热播海报片名不可见：卡片标题显式使用 onSurface 前景色，深色卡片上片名清晰可读，保留最多两行自适应换行。"
   ]
 }
 ```
@@ -116,7 +115,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.21 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- v1.3.22 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。

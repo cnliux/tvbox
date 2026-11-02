@@ -1,5 +1,22 @@
 ﻿# Release - 2026-06-25
 
+## 2026-11-02 - 发布 v1.3.22：手机版海报片名不可见修复
+
+### 文件修改、原因与目的
+
+- `ui/components/Common.kt`：`MoviePosterCard` 与 `DoubanHotPosterCard` 片名显式 `onSurface` 前景色（与 v1.3.20 设置页不可见文字同一根因：手机版 edge-to-edge 下默认内容色在深色卡片上几乎同色），保留最多两行自适应换行。
+- `app/build.gradle.kts`：版本升级至 `10322 / 1.3.22`；`CHANGELOG.md`、`README.md`、`update.json` 同步。
+
+### 构建与发布校验
+
+- 本地 `:app:compileDebugKotlin` 通过。
+- CI 发布：推送 `v1.3.22` 标签触发 `.github/workflows/release.yml`，发布 [TVBox v1.3.22](https://github.com/cnliux/tvbox/releases/tag/v1.3.22)。
+- Release 附件 `app-release.apk` 下载后本地计算 SHA-256 与大小，回填 `update.json` 与 README 示例。
+
+### 导航
+
+- 主日志：`devLog/README.md`；模块日志：`devLog/mobile-mode.md`。
+
 ## 2026-11-02 - 发布 v1.3.21：视频卡片只显示节目名称与手机版直播大卡片自适应
 
 ### 文件修改、原因与目的
