@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -1297,7 +1299,7 @@ private fun HomeApiLineSetting(
     selectedApiLine: ApiLine?,
     customLineCount: Int,
     onSelect: (String) -> Unit,
-    onOpenConfig: () -> Unit,
+    onOpenConfig: (() -> Unit)?,
 ) {
     var expanded by remember { mutableStateOf(false) }
     Row(
@@ -1349,10 +1351,13 @@ private fun HomeApiLineSetting(
                     }
                 }
             }
-            SettingsActionButton(
-                text = "添加接口",
-                onClick = onOpenConfig,
-            )
+            // 手机版不再提供网页配置入口，添加接口统一走页内"导入配置"。
+            if (onOpenConfig != null) {
+                SettingsActionButton(
+                    text = "添加接口",
+                    onClick = onOpenConfig,
+                )
+            }
         }
     }
 }
@@ -1922,6 +1927,7 @@ private fun createQrBitmap(content: String, size: Int): Bitmap {
 
 // ===== Source Management Screens =====
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun SourceManagerSetting(
     state: TvBoxUiState,
@@ -1929,6 +1935,7 @@ private fun SourceManagerSetting(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     var importDialogVisible by remember { mutableStateOf(false) }
     var importDraft by remember { mutableStateOf("") }
     var exportMessage by remember { mutableStateOf<String?>(null) }
@@ -1945,10 +1952,11 @@ private fun SourceManagerSetting(
     }
 
     Column {
-        Row(
+        // 工具按钮流式排布：电视宽屏保持一行，手机版窄屏/大字号自动换行不溢出。
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             SettingsActionButton(
                 text = if (state.sourceTesting) "测速 ${state.sourceTestCompleted}/${state.sourceTestTotal}" else "一键测速并排列",
@@ -2009,33 +2017,30 @@ private fun SourceManagerSetting(
                 val blocked = line.id in state.appSettings.blockedSourceIds
                 val selected = line.id == state.selectedApiLine?.id
                 val statusSuffix = if (blocked) "（已屏蔽）" else ""
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = (if (selected) "已选 " else "") + line.name + statusSuffix,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(
-                            text = buildString {
-                                append(sourceLatencyLabel(line.id, state.sourceLatencies))
-                                append(" | ")
-                                append(line.baseUrls.firstOrNull() ?: "")
-                            },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.labelSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                val cardModifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                val infoBlock = @Composable {
+                    Text(
+                        text = (if (selected) "已选 " else "") + line.name + statusSuffix,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = buildString {
+                            append(sourceLatencyLabel(line.id, state.sourceLatencies))
+                            append(" | ")
+                            append(line.baseUrls.firstOrNull() ?: "")
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.labelSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                val actionBlock = @Composable {
                     if (!blocked) {
                         SettingsActionButton(
                             text = if (state.sourceTesting) "..." else "测速",
@@ -2056,6 +2061,25 @@ private fun SourceManagerSetting(
                         text = "删除",
                         onClick = { actions.deleteApiLine(line.id) },
                     )
+                }
+                if (isMobile) {
+                    // 手机版：信息在上、操作按钮流式换行在下，避免窄屏把源名挤成竖排。
+                    Column(modifier = cardModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        infoBlock()
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) { actionBlock() }
+                    }
+                } else {
+                    Row(
+                        modifier = cardModifier,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) { infoBlock() }
+                        actionBlock()
+                    }
                 }
             }
         }
@@ -2217,27 +2241,66 @@ private fun sourceLatencyLabel(lineId: String, latencies: Map<String, Long?>): S
     }
 }
 
+/**
+ * 管理页头部：电视模式保持"大标题 + 右侧按钮行"；手机版改为竖向堆叠，
+ * 按钮用 FlowRow 自动换行，避免窄屏 + 大字号下标题与按钮互相挤出屏幕。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ManageScreenHeader(
+    title: String,
+    subtitle: String,
+    isMobile: Boolean,
+    buttons: @Composable () -> Unit,
+) {
+    if (isMobile) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) { buttons() }
+        }
+    } else {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(text = title, style = MaterialTheme.typography.headlineLarge)
+                Text(text = subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) { buttons() }
+        }
+    }
+}
+
 @Composable
 private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            ManageScreenHeader(
+                title = "源管理",
+                subtitle = if (isMobile) "视频接口、直播源与首页渲染数据统一管理（支持地址导入与页内管理）" else "视频接口、直播源与首页渲染数据统一管理（支持网页管理与地址导入）",
+                isMobile = isMobile,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "源管理", style = MaterialTheme.typography.headlineLarge)
-                    Text(text = "视频接口、直播源与首页渲染数据统一管理（支持网页管理与地址导入）", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
-                    SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
-                    SettingsActionButton(text = "返回", onClick = actions::goBack)
-                }
+                SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
+                SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
+                SettingsActionButton(text = "返回", onClick = actions::goBack)
             }
             Spacer(modifier = Modifier.height(22.dp))
             LazyVerticalGrid(
@@ -2250,7 +2313,7 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "首页渲染数据（视频接口）",
-                        subtitle = "从这里进入独立的视频接口管理页，支持网页管理与地址导入以解析视频源数据。",
+                        subtitle = "从这里进入独立的视频接口管理页，支持地址导入与页内管理。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2269,7 +2332,7 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "直播源",
-                        subtitle = "从这里进入独立的直播源管理页，支持网页管理与地址导入以解析直播源数据。",
+                        subtitle = "从这里进入独立的直播源管理页，支持地址导入与页内编辑。",
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2295,24 +2358,22 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
 
 @Composable
 private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            ManageScreenHeader(
+                title = "视频接口管理",
+                subtitle = if (isMobile) "首页渲染数据管理（支持地址导入、测速与源增删）" else "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）",
+                isMobile = isMobile,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "视频接口管理", style = MaterialTheme.typography.headlineLarge)
-                    Text(text = "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 手机版源管理全部在页内完成，不再暴露远程网页入口。
+                if (!isMobile) {
                     SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
-                    SettingsActionButton(text = "返回", onClick = actions::goBack)
                 }
+                SettingsActionButton(text = "返回", onClick = actions::goBack)
             }
             Spacer(modifier = Modifier.height(22.dp))
             if (state.remoteManageDialogVisible) {
@@ -2331,7 +2392,7 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                         selectedApiLine = state.selectedApiLine,
                         customLineCount = state.appSettings.customVideoApiLines.size,
                         onSelect = actions::updateHomeApiLine,
-                        onOpenConfig = actions::openRemoteManageDialog,
+                        onOpenConfig = if (isMobile) null else actions::openRemoteManageDialog,
                     )
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -2359,20 +2420,17 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
 
 @Composable
 private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+            ManageScreenHeader(
+                title = "直播源管理",
+                subtitle = if (isMobile) "直播源与平台直播站点管理（支持地址导入与页内编辑）" else "直播源与自定义直播源管理（支持网页管理与地址导入以解析直播源数据）",
+                isMobile = isMobile,
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(text = "直播源管理", style = MaterialTheme.typography.headlineLarge)
-                    Text(text = "直播源与自定义直播源管理（支持网页管理与地址导入以解析直播源数据）", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
                 SettingsActionButton(text = "返回", onClick = actions::goBack)
             }
             Spacer(modifier = Modifier.height(22.dp))
@@ -2591,7 +2649,7 @@ private fun MobileSettingsScreen(
             item {
                 MobileHomeApiLineSetting(
                     state.apiLines, state.selectedApiLine, state.appSettings.customVideoApiLines.size,
-                    actions::updateHomeApiLine, actions::openRemoteManageDialog,
+                    actions::updateHomeApiLine, actions::openVideoSourceManager,
                 )
             }
 
@@ -2603,13 +2661,6 @@ private fun MobileSettingsScreen(
                     MobileSettingButton("直播源管理", onClick = actions::openLiveSourceManager)
                     MobileSettingButton("全部源管理", onClick = actions::openSourceManager)
                 }
-            }
-            item {
-                MobileSettingButton(
-                    "手机远程管理（网页）",
-                    subtitle = "无需 token，同一局域网可管理",
-                    onClick = actions::openRemoteManageDialog,
-                )
             }
 
             // AI 配置
@@ -2835,7 +2886,7 @@ private fun MobileHomeApiLineSetting(
             Text("已添加 $customLineCount 条自定义 MacCms 接口", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box {
+            Box(modifier = Modifier.weight(1f)) {
                 Button(
                     onClick = { expanded = true },
                     enabled = apiLines.isNotEmpty(),

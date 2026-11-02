@@ -23,6 +23,9 @@ internal fun VideoScaleMode.toPlayerResizeMode(): Int = when (this) {
     VideoScaleMode.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
 }
 
+/** 系统栏巡检间隔：兼顾"旋转后尽快恢复全屏"与"手势临时唤出时不被立刻打断"。 */
+private const val IMMERSIVE_REHIDE_INTERVAL_MS = 3_000L
+
 /** Only the on-demand playback page owns immersive mode; restore it on exit. */
 @Suppress("DEPRECATION")
 @Composable
@@ -50,7 +53,20 @@ internal fun FullscreenWhilePlayingPageVisible(activity: Activity?) {
             if (event == Lifecycle.Event.ON_RESUME) hideBars()
         }
         owner.lifecycle.addObserver(observer)
+        // ON_RESUME 只在切后台返回时触发；旋转屏幕、下拉通知栏、三方弹窗关闭后系统栏都会重新出现，
+        // 手机版播放页需要轻量巡检把它重新隐藏，否则底部导航栏会压住播放控件。
+        val rehide = object : Runnable {
+            override fun run() {
+                val visibleNow = ViewCompat.getRootWindowInsets(decor)?.let {
+                    it.isVisible(statusBars) || it.isVisible(navigationBars)
+                } ?: false
+                if (visibleNow) hideBars()
+                decor.postDelayed(this, IMMERSIVE_REHIDE_INTERVAL_MS)
+            }
+        }
+        decor.postDelayed(rehide, IMMERSIVE_REHIDE_INTERVAL_MS)
         onDispose {
+            decor.removeCallbacks(rehide)
             owner.lifecycle.removeObserver(observer)
             controller.systemBarsBehavior = previousBehavior
             if (statusWasVisible) controller.show(statusBars) else controller.hide(statusBars)

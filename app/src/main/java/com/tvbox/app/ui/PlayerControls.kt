@@ -4,15 +4,14 @@ import android.view.KeyEvent as NativeKeyEvent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -31,8 +30,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.KeyEvent
@@ -47,7 +48,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -393,11 +393,19 @@ private fun AnnotatedString.withSuffix(suffix: String): AnnotatedString = buildA
     append(suffix)
 }
 
-// ── 手机模式播放器控件（精简版）──────────────────────────────────────────────────
+// ── 手机模式播放器控件 ─────────────────────────────────────────────────────────
+
+/** 手机播放页一次只展开一个面板，避免多个面板同时出现把画面挤没。 */
+private enum class MobilePlayerSection { Episodes, Sources, Speeds, Picture }
 
 /**
- * 手机模式播放控件：常驻底部半透明条，仅显示播放/暂停 + 选集 + 更多（线路/倍速/画面）。
- * TV 模式的遥控器快捷键逻辑在 PlayerScreen 的 onPreviewKeyEvent 中处理，不受此影响。
+ * 手机模式播放控件。
+ *
+ * 顶部：返回 + 片名/集数；底部：进度条 + 大号播放键，再下一行是等宽功能入口（选集/线路/倍速/画面/投屏）。
+ * 之前 6 个按钮塞在一行 SpaceEvenly 里，窄屏会被折叠成一字宽；现在竖屏每个入口按权重均分，
+ * 横屏（≥600dp）允许整行横滑，按钮不会再被压缩。
+ * 顶部与底部都吸收 safeDrawing：系统导航栏临时出现时也不会压住控件。
+ * TV 端遥控器快捷键逻辑仍在 PlayerScreen 的 onPreviewKeyEvent 中处理，不受影响。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -420,271 +428,382 @@ internal fun PlayerControlsMobile(
     castLabel: String? = null,
     onCast: () -> Unit = {},
     onBack: () -> Unit = {},
-    // 通知外层“更多面板”是否展开：面板展开时不能自动隐藏控件，否则来不及选集。
+    // 通知外层“面板是否展开”：面板展开时不能自动隐藏控件，否则来不及选集。
     onMorePanelChange: (Boolean) -> Unit = {},
 ) {
     val source = sources[sourceIndex]
-    var showMore by remember { mutableStateOf(false) }
-    LaunchedEffect(showMore) { onMorePanelChange(showMore) }
+    val wide = LocalConfiguration.current.screenWidthDp >= 600
+    var openSection by remember { mutableStateOf<MobilePlayerSection?>(null) }
+    LaunchedEffect(openSection) { onMorePanelChange(openSection != null) }
+    val episodeTitle = source.episodes.getOrNull(episodeIndex)?.title.orEmpty()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 顶部标题栏（手机上没有遥控器，必须提供可见的返回入口）
+        // 顶部栏（手机没有遥控器，必须给出可见的返回入口）
         Surface(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.safeDrawing)
                 .background(
                     Brush.verticalGradient(
-                        listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent),
+                        listOf(Color.Black.copy(alpha = 0.92f), Color.Transparent),
                     ),
                 ),
             color = Color.Transparent,
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 2.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onBack) {
+                TextButton(
+                    onClick = onBack,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                ) {
                     Text("返回", color = Color.White, style = MaterialTheme.typography.labelLarge)
                 }
-                Text(
-                    text = title,
-                    modifier = Modifier.weight(1f),
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (source.episodes.isNotEmpty() && episodeIndex in source.episodes.indices) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = source.episodes[episodeIndex].title,
-                        color = Color.White.copy(alpha = 0.7f),
+                        text = title,
+                        color = Color.White,
                         maxLines = 1,
-                        style = MaterialTheme.typography.labelMedium,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleSmall,
                     )
+                    if (episodeTitle.isNotBlank()) {
+                        Text(
+                            text = episodeTitle,
+                            color = Color.White.copy(alpha = 0.65f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
                 }
             }
         }
-        // 底部控制条
+        // 底部控制区
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f)))),
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .background(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))),
+                ),
             color = Color.Transparent,
         ) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                // 进度条
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text(
-                        formatPlayerTime(positionMs),
-                        modifier = Modifier.width(50.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
-                    )
-                    Slider(
-                        value = positionMs.toFloat().coerceIn(0f, durationMs.coerceAtLeast(1).toFloat()),
-                        onValueChange = { onSeek(it.toLong()) },
-                        onValueChangeFinished = {},
-                        valueRange = 0f..durationMs.coerceAtLeast(1).toFloat(),
-                        enabled = durationMs > 0,
-                        thumb = {
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .background(Color.White, CircleShape),
-                            )
-                        },
-                        track = { slider ->
-                            val fraction = ((slider.value - slider.valueRange.start) /
-                                (slider.valueRange.endInclusive - slider.valueRange.start).coerceAtLeast(1f)).coerceIn(0f, 1f)
-                            Canvas(Modifier.fillMaxWidth().height(3.dp)) {
-                                val center = size.height / 2
-                                drawLine(
-                                    Color.White.copy(alpha = 0.25f),
-                                    Offset(0f, center),
-                                    Offset(size.width, center),
-                                    size.height,
-                                    StrokeCap.Round,
-                                )
-                                drawLine(
-                                    Color(0xFF7AE2BA),
-                                    Offset(0f, center),
-                                    Offset(size.width * fraction, center),
-                                    size.height,
-                                    StrokeCap.Round,
-                                )
-                            }
-                        },
-                        modifier = Modifier.weight(1f).height(48.dp),
-                    )
-                    Text(
-                        if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
-                        modifier = Modifier.width(50.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.7f),
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                openSection?.let { section ->
+                    MobileSectionPanel(
+                        section = section,
+                        sources = sources,
+                        sourceIndex = sourceIndex,
+                        episodeIndex = episodeIndex,
+                        speed = speed,
+                        videoScaleMode = videoScaleMode,
+                        onEpisode = onEpisode,
+                        onSource = onSource,
+                        onSpeed = onSpeed,
+                        onVideoScale = onVideoScale,
+                        onClose = { openSection = null },
                     )
                 }
-                // 主要控制按钮
+                MobileProgressRow(positionMs = positionMs, durationMs = durationMs, onSeek = onSeek)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    ControlButtonMobile(
-                        text = if (episodeIndex > 0) "上一集" else "",
-                        onClick = { if (episodeIndex > 0) onEpisode(episodeIndex - 1) },
+                    MobileChip(
+                        text = "上一集",
+                        modifier = Modifier.weight(1f),
                         enabled = episodeIndex > 0,
+                        onClick = { onEpisode(episodeIndex - 1) },
                     )
-                    ControlButtonMobile(
-                        text = if (playing) "暂停" else "播放",
-                        onClick = onToggle,
-                        primary = true,
-                    )
-                    ControlButtonMobile(
-                        text = if (episodeIndex < source.episodes.lastIndex) "下一集" else "",
-                        onClick = { if (episodeIndex < source.episodes.lastIndex) onEpisode(episodeIndex + 1) },
+                    MobilePlayPauseButton(playing = playing, onClick = onToggle)
+                    MobileChip(
+                        text = "下一集",
+                        modifier = Modifier.weight(1f),
                         enabled = episodeIndex < source.episodes.lastIndex,
+                        onClick = { onEpisode(episodeIndex + 1) },
+                    )
+                }
+                val features: @Composable RowScope.() -> Unit = {
+                    val itemModifier = if (wide) Modifier else Modifier.weight(1f)
+                    MobileChip(
+                        text = "选集",
+                        modifier = itemModifier,
+                        selected = openSection == MobilePlayerSection.Episodes,
+                        onClick = { openSection = openSection.toggle(MobilePlayerSection.Episodes) },
+                    )
+                    MobileChip(
+                        text = "线路",
+                        modifier = itemModifier,
+                        selected = openSection == MobilePlayerSection.Sources,
+                        onClick = { openSection = openSection.toggle(MobilePlayerSection.Sources) },
+                    )
+                    MobileChip(
+                        text = "${formatSpeedLabel(speed)}x",
+                        modifier = itemModifier,
+                        selected = openSection == MobilePlayerSection.Speeds,
+                        onClick = { openSection = openSection.toggle(MobilePlayerSection.Speeds) },
+                    )
+                    MobileChip(
+                        text = "画面",
+                        modifier = itemModifier,
+                        selected = openSection == MobilePlayerSection.Picture,
+                        onClick = { openSection = openSection.toggle(MobilePlayerSection.Picture) },
                     )
                     if (castLabel != null) {
-                        ControlButtonMobile(text = castLabel, onClick = onCast)
+                        MobileChip(text = castLabel, modifier = itemModifier, onClick = onCast)
                     }
-                    ControlButtonMobile(text = "选集", onClick = { showMore = !showMore })
-                    ControlButtonMobile(text = "···", onClick = { showMore = !showMore })
                 }
-                // 更多面板
-                if (showMore) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Surface(
-                        color = Color(0xCC1A1A1A),
-                        shape = RoundedCornerShape(12.dp),
+                if (wide) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { features() }
+                } else {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            // 选集
-                            Text("选集", style = MaterialTheme.typography.titleSmall, color = Color.White.copy(alpha = 0.7f))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(source.episodes) { ep ->
-                                    val isSelected = source.episodes.indexOf(ep) == episodeIndex
-                                    Button(
-                                        onClick = { onEpisode(source.episodes.indexOf(ep)); showMore = false },
-                                        enabled = true,
-                                        modifier = Modifier.height(48.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                                            contentColor = if (isSelected) Color.Black else Color.White,
-                                        ),
-                                    ) {
-                                        Text(ep.title.take(6), fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                            Divider(color = Color.White.copy(alpha = 0.1f))
-                            // 线路
-                            Text("线路", style = MaterialTheme.typography.titleSmall, color = Color.White.copy(alpha = 0.7f))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(sources) { src ->
-                                    val idx = sources.indexOf(src)
-                                    val isSelected = idx == sourceIndex
-                                    Button(
-                                        onClick = { onSource(idx); showMore = false },
-                                        enabled = true,
-                                        modifier = Modifier.height(48.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                                            contentColor = if (isSelected) Color.Black else Color.White,
-                                        ),
-                                    ) {
-                                        Text(src.name.take(8), fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                            Divider(color = Color.White.copy(alpha = 0.1f))
-                            // 倍速
-                            Text("倍速", style = MaterialTheme.typography.titleSmall, color = Color.White.copy(alpha = 0.7f))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(playerSpeeds) { sp ->
-                                    val isSelected = sp == speed
-                                    Button(
-                                        onClick = { onSpeed(sp); showMore = false },
-                                        enabled = true,
-                                        modifier = Modifier.height(48.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                                            contentColor = if (isSelected) Color.Black else Color.White,
-                                        ),
-                                    ) {
-                                        Text("${sp.toString().trimEnd('0').trimEnd('.')}x", fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                            Divider(color = Color.White.copy(alpha = 0.1f))
-                            // 画面比例
-                            Text("画面", style = MaterialTheme.typography.titleSmall, color = Color.White.copy(alpha = 0.7f))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                VideoScaleMode.entries.forEach { mode ->
-                                    val isSelected = mode == videoScaleMode
-                                    Button(
-                                        onClick = { onVideoScale(mode); showMore = false },
-                                        enabled = true,
-                                        modifier = Modifier.height(48.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        colors = ButtonDefaults.buttonColors(
-                                            containerColor = if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                                            contentColor = if (isSelected) Color.Black else Color.White,
-                                        ),
-                                    ) {
-                                        Text(mode.displayName, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) { features() }
                 }
             }
         }
     }
 }
 
+private fun MobilePlayerSection?.toggle(section: MobilePlayerSection): MobilePlayerSection? =
+    if (this == section) null else section
+
+private fun formatSpeedLabel(speed: Float): String = speed.toString().trimEnd('0').trimEnd('.')
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ControlButtonMobile(
-    text: String,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-    primary: Boolean = false,
+private fun MobileProgressRow(
+    positionMs: Long,
+    durationMs: Long,
+    onSeek: (Long) -> Unit,
 ) {
-    val shape = RoundedCornerShape(if (primary) 24.dp else 10.dp)
-    Button(
-        onClick = onClick,
-        enabled = enabled,
+    // 拖动期间只更新本地预览，松手才真正 seek，避免拖动过程中连续 seek 造成卡顿。
+    var preview by remember { mutableStateOf<Float?>(null) }
+    val maxValue = durationMs.coerceAtLeast(1L).toFloat()
+    val timeStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace)
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = formatPlayerTime(preview?.toLong() ?: positionMs),
+            modifier = Modifier.width(52.dp),
+            style = timeStyle,
+            color = Color.White.copy(alpha = 0.85f),
+            maxLines = 1,
+        )
+        Slider(
+            value = (preview ?: positionMs.toFloat()).coerceIn(0f, maxValue),
+            onValueChange = { preview = it },
+            onValueChangeFinished = {
+                preview?.let { onSeek(it.toLong()) }
+                preview = null
+            },
+            valueRange = 0f..maxValue,
+            enabled = durationMs > 0,
+            thumb = {
+                Box(
+                    modifier = Modifier.size(16.dp).background(Color.White, CircleShape),
+                )
+            },
+            track = { slider ->
+                val fraction = ((slider.value - slider.valueRange.start) /
+                    (slider.valueRange.endInclusive - slider.valueRange.start).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                Canvas(Modifier.fillMaxWidth().height(4.dp)) {
+                    val center = size.height / 2
+                    drawLine(
+                        Color.White.copy(alpha = 0.25f),
+                        Offset(0f, center),
+                        Offset(size.width, center),
+                        size.height,
+                        StrokeCap.Round,
+                    )
+                    drawLine(
+                        Color(0xFF7AE2BA),
+                        Offset(0f, center),
+                        Offset(size.width * fraction, center),
+                        size.height,
+                        StrokeCap.Round,
+                    )
+                }
+            },
+            modifier = Modifier.weight(1f).height(40.dp),
+        )
+        Text(
+            text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
+            modifier = Modifier.width(52.dp),
+            style = timeStyle,
+            color = Color.White.copy(alpha = 0.85f),
+            maxLines = 1,
+        )
+    }
+}
+
+/** 大号播放/暂停圆钮：用 Canvas 画三角与双竖条，避免依赖额外的图标库。 */
+@Composable
+private fun MobilePlayPauseButton(playing: Boolean, onClick: () -> Unit) {
+    Box(
         modifier = Modifier
-            .heightIn(min = 48.dp)
-            .padding(horizontal = if (primary) 24.dp else 12.dp),
-        shape = shape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = when {
-                primary -> Color.White
-                !enabled -> Color.Transparent
-                else -> Color.White.copy(alpha = 0.15f)
-            },
-            contentColor = when {
-                primary -> Color(0xFF101614)
-                !enabled -> Color.White.copy(alpha = 0.3f)
-                else -> Color.White.copy(alpha = 0.9f)
-            },
-            disabledContainerColor = Color.Transparent,
-            disabledContentColor = Color.White.copy(alpha = 0.3f),
-        ),
+            .size(58.dp)
+            .clip(CircleShape)
+            .background(Color.White)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
     ) {
-        Text(text, style = MaterialTheme.typography.labelLarge)
+        Canvas(Modifier.size(22.dp)) {
+            if (playing) {
+                val barWidth = size.width * 0.26f
+                drawRect(
+                    Color(0xFF101614),
+                    topLeft = Offset(0f, 0f),
+                    size = Size(barWidth, size.height),
+                )
+                drawRect(
+                    Color(0xFF101614),
+                    topLeft = Offset(size.width - barWidth, 0f),
+                    size = Size(barWidth, size.height),
+                )
+            } else {
+                val path = Path().apply {
+                    moveTo(size.width * 0.12f, 0f)
+                    lineTo(size.width * 0.95f, size.height / 2f)
+                    lineTo(size.width * 0.12f, size.height)
+                    close()
+                }
+                drawPath(path, Color(0xFF101614))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileChip(
+    text: String,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .heightIn(min = 44.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                when {
+                    selected -> Color(0xFF1ED760)
+                    enabled -> Color.White.copy(alpha = 0.14f)
+                    else -> Color.White.copy(alpha = 0.05f)
+                },
+            )
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelLarge,
+            color = when {
+                !enabled -> Color.White.copy(alpha = 0.32f)
+                selected -> Color(0xFF101614)
+                else -> Color.White.copy(alpha = 0.92f)
+            },
+        )
+    }
+}
+
+@Composable
+private fun MobileSectionPanel(
+    section: MobilePlayerSection,
+    sources: List<PlaySource>,
+    sourceIndex: Int,
+    episodeIndex: Int,
+    speed: Float,
+    videoScaleMode: VideoScaleMode,
+    onEpisode: (Int) -> Unit,
+    onSource: (Int) -> Unit,
+    onSpeed: (Float) -> Unit,
+    onVideoScale: (VideoScaleMode) -> Unit,
+    onClose: () -> Unit,
+) {
+    val episodes = sources[sourceIndex].episodes
+    Surface(
+        color = Color(0xE61A1A1A),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = when (section) {
+                        MobilePlayerSection.Episodes -> "选集（共 ${episodes.size} 集）"
+                        MobilePlayerSection.Sources -> "线路（共 ${sources.size} 条）"
+                        MobilePlayerSection.Speeds -> "播放倍速"
+                        MobilePlayerSection.Picture -> "画面比例 · ${videoScaleMode.displayName}"
+                    },
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.White.copy(alpha = 0.8f),
+                )
+                TextButton(onClick = onClose) {
+                    Text(
+                        "收起",
+                        color = Color.White.copy(alpha = 0.75f),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            when (section) {
+                MobilePlayerSection.Episodes -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(episodes.size) { index ->
+                        MobileChip(
+                            text = "${index + 1}. ${episodes[index].title}",
+                            selected = index == episodeIndex,
+                            onClick = { onEpisode(index); onClose() },
+                        )
+                    }
+                }
+                MobilePlayerSection.Sources -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(sources.size) { index ->
+                        MobileChip(
+                            text = sources[index].name,
+                            selected = index == sourceIndex,
+                            onClick = { onSource(index); onClose() },
+                        )
+                    }
+                }
+                MobilePlayerSection.Speeds -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    playerSpeeds.forEach { item ->
+                        MobileChip(
+                            text = "${formatSpeedLabel(item)}x",
+                            selected = kotlin.math.abs(item - speed) < 0.01f,
+                            onClick = { onSpeed(item); onClose() },
+                        )
+                    }
+                }
+                MobilePlayerSection.Picture -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    VideoScaleMode.entries.forEach { mode ->
+                        MobileChip(
+                            text = mode.displayName,
+                            selected = mode == videoScaleMode,
+                            onClick = { onVideoScale(mode); onClose() },
+                        )
+                    }
+                }
+            }
+        }
     }
 }

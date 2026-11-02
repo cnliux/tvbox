@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
@@ -66,6 +68,7 @@ import com.tvbox.app.ui.components.SmallMeta
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvLayout
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DetailScreen(
     state: TvBoxUiState,
@@ -128,13 +131,18 @@ fun DetailScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = movie.name,
-                                        style = MaterialTheme.typography.headlineLarge,
+                                        // 手机版窄屏用较小标题，避免片名被右侧按钮挤成竖排单字。
+                                        style = if (compact) {
+                                            MaterialTheme.typography.titleLarge
+                                        } else {
+                                            MaterialTheme.typography.headlineLarge
+                                        },
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         SmallMeta(movie.typeName)
                                         SmallMeta(movie.year)
                                         SmallMeta(movie.remarks)
