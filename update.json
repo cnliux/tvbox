@@ -2,8 +2,8 @@
   "versionCode": 10319,
   "versionName": "1.3.19",
   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.19/app-release.apk",
-  "apkSha256": "",
-  "apkSize": 0,
+  "apkSha256": "e718286f618926efc75a325478a5a32bbd8c0c61cd3f96f9597aedc78e0a80cc",
+  "apkSize": 50886810,
   "force": false,
   "changelog": [
     "修复手机底部导航被系统三键/手势栏遮挡：导航栏自动吸收系统导航栏高度。",

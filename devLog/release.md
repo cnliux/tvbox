@@ -12,7 +12,8 @@
 
 - 本地 `:app:assembleDebug` 与 `:app:testDebugUnitTest` 通过。
 - 192.168.1.45 真机验证：首页底部导航五标签完整可见不被遮挡；站点/分类/房间列表均 4 列铺满、无两侧黑框、卡片信息可读。
-- CI 发布与附件 SHA-256 核对结果见后续提交。
+- CI 发布：推送 `v1.3.19` 标签触发 `.github/workflows/release.yml`（run `41373114909`）成功，发布 [TVBox v1.3.19](https://github.com/cnliux/tvbox/releases/tag/v1.3.19)。
+- Release 附件 `app-release.apk`：`50886810` 字节，下载后本地计算 SHA-256 `e718286f618926efc75a325478a5a32bbd8c0c61cd3f96f9597aedc78e0a80cc`，与大小一致；`update.json` 与 README 示例按该附件实际值更新。
 
 ### 导航
 
