@@ -7,7 +7,7 @@
 - Go 侧新增 35 个单元测试并通过（总计 46 个 Go 测试）；本地服务端冒烟验证 5 个新平台的分类/房间/取流与分享链接解析（网易CC 重播房间 `5200` 返回 2 条 CDN 候选）。
 - 虎牙「每 2 分钟必断流」根因修复 — 新增本机连续 FLV 代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`）：实测断流来自虎牙 CDN 对单次 HTTP-FLV 约 2 分钟的会话上限（120~137 秒正常关流，同签名 HLS 约 142 秒后 403），与网络/UA/签名有效期无关。代理让播放器只连 `127.0.0.1` 的一条永不结束的 FLV，上游关流后立即重解析拿新签名续拉，新一段首帧时间戳接在上一帧之后 33ms（仅丢弃时间戳回退帧，允许音视频同帧）；连续两次硬失败才换候选线路。192.168.1.45 实测连续 590 秒、`reconnects=4`、`upstreamSessions=5`、`candidateSwitches=0`，全程无 `STATE_ENDED`、无换线路、无恢复重连。
 - 应用图标更新：改用新的自适应图标素材（`drawable/ic_launcher_foreground.png` + `#1E40AF` 底色 + 各密度 `mipmap-*/ic_launcher.png`），并把画面中心裁切放大（主体约占图标 50% 高度，落在自适应图标安全区内），移除旧矢量前景 `ic_launcher_foreground.xml`。
-- 构建产物收敛：不再生成 `app-release.aab`，CI 只构建与发布 `app-release.apk`（`assembleRelease`）。
+- 构建产物收敛：不再生成 `app-release.aab`，CI 只构建与发布 `app-release.apk`（`assembleRelease`）。CI 实际发布包 19,493,830 B（约 18.6 MB，arm64-v8a）。
 
 ## v1.3.27 - 2026-11-03
 
