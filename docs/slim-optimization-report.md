@@ -2,16 +2,16 @@
 
 > 日期：2026-11-03
 > 基线：`app/build/outputs/apk/universal/release/app-universal-release.apk`（1.3.25，本地 universal 产物，92,015,725 字节）
-> 优化后：1.3.27 合集版 + 仅 `arm64-v8a`（18,613,098 字节）。正式 Release 由 GitHub Actions 构建与发布，本地只构建 Debug。
+> 优化后：1.3.27 合集版 + 仅 `arm64-v8a`（GitHub Actions 发布产物 18,151,778 字节）。本地只构建 Debug，Release 一律由 CI 构建与发布。
 
 ## 1. 结论
 
 | 指标 | 瘦身前 | 瘦身后 | 变化 |
 |---|---:|---:|---:|
-| Release APK | 92,015,725 B（87.75 MiB） | 18,613,098 B（17.75 MiB） | **-73,402,627 B（-79.77%）** |
-| Release AAB | 未产出 | 由 CI 构建（按 ABI/语言拆分下发） | 单设备只下发 arm64-v8a |
-| `platformlive.aar` | 34,524,960 B（3 ABI、未剥离） | 11,524,281 B（2 ABI、已剥离，本地） | **-66.62%**；CI 仅 bind arm64 后更小 |
-| 上一版 OTA APK（`update.json`） | 74,540,357 B | 18,613,098 B | **-75.0%** |
+| Release APK（CI） | 92,015,725 B（87.75 MiB） | 18,151,778 B（17.31 MiB） | **-73,863,947 B（-80.27%）** |
+| Release AAB（CI） | 未产出 | 12,494,592 B（11.92 MiB） | 只含 `base/lib/arm64-v8a` |
+| `platformlive.aar` | 34,524,960 B（3 ABI、未剥离） | 11,524,281 B（本地双 ABI、已剥离） | **-66.62%**；CI 仅 bind arm64 后更小 |
+| 上一版 OTA APK（`update.json`） | 74,540,357 B | 18,151,778 B | **-75.6%** |
 
 瘦身收益主要来自三处：
 
@@ -128,55 +128,55 @@
 
 | 模块 | 瘦身前 | 瘦身后 | 变化 | 变化率 |
 |---|---:|---:|---:|---:|
-| `lib/arm64-v8a` | 29,568,744 | 15,964,096 | -13,604,648 | -46.01% |
+| `lib/arm64-v8a` | 29,568,744 | 15,502,800 | -14,065,944 | -47.57% |
 | `lib/armeabi-v7a` | 28,677,032 | 0 | -28,677,032 | -100% |
 | `lib/x86_64` | 30,664,872 | 0 | -30,664,872 | -100% |
-| `classes.dex` | 2,518,884 | 2,483,234 | -35,650 | -1.42% |
+| `classes.dex` | 2,518,884 | 2,483,285 | -35,599 | -1.41% |
 | `resources.arsc` + Manifest（`other`） | 336,402 | 41,779 | -294,623 | -87.58% |
 | `res/` | 65,551 | 65,330 | -221 | -0.34% |
-| `assets/` | 60,381 | 17,615 | -42,766 | -70.83% |
-| `META-INF/` | 18,889 | 326 | -18,563 | -98.27% |
+| `assets/` | 60,381 | 17,547 | -42,834 | -70.94% |
+| `META-INF/` | 18,889 | 327 | -18,562 | -98.27% |
 | `kotlin/` 元数据 | 12,350 | 0 | -12,350 | -100% |
-| **合计** | **92,015,725** | **18,613,098** | **-73,402,627** | **-79.77%** |
+| **合计** | **92,015,725** | **18,151,778** | **-73,863,947** | **-80.27%** |
 
-补充：native 库合计 88,910,648 → 15,964,096 字节（-82.04%）；非 native 部分 3,105,077 → 2,649,002 字节（-14.69%）。
+补充：native 库合计 88,910,648 → 15,502,800 字节（-82.56%）；非 native 部分 3,105,077 → 2,648,978 字节（-14.69%）。
 
 ### 6.2 AAB / AAR
 
 | 产物 | 瘦身前 | 瘦身后 | 变化 |
 |---|---:|---:|---:|
-| `app-release.aab` | 未产出 | 由 CI 构建发布 | 只含 `base/lib/arm64-v8a` |
+| `app-release.aab`（CI） | 未产出 | 12,494,592 B | 只含 `base/lib/arm64-v8a` |
 | `platformlive.aar` | 34,524,960 B | 11,524,281 B（本地双 ABI） | -66.62%；CI 单 arm64 更小 |
 
 AAB 只含 `base/lib/arm64-v8a`（无 armeabi-v7a / x86 / x86_64），不含 `PublicSuffixDatabase.list`。
 
 ## 7. 验证结果
 
-已实际执行并通过：
+CI（GitHub Actions，tag `v1.3.27`）构建并发布成功（`Release build` success）。本地仅执行 Debug 构建与测试：
 
 ```text
-.\gradlew.bat assembleRelease -PtvboxSkipPlatformBind=true
-BUILD SUCCESSFUL（lintVitalRelease 通过；仅用于确认 ABI 收敛后的体积）
+.\gradlew.bat assembleDebug -PtvboxSkipPlatformBind=true
+BUILD SUCCESSFUL；app-debug.apk 只含 lib/arm64-v8a
 
 .\gradlew.bat testDebugUnitTest -PtvboxSkipPlatformBind=true
 BUILD SUCCESSFUL，17 个测试类 / 100 个测试用例，0 failure / 0 error
 ```
 
-APK 校验：
+发布包校验（下载自 GitHub Release 附件）：
 
 ```text
 package=com.tvbox.app  versionCode=10327  versionName=1.3.27  minSdk=24  targetSdk=36
 launchable-activity: com.tvbox.app.MainActivity
 leanback-launchable-activity: com.tvbox.app.MainActivity
 native-code: 'arm64-v8a'
-uses-feature-not-required: microphone / touchscreen / wifi / leanback
-apksigner: Verifies；APK Signature Scheme v2 = true
+APK  18,151,778 B
+AAB  12,494,592 B（base/lib 仅 arm64-v8a）
 ```
 
-产物 SHA-256（策略验证时的本地临时构建；正式发布包由 CI 构建，SHA 以 Release 附件为准）：
+发布产物 SHA-256（GitHub Release 附件，已回填 `update.json`）：
 
 ```text
-APK  6672B9826F7964557F76A8AF658803CF9A723814503DBA771B3533CD88C214C
+APK  2DA99030F1317D941B69B892CDD876D6E7447744B1FC993FEDA4E116998E9B1B
 ```
 
 ## 8. 注意事项

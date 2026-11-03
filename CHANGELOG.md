@@ -7,7 +7,7 @@
 - 依赖清理：移除 Compose for TV（tv-foundation/tv-material）、Retrofit/converter 与未使用的 lifecycle-viewmodel-compose、ui-tooling；网络层改为 OkHttp + kotlinx.serialization 直连。
 - ABI 策略调整：Release/OTA 只打包 `arm64-v8a`，不再发布 `armeabi-v7a` 与 `x86/x86_64`；本地模拟器调试可加 `-PtvboxEmulatorAbis=true` 生成 x86/x86_64 Debug 包。
 - gomobile 默认只绑定 `android/arm64`，开启模拟器开关时追加 `android/amd64,android/386`；AAR 仍由 NDK `llvm-strip --strip-unneeded` 剥离符号。
-- APK 体积从 92.0 MB 降至约 18 MB（-80%），AAB 约 9 MB；域单元测试全部通过。
+- APK 体积从 92.0 MB 降至 18,151,778 B（约 18 MB，-80.3%），AAB 12,494,592 B；域单元测试 100/100 通过，发布包仅含 `arm64-v8a`。
 
 ## v1.3.26 - 2026-11-03
 
