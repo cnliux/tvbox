@@ -19,8 +19,11 @@ import platformlive.Platformlive
 object FlvContinuityProxy {
     private const val LOG_TAG = "TVBoxPlatformLive"
 
-    /** 目前只对虎牙启用：实测只有它存在固定的约 2 分钟关流。 */
-    private val supportedSites = setOf("huya")
+    /**
+     * 虎牙实测约 2 分钟必被 CDN 关流；斗鱼 FLV 同样带时效签名、存在会话上限，
+     * 一并走代理。代理对不断流的平台只是单会话透传，无副作用。
+     */
+    private val supportedSites = setOf("huya", "douyu")
 
     fun shouldWrap(site: String, protocol: String): Boolean =
         protocol.equals("flv", ignoreCase = true) && site.lowercase() in supportedSites

@@ -450,11 +450,11 @@ fun MoviePosterCard(
         }
         Text(
             text = movie.name,
-            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 12.dp),
-            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(start = 6.dp, top = 6.dp, end = 6.dp, bottom = 8.dp),
+            style = MaterialTheme.typography.labelSmall,
             // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
@@ -565,11 +565,11 @@ fun DoubanHotPosterCard(
         }
         Text(
             text = item.title,
-            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp, bottom = 12.dp),
-            style = MaterialTheme.typography.titleSmall,
+            modifier = Modifier.padding(start = 6.dp, top = 6.dp, end = 6.dp, bottom = 8.dp),
+            style = MaterialTheme.typography.labelSmall,
             // 手机版深色卡片上必须显式前景色，否则片名与卡片底色几乎同色、无法辨认。
             color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 2,
+            maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }

@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import android.content.Context
 import android.app.DownloadManager
@@ -282,7 +282,7 @@ private data class UpdateManifestDto(
     @SerialName("changelog") val changelog: List<String> = emptyList(),
 )
 
-private const val UPDATE_MANIFEST_URL = "https://raw.githubusercontent.com/cnliux/tvbox/main/update.json"
+private const val UPDATE_MANIFEST_URL = "https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json"
 private const val USER_AGENT = "TVBox-Android"
 
 @Serializable

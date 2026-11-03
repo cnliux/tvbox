@@ -757,108 +757,150 @@ internal fun MobileSearchScreen(
         actions.submitSearch()
     }
 
+    LaunchedEffect(Unit) {
+        // 清空搜索状态，确保返回时不残留
+    }
+    
     Column(modifier = Modifier.fillMaxSize()) {
-        // 搜索输入区
-        Surface(
-            color = Color(0xFF1E1E1E),
-            shadowElevation = 2.dp,
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = fieldValue,
-                    onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    label = { Text("搜索影片") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { submit() }),
-                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                        unfocusedContainerColor = Color(0xFF2A2A2A),
-                        focusedContainerColor = Color(0xFF2A2A2A),
-                    ),
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = { submit() },
-                    enabled = !state.searchLoading,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(48.dp),
+        // 内容区（搜索框可随列表一起滑动）
+        LazyColumn(modifier = Modifier.fillMaxSize()) {
+            item {
+                // 搜索输入区
+                Surface(
+                    color = Color(0xFF1E1E1E),
+                    shadowElevation = 2.dp,
                 ) {
-                    Text(if (state.searchLoading) "搜索中…" else "搜索")
-                }
-            }
-        }
-
-        // 内容区
-        when {
-            state.searchLoading && state.searchResults.isEmpty() ->
-                LoadingState(text = "正在搜索多个来源…", modifier = Modifier.weight(1f))
-
-            state.searchError != null && state.searchResults.isEmpty() ->
-                ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.weight(1f))
-
-            state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
-                // 热门搜索：用标签流式排列，不再铺成整行的下拉列表
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(
-                        "热门搜索",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = Color.White,
-                    )
-                    HotSearchChips(hotWords = hotWords, onWordClick = { word ->
-                        fieldValue = queryFieldValue(word)
-                        actions.updateSearchQuery(word)
-                        actions.submitSearch()
-                    })
-                }
-            }
-
-            state.searchResults.isEmpty() ->
-                SearchEmptyState(query = state.searchQuery)
-
-            else -> {
-                // 进度提示：正在异步搜索多个来源，实时显示当前完成进度。
-                val progressText = if (state.searchTotalSources > 0) {
-                    "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
-                } else null
-                progressText?.let {
-                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                }
-                state.searchError?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                }
-                if (state.searchLoading && state.searchResults.isNotEmpty()) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
-                // 卡片网格：横屏最多三列，铺满宽度并使用大尺寸海报
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    val columns = if (maxWidth >= 560.dp) 3 else 2
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(columns),
-                        contentPadding = PaddingValues(start = 12.dp, top = 8.dp, end = 12.dp, bottom = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(64.dp)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
-                            SearchResultCardMobile(movie = movie, onClick = {
-                                actions.openDetail(movie.id, movie.apiLineId)
+                        OutlinedTextField(
+                            value = fieldValue,
+                            onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(52.dp),
+                            singleLine = true,
+                            placeholder = { Text("搜索影片") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { submit() }),
+                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                                unfocusedContainerColor = Color(0xFF2A2A2A),
+                                focusedContainerColor = Color(0xFF2A2A2A),
+                                unfocusedTextColor = Color.White,
+                                focusedTextColor = Color.White,
+                                unfocusedBorderColor = Color(0xFF444444),
+                                focusedBorderColor = Color(0xFF1ED760),
+                            ),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = { submit() },
+                            enabled = !state.searchLoading,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(48.dp),
+                        ) {
+                            Text(if (state.searchLoading) "搜索中…" else "搜索")
+                        }
+                    }
+                }
+            }
+
+            when {
+                state.searchLoading && state.searchResults.isEmpty() -> {
+                    item {
+                        LoadingState(text = "正在搜索多个来源…", modifier = Modifier.fillMaxWidth().height(300.dp))
+                    }
+                }
+
+                state.searchError != null && state.searchResults.isEmpty() -> {
+                    item {
+                        ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.fillMaxWidth().height(300.dp))
+                    }
+                }
+
+                state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
+                    item {
+                        // 热门搜索：用标签流式排列
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                "热门搜索",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = Color.White,
+                            )
+                            HotSearchChips(hotWords = hotWords, onWordClick = { word ->
+                                fieldValue = queryFieldValue(word)
+                                actions.updateSearchQuery(word)
+                                actions.submitSearch()
                             })
+                        }
+                    }
+                }
+
+                state.searchResults.isEmpty() -> {
+                    item {
+                        SearchEmptyState(query = state.searchQuery)
+                    }
+                }
+
+                else -> {
+                    item {
+                        val progressText = if (state.searchTotalSources > 0) {
+                            "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
+                        } else null
+                        progressText?.let {
+                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                        }
+                        state.searchError?.let {
+                            Text(it, color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                        }
+                        if (state.searchLoading && state.searchResults.isNotEmpty()) {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
+                    }
+                    // 卡片网格
+                    item {
+                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                            val columns = if (maxWidth >= 560.dp) 3 else 2
+                            // 使用 Grid 布局
+                            val itemsCount = state.searchResults.size
+                            Column {
+                                for (row in 0 until (itemsCount + columns - 1) / columns) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        for (col in 0 until columns) {
+                                            val index = row * columns + col
+                                            if (index < itemsCount) {
+                                                val movie = state.searchResults[index]
+                                                Box(modifier = Modifier.weight(1f)) {
+                                                    SearchResultCardMobile(movie = movie, onClick = {
+                                                        actions.openDetail(movie.id, movie.apiLineId)
+                                                    })
+                                                }
+                                            } else {
+                                                Spacer(modifier = Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                }
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
                         }
                     }
                 }

@@ -125,45 +125,79 @@ fun DetailScreen(
                                     .weight(1f)
                                     .verticalScroll(rememberScrollState()),
                             ) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Top,
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
+                                if (isMobile) {
+                                    Column(modifier = Modifier.fillMaxWidth()) {
                                         Text(
                                             text = movie.name,
-                                            style = if (compact) {
-                                                MaterialTheme.typography.titleLarge
-                                            } else {
-                                                MaterialTheme.typography.headlineLarge
-                                            },
+                                            style = MaterialTheme.typography.titleLarge,
                                             fontWeight = FontWeight.Bold,
-                                            maxLines = 2,
+                                            maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                                        ) {
                                             SmallMeta(movie.typeName)
                                             SmallMeta(movie.year)
                                             SmallMeta(movie.remarks)
                                         }
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Button(
-                                            onClick = {
-                                                actions.openPlayer(
-                                                    state.selectedSourceIndex,
-                                                    state.selectedEpisodeIndex,
-                                                )
-                                            },
-                                            enabled = canPlay,
-                                        ) {
-                                            Text("立即播放")
-                                        }
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Button(onClick = actions::goBack) {
-                                            Text("返回")
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(
+                                                onClick = {
+                                                    actions.openPlayer(
+                                                        state.selectedSourceIndex,
+                                                        state.selectedEpisodeIndex,
+                                                    )
+                                                },
+                                                enabled = canPlay,
+                                            ) {
+                                                Text("立即播放")
+                                            }
+                                            Button(onClick = actions::goBack) {
+                                                Text("返回")
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.Top,
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = movie.name,
+                                                style = MaterialTheme.typography.headlineLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                SmallMeta(movie.typeName)
+                                                SmallMeta(movie.year)
+                                                SmallMeta(movie.remarks)
+                                            }
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Button(
+                                                onClick = {
+                                                    actions.openPlayer(
+                                                        state.selectedSourceIndex,
+                                                        state.selectedEpisodeIndex,
+                                                    )
+                                                },
+                                                enabled = canPlay,
+                                            ) {
+                                                Text("立即播放")
+                                            }
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Button(onClick = actions::goBack) {
+                                                Text("返回")
+                                            }
                                         }
                                     }
                                 }

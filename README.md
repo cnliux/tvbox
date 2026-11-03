@@ -74,7 +74,7 @@ TVBox 是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，
 从 Release 下载最新 APK：
 
 - [Latest Release](https://github.com/cnliux/tvbox/releases/latest)
-- OTA 更新清单：`https://raw.githubusercontent.com/cnliux/tvbox/main/update.json`
+- OTA 更新清单：`https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json`
 
 通过 ADB 安装：
 
@@ -93,7 +93,7 @@ adb install -r app-release.apk
 应用启动后会请求：
 
 ```text
-https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
+https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 ```
 
 `update.json` 示例：
@@ -102,7 +102,7 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 {
   "versionCode": 10323,
   "versionName": "1.3.23",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.23/app-release.apk",
+  "apkUrl": "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.23/app-release.apk",
   "apkSha256": "401bf8d4e76ec188056e73a4690ff4bb7f5ff68715523f3cdbd804beb8d06138",
   "apkSize": 50886726,
   "force": false,
@@ -123,10 +123,10 @@ https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
 - 下载开始后关闭弹窗或按返回不取消任务；后台下载完成时，回到应用后打开安装界面。系统安装仍需用户确认，取消后可从小型进度卡片手动安装；无需悬浮窗权限。
-- `apkUrl` 是 APK 下载地址，直接指向 GitHub Release 附件（需要能访问 GitHub Releases）。
+- `apkUrl` 是 APK 下载地址，通过 CDN 代理指向 GitHub Release 附件（国内访问更稳定）。
 - `apkSha256` 用于下载完成后的完整性校验。
 - `force` 预留强制更新能力，当前普通更新可选择稍后再说。
-- `update.json` 放在 GitHub 仓库根目录，随 `main` 分支更新后，应用会通过 raw 地址读取。
+- `update.json` 放在 GitHub 仓库根目录，随 `main` 分支更新后，应用会通过 CDN 代理地址读取。
 - APK 附件上传到 GitHub Release，`update.json` 中的 `apkUrl` 指向对应 GitHub Release 附件。
 - `git push` 只会上传代码和 tag，不会自动上传 Release 附件。
 
@@ -175,6 +175,8 @@ TVBOX_AI_API_KEY=你的测试密钥
 .\gradlew.bat testDebugUnitTest --console=plain
 .\gradlew.bat assembleDebug --console=plain
 ```
+
+> **调试规范：所有本地调试默认使用 `arm64-v8a` Debug 包，与 Release 产物保持一致。仅在需要本机模拟器调试时才加 `-PtvboxEmulatorAbis=true` 开关生成 x86/x86_64 版本。**
 
 如需在本机模拟器调试（x86/x86_64）：
 

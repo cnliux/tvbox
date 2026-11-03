@@ -178,6 +178,7 @@ data class TvBoxUiState(
     val liveReconnectNonce: Int = 0,
     /** 直播面板两级层级：分类列表 / 频道列表。 */
     val liveGroupPanelStage: LiveGroupStage = LiveGroupStage.Groups,
+    val liveFavoriteChannelNumbers: Set<Int> = emptySet(),
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
     /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
@@ -1082,6 +1083,19 @@ class TvBoxViewModel(
 
     fun updateSearchQuery(query: String) {
         _state.update { it.copy(searchQuery = query, searchError = null) }
+    }
+    
+    fun clearSearch() {
+        _state.update {
+            it.copy(
+                searchQuery = "",
+                searchResults = emptyList(),
+                searchError = null,
+                searchLoading = false,
+                searchCompletedSources = 0,
+                searchTotalSources = 0,
+            )
+        }
     }
 
     fun updateAiQuery(query: String) {
@@ -2027,6 +2041,20 @@ class TvBoxViewModel(
         }
     }
 
+    /** 收藏/取消收藏当前播放的直播频道（通过频道号）。 */
+    fun toggleLiveFavorite(channelNumber: Int) {
+        val current = _state.value
+        val favorites = current.liveFavoriteChannelNumbers.toMutableSet()
+        if (favorites.contains(channelNumber)) {
+            favorites.remove(channelNumber)
+        } else {
+            favorites.add(channelNumber)
+        }
+        _state.update {
+            it.copy(liveFavoriteChannelNumbers = favorites)
+        }
+    }
+
     /** 订阅地址标签：第 0 项"全部"，之后为各订阅地址。 */
     fun liveSourceLabels(): List<String> = buildList {
         add("全部")
@@ -2325,7 +2353,12 @@ class TvBoxViewModel(
                 _state.update { it.copy(screen = it.detailReturnScreen) }
                 true
             }
-            TvScreen.Search, TvScreen.History, TvScreen.Settings, TvScreen.AiRecommend -> {
+            TvScreen.Search -> {
+                clearSearch()
+                _state.update { it.copy(screen = TvScreen.Home) }
+                true
+            }
+            TvScreen.History, TvScreen.Settings, TvScreen.AiRecommend -> {
                 _state.update { it.copy(screen = TvScreen.Home) }
                 true
             }
@@ -2620,6 +2653,93 @@ class TvBoxViewModel(
                 appSettings = finalSettings,
                 sourceLatencies = it.sourceLatencies - line.id,
                 sourceManagerMessage = "已删除源“${line.name}”",
+            )
+        }
+        persistSourceLatencies()
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun deleteAllSources() {
+        val current = _state.value
+        if (current.sourceTesting || current.sourceImporting) return
+        val allCustomIds = current.appSettings.customVideoApiLines.map { it.id }.toSet()
+        if (allCustomIds.isEmpty()) {
+            _state.update { it.copy(sourceManagerMessage = "暂无自定义视频源可删除") }
+            return
+        }
+        val settings = current.appSettings.copy(
+            customVideoApiLines = emptyList(),
+            blockedSourceIds = current.appSettings.blockedSourceIds.filterNot { it in allCustomIds },
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceLatencies = it.sourceLatencies.filterKeys { it !in allCustomIds },
+                sourceManagerMessage = "已一键删除全部自定义视频源（${allCustomIds.size} 个）",
+            )
+        }
+        persistSourceLatencies()
+        if (selectionMissing) {
+            switchHomeApiLine(finalSettings.homeApiLineId)
+        }
+    }
+
+    fun deduplicateSourcesByDomain() {
+        val current = _state.value
+        if (current.sourceTesting || current.sourceImporting) return
+        val custom = current.appSettings.customVideoApiLines
+        if (custom.isEmpty()) {
+            _state.update { it.copy(sourceManagerMessage = "暂无自定义视频源") }
+            return
+        }
+        val seen = mutableSetOf<String>()
+        val kept = mutableListOf<CustomVideoApiLine>()
+        val removed = mutableListOf<CustomVideoApiLine>()
+        for (line in custom) {
+            val host = try {
+                java.net.URI(line.baseUrl).host?.lowercase()?.removePrefix("www.") ?: line.baseUrl.lowercase()
+            } catch (e: Exception) {
+                line.baseUrl.lowercase()
+            }
+            if (host in seen) {
+                removed.add(line)
+            } else {
+                seen.add(host)
+                kept.add(line)
+            }
+        }
+        if (removed.isEmpty()) {
+            _state.update { it.copy(sourceManagerMessage = "未发现重复域名的视频源") }
+            return
+        }
+        val removedIds = removed.map { it.id }.toSet()
+        val settings = current.appSettings.copy(
+            customVideoApiLines = kept,
+            blockedSourceIds = current.appSettings.blockedSourceIds.filterNot { it in removedIds },
+        )
+        applySourceSettings(settings)
+        val available = availableApiLinesFor(settings)
+        val allLines = allApiLinesFor(settings)
+        val (finalSettings, selectionMissing) = resolveHomeSelection(settings, available)
+        saveSettings(finalSettings)
+        _state.update {
+            it.copy(
+                apiLines = available,
+                allSourceLines = allLines,
+                selectedApiLineId = finalSettings.homeApiLineId,
+                appSettings = finalSettings,
+                sourceLatencies = it.sourceLatencies.filterKeys { it !in removedIds },
+                sourceManagerMessage = "已按域名去重：保留 ${kept.size} 个，删除 ${removed.size} 个重复项",
             )
         }
         persistSourceLatencies()
