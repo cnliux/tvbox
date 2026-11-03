@@ -723,8 +723,3 @@ fun SmallMeta(text: String, modifier: Modifier = Modifier) {
         Text(text = text, style = MaterialTheme.typography.labelMedium)
     }
 }
-
-@Composable
-fun TinySpacer() {
-    Spacer(modifier = Modifier.size(8.dp))
-}

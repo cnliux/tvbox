@@ -1,4 +1,8 @@
 import java.util.Properties
+import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
+import java.util.zip.ZipOutputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -30,7 +34,13 @@ val releaseStorePassword = configProperty("TVBOX_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = configProperty("TVBOX_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = configProperty("TVBOX_RELEASE_KEY_PASSWORD")
 val aiApiKey = configProperty("TVBOX_AI_API_KEY")
-val platformLiveServiceUrl = configProperty("TVBOX_PLATFORM_LIVE_SERVICE_URL")
+// 仅本地调试需要 x86 模拟器包：-PtvboxEmulatorAbis=true
+// 会给 Debug 追加 x86/x86_64，并让 gomobile bind 一并产出对应 ABI；Release 永远只有 arm64-v8a。
+val emulatorAbisEnabled = listOf(
+    providers.gradleProperty("tvboxEmulatorAbis").orNull,
+    localProperties.getProperty("tvboxEmulatorAbis"),
+    providers.environmentVariable("TVBOX_EMULATOR_ABIS").orNull,
+).any { it != null && it.isNotBlank() && it != "0" && !it.equals("false", ignoreCase = true) }
 val hasReleaseSigning = listOf(
     releaseStoreFile,
     releaseStorePassword,
@@ -46,38 +56,20 @@ android {
         applicationId = "com.tvbox.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10326
-        versionName = "1.3.26"
+        versionCode = 10327
+        versionName = "1.3.27"
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
-        buildConfigField("String", "PLATFORM_LIVE_SERVICE_URL", platformLiveServiceUrl.toBuildConfigString())
-        ndk {
-            // 平台直播解析通过 gomobile 产出 .so（platformlive.aar），与以下 ABI 对齐。
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
-        }
+        // 只保留中文资源，剔除 AndroidX/Media3 携带的其他语言字符串。
+        resConfigs(listOf("zh"))
+        // ABI 按构建类型分别配置：Release 只发 arm64-v8a，Debug 可选本机 x86。
     }
 
-    // 三种发行版：universal（手机+电视）、tv（仅电视）、mobile（仅手机）
-    flavorDimensions += listOf("device")
-    productFlavors {
-        create("universal") {
-            dimension = "device"
-            applicationId = "com.tvbox.app"
-            versionNameSuffix = ""
-            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
-        }
-        create("tv") {
-            dimension = "device"
-            applicationId = "com.tvbox.app.tv"
-            versionNameSuffix = "-tv"
-            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher"
-        }
-        create("mobile") {
-            dimension = "device"
-            applicationId = "com.tvbox.app.mobile"
-            versionNameSuffix = "-mobile"
-            manifestPlaceholders["appIcon"] = "@mipmap/ic_launcher_mobile"
-        }
+    androidResources {
+        // OkHttp 公共后缀库仅 CookieJar 使用，R8 已删除相关类，这里同步剔除该 assets。
+        ignoreAssetsPatterns += "!PublicSuffixDatabase.list"
     }
+
+    // 单一合集发行版：同一套代码通过 DeviceMode 在运行时适配电视/手机，不再拆 flavor。
 
     signingConfigs {
         if (hasReleaseSigning) {
@@ -92,11 +84,23 @@ android {
 
     buildTypes {
         debug {
+            // 本地调试默认仅 arm64-v8a；需要 x86 模拟器时加 -PtvboxEmulatorAbis=true。
+            ndk {
+                abiFilters += if (emulatorAbisEnabled) {
+                    listOf("arm64-v8a", "x86", "x86_64")
+                } else {
+                    listOf("arm64-v8a")
+                }
+            }
             if (hasReleaseSigning && configProperty("TVBOX_SIGN_DEBUG_WITH_RELEASE") == "true") {
                 signingConfig = signingConfigs.getByName("release")
             }
         }
         release {
+            // 只发布 arm64-v8a：不在应用商店/Release 中附带 armv7 与 x86 原生库。
+            ndk {
+                abiFilters += listOf("arm64-v8a")
+            }
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -112,6 +116,16 @@ android {
     buildFeatures {
         buildConfig = true
         compose = true
+        viewBinding = false
+        dataBinding = false
+        aidl = false
+        shaders = false
+    }
+
+    dependenciesInfo {
+        // 不再向 APK/AAB 写入依赖清单（仅 Google Play 使用）。
+        includeInApk = false
+        includeInBundle = false
     }
 
     compileOptions {
@@ -127,7 +141,20 @@ android {
 
     packaging {
         resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += listOf(
+                "/META-INF/{AL2.0,LGPL2.1}",
+                "/META-INF/DEPENDENCIES",
+                "/META-INF/LICENSE*",
+                "/META-INF/NOTICE*",
+                "/META-INF/**/LICENSE*",
+                "/META-INF/**/NOTICE*",
+                "/META-INF/*.version",
+                "/META-INF/version-control-info.textproto",
+                "/META-INF/native-image/**",
+                // Kotlin 反射元数据与调试探针在 App 中未使用。
+                "/kotlin/**",
+                "/DebugProbesKt.bin",
+            )
         }
     }
 }
@@ -136,6 +163,26 @@ android {
 // preBuild 前自动执行 tools/bind-platform-live.*，产出 app/libs/platformlive.aar。
 // 无 Go 工具链时可用 -PtvboxSkipPlatformBind=true 跳过（需事先准备 app/libs/platformlive.aar）。
 val platformLiveAar = file("libs/platformlive.aar")
+
+fun resolveNdkDir(): File? {
+    android.ndkPath?.let { path -> File(path).takeIf { it.isDirectory }?.let { return it } }
+    System.getenv("ANDROID_NDK_HOME")?.let { path ->
+        File(path).takeIf { it.isDirectory }?.let { return it }
+    }
+    val sdkRoot = System.getenv("ANDROID_SDK_ROOT")
+        ?: System.getenv("ANDROID_HOME")
+        ?: localProperties.getProperty("sdk.dir")
+    if (!sdkRoot.isNullOrBlank()) {
+        val ndkRoot = File(sdkRoot, "ndk")
+        if (ndkRoot.isDirectory) {
+            return ndkRoot.listFiles()
+                ?.filter { it.isDirectory }
+                ?.maxByOrNull { it.name }
+        }
+    }
+    return null
+}
+
 val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
     val scriptName = if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
         "bind-platform-live.ps1"
@@ -144,10 +191,13 @@ val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
     }
     val script = rootProject.file("tools/$scriptName")
     inputs.dir(rootProject.file("platform_live_go"))
+    // 模拟器 ABI 开关变化时重新绑定，产出含 x86/x86_64 的 AAR。
+    inputs.property("emulatorAbis", emulatorAbisEnabled)
     if (platformLiveAar.exists()) {
         outputs.file(platformLiveAar)
     }
     onlyIf { !project.hasProperty("tvboxSkipPlatformBind") }
+    environment("TVBOX_EMULATOR_ABIS", if (emulatorAbisEnabled) "1" else "0")
     if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
         commandLine(
             "powershell",
@@ -162,8 +212,77 @@ val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
     }
 }
 
-tasks.matching { it.name == "preBuild" }.configureEach {
+// gomobile 产出的 libgojni.so 默认带 Go 调试符号（单 ABI 约 29MB）。
+// 打包前用 NDK llvm-strip 去掉 .symtab/.debug_*，单 ABI 可降到约 16MB。
+val stripPlatformLiveAar = tasks.register("stripPlatformLiveAar") {
     dependsOn(bindPlatformLive)
+    outputs.upToDateWhen { false }
+    doLast {
+        val aar = platformLiveAar
+        if (!aar.isFile) return@doLast
+        val stampFile = layout.buildDirectory.file("platformlive-aar-strip.stamp").get().asFile
+        val currentState = "${aar.length()}:${aar.lastModified()}"
+        if (stampFile.isFile && stampFile.readText() == currentState) return@doLast
+
+        val ndkDir = resolveNdkDir()
+        if (ndkDir == null) {
+            logger.warn("未找到 Android NDK，跳过 libgojni.so 调试符号剥离")
+            return@doLast
+        }
+        val hostTag = when {
+            org.gradle.internal.os.OperatingSystem.current().isWindows -> "windows-x86_64"
+            org.gradle.internal.os.OperatingSystem.current().isMacOsX -> "darwin-x86_64"
+            else -> "linux-x86_64"
+        }
+        val stripName = if (hostTag.startsWith("windows")) "llvm-strip.exe" else "llvm-strip"
+        val strip = ndkDir.resolve("toolchains/llvm/prebuilt/$hostTag/bin/$stripName")
+        if (!strip.isFile) {
+            logger.warn("未找到 $strip，跳过 libgojni.so 调试符号剥离")
+            return@doLast
+        }
+
+        val tmpAar = File(temporaryDir, "platformlive-stripped.aar")
+        ZipInputStream(aar.inputStream()).use { input ->
+            ZipOutputStream(tmpAar.outputStream()).use { output ->
+                var entry: ZipEntry? = input.nextEntry
+                while (entry != null) {
+                    val current = entry
+                    if (current.isDirectory) {
+                        output.putNextEntry(ZipEntry(current.name))
+                        output.closeEntry()
+                    } else if (current.name.startsWith("jni/") && current.name.endsWith(".so")) {
+                        val so = File(temporaryDir, current.name.substringAfterLast('/'))
+                        so.outputStream().use { input.copyTo(it) }
+                        val process = ProcessBuilder(strip.absolutePath, "--strip-unneeded", so.absolutePath)
+                            .redirectErrorStream(true)
+                            .start()
+                        val processLog = process.inputStream.bufferedReader().readText()
+                        if (!process.waitFor(30, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                            error("llvm-strip 失败：$processLog")
+                        }
+                        output.putNextEntry(ZipEntry(current.name))
+                        so.inputStream().use { it.copyTo(output) }
+                        output.closeEntry()
+                        so.delete()
+                    } else {
+                        output.putNextEntry(ZipEntry(current.name))
+                        input.copyTo(output)
+                        output.closeEntry()
+                    }
+                    input.closeEntry()
+                    entry = input.nextEntry
+                }
+            }
+        }
+        tmpAar.copyTo(aar, overwrite = true)
+        tmpAar.delete()
+        stampFile.parentFile?.mkdirs()
+        stampFile.writeText("${aar.length()}:${aar.lastModified()}")
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(stripPlatformLiveAar)
 }
 
 dependencies {
@@ -173,27 +292,20 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.runtime)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.core)
     implementation(libs.androidx.lifecycle.runtime.compose)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
-    implementation(libs.androidx.tv.foundation)
-    implementation(libs.androidx.tv.material)
     implementation(libs.coil.compose)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
-    implementation(libs.retrofit)
-    implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.zxing.core)
-
-    debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.tooling.preview)
 
     testImplementation(libs.junit)
 }

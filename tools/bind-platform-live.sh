@@ -49,10 +49,20 @@ go test ./...
 # gomobile bind 依赖 gobind，须先 init（幂等）。
 gomobile init
 
+# Release 只发布 arm64-v8a；仅本地 Debug 调试时附加 x86/x86_64。
+if [ "${TVBOX_EMULATOR_ABIS:-0}" != "0" ]; then
+    BIND_TARGETS="android/arm64,android/amd64,android/386"
+else
+    BIND_TARGETS="android/arm64"
+fi
+echo "gomobile target=$BIND_TARGETS"
+
 mkdir -p "$(dirname "$OUTPUT_AAR")"
 gomobile bind \
-    -target=android/arm,android/arm64,android/amd64 \
+    -target="$BIND_TARGETS" \
     -androidapi 24 \
+    -ldflags="-s -w" \
+    -trimpath \
     -o "$OUTPUT_AAR" \
     .
 

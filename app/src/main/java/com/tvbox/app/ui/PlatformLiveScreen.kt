@@ -25,7 +25,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -260,7 +259,8 @@ private fun PlatformLiveRoomsScreen(
     LaunchedEffect(
         state.platformLiveDestination,
         state.platformLiveRoomIndex,
-        state.platformLiveRooms.map(PlatformLiveRoom::id),
+        // 仅首条数据变化（初次加载/切换分类/收藏增删）时归位；翻页追加数据时不回滚滚动位置。
+        state.platformLiveRooms.firstOrNull()?.id,
     ) {
         if (state.platformLiveRooms.isEmpty()) return@LaunchedEffect
         gridState.scrollToItem(selectedRoomIndex)
@@ -273,6 +273,38 @@ private fun PlatformLiveRoomsScreen(
         if (favoritesMode && state.platformLiveRooms.isEmpty()) {
             runCatching { emptyFavoriteFocusRequester.requestFocus() }
         }
+    }
+    // 滑动/遥控下拉接近列表底部时自动加载下一页，替代手动“加载更多”按钮。
+    // 提前半屏预取，保证遥控焦点下移时下一页已经就位。
+    val nearListEnd by remember(gridState) {
+        derivedStateOf {
+            val layoutInfo = gridState.layoutInfo
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull() ?: return@derivedStateOf false
+            val remaining = layoutInfo.totalItemsCount - 1 - lastVisible.index
+            remaining <= (layoutInfo.visibleItemsInfo.size / 2).coerceAtLeast(1)
+        }
+    }
+    // 记录最近一次自动加载发起时的页码，避免接口返回重复页或失败时反复触发。
+    var autoLoadFromPage by remember(state.platformLiveSelectedCategory?.id) { mutableIntStateOf(0) }
+    LaunchedEffect(
+        nearListEnd,
+        state.platformLiveRoomPage,
+        state.platformLiveRoomPageCount,
+        state.platformLiveLoading,
+        state.platformLiveLoadingMore,
+        state.platformLiveError,
+        favoritesMode,
+    ) {
+        if (favoritesMode || !nearListEnd) return@LaunchedEffect
+        if (state.platformLiveLoading || state.platformLiveLoadingMore) return@LaunchedEffect
+        if (state.platformLiveRoomPage >= state.platformLiveRoomPageCount) return@LaunchedEffect
+        if (state.platformLiveRoomPage == autoLoadFromPage) return@LaunchedEffect
+        // 等待上一页数据完成测量后再确认是否仍接近底部，避免用旧布局连续翻页。
+        withFrameNanos { }
+        if (!nearListEnd) return@LaunchedEffect
+        // 确认仍需加载后才记录页码，避免误标导致之后滚到底部不再自动加载。
+        autoLoadFromPage = state.platformLiveRoomPage
+        actions.loadMorePlatformLiveRooms()
     }
     val category = state.platformLiveSelectedCategory
     val site = state.platformLiveSelectedSite
@@ -308,6 +340,7 @@ private fun PlatformLiveRoomsScreen(
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
         notice = state.platformLiveFavoriteError,
+        loadingMore = !favoritesMode && state.platformLiveLoadingMore,
     ) {
         itemsIndexed(state.platformLiveRooms, key = { _, room -> room.id }) { index, room ->
             PlatformLiveRoomCard(
@@ -323,15 +356,6 @@ private fun PlatformLiveRoomsScreen(
                 },
             )
         }
-        if (!favoritesMode && state.platformLiveRoomPage < state.platformLiveRoomPageCount) {
-            item(key = "load-more", span = { GridItemSpan(maxLineSpan) }) {
-                PlatformLiveLoadMoreCard(
-                    loading = state.platformLiveLoadingMore,
-                    text = "加载更多（${state.platformLiveRoomPage}/${state.platformLiveRoomPageCount}）",
-                    onClick = actions::loadMorePlatformLiveRooms,
-                )
-            }
-        }
     }
 }
 
@@ -346,6 +370,7 @@ private fun PlatformLiveBrowseSurface(
     onRetry: () -> Unit,
     gridState: LazyGridState? = null,
     notice: String? = null,
+    loadingMore: Boolean = false,
     touchColumns: Int = 2,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
@@ -386,25 +411,49 @@ private fun PlatformLiveBrowseSurface(
                     }
                     val screenWidthDp = LocalConfiguration.current.screenWidthDp
                     val touchMode = LocalTouchMode.current
-                    LazyVerticalGrid(
-                        state = resolvedGridState,
-                        // 手机触摸模式大卡片自适应：竖屏按基准列数（房间 2 列），屏越宽列数越多（≥500dp +1、≥720dp +2），卡片保持可读尺寸。
-                        columns = if (touchMode) {
-                            val extra = when {
-                                screenWidthDp >= 720 -> 2
-                                screenWidthDp >= 500 -> 1
-                                else -> 0
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        LazyVerticalGrid(
+                            state = resolvedGridState,
+                            // 手机触摸模式大卡片自适应：竖屏按基准列数（房间 2 列），屏越宽列数越多（≥500dp +1、≥720dp +2），卡片保持可读尺寸。
+                            columns = if (touchMode) {
+                                val extra = when {
+                                    screenWidthDp >= 720 -> 2
+                                    screenWidthDp >= 500 -> 1
+                                    else -> 0
+                                }
+                                GridCells.Fixed(touchColumns + extra)
+                            } else {
+                                GridCells.Fixed(TvLayout.PlatformLiveColumns)
+                            },
+                            contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
+                            verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            content()
+                        }
+                        // 自动加载更多时的轻量提示，不参与网格布局与焦点遍历。
+                        if (loadingMore) {
+                            Surface(
+                                shape = MaterialTheme.shapes.large,
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                                modifier = Modifier
+                                    .align(Alignment.BottomCenter)
+                                    .padding(bottom = if (touchMode) 12.dp else 18.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(16.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    Text(text = "正在加载更多", style = MaterialTheme.typography.labelMedium)
+                                }
                             }
-                            GridCells.Fixed(touchColumns + extra)
-                        } else {
-                            GridCells.Fixed(TvLayout.PlatformLiveColumns)
-                        },
-                        contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        content()
+                        }
                     }
                 }
             }
@@ -649,28 +698,6 @@ private fun PlatformLiveFavoriteStar(
             color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
             style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
         )
-    }
-}
-
-@Composable
-private fun PlatformLiveLoadMoreCard(loading: Boolean, text: String, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = MaterialTheme.shapes.medium
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .tvFocusScale(shape = shape)
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
-            .clickable(enabled = !loading, onClick = onClick)
-            .focusable()
-            .padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        if (loading) CircularProgressIndicator(modifier = Modifier.size(28.dp))
-        Text(text = if (loading) "正在加载" else text, style = MaterialTheme.typography.titleSmall)
     }
 }
 

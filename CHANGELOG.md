@@ -1,5 +1,14 @@
 # 更新记录
 
+## v1.3.27 - 2026-11-03
+
+- 版本收敛为手机/电视合集单包：移除 universal/tv/mobile flavor 与对应源集判断，运行时按设备类型适配电视/手机。
+- 极限瘦身：R8 full mode、`shrinkResources`、`nonFinalResIds`、`nonTransitiveRClass`、`enableResourceOptimizations`；剔除 PublicSuffixDatabase、Kotlin 反射元数据与调试探针等冗余 assets。
+- 依赖清理：移除 Compose for TV（tv-foundation/tv-material）、Retrofit/converter 与未使用的 lifecycle-viewmodel-compose、ui-tooling；网络层改为 OkHttp + kotlinx.serialization 直连。
+- ABI 策略调整：Release/OTA 只打包 `arm64-v8a`，不再发布 `armeabi-v7a` 与 `x86/x86_64`；本地模拟器调试可加 `-PtvboxEmulatorAbis=true` 生成 x86/x86_64 Debug 包。
+- gomobile 默认只绑定 `android/arm64`，开启模拟器开关时追加 `android/amd64,android/386`；AAR 仍由 NDK `llvm-strip --strip-unneeded` 剥离符号。
+- APK 体积从 92.0 MB 降至约 18 MB（-80%），AAB 约 9 MB；域单元测试全部通过。
+
 ## v1.3.26 - 2026-11-03
 
 - 直播「无法播放」根因修复 — 无扩展名地址 MIME 探测：约 1/3 直播地址无 .m3u8/.flv 扩展名（如 `…/play?id=cctv1`），旧版 ExoPlayer 无法按 URI 推断格式，走 progressive 嗅探报 `UnrecognizedInputFormatException` 直接黑屏。新增 `LiveStreamProbe`（Range 前 4KB + Content-Type/魔数识别 HLS/FLV/TS，结果缓存），取流前注入 `setMimeType`；探测失败自动回退旧行为。

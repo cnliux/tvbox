@@ -90,7 +90,6 @@ import com.tvbox.app.domain.probeLiveLineMimeType
 import android.widget.Toast
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.ui.components.ErrorState
-import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
 import kotlinx.coroutines.delay

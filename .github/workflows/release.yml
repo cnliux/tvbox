@@ -50,29 +50,37 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      - name: Build release APK
+      - name: Build release APK + AAB
         env:
           TVBOX_RELEASE_STORE_PASSWORD: ${{ secrets.TVBOX_RELEASE_STORE_PASSWORD }}
           TVBOX_RELEASE_KEY_ALIAS: ${{ secrets.TVBOX_RELEASE_KEY_ALIAS }}
           TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
-          TVBOX_PLATFORM_LIVE_SERVICE_URL: ${{ secrets.TVBOX_PLATFORM_LIVE_SERVICE_URL }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: ./gradlew --no-daemon assembleRelease bundleRelease
 
-      # flavor 产物收敛：universal 版沿用旧资产名 app-release.apk，保持 OTA 兼容。
+      # 单一合集版本：同一套代码运行时适配电视/手机；原生库只发布 arm64-v8a。
       - name: Stage release artifacts
         run: |
           mkdir -p dist
-          cp app/build/outputs/apk/universal/release/app-universal-release.apk dist/app-release.apk
-          cp app/build/outputs/apk/tv/release/app-tv-release.apk dist/app-tv-release.apk
-          cp app/build/outputs/apk/mobile/release/app-mobile-release.apk dist/app-mobile-release.apk
+          cp app/build/outputs/apk/release/app-release.apk dist/app-release.apk
+          cp app/build/outputs/bundle/release/app-release.aab dist/app-release.aab
+
+      # 发布策略硬校验：Release 只允许 arm64-v8a，禁止 armv7/x86 混入。
+      - name: Verify arm64-v8a only
+        run: |
+          ABIS=$(unzip -Z1 dist/app-release.apk 'lib/*' | cut -d/ -f2 | sort -u)
+          echo "APK ABIs: $ABIS"
+          if [ "$ABIS" != "arm64-v8a" ]; then
+            echo "::error::Release 只允许 arm64-v8a，实际为: $ABIS"
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.apk
+          files: dist/*
           name: TVBox ${{ github.ref_name }}
           body: |
-            TVBox Android TV 客户端 ${{ github.ref_name }} 版本。
+            TVBox 手机/电视合集版 ${{ github.ref_name }}。
 
             - 不内置任何点播视频接口与电视直播源，视频源与直播源均需自行导入
             - 平台直播站点（斗鱼/虎牙等）可管控

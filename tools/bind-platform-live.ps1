@@ -4,6 +4,10 @@
 # - 本机安装 Go（go.exe 可在 PATH，或用 -GoBin 指定完整路径）；
 # - Android SDK 存在 NDK（从 local.properties 的 sdk.dir 或 ANDROID_SDK_ROOT 探测）。
 # 产物：app/libs/platformlive.aar（APK 通过 implementation(files(...)) 依赖）。
+# 说明：默认只编译真机 ABI（arm64），并用 -ldflags="-s -w" 去掉调试符号；
+#       本地模拟器调试时设置 TVBOX_EMULATOR_ABIS=1（或 -PtvboxEmulatorAbis=true）
+#       会额外产出 x86/x86_64（android/386,android/amd64），仅用于 Debug 包。
+#       Gradle 侧 stripPlatformLiveAar 还会用 NDK llvm-strip 做一次兜底剥离。
 
 param(
     [string]$GoBin = "",
@@ -107,9 +111,18 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "gomobile init 失败。" }
 
     $targetAar = Join-Path $moduleDir "..\app\libs\platformlive.aar"
+    # Release 只发布 arm64-v8a；仅本地 Debug 调试时附加 x86/x86_64。
+    $bindTargets = if ($env:TVBOX_EMULATOR_ABIS -and $env:TVBOX_EMULATOR_ABIS -ne "0") {
+        "android/arm64,android/amd64,android/386"
+    } else {
+        "android/arm64"
+    }
+    Write-Host "gomobile target=$bindTargets"
     & $gomobileExe bind `
-        -target "android/arm,android/arm64,android/amd64" `
+        -target $bindTargets `
         -androidapi 24 `
+        -ldflags "-s -w" `
+        -trimpath `
         -o $targetAar `
         .
     if ($LASTEXITCODE -ne 0) { throw "gomobile bind 失败。" }

@@ -1,8 +1,8 @@
 # TVBox
 
-TVBox 是一个面向 Android TV / 电视盒子的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。应用重点适配遥控器操作，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
+TVBox 是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。合集版根据设备类型自动适配：电视端强调遥控器操作，手机端提供触屏与竖屏布局，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.26`（`versionCode=10326`）。本版本修复直播「无法播放」（无扩展名地址 MIME 探测）与虎牙「自动切线路」（ENDED 同线路重连+计数清零）；落地多线路聚合模型与分类→频道两级交互；平台直播解析迁移 Go；发布 universal/tv/mobile 三种 flavor。
+当前源码版本为 `1.3.27`（`versionCode=10327`）。本版本完成代码与资源极限瘦身：移除 tv/mobile 独立 flavor，统一为手机/电视合集版，R8 full mode + 资源压缩，APK 由约 92 MB 降到约 18 MB；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -160,42 +160,33 @@ TVBOX_AI_API_KEY=你的测试密钥
 - 点击“添加接口”后，电视弹出二维码；手机扫码填写接口名称和 MacCms 地址，确认后自动同步到电视。
 - MacCms 地址示例：`https://example.com/api.php/provide/vod`
 
-平台直播服务配置：
+平台直播解析配置：
 
-- 服务端运行在电脑或服务器上，TVBox 通过 `TVBOX_PLATFORM_LIVE_SERVICE_URL` 访问统一接口。
-- Windows PowerShell 临时构建配置（替换为你的服务地址）：
+- 默认使用内置 Go 解析库（`platform_live_go`，经 `gomobile bind` 打包为 `libgojni.so`），安装即可用，无需部署服务端。
+- 发布版只打包 `arm64-v8a` 原生库（`Release` 与 AAB 均不再包含 armv7/x86），并对原生库做符号剥离以控制体积。
+- 本地模拟器调试：执行 `.\gradlew.bat assembleDebug -PtvboxEmulatorAbis=true`，会额外生成 `x86`/`x86_64` 原生库（gomobile 同时产出 `android/amd64`、`android/386`）。该开关不影响 Release 产物。
+- 如需回到远程解析模式，可恢复 `RemotePlatformLiveRepository` 并自行注入服务地址构建参数。
 
-```powershell
-$env:TVBOX_PLATFORM_LIVE_SERVICE_URL="http://<your-server>:8868"
-.\gradlew.bat testDebugUnitTest assembleDebug --console=plain
-```
-
-- 该变量只在构建时注入 APK，不需要写入服务器代码；服务器 Cookie 只配置在服务器环境变量中。
-- 如果服务器地址变化，必须使用新地址重新构建 APK；不要填写 `localhost` 或 `127.0.0.1`。
-
-运行测试：
+运行测试与构建 Debug（本地只构建 Debug，不构建 Release）：
 
 ```powershell
 .\gradlew.bat testDebugUnitTest --console=plain
-```
-
-构建 debug APK：
-
-```powershell
 .\gradlew.bat assembleDebug --console=plain
 ```
 
-构建 release APK：
+如需在本机模拟器调试（x86/x86_64）：
 
 ```powershell
-.\gradlew.bat assembleRelease --console=plain
+.\gradlew.bat assembleDebug -PtvboxEmulatorAbis=true --console=plain
 ```
 
-release APK 输出位置：
+Debug 产物位置：
 
 ```text
-app\build\outputs\apk\release\app-release.apk
+app\build\outputs\apk\debug\app-debug.apk
 ```
+
+> Release APK/AAB 一律由 GitHub Actions 构建与发布（仅 `arm64-v8a`）。本地不要执行 `assembleRelease` / `bundleRelease`，避免产出与 CI 不一致的非发布包。
 
 ## Release 签名
 
@@ -218,31 +209,36 @@ apksigner verify --print-certs app\build\outputs\apk\release\app-release.apk
 
 ## 发布新版本流程
 
-1. 更新版本号、CHANGELOG 和 README；构建签名 APK 后，根据实际 SHA-256 和大小填写根目录 `update.json`。
+> 发布包只由 GitHub Actions 构建（`Release` 仅含 `arm64-v8a`）。本地只改代码、跑 Debug 与测试。
+
+1. 更新 `app/build.gradle.kts` 的 `versionCode` / `versionName`，同步 CHANGELOG、README；`update.json` 先保持上一版本，等 CI 发布完成后再一次性更新。
 2. 仅暂存本次发布涉及的主工程代码及文档；如开发日志含无关修改，使用分段暂存。
 
 ```powershell
-git add CHANGELOG.md README.md update.json app\build.gradle.kts app\src\main app\src\test app\src\debug devLog\home-player-ui.md devLog\playback-experience.md devLog\release.md
-git add -p devLog\README.md
-git commit -m "Release v1.3.13"
-git tag -a v1.3.13 -m "TVBox v1.3.13"
-git push origin v1.3.13
-```
-
-3. 创建草稿 Release 并上传 APK 与相同版本的 OTA 清单，检查附件完整性。
-
-```powershell
-gh release create v1.3.13 app\build\outputs\apk\release\TVBox-v1.3.13.apk app\build\outputs\apk\release\update.json --repo cnliux/tvbox --verify-tag --draft --title "TVBox v1.3.13" --notes-file app\build\outputs\apk\release\release-notes.md
-```
-
-4. 公开 Release 后推送主分支，使 OTA 清单指向已经可下载的附件。
-
-```powershell
-gh release edit v1.3.13 --repo cnliux/tvbox --draft=false --latest
+git add CHANGELOG.md README.md docs\slim-optimization-report.md app\build.gradle.kts app\src\main app\src\test app\src\debug tools\bind-platform-live.ps1 tools\bind-platform-live.sh .github\workflows\release.yml gradle.properties gradle\libs.versions.toml app\proguard-rules.pro
+git commit -m "Release v1.3.27"
 git push origin main
+git tag -a v1.3.27 -m "TVBox v1.3.27"
+git push origin v1.3.27
 ```
 
-> GitHub Release 包含对应版本的 APK 和 `update.json`；应用启动时从 GitHub `main` 分支读取更新清单。
+3. tag 推送后，GitHub Actions 自动构建并发布 `app-release.apk`（`arm64-v8a`）与 `app-release.aab`。
+4. CI 发布完成后，从 Release 附件回填 `update.json` 的 `apkSha256` / `apkSize`，再提交并推送 `main`，使 OTA 清单指向已可下载的附件。
+
+```powershell
+# 例：下载 CI 产物后计算
+(Get-FileHash .\app-release.apk -Algorithm SHA256).Hash.ToLower()
+(Get-Item .\app-release.apk).Length
+```
+
+5. 若需要校验发布包的 ABI：
+
+```powershell
+aapt2 dump badging app-release.apk | Select-String "native-code"
+# 期望输出：native-code: 'arm64-v8a'
+```
+
+> Release 附件由 CI 上传；`git push` 只上传代码和 tag，不会自动上传 APK。
 
 ## 项目结构
 
@@ -258,9 +254,9 @@ app/src/main/java/com/tvbox/app
 
 - Kotlin
 - Jetpack Compose
-- Compose for TV 基础能力
+- Compose for TV 能力（聚焦/遥控器交互，按需自实现）
 - Media3 ExoPlayer
-- Retrofit / OkHttp
+- OkHttp
 - kotlinx.serialization
 - Coil
 
