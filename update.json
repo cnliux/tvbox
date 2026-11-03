@@ -1,15 +1,15 @@
 {
-  "versionCode": 10326,
-  "versionName": "1.3.26",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.26/app-release.apk",
-  "apkSha256": "9696cdea789ea04dd8ec355d95f1aecd4b59765702459b3ae9e2e9d519df6a6a",
-  "apkSize": 74540357,
+  "versionCode": 10327,
+  "versionName": "1.3.27",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.27/app-release.apk",
+  "apkSha256": "2da99030f1317d941b69b892cdd876d6e7447744b1fc993feda4e116998e9b1b",
+  "apkSize": 18151778,
   "force": false,
   "changelog": [
-    "直播「无法播放」修复：无扩展名直播地址自动探测 MIME（HLS/FLV/TS）后再起播，黑屏报错大幅减少。",
-    "虎牙「自动换线路」修复：流正常关闭时先同线路原地重连（重新签名），不再误判为线路故障轮换 CDN；画面恢复即清零重连计数。",
-    "多线路模型：同频道多源聚合为一条频道（面板标注协议），M3U 逐线路 UA/Cookie 生效，线路记忆按「分组#频道」不再互相污染。",
-    "直播面板两级交互：分类→频道逐级进入，BACK 逐级返回；焦点自动落到正在播放频道，修复遥控器方向键失灵。",
-    "平台直播解析迁移 Go（移除 Python 运行时）；剧集列表支持倒序。注意本版 APK 体积增大（含 Go 原生库多架构）。"
+    "体积大幅减小：APK 由 92 MB 降到约 18 MB（-80%），移除冗余版本、依赖与原生库。",
+    "统一为手机/电视合集版：同一安装包按设备类型自动适配，不再区分 tv/mobile 版本。",
+    "发布版仅支持 arm64-v8a：不再提供 armv7 与 x86 安装包；旧设备请继续使用上一版本。",
+    "依赖与资源清理：移除 Compose for TV、Retrofit，网络层改为 OkHttp；裁剪多语言资源与无用 assets。",
+    "平台直播解析仍内置 Go 库并做符号剥离；本地调试可开启 x86 模拟器包。"
   ]
 }
