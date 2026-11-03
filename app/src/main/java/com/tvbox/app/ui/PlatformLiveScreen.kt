@@ -75,6 +75,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.tvbox.app.data.FlvContinuityProxy
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
@@ -720,6 +721,23 @@ private fun PlatformLivePlayerScreen(
     }
     KeepScreenOnWhileVisible()
     val stream = state.platformLiveStream?.takeIf { it.channelId == room.id }
+    // 虎牙单次 FLV 拉流约 2 分钟被 CDN 关闭：改由 Go 侧本机连续代理续流，
+    // 播放器只连本地一条永不结束的 FLV，避免每 2 分钟一次 ENDED 断流。
+    val continuityProxy = remember(room.id, stream?.url) {
+        stream?.takeIf { FlvContinuityProxy.shouldWrap(room.site, it.protocol) }?.let { resolved ->
+            FlvContinuityProxy.start(
+                site = room.site,
+                roomId = room.id,
+                candidateIndex = resolved.activeCandidateIndex,
+                url = resolved.url,
+                headers = resolved.headers,
+            )
+        }
+    }
+    DisposableEffect(continuityProxy) {
+        onDispose { continuityProxy?.close() }
+    }
+    val playbackUrl = continuityProxy?.localUrl() ?: stream?.url
     val context = androidx.compose.ui.platform.LocalContext.current
     val isMobile = state.appSettings.deviceMode == com.tvbox.app.domain.DeviceMode.Mobile
     val activity = remember(context) { context.findActivity() }
@@ -735,7 +753,7 @@ private fun PlatformLivePlayerScreen(
                 initialRequestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
-    val player = remember(stream?.url, stream?.headers) {
+    val player = remember(playbackUrl, stream?.headers) {
         stream?.let { resolved ->
             val dataSourceFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
@@ -751,7 +769,7 @@ private fun PlatformLivePlayerScreen(
             }
             android.util.Log.d(
                 PLATFORM_LIVE_LOG_TAG,
-                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.url}, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidate.cdn}, candidates=${resolved.candidates.size}"
+                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.url}, localUrl=$playbackUrl, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidate.cdn}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
             )
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
@@ -778,7 +796,7 @@ private fun PlatformLivePlayerScreen(
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=${stream?.url}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
+                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=$playbackUrl, sourceUrl=${stream?.url}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
                         error
                     )
                     if (!session.canPlay) return
@@ -799,7 +817,7 @@ private fun PlatformLivePlayerScreen(
                     }
                     android.util.Log.d(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${stream?.url}"
+                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=$playbackUrl"
                     )
                     playerState = playbackState
                     if (playbackState == Player.STATE_READY) {
@@ -817,17 +835,26 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(player, stream?.url) {
+    LaunchedEffect(player, playbackUrl) {
         if (player == null || stream == null) return@LaunchedEffect
         android.util.Log.d(
             PLATFORM_LIVE_LOG_TAG,
-            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${stream.url}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidate.cdn}, candidateIndex=${stream.activeCandidateIndex}/${stream.candidates.size}"
+            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=$playbackUrl, sourceUrl=${stream.url}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidate.cdn}, candidateIndex=${stream.activeCandidateIndex}/${stream.candidates.size}"
         )
         playbackError = null
         badgeVisible = true
-        player.setMediaItem(MediaItem.fromUri(stream.url))
+        player.setMediaItem(MediaItem.fromUri(playbackUrl ?: stream.url))
         player.prepare()
         session.preparePlayback(player)
+    }
+
+    // 连续代理会周期性续流，定期把代理统计打进日志，便于确认续流是否正常。
+    LaunchedEffect(continuityProxy) {
+        val handle = continuityProxy ?: return@LaunchedEffect
+        while (true) {
+            delay(10_000)
+            android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【连续代理】${handle.stats()}")
+        }
     }
 
     // 控制条与角标显示 4 秒后自动隐藏，点击画面可再次唤出（与电视直播页一致）。
@@ -838,7 +865,7 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(playerState, player, stream?.url, session.canPlay) {
+    LaunchedEffect(playerState, player, playbackUrl, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
         when (playerState) {
             Player.STATE_ENDED -> {

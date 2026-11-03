@@ -54,6 +54,11 @@ func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func()
 		newBilibiliResolver(timeoutSeconds, bilibiliCookie),
 		newDouyinResolver(timeoutSeconds, douyinCookie),
 		newKuaishouResolver(timeoutSeconds, kuaishouCookie, kuaishouKww),
+		newCCResolver(timeoutSeconds),
+		newMissevanResolver(timeoutSeconds),
+		newShowroomResolver(timeoutSeconds),
+		newInkeResolver(timeoutSeconds),
+		newWeiboResolver(timeoutSeconds),
 	}
 	for _, adapter := range service.adapters {
 		service.byID[strings.ToLower(adapter.SiteID())] = adapter

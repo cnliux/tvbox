@@ -50,19 +50,19 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      - name: Build release APK + AAB
+      - name: Build release APK
         env:
           TVBOX_RELEASE_STORE_PASSWORD: ${{ secrets.TVBOX_RELEASE_STORE_PASSWORD }}
           TVBOX_RELEASE_KEY_ALIAS: ${{ secrets.TVBOX_RELEASE_KEY_ALIAS }}
           TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease bundleRelease
+        run: ./gradlew --no-daemon assembleRelease
 
       # 单一合集版本：同一套代码运行时适配电视/手机；原生库只发布 arm64-v8a。
+      # 只发布 APK，不再产出 AAB。
       - name: Stage release artifacts
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk dist/app-release.apk
-          cp app/build/outputs/bundle/release/app-release.aab dist/app-release.aab
 
       # 发布策略硬校验：Release 只允许 arm64-v8a，禁止 armv7/x86 混入。
       - name: Verify arm64-v8a only

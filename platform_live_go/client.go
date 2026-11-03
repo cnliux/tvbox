@@ -151,6 +151,18 @@ func parseJSONBytes(data []byte) (interface{}, error) {
 	return payload, nil
 }
 
+// parseJSONPreserveNumbers 使用 json.Number 保留大整数原文，避免 18 位房间号
+// 先经过 float64 后丢失精度。新平台 resolver 统一使用该函数。
+func parseJSONPreserveNumbers(data []byte) (interface{}, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	decoder.UseNumber()
+	var payload interface{}
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
 // jsonObject 断言 map[string]interface{}。
 func jsonObject(value interface{}) map[string]interface{} {
 	if raw, ok := value.(map[string]interface{}); ok {

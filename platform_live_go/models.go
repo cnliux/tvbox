@@ -7,6 +7,7 @@
 package platformlive
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"net/url"
@@ -120,6 +121,8 @@ func Text(value interface{}, fallback string) string {
 			return strconv.FormatInt(int64(raw), 10)
 		}
 		return strconv.FormatFloat(raw, 'f', -1, 64)
+	case json.Number:
+		return raw.String()
 	default:
 		trimmed := strings.TrimSpace(fmt.Sprintf("%v", raw))
 		if trimmed == "" || trimmed == "<nil>" {
@@ -165,6 +168,14 @@ func ToInt(value interface{}) (int64, bool) {
 		var parsed int64
 		if _, err := fmt.Sscanf(strings.TrimSpace(raw), "%d", &parsed); err == nil {
 			return parsed, true
+		}
+		return 0, false
+	case json.Number:
+		if parsed, err := raw.Int64(); err == nil {
+			return parsed, true
+		}
+		if parsed, err := raw.Float64(); err == nil {
+			return int64(parsed), true
 		}
 		return 0, false
 	default:

@@ -25,7 +25,7 @@ TVBox 是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，
 - 观看历史：记录影片、封面、播放线路、集数、播放进度和更新时间；首页显示最近六部未看完的“继续观看”，原来源优先续播，备用线路后台补齐。
 - 返回定位：首页、搜索和历史页面恢复滚动位置与影片焦点；“继续观看”卡片可用方向上返回顶部导航。
 - 电视直播：支持 TVBox 文本与 M3U 直播源，主源不可用时自动尝试备用源；支持分组、左右切台、上下切换线路、数字选台，以及线路异常时自动换线。
-- 平台直播：支持斗鱼、虎牙、哔哩哔哩、抖音和快手，统一提供平台、一级分类、二级分类、直播间和播放器流程，并按平台返回结果优先选择最高画质；直播间可在本机收藏，在直播入口的“收藏”卡片中直接打开。
+- 平台直播：支持斗鱼、虎牙、哔哩哔哩、抖音、快手、网易CC、猫耳 FM、SHOWROOM、映客和微博，统一提供平台、一级分类、二级分类、直播间和播放器流程，并按平台返回结果优先选择最高画质；直播间可在本机收藏，在直播入口的“收藏”卡片中直接打开。
 - 播放亮屏：所有播放页在前台保持亮屏，暂停时同样生效；退出播放页或切到后台后恢复原设置。
 - 播放中断：切到后台或发生音频焦点中断后暂停，返回后由用户手动恢复播放。
 - OTA 更新：系统后台下载 APK，缺少系统下载组件时使用应用备用下载；小窗显示进度与授权状态，前台完成且获得授权后打开安装器，也可保存 APK 后通过文件管理器手动安装。
@@ -163,7 +163,9 @@ TVBOX_AI_API_KEY=你的测试密钥
 平台直播解析配置：
 
 - 默认使用内置 Go 解析库（`platform_live_go`，经 `gomobile bind` 打包为 `libgojni.so`），安装即可用，无需部署服务端。
-- 发布版只打包 `arm64-v8a` 原生库（`Release` 与 AAB 均不再包含 armv7/x86），并对原生库做符号剥离以控制体积。
+- Go 解析库同时提供分享口令/短链解析：`ResolveLinkJson(text, siteHint)`；独立服务端对应 `GET /v1/live/resolve-link?text=<分享链接>&site=<可选平台>`，只访问已登记的平台域名（含重定向逐跳校验），避免被当作任意 URL 代理。
+- 发布版只打包 `arm64-v8a` 原生库（`Release` 不再包含 armv7/x86），并对原生库做符号剥离以控制体积。
+- 虎牙连续播放：虎牙 CDN 对单次 HTTP-FLV 拉流有约 2 分钟会话上限（实测 120~137 秒被服务端正常关闭）。App 内置 Go 侧本机代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`），播放器只连 `127.0.0.1` 的一条永不结束的 FLV；上游被关闭时代理立即重新解析拿新签名续拉，并把新一段时间戳接在上一帧之后（丢弃回退帧）。实测连续 400 秒、3 次服务端关流均无 ENDED、无换线路。
 - 本地模拟器调试：执行 `.\gradlew.bat assembleDebug -PtvboxEmulatorAbis=true`，会额外生成 `x86`/`x86_64` 原生库（gomobile 同时产出 `android/amd64`、`android/386`）。该开关不影响 Release 产物。
 - 如需回到远程解析模式，可恢复 `RemotePlatformLiveRepository` 并自行注入服务地址构建参数。
 
@@ -186,7 +188,7 @@ Debug 产物位置：
 app\build\outputs\apk\debug\app-debug.apk
 ```
 
-> Release APK/AAB 一律由 GitHub Actions 构建与发布（仅 `arm64-v8a`）。本地不要执行 `assembleRelease` / `bundleRelease`，避免产出与 CI 不一致的非发布包。
+> Release APK 一律由 GitHub Actions 构建与发布（仅 `arm64-v8a`，不再产出 AAB）。本地不要执行 `assembleRelease`，避免产出与 CI 不一致的非发布包。
 
 ## Release 签名
 
@@ -222,7 +224,7 @@ git tag -a v1.3.27 -m "TVBox v1.3.27"
 git push origin v1.3.27
 ```
 
-3. tag 推送后，GitHub Actions 自动构建并发布 `app-release.apk`（`arm64-v8a`）与 `app-release.aab`。
+3. tag 推送后，GitHub Actions 自动构建并发布 `app-release.apk`（`arm64-v8a`）。
 4. CI 发布完成后，从 Release 附件回填 `update.json` 的 `apkSha256` / `apkSize`，再提交并推送 `main`，使 OTA 清单指向已可下载的附件。
 
 ```powershell

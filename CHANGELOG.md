@@ -1,5 +1,14 @@
 # 更新记录
 
+## v1.3.28 - 2026-11-03
+
+- 平台直播按“路线 A”继续移植 pure_live 解析逻辑（`platform_live_go`，不改 Android UI）：新增网易CC（配置中心分类 + 官方入口 + 多 CDN 最高画质）、猫耳 FM、SHOWROOM（本地分页）、映客（当前场次 FLV 校验）、微博（公开场次/观看限制语义）；平台数 5 → 10。18 位房间号改用 `json.Number` 保留精度。
+- 新增分享口令/短链解析：`Service.ResolveLink`、gomobile `ResolveLinkJson` 与服务端 `GET/POST /v1/live/resolve-link`。提取 URL → 跟随 b23.tv/v.douyin.com/v.huya.com/v.kuaishou.com/t.cn → 各平台 `NormalizeRoomID`；逐跳域名白名单 + 6 跳/256 KB 上限防 SSRF。
+- Go 侧新增 35 个单元测试并通过（总计 46 个 Go 测试）；本地服务端冒烟验证 5 个新平台的分类/房间/取流与分享链接解析（网易CC 重播房间 `5200` 返回 2 条 CDN 候选）。
+- 虎牙「每 2 分钟必断流」根因修复 — 新增本机连续 FLV 代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`）：实测断流来自虎牙 CDN 对单次 HTTP-FLV 约 2 分钟的会话上限（120~137 秒正常关流，同签名 HLS 约 142 秒后 403），与网络/UA/签名有效期无关。代理让播放器只连 `127.0.0.1` 的一条永不结束的 FLV，上游关流后立即重解析拿新签名续拉，新一段首帧时间戳接在上一帧之后 33ms（仅丢弃时间戳回退帧，允许音视频同帧）；连续两次硬失败才换候选线路。192.168.1.45 实测连续 590 秒、`reconnects=4`、`upstreamSessions=5`、`candidateSwitches=0`，全程无 `STATE_ENDED`、无换线路、无恢复重连。
+- 应用图标更新：改用新的自适应图标素材（`drawable/ic_launcher_foreground.png` + `#1E40AF` 底色 + 各密度 `mipmap-*/ic_launcher.png`），并把画面中心裁切放大（主体约占图标 50% 高度，落在自适应图标安全区内），移除旧矢量前景 `ic_launcher_foreground.xml`。
+- 构建产物收敛：不再生成 `app-release.aab`，CI 只构建与发布 `app-release.apk`（`assembleRelease`）。
+
 ## v1.3.27 - 2026-11-03
 
 - 版本收敛为手机/电视合集单包：移除 universal/tv/mobile flavor 与对应源集判断，运行时按设备类型适配电视/手机。

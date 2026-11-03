@@ -10,14 +10,15 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
-	"github.com/cnliux/tvbox/platform_live_go/platformassets"
 	"github.com/cnliux/tvbox/platform_live_go"
+	"github.com/cnliux/tvbox/platform_live_go/platformassets"
 )
 
 const (
 	serviceName    = "tvbox-platform-live"
-	serviceVersion = 4
+	serviceVersion = 5
 )
 
 func main() {
@@ -134,10 +135,47 @@ func main() {
 		writeJSON(w, http.StatusOK, result)
 	})
 
+	mux.HandleFunc("/v1/live/resolve-link", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodPost {
+			failMessage(w, http.StatusMethodNotAllowed, "仅支持 GET/POST")
+			return
+		}
+		shareText := strings.TrimSpace(r.URL.Query().Get("text"))
+		siteHint := strings.TrimSpace(r.URL.Query().Get("site"))
+		if r.Method == http.MethodPost {
+			if err := r.ParseForm(); err != nil {
+				failMessage(w, http.StatusBadRequest, "表单参数解析失败")
+				return
+			}
+			if shareText == "" {
+				shareText = strings.TrimSpace(r.FormValue("text"))
+			}
+			if siteHint == "" {
+				siteHint = strings.TrimSpace(r.FormValue("site"))
+			}
+		}
+		if shareText == "" {
+			failMessage(w, http.StatusBadRequest, "缺少参数：text")
+			return
+		}
+		target, err := liveService().ResolveLink(shareText, siteHint)
+		if fail(w, err) {
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"site":      target.Site,
+			"name":      target.SiteName,
+			"roomId":    target.RoomID,
+			"sourceUrl": target.SourceURL,
+			"url":       target.URL,
+		})
+	})
+
 	address := fmt.Sprintf("%s:%d", *host, *port)
 	log.Printf("%s 已启动：http://%s:%d", serviceName, *host, *port)
 	log.Println("健康检查：GET /health")
 	log.Printf("播放解析：GET /v1/live/resolve?site=douyu&roomId=36252")
+	log.Printf("分享口令解析：GET /v1/live/resolve-link?text=<分享链接>")
 	if err := http.ListenAndServe(address, mux); err != nil {
 		log.Fatalf("服务启动失败：%v", err)
 	}

@@ -166,6 +166,20 @@ func ResolveJson(site string, roomID string, refresh string) (string, error) {
 	return marshalIndentFree(result)
 }
 
+// ResolveLinkJson 把粘贴的分享口令/短链解析成 {site,name,roomId,sourceUrl,url}。
+// siteHint 可空；空值表示完全由链接域名判断平台。
+func ResolveLinkJson(shareText string, siteHint string) (string, error) {
+	service, err := bridgeCurrent()
+	if err != nil {
+		return "", err
+	}
+	target, err := service.ResolveLink(shareText, siteHint)
+	if err != nil {
+		return "", err
+	}
+	return marshalIndentFree(target)
+}
+
 func marshalIndentFree(value interface{}) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
