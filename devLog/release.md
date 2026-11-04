@@ -60,7 +60,7 @@
 
 ### 文件修改、原因与目的
 
-- `data/LiveRepository.kt`：清理内置电视直播源，仅保留项目最初的 `https://nav.zhenxx.de5.net/iptv.txt`（`BUILT_IN_LIVE_SOURCE_URL`）；多源按顺序探测、首个成功即用；新增 `normalizeSourceUrl` 地址归一化去重。
+- `data/LiveRepository.kt`：清理内置电视直播源，仅保留项目最初的内置源地址（历史记录已脱敏为 `REDACTED`，该地址已在后续版本彻底移除）；多源按顺序探测、首个成功即用；新增 `normalizeSourceUrl` 地址归一化去重。
 - `domain/LiveParser.kt`：TXT 源没有 `#genre#` 分组标记时不再丢台，统一归入默认"电视直播"分组；`test/PlaybackParserTest.kt` 同步用例。
 - `ui/PlatformLiveScreen.kt`：手机版列表列数按屏幕宽度分级（2/2/3/4 列）；房间卡改竖版 3:4 封面、收藏星标叠在封面上；播放页控制栏 4 秒无操作自动隐藏、点击唤出并吸收安全区；"加载更多"改通栏按钮。
 - `ui/TvBoxApp.kt`：直播源文案更新；`MobileSettingsScreen` 与三个源管理页增加 `safeDrawing` 内边距；"启动时检查更新"、线路质量统计等文字显式设置 `onSurface` 前景色，修复深色底上不可见。
