@@ -2,7 +2,7 @@
 
 TVBox 是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。合集版根据设备类型自动适配：电视端强调遥控器操作，手机端提供触屏与竖屏布局，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.3.27`（`versionCode=10327`）。本版本完成代码与资源极限瘦身：移除 tv/mobile 独立 flavor，统一为手机/电视合集版，R8 full mode + 资源压缩，APK 由约 92 MB 降到约 18 MB；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
+当前源码版本为 `1.3.30`（`versionCode=10330`）。合集版统一为手机/电视单包，R8 full mode + 资源压缩；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
