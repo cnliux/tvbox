@@ -1,15 +1,14 @@
 {
-  "versionCode": 10329,
-  "versionName": "1.3.29",
-  "apkUrl": "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.29/app-release.apk",
-  "apkSha256": "9cb0f9e8ea190ae47c85d4eeeeef00004e2ecac47ce4f267029dd13d45b39ab5",
-  "apkSize": 19493830,
+  "versionCode": 10330,
+  "versionName": "1.3.30",
+  "apkUrl": "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.30/app-release.apk",
+  "apkSha256": "67944f641ea3c9a723c3cd94dedc22be53ae5bf022df2e92b953b49f1bcdf7e9",
+  "apkSize": 19510214,
   "force": false,
   "changelog": [
-    "虎牙断流根治：内置连续 FLV 代理，播放器只连本机一条永不结束的流，上游每 2 分钟被 CDN 关闭时自动重签名续拉并缝合时间戳，实测 10 分钟无断流、无换线路。",
-    "平台直播新增 5 平台：网易CC、猫耳FM、SHOWROOM、映客、微博，平台数 5 → 10。",
-    "支持粘贴分享口令/短链直达房间：b23.tv、v.douyin.com、v.huya.com、v.kuaishou.com 等自动解析。",
-    "应用图标更新：新自适应图标，主体放大更清晰。",
-    "发布收敛：不再产出 AAB，仅发布 arm64-v8a APK。"
+    "TV 直播面板升级为三段式：左侧分类、中间频道、右侧频道详情与节目单；打开面板后焦点自动进入分类列表，方向键交由各子列表处理，修复遥控器焦点丢失。",
+    "频道列表按设备自适应：手机触摸模式使用网格多列，电视模式使用单列列表，便于遥控器上下导航。",
+    "TV 设置页改为分屏布局：左侧大类导航、右侧设置项，减少遥控器翻页操作。",
+    "首页数字快捷键（1–6）映射重构为主键盘/小键盘统一映射表，仅响应 KeyUp，避免长按重复触发。"
   ]
 }
