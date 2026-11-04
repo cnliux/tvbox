@@ -1080,7 +1080,7 @@ private fun LiveTwoLevelPanel(
                     }
                     LazyVerticalGrid(
                         state = gridState,
-                        columns = GridCells.Adaptive(minSize = 100.dp),
+                        columns = GridCells.Fixed(4),
                         contentPadding = PaddingValues(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),

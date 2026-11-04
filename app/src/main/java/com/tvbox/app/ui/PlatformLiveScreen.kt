@@ -427,7 +427,7 @@ private fun PlatformLiveBrowseSurface(
                     Box(modifier = Modifier.fillMaxSize()) {
                         LazyVerticalGrid(
                             state = resolvedGridState,
-                            columns = if (touchMode) GridCells.Adaptive(minSize = 132.dp)
+                            columns = if (touchMode) GridCells.Fixed(4)
                             else GridCells.Fixed(TvLayout.PlatformLiveColumns),
                             contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
