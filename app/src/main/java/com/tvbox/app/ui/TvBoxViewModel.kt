@@ -190,8 +190,12 @@ data class TvBoxUiState(
     val platformLiveSelectedSite: PlatformLiveSite? = null,
     val platformLiveParentCategories: List<PlatformLiveParentCategory> = emptyList(),
     val platformLiveSelectedParentCategory: PlatformLiveParentCategory? = null,
+    /** 一级分类上次选中的下标：返回一级分类页时用于恢复滚动位置与焦点。 */
+    val platformLiveParentIndex: Int = 0,
     val platformLiveCategories: List<PlatformLiveCategory> = emptyList(),
     val platformLiveSelectedCategory: PlatformLiveCategory? = null,
+    /** 二级分类上次选中的下标：返回二级分类页时用于恢复滚动位置与焦点。 */
+    val platformLiveCategoryIndex: Int = 0,
     val platformLiveRooms: List<PlatformLiveRoom> = emptyList(),
     val platformLiveRoomIndex: Int = 0,
     val platformLiveRoomPage: Int = 1,
@@ -1703,11 +1707,13 @@ class TvBoxViewModel(
     }
 
 
+    /** 手动切换线路后清零卡顿计数，避免旧线路的失败次数影响新线路。 */
     fun playNextLiveLine(): Boolean {
         val state = _state.value
         val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
         val lines = channel.lines
         if (lines.size <= 1) return false
+        liveStallRetries = 0
         val newIndex = (state.liveLineIndex + 1) % lines.size
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.liveLineIndex}, to=$newIndex, url=${lines[newIndex].url}")
         _state.update {
@@ -1717,11 +1723,13 @@ class TvBoxViewModel(
         return true
     }
 
+    /** 手动切换线路后清零卡顿计数，避免旧线路的失败次数影响新线路。 */
     fun playPreviousLiveLine(): Boolean {
         val state = _state.value
         val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
         val lines = channel.lines
         if (lines.size <= 1) return false
+        liveStallRetries = 0
         val previousIndex = if (state.liveLineIndex <= 0) lines.lastIndex else state.liveLineIndex - 1
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.liveLineIndex}, to=$previousIndex, url=${lines[previousIndex].url}")
         _state.update {
@@ -1736,6 +1744,7 @@ class TvBoxViewModel(
         val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return
         if (lineIndex !in channel.lines.indices) return
         if (lineIndex == state.liveLineIndex) return
+        liveStallRetries = 0
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.liveLineIndex}, to=$lineIndex, url=${channel.lines[lineIndex].url}")
         _state.update { it.copy(liveLineIndex = lineIndex) }
         liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
@@ -1802,6 +1811,19 @@ class TvBoxViewModel(
         _state.update { it.copy(liveNotice = message) }
     }
 
+    /**
+     * 电视直播画面就绪（STATE_READY）后调用：清零卡顿重试计数。
+     *
+     * 此前该计数只在真正切换线路时清零，会跨频道累计：
+     * 连续几个频道各卡顿一次后，新频道第一次卡顿就直接换线，表现为"没坏也自动切线路"。
+     */
+    fun notifyLivePlaybackReady() {
+        if (liveStallRetries != 0) {
+            android.util.Log.d(VM_LIVE_LOG_TAG, "【直播就绪】画面就绪，清零卡顿重试计数（原 $liveStallRetries）")
+            liveStallRetries = 0
+        }
+    }
+
     fun selectPlatformLiveSite(site: PlatformLiveSite) {
         _state.update {
             it.copy(
@@ -1810,7 +1832,9 @@ class TvBoxViewModel(
                 platformLiveSelectedSite = site,
                 platformLiveParentCategories = emptyList(),
                 platformLiveSelectedParentCategory = null,
+                platformLiveParentIndex = 0,
                 platformLiveSelectedCategory = null,
+                platformLiveCategoryIndex = 0,
                 platformLiveCategories = emptyList(),
                 platformLiveRooms = emptyList(),
                 platformLiveRoomIndex = 0,
@@ -1863,13 +1887,19 @@ class TvBoxViewModel(
     }
 
     fun selectPlatformLiveParentCategory(parentCategory: PlatformLiveParentCategory) {
-        val hasCategories = _state.value.platformLiveCategories.any { it.parentId == parentCategory.id }
+        val state = _state.value
+        val parentIndex = state.platformLiveParentCategories
+            .indexOfFirst { it.id == parentCategory.id }
+            .coerceAtLeast(0)
+        val hasCategories = state.platformLiveCategories.any { it.parentId == parentCategory.id }
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
                 platformLiveDestination = PlatformLiveDestination.Categories,
                 platformLiveSelectedParentCategory = parentCategory,
+                platformLiveParentIndex = parentIndex,
                 platformLiveSelectedCategory = null,
+                platformLiveCategoryIndex = 0,
                 platformLiveRooms = emptyList(),
                 platformLiveRoomIndex = 0,
                 platformLiveError = if (hasCategories) null else "这个大分类暂时没有可用的二级分类",
@@ -1879,11 +1909,15 @@ class TvBoxViewModel(
     }
 
     fun selectPlatformLiveCategory(category: PlatformLiveCategory) {
+        val categoryIndex = _state.value.platformLiveCategories
+            .indexOfFirst { it.id == category.id }
+            .coerceAtLeast(0)
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
                 platformLiveDestination = PlatformLiveDestination.Rooms,
                 platformLiveSelectedCategory = category,
+                platformLiveCategoryIndex = categoryIndex,
                 platformLiveRooms = emptyList(),
                 platformLiveRoomIndex = 0,
                 platformLiveRoomPage = 1,
@@ -1954,6 +1988,7 @@ class TvBoxViewModel(
     }
 
     fun selectLiveChannel(index: Int) {
+        liveStallRetries = 0
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state
@@ -2129,6 +2164,26 @@ class TvBoxViewModel(
                 platformLiveStream = stream.withActiveCandidate(index),
             )
         }
+    }
+
+    /** 遥控器：切换到上一条候选线路（循环）。 */
+    fun playPreviousPlatformLiveCandidate() {
+        stepPlatformLiveCandidate(-1)
+    }
+
+    /** 遥控器：切换到下一条候选线路（循环）。 */
+    fun playNextPlatformLiveCandidate() {
+        stepPlatformLiveCandidate(1)
+    }
+
+    private fun stepPlatformLiveCandidate(delta: Int) {
+        val stream = _state.value.platformLiveStream ?: return
+        if (stream.candidates.size <= 1) {
+            _state.update { it.copy(platformLiveNotice = "当前直播间只有一条线路") }
+            return
+        }
+        val next = (stream.activeCandidateIndex + delta + stream.candidates.size) % stream.candidates.size
+        switchPlatformLiveCandidate(next)
     }
 
     /** 消费平台直播轻提示。 */

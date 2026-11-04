@@ -1,12 +1,14 @@
 package com.tvbox.app.ui
 
 import android.app.Activity
+import android.os.SystemClock
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
@@ -25,6 +27,9 @@ internal fun VideoScaleMode.toPlayerResizeMode(): Int = when (this) {
 
 /** 系统栏巡检间隔：兼顾"旋转后尽快恢复全屏"与"手势临时唤出时不被立刻打断"。 */
 private const val IMMERSIVE_REHIDE_INTERVAL_MS = 3_000L
+
+/** 系统栏显隐动画结束后至少等待这么久再巡检，避免用户刚下拉通知栏就被抢回全屏。 */
+private const val IMMERSIVE_REHIDE_GRACE_MS = 1_500L
 
 /** Only the on-demand playback page owns immersive mode; restore it on exit. */
 @Suppress("DEPRECATION")
@@ -53,20 +58,39 @@ internal fun FullscreenWhilePlayingPageVisible(activity: Activity?) {
             if (event == Lifecycle.Event.ON_RESUME) hideBars()
         }
         owner.lifecycle.addObserver(observer)
-        // ON_RESUME 只在切后台返回时触发；旋转屏幕、下拉通知栏、三方弹窗关闭后系统栏都会重新出现，
-        // 手机版播放页需要轻量巡检把它重新隐藏，否则底部导航栏会压住播放控件。
+        // 记录系统栏动画结束时间：用户主动下拉通知栏/上滑导航后，给一段宽限期再巡检，
+        // 避免"刚拉开就被重新隐藏"的打架现象。
+        var lastBarsAnimationEndMs = 0L
+        val animationCallback = object : WindowInsetsAnimationCompat.Callback(
+            WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP,
+        ) {
+            override fun onProgress(
+                insets: WindowInsetsCompat,
+                runningAnimations: MutableList<WindowInsetsAnimationCompat>,
+            ): WindowInsetsCompat = insets
+
+            override fun onEnd(animation: WindowInsetsAnimationCompat) {
+                lastBarsAnimationEndMs = SystemClock.elapsedRealtime()
+            }
+        }
+        ViewCompat.setWindowInsetsAnimationCallback(decor, animationCallback)
+        // ON_RESUME 只在切后台返回时触发；旋转屏幕、三方弹窗关闭后系统栏都会重新出现，
+        // 手机版播放页需要轻量巡检把导航栏重新隐藏，否则底部导航栏会压住播放控件。
+        // 只检查导航栏：下拉通知栏通常只露出状态栏，此时不应抢回，以免打断通知查看。
         val rehide = object : Runnable {
             override fun run() {
-                val visibleNow = ViewCompat.getRootWindowInsets(decor)?.let {
-                    it.isVisible(statusBars) || it.isVisible(navigationBars)
-                } ?: false
-                if (visibleNow) hideBars()
+                val navigationVisibleNow = ViewCompat.getRootWindowInsets(decor)
+                    ?.isVisible(navigationBars) ?: false
+                val recentlyAnimated =
+                    SystemClock.elapsedRealtime() - lastBarsAnimationEndMs < IMMERSIVE_REHIDE_GRACE_MS
+                if (navigationVisibleNow && !recentlyAnimated) hideBars()
                 decor.postDelayed(this, IMMERSIVE_REHIDE_INTERVAL_MS)
             }
         }
         decor.postDelayed(rehide, IMMERSIVE_REHIDE_INTERVAL_MS)
         onDispose {
             decor.removeCallbacks(rehide)
+            ViewCompat.setWindowInsetsAnimationCallback(decor, null)
             owner.lifecycle.removeObserver(observer)
             controller.systemBarsBehavior = previousBehavior
             if (statusWasVisible) controller.show(statusBars) else controller.hide(statusBars)

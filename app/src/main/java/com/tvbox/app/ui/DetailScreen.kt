@@ -22,12 +22,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -55,10 +53,6 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlayEpisode
 import com.tvbox.app.domain.PlaySource
-import com.tvbox.app.domain.PlaybackAgent
-import com.tvbox.app.domain.PlaybackHealthSnapshot
-import com.tvbox.app.domain.PlaybackIssueType
-import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.InfoLine
@@ -233,74 +227,6 @@ fun DetailScreen(
 }
 
 @Composable
-private fun PlaySourceTabs(
-    movie: Movie,
-    sources: List<IndexedValue<PlaySource>>,
-    selectedIndex: Int,
-    selectedEpisodeIndex: Int,
-    playbackHealth: PlaybackHealthSnapshot,
-    sourceLatencies: Map<String, Long?>,
-    onSelect: (Int) -> Unit,
-) {
-    if (sources.isEmpty()) {
-        Text("暂无可播放源", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        return
-    }
-    val playbackAgent = remember { PlaybackAgent() }
-    val nowMs = System.currentTimeMillis()
-    val recommendedIndex = playbackAgent.selectBestSource(
-        movie = movie,
-        requestedSourceIndex = selectedIndex,
-        episodeIndex = selectedEpisodeIndex,
-        healthSnapshot = playbackHealth,
-        nowMs = nowMs,
-    )?.sourceIndex
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        itemsIndexed(sources) { _, indexedSource ->
-            val index = indexedSource.index
-            val source = indexedSource.value
-            val statusLabel = playSourceStatusLabel(
-                movieId = movie.id,
-                source = source,
-                sourceIndex = index,
-                episodeIndex = selectedEpisodeIndex,
-                playbackHealth = playbackHealth,
-                recommendedIndex = recommendedIndex,
-                nowMs = nowMs,
-            )
-            CategoryPill(
-                label = listOfNotNull(
-                    source.name,
-                    lineLatencyLabel(source.lineId, sourceLatencies),
-                    statusLabel,
-                ).joinToString(" · "),
-                selected = index == selectedIndex,
-                onClick = { onSelect(index) },
-            )
-        }
-    }
-}
-
-/** 已测速线路按延迟升序在前，未测速/失败线路保持原有顺序排在后面。 */
-private fun orderPlaySourcesByLatency(
-    sources: List<PlaySource>,
-    latencies: Map<String, Long?>,
-): List<IndexedValue<PlaySource>> {
-    return sources.withIndex().sortedWith(
-        compareBy(
-            { latencies[it.value.lineId] == null },
-            { latencies[it.value.lineId] ?: 0L },
-            { it.index },
-        ),
-    )
-}
-
-private fun lineLatencyLabel(lineId: String, latencies: Map<String, Long?>): String? {
-    if (lineId.isBlank() || !latencies.containsKey(lineId)) return null
-    return latencies[lineId]?.let { "${it}ms" } ?: "测速失败"
-}
-
-@Composable
 private fun EpisodeGrid(
     source: PlaySource?,
     selectedEpisodeIndex: Int,
@@ -409,22 +335,5 @@ private fun EpisodeButton(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-    }
-}
-
-private fun playSourceStatusLabel(
-    movieId: Int,
-    source: PlaySource,
-    sourceIndex: Int,
-    episodeIndex: Int,
-    playbackHealth: PlaybackHealthSnapshot,
-    recommendedIndex: Int?,
-    nowMs: Long,
-): String? {
-    val key = playbackHealthKey(movieId, episodeIndex, source)
-    return when (playbackHealth.entryFor(key)?.recentIssueType(nowMs)) {
-        PlaybackIssueType.Error -> "近期失败"
-        PlaybackIssueType.SlowBuffer -> "较慢"
-        null -> if (sourceIndex == recommendedIndex) "推荐" else null
     }
 }

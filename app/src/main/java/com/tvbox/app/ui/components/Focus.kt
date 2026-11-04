@@ -24,15 +24,14 @@ fun Modifier.tvFocusScale(
     focusedBorder: Color? = null,
     idleBorder: Color? = null,
 ): Modifier = composed {
-    // 手机触摸模式下不显示遥控器焦点框：触摸后焦点不会自动消失，会造成"一直高亮"的错觉。
-    if (LocalTouchMode.current) {
-        return@composed border(width = 1.dp, color = idleBorder ?: TvColors.Border, shape = shape)
-    }
+    // 手机触摸模式不再"隐藏"焦点：触摸点击不会主动获取焦点，而外接蓝牙遥控/键盘
+    // 仍然需要可见的焦点反馈。触摸模式只用 2dp 描边、不做放大，避免误以为卡片被选中。
+    val touchMode = LocalTouchMode.current
     val resolvedFocusedBorder = focusedBorder ?: TvColors.Accent
     val resolvedIdleBorder = idleBorder ?: TvColors.Border
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (focused) TvDimens.FocusScale else 1f,
+        targetValue = if (focused && !touchMode) TvDimens.FocusScale else 1f,
         label = "tv-focus-scale",
     )
     this
@@ -42,7 +41,11 @@ fun Modifier.tvFocusScale(
             scaleY = scale
         }
         .border(
-            width = if (focused) 3.dp else 1.dp,
+            width = when {
+                focused && !touchMode -> 3.dp
+                focused -> 2.dp
+                else -> 1.dp
+            },
             color = if (focused) resolvedFocusedBorder else resolvedIdleBorder,
             shape = shape,
         )

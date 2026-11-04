@@ -914,14 +914,21 @@ private fun SettingsActionButton(
         tonalElevation = if (focused) 8.dp else 0.dp,
         shadowElevation = if (focused) 10.dp else 0.dp,
     ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        // 触控热区至少 48dp，避免手机端按钮偏小导致误触。
+        Box(
+            modifier = Modifier
+                .heightIn(min = 48.dp)
+                .padding(horizontal = 18.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

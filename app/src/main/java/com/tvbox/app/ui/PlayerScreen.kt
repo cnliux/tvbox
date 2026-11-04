@@ -935,7 +935,10 @@ fun PlayerScreen(
                         }
                         true
                     }
-                    setOnTouchListener(gestureTouchListener)
+                    // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
+                    if (!isTelevision) {
+                        setOnTouchListener(gestureTouchListener)
+                    }
                 }
             },
             update = {

@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -53,6 +54,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -97,6 +103,12 @@ fun SearchScreen(
     val grid = rememberLazyGridState()
     val returnFocus = rememberReturnFocus()
     val searchFieldFocus = remember { FocusRequester() }
+    val resultsFocus = remember { FocusRequester() }
+    val moveToResults: () -> Unit = {
+        if (state.searchResults.isNotEmpty()) {
+            runCatching { resultsFocus.requestFocus() }
+        }
+    }
     var savedQuery by rememberSaveable { mutableStateOf(state.searchQuery) }
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
@@ -177,6 +189,7 @@ fun SearchScreen(
                         onBack = actions::goBack,
                         onKey = ::insertKey,
                         onDelete = ::deleteKey,
+                        onMoveToResults = moveToResults,
                         modifier = Modifier
                             .width(356.dp)
                             .fillMaxHeight(),
@@ -203,6 +216,7 @@ fun SearchScreen(
                         actions = actions,
                         grid = grid,
                         returnFocus = returnFocus,
+                        resultsFocus = resultsFocus,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
@@ -214,6 +228,7 @@ fun SearchScreen(
                         state = state,
                         fieldValue = fieldValue,
                         fieldFocus = searchFieldFocus,
+                        onMoveToResults = moveToResults,
                         onValueChange = {
                             fieldValue = it
                             actions.updateSearchQuery(it.text)
@@ -232,6 +247,7 @@ fun SearchScreen(
                         actions = actions,
                         grid = grid,
                         returnFocus = returnFocus,
+                        resultsFocus = resultsFocus,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -251,6 +267,7 @@ private fun SearchControlPanel(
     onBack: () -> Unit,
     onKey: (String) -> Unit,
     onDelete: () -> Unit,
+    onMoveToResults: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -266,7 +283,17 @@ private fun SearchControlPanel(
             onValueChange = onValueChange,
             modifier = Modifier
                 .fillMaxWidth()
-                .focusRequester(fieldFocus),
+                .focusRequester(fieldFocus)
+                .onPreviewKeyEvent { event ->
+                    // 单行搜索框里的"下键"没有光标移动意义：直接进入结果卡片列表，
+                    // 避免遥控器焦点被 TextField 吞掉后在输入框里"卡死"。
+                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                        onMoveToResults()
+                        true
+                    } else {
+                        false
+                    }
+                },
             singleLine = true,
             label = { Text("影片名称") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -318,6 +345,7 @@ private fun SearchCompactBar(
     state: TvBoxUiState,
     fieldValue: TextFieldValue,
     fieldFocus: FocusRequester,
+    onMoveToResults: () -> Unit,
     onValueChange: (TextFieldValue) -> Unit,
     onSearch: () -> Unit,
     onClear: () -> Unit,
@@ -344,7 +372,15 @@ private fun SearchCompactBar(
                 onValueChange = onValueChange,
                 modifier = Modifier
                     .weight(1f)
-                    .focusRequester(fieldFocus),
+                    .focusRequester(fieldFocus)
+                    .onPreviewKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                            onMoveToResults()
+                            true
+                        } else {
+                            false
+                        }
+                    },
                 singleLine = true,
                 label = { Text("影片名称") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -543,6 +579,7 @@ private fun SearchResultsPanel(
     actions: TvBoxViewModel,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState,
     returnFocus: ReturnFocus,
+    resultsFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
     val progress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
@@ -617,17 +654,25 @@ private fun SearchResultsPanel(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                    itemsIndexed(
+                        items = state.searchResults,
+                        key = { _, movie -> "${movie.apiLineId}-${movie.id}" },
+                    ) { index, movie ->
                         SearchResultCard(
                             movie = movie,
                             onClick = {
-                                returnFocus.mark("${movie.apiLineId}:${movie.id}", state.searchResults.indexOf(movie))
+                                returnFocus.mark("${movie.apiLineId}:${movie.id}", index)
                                 actions.openDetail(movie.id, movie.apiLineId)
                             },
-                            modifier = returnFocus.modifier(
-                                "${movie.apiLineId}:${movie.id}",
-                                state.searchResults.indexOf(movie),
-                            ),
+                            modifier = returnFocus
+                                .modifier("${movie.apiLineId}:${movie.id}", index)
+                                .then(
+                                    if (index == 0 && returnFocus.lastKey == null) {
+                                        Modifier.focusRequester(resultsFocus)
+                                    } else {
+                                        Modifier
+                                    },
+                                ),
                         )
                     }
                 }

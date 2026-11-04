@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -31,6 +32,7 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -176,11 +178,17 @@ private fun PlatformLiveParentCategoriesScreen(
     actions: TvBoxViewModel,
 ) {
     val touchMode = LocalTouchMode.current
+    val gridState = rememberLazyGridState()
     val firstCardFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(state.platformLiveParentCategories) {
-        if (!touchMode && state.platformLiveParentCategories.isNotEmpty()) {
-            firstCardFocusRequester.requestFocus()
-        }
+    val targetIndex = state.platformLiveParentIndex.coerceIn(
+        0,
+        state.platformLiveParentCategories.lastIndex.coerceAtLeast(0),
+    )
+    LaunchedEffect(state.platformLiveParentCategories, targetIndex) {
+        if (touchMode || state.platformLiveParentCategories.isEmpty()) return@LaunchedEffect
+        // 返回一级分类页时回到上次选中的分类，而不是永远落在第一项。
+        gridState.scrollToItem(targetIndex)
+        firstCardFocusRequester.requestFocus()
     }
     val site = state.platformLiveSelectedSite
     PlatformLiveBrowseSurface(
@@ -191,6 +199,7 @@ private fun PlatformLiveParentCategoriesScreen(
         isEmpty = state.platformLiveParentCategories.isEmpty(),
         emptyMessage = "没有可用直播大分类",
         onRetry = actions::refreshPlatformLive,
+        gridState = gridState,
         touchColumns = 2,
     ) {
         itemsIndexed(
@@ -202,7 +211,7 @@ private fun PlatformLiveParentCategoriesScreen(
                 category = category,
                 childCount = childCount,
                 onClick = { actions.selectPlatformLiveParentCategory(category) },
-                modifier = if (index == 0) Modifier.focusRequester(firstCardFocusRequester) else Modifier,
+                modifier = if (index == targetIndex) Modifier.focusRequester(firstCardFocusRequester) else Modifier,
             )
         }
     }
@@ -214,15 +223,18 @@ private fun PlatformLiveCategoriesScreen(
     actions: TvBoxViewModel,
 ) {
     val touchMode = LocalTouchMode.current
+    val gridState = rememberLazyGridState()
     val firstCardFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(state.platformLiveCategories) {
-        if (!touchMode && state.platformLiveCategories.isNotEmpty()) {
-            firstCardFocusRequester.requestFocus()
-        }
-    }
     val site = state.platformLiveSelectedSite
     val parentCategory = state.platformLiveSelectedParentCategory
     val categories = state.platformLiveCategories.filter { it.parentId == parentCategory?.id }
+    val targetIndex = state.platformLiveCategoryIndex.coerceIn(0, categories.lastIndex.coerceAtLeast(0))
+    LaunchedEffect(categories, targetIndex) {
+        if (touchMode || categories.isEmpty()) return@LaunchedEffect
+        // 从房间页返回时回到上次选中的二级分类。
+        gridState.scrollToItem(targetIndex)
+        firstCardFocusRequester.requestFocus()
+    }
     PlatformLiveBrowseSurface(
         title = parentCategory?.name ?: site?.name ?: "直播分类",
         subtitle = "选择二级分类",
@@ -231,13 +243,14 @@ private fun PlatformLiveCategoriesScreen(
         isEmpty = categories.isEmpty(),
         emptyMessage = "没有可用二级分类",
         onRetry = actions::refreshPlatformLive,
+        gridState = gridState,
         touchColumns = 3,
     ) {
         itemsIndexed(categories, key = { _, category -> category.id }) { index, category ->
             PlatformLiveCategoryCard(
                 category = category,
                 onClick = { actions.selectPlatformLiveCategory(category) },
-                modifier = if (index == 0) Modifier.focusRequester(firstCardFocusRequester) else Modifier,
+                modifier = if (index == targetIndex) Modifier.focusRequester(firstCardFocusRequester) else Modifier,
             )
         }
     }
@@ -627,8 +640,8 @@ private fun PlatformLiveImageCard(
                 }
                 if (touchMode && hasFavorite) {
                     PlatformLiveFavoriteStar(
-                        favorite = favorite!!,
-                        onFavoriteClick = onFavoriteClick!!,
+                        favorite = favorite,
+                        onFavoriteClick = onFavoriteClick,
                         title = title,
                         modifier = Modifier.align(Alignment.TopEnd).padding(5.dp),
                         size = 26.dp,
@@ -663,8 +676,8 @@ private fun PlatformLiveImageCard(
         }
         if (!touchMode && hasFavorite) {
             PlatformLiveFavoriteStar(
-                favorite = favorite!!,
-                onFavoriteClick = onFavoriteClick!!,
+                favorite = favorite,
+                onFavoriteClick = onFavoriteClick,
                 title = title,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
                 size = 44.dp,
@@ -683,22 +696,34 @@ private fun PlatformLiveFavoriteStar(
 ) {
     var starFocused by remember { mutableStateOf(false) }
     val touchMode = LocalTouchMode.current
+    // 触控热区至少 48dp（手机端视觉仍是 26dp），满足最小可点击尺寸。
+    val touchTarget = if (size < 48.dp) 48.dp else size
     Box(
         modifier = modifier
-            .size(size)
-            .tvFocusScale(shape = MaterialTheme.shapes.small, focusedBorder = Color.White)
-            .clip(MaterialTheme.shapes.small)
-            .onFocusChanged { starFocused = it.isFocused }
-            .background(if (starFocused) MaterialTheme.colorScheme.primary else Color(0xCC101010))
+            .size(touchTarget)
+            .onFocusChanged { starFocused = it.isFocused || it.hasFocus }
             .semantics { contentDescription = if (favorite) "取消收藏 $title" else "收藏 $title" }
             .clickable(onClick = onFavoriteClick),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = if (favorite) "★" else "☆",
-            color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
-            style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
-        )
+        Box(
+            modifier = Modifier
+                .size(size)
+                .clip(MaterialTheme.shapes.small)
+                .background(if (starFocused) MaterialTheme.colorScheme.primary else Color(0xCC101010))
+                .border(
+                    width = if (starFocused) 2.dp else 0.dp,
+                    color = if (starFocused) Color.White else Color.Transparent,
+                    shape = MaterialTheme.shapes.small,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (favorite) "★" else "☆",
+                color = if (starFocused) MaterialTheme.colorScheme.onPrimary else Color.White,
+                style = if (touchMode) MaterialTheme.typography.titleSmall else MaterialTheme.typography.headlineSmall,
+            )
+        }
     }
 }
 
@@ -913,6 +938,19 @@ private fun PlatformLivePlayerScreen(
 
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
+    val lineListState = rememberLazyListState()
+    val lineFocusRequester = remember { FocusRequester() }
+    var focusedCandidateIndex by remember { mutableStateOf(-1) }
+    LaunchedEffect(showLineControl, stream?.activeCandidateIndex) {
+        if (!showLineControl) {
+            // 关闭浮层后焦点回到播放器根节点，避免焦点遗留在已移除的候选行上。
+            runCatching { playerFocusRequester.requestFocus() }
+            return@LaunchedEffect
+        }
+        val target = stream?.activeCandidateIndex ?: 0
+        lineListState.scrollToItem(target.coerceAtLeast(0))
+        runCatching { lineFocusRequester.requestFocus() }
+    }
 
     Box(
         modifier = Modifier
@@ -921,6 +959,8 @@ private fun PlatformLivePlayerScreen(
             .focusRequester(playerFocusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                // 候选线路浮层打开时，方向键/确认键全部交给浮层内的候选行处理。
+                if (showLineControl) return@onPreviewKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                         actions.playPreviousPlatformLiveRoom()
@@ -928,6 +968,16 @@ private fun PlatformLivePlayerScreen(
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
                         actions.playNextPlatformLiveRoom()
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                        actions.playPreviousPlatformLiveCandidate()
+                        badgeVisible = true
+                        true
+                    }
+                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                        actions.playNextPlatformLiveCandidate()
+                        badgeVisible = true
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER,
@@ -940,6 +990,15 @@ private fun PlatformLivePlayerScreen(
                         } else {
                             showLineControl = true
                         }
+                        badgeVisible = true
+                        true
+                    }
+                    // 强制重连：重新解析当前直播间地址并重建 FLV 续流代理，
+                    // 用于代理端口异常/长时间无画面但未触发自动恢复的场景。
+                    AndroidKeyEvent.KEYCODE_MENU,
+                    AndroidKeyEvent.KEYCODE_INFO,
+                    -> {
+                        actions.reconnectPlatformLiveChannel()
                         badgeVisible = true
                         true
                     }
@@ -1090,14 +1149,33 @@ private fun PlatformLivePlayerScreen(
                     Column(modifier = Modifier.padding(24.dp)) {
                         Text("候选线路切换 - ${room.title}", style = MaterialTheme.typography.titleMedium)
                         Spacer(modifier = Modifier.height(16.dp))
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LazyColumn(
+                            state = lineListState,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             lazyItemsIndexed(stream.candidates) { index, candidate ->
                                 val selected = index == stream.activeCandidateIndex
+                                val focused = focusedCandidateIndex == index
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(MaterialTheme.shapes.small)
-                                        .background(if (selected) Color(0xFF7AE2BA).copy(alpha = 0.2f) else Color.Transparent)
+                                        .background(
+                                            when {
+                                                focused -> Color.White.copy(alpha = 0.10f)
+                                                selected -> Color(0xFF7AE2BA).copy(alpha = 0.2f)
+                                                else -> Color.Transparent
+                                            },
+                                        )
+                                        .border(
+                                            width = if (focused) 1.dp else 0.dp,
+                                            color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                                            shape = MaterialTheme.shapes.small,
+                                        )
+                                        .then(
+                                            if (selected) Modifier.focusRequester(lineFocusRequester) else Modifier,
+                                        )
+                                        .onFocusChanged { if (it.isFocused) focusedCandidateIndex = index }
                                         .clickable {
                                             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${stream.activeCandidateIndex}, to=$index, cdn=${candidate.cdn}")
                                             actions.switchPlatformLiveCandidate(index)

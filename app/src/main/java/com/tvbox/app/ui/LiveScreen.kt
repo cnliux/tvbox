@@ -355,6 +355,8 @@ private fun LivePlayerScreen(
                     Player.STATE_READY -> {
                         android.util.Log.i(LIVE_LOG_TAG, "【播放就绪】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, buffered=${player.bufferedPercentage}%, url=$latestLineUrl.value")
                         bufferingLineUrl = null
+                        // 画面真正就绪后清零卡顿重试计数，避免跨频道累计导致提前换线。
+                        actions.notifyLivePlaybackReady()
                         handleBufferDecision(
                             bufferMonitor.onReady(
                                 playWhenReady = player.playWhenReady,
@@ -1475,13 +1477,30 @@ private fun LiveThreeSectionPanel(
         ?.let { num -> channels.firstOrNull { it.number == num } }
         ?: playingChannel
 
-    // 焦点管理：打开面板时自动把焦点交给一级分类列表第一项
+    // 焦点管理：打开面板时自动把焦点交给一级分类列表的当前选中项
     val groupFocusRequester = remember { FocusRequester() }
+    val groupListState = rememberLazyListState()
+    val lineFocusRequester = remember { FocusRequester() }
+    val lineListState = rememberLazyListState()
     LaunchedEffect(Unit) {
         delay(80)
-        runCatching { groupFocusRequester.requestFocus() }
+        runCatching {
+            groupListState.scrollToItem(selectedGroupIndex.coerceAtLeast(0))
+            groupFocusRequester.requestFocus()
+        }
             .onSuccess { android.util.Log.d(LIVE_LOG_TAG, "【三段式面板】焦点已交给分类列表") }
             .onFailure { android.util.Log.w(LIVE_LOG_TAG, "【三段式面板】焦点请求失败") }
+    }
+
+    // 线路浮层打开后把焦点交给当前线路，保证遥控器可直接确认切换
+    LaunchedEffect(showLineSwitch) {
+        if (!showLineSwitch) return@LaunchedEffect
+        delay(60)
+        val target = (detailChannel?.lines?.indices)?.let { state.liveLineIndex.coerceIn(it) } ?: 0
+        runCatching {
+            lineListState.scrollToItem(target)
+            lineFocusRequester.requestFocus()
+        }
     }
 
     androidx.activity.compose.BackHandler {
@@ -1503,24 +1522,25 @@ private fun LiveThreeSectionPanel(
     Surface(
         modifier = Modifier
             .fillMaxSize()
-            .focusRequester(groupFocusRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
                     AndroidKeyEvent.KEYCODE_BACK,
                     AndroidKeyEvent.KEYCODE_ESCAPE,
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER,
                     -> {
                         if (showLineSwitch) showLineSwitch = false
                         else onClose()
                         true
                     }
+                    // 确认键必须交给子项（频道/线路/按钮的 clickable 在 KeyUp 触发点击），
+                    // 这里消费会把"选台/换线"变成"关闭面板"。
                     AndroidKeyEvent.KEYCODE_DPAD_UP,
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN,
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT,
                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                    -> false   // 方向键交给 Compose 焦点系统，让各子列表自行处理
+                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                    AndroidKeyEvent.KEYCODE_ENTER,
+                    -> false
                     else -> false
                 }
             },
@@ -1540,6 +1560,7 @@ private fun LiveThreeSectionPanel(
                     fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.6f),
                     modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
                 LazyColumn(
+                    state = groupListState,
                     modifier = Modifier.fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 6.dp),
                     verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1740,17 +1761,36 @@ private fun LiveThreeSectionPanel(
                         Text("切换线路 - ${detailChannel.name}",
                             style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(8.dp))
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        var focusedLineIndex by remember { mutableStateOf(-1) }
+                        LazyColumn(
+                            state = lineListState,
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
                             itemsIndexed(detailChannel.lines) { index, line ->
                                 val selected = index == state.liveLineIndex
+                                val focused = focusedLineIndex == index
+                                val rowShape = RoundedCornerShape(6.dp)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(vertical = 6.dp)
+                                        .clip(rowShape)
+                                        .background(
+                                            if (focused) Color.White.copy(alpha = 0.08f) else Color.Transparent,
+                                        )
+                                        .border(
+                                            width = if (focused) 1.dp else 0.dp,
+                                            color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                                            shape = rowShape,
+                                        )
+                                        .then(
+                                            if (selected) Modifier.focusRequester(lineFocusRequester) else Modifier,
+                                        )
+                                        .onFocusChanged { if (it.isFocused) focusedLineIndex = index }
                                         .clickable {
                                             actions.selectLiveLine(index)
                                             showLineSwitch = false
-                                        },
+                                        }
+                                        .padding(horizontal = 6.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
                                     Text("${index + 1}",
