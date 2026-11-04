@@ -423,22 +423,12 @@ private fun PlatformLiveBrowseSurface(
                             }
                         }
                     }
-                    val screenWidthDp = LocalConfiguration.current.screenWidthDp
                     val touchMode = LocalTouchMode.current
                     Box(modifier = Modifier.fillMaxSize()) {
                         LazyVerticalGrid(
                             state = resolvedGridState,
-                            // 手机触摸模式大卡片自适应：竖屏按基准列数（房间 2 列），屏越宽列数越多（≥500dp +1、≥720dp +2），卡片保持可读尺寸。
-                            columns = if (touchMode) {
-                                val extra = when {
-                                    screenWidthDp >= 720 -> 2
-                                    screenWidthDp >= 500 -> 1
-                                    else -> 0
-                                }
-                                GridCells.Fixed(touchColumns + extra)
-                            } else {
-                                GridCells.Fixed(TvLayout.PlatformLiveColumns)
-                            },
+                            columns = if (touchMode) GridCells.Adaptive(minSize = 132.dp)
+                            else GridCells.Fixed(TvLayout.PlatformLiveColumns),
                             contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
                             verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),

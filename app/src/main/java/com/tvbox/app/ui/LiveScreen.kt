@@ -1068,12 +1068,6 @@ private fun LiveTwoLevelPanel(
             } else {
                 // 手机触摸模式：网格布局自适应列数；TV 模式：单列列表便于遥控器导航。
                 if (isPortraitPhone) {
-                    val screenWidthDp = LocalConfiguration.current.screenWidthDp
-                    val columns = when {
-                        screenWidthDp >= 720 -> 3
-                        screenWidthDp >= 500 -> 2
-                        else -> 2
-                    }
                     val gridState = rememberLazyGridState()
                     LaunchedEffect(inChannelsStage) {
                         if (inChannelsStage) {
@@ -1086,7 +1080,7 @@ private fun LiveTwoLevelPanel(
                     }
                     LazyVerticalGrid(
                         state = gridState,
-                        columns = GridCells.Fixed(columns),
+                        columns = GridCells.Adaptive(minSize = 100.dp),
                         contentPadding = PaddingValues(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp),
