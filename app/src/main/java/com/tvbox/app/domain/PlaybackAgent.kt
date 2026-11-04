@@ -57,6 +57,12 @@ data class PlaybackHealthSnapshot(
 
     val slowBufferCount: Int
         get() = entries.values.sumOf { it.slowBufferCount }
+
+    /** 格式化显示线路质量统计摘要，供 UI 层直接使用。 */
+    fun qualitySummaryText(): String {
+        if (entryCount <= 0) return "暂无线路质量记录"
+        return "已记录 $entryCount 条线路表现｜成功 $successCount｜失败 $failureCount｜卡顿 $slowBufferCount｜保留最近 30 天"
+    }
 }
 
 fun prunePlaybackHealthEntries(

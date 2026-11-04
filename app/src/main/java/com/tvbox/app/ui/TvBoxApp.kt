@@ -104,6 +104,7 @@ import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.tvFocusScale
+import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
 import com.tvbox.app.ui.theme.TvLayout
@@ -419,50 +420,29 @@ private fun HomeScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .onPreviewKeyEvent { event ->
+                    // 方向键上：导航栏回弹处理
                     if (event.nativeKeyEvent.keyCode == AndroidKeyEvent.KEYCODE_DPAD_UP && navigationUpHeld) {
                         if (event.type == KeyEventType.KeyUp) navigationUpHeld = false
                         return@onPreviewKeyEvent true
                     }
+                    // 仅响应 KeyUp 事件，避免长按重复触发
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
-                    when (event.nativeKeyEvent.keyCode) {
-                        AndroidKeyEvent.KEYCODE_1,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_1,
-                        -> {
-                            actions.openHistory()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_2,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_2,
-                        -> {
-                            actions.openSearch()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_3,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_3,
-                        -> {
-                            actions.openAiRecommend()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_4,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_4,
-                        -> {
-                            actions.openLive()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_5,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_5,
-                        -> {
-                            actions.openPlatformLive()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_6,
-                        AndroidKeyEvent.KEYCODE_NUMPAD_6,
-                        -> {
-                            actions.openSettings()
-                            true
-                        }
-                        else -> false
-                    }
+                    // 数字快捷键映射（主键盘 + 小键盘统一处理）
+                    val shortcutMap = mapOf(
+                        AndroidKeyEvent.KEYCODE_1       to { actions.openHistory() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_1 to { actions.openHistory() },
+                        AndroidKeyEvent.KEYCODE_2       to { actions.openSearch() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_2 to { actions.openSearch() },
+                        AndroidKeyEvent.KEYCODE_3       to { actions.openAiRecommend() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_3 to { actions.openAiRecommend() },
+                        AndroidKeyEvent.KEYCODE_4       to { actions.openLive() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_4 to { actions.openLive() },
+                        AndroidKeyEvent.KEYCODE_5       to { actions.openPlatformLive() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_5 to { actions.openPlatformLive() },
+                        AndroidKeyEvent.KEYCODE_6       to { actions.openSettings() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_6 to { actions.openSettings() },
+                    )
+                    shortcutMap[event.nativeKeyEvent.keyCode]?.let { it(); true } ?: false
                 }
                 .padding(padding),
         ) {
@@ -752,293 +732,11 @@ private fun SettingsScreen(
         MobileSettingsScreen(state = state, actions = actions)
         return
     }
-    PageSurface { padding ->
-        var confirmClearPlaybackStats by remember { mutableStateOf(false) }
-        if (confirmClearPlaybackStats) {
-            AlertDialog(
-                onDismissRequest = { confirmClearPlaybackStats = false },
-                title = { Text("清空线路统计") },
-                text = { Text("确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。") },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            confirmClearPlaybackStats = false
-                            actions.clearPlaybackStats()
-                        },
-                    ) {
-                        Text("清空")
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { confirmClearPlaybackStats = false }) {
-                        Text("取消")
-                    }
-                },
-            )
-        }
-        if (state.remoteManageDialogVisible) {
-            RemoteManageDialog(state = state, actions = actions)
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "设置",
-                        style = MaterialTheme.typography.headlineLarge,
-                    )
-                    Text(
-                        text = "设备模式、外观与播放设置",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                SettingsActionButton(text = "返回", onClick = actions::goBack)
-            }
-            Spacer(modifier = Modifier.height(22.dp))
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "设备模式",
-                        subtitle = "默认使用电视模式；手机用户可选择手机模式。设置保存在本机。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    DeviceModeSetting(
-                        selectedMode = state.appSettings.deviceMode,
-                        onModeSelect = actions::updateDeviceMode,
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "外观",
-                        subtitle = "默认主题保留原有界面；影院主题使用左侧图标导航和影院色板。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    ThemeSetting(
-                        selectedTheme = state.appSettings.theme,
-                        onThemeSelect = actions::updateTheme,
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    FontScaleSetting(
-                        selectedFontScale = state.appSettings.fontScale,
-                        onFontScaleSelect = actions::updateFontScale,
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "首页",
-                        subtitle = "控制首页是否显示“继续观看”入口，默认关闭。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "继续观看",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = if (state.appSettings.homeContinueWatchingEnabled) {
-                                    "已开启，首页会显示最近观看记录"
-                                } else {
-                                    "已关闭，首页不显示继续观看"
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = state.appSettings.homeContinueWatchingEnabled,
-                            onCheckedChange = actions::updateHomeContinueWatching,
-                        )
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "视频接口",
-                        subtitle = "不内置视频接口，可扫码或导入添加 MacCms 自定义视频接口。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    HomeApiLineSetting(
-                        apiLines = state.apiLines,
-                        selectedApiLine = state.selectedApiLine,
-                        customLineCount = state.appSettings.customVideoApiLines.size,
-                        onSelect = actions::updateHomeApiLine,
-                        onOpenConfig = actions::openRemoteManageDialog,
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "源管理",
-                        subtitle = "直播源、自定义直播源与首页渲染数据均进入独立管理页，支持网页管理，并保留地址导入以解析视频源与直播源数据。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "源管理入口", style = MaterialTheme.typography.titleMedium)
-                            Text(text = "视频接口、直播源与首页渲染数据统一管理", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
-                            SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
-                            SettingsActionButton(text = "全部源管理", onClick = actions::openSourceManager)
-                        }
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "手机远程管理", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = "无需 token，同一局域网手机浏览器可管理视频源与直播源、导入订阅、屏蔽视频分类",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "大模型",
-                        subtitle = "未填写 API Key 时使用 APK 内置 AI 配置。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    AiProviderSetting(
-                        selectedProvider = AiProviders.find(state.appSettings.aiProviderId),
-                        modelName = state.appSettings.aiModelName,
-                        apiKey = state.appSettings.aiApiKey,
-                        onProviderSelect = actions::updateAiProvider,
-                        onOpenConfig = actions::openRemoteManageDialog,
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "播放管家",
-                        subtitle = "控制播放失败或卡顿时是否自动尝试其它线路。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "自动换线",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = if (state.appSettings.playbackAgentAutoSwitchEnabled) {
-                                    "播放失败或缓冲过久时自动切换线路"
-                                } else {
-                                    "已关闭，播放器仍可手动换线"
-                                },
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Switch(
-                            checked = state.appSettings.playbackAgentAutoSwitchEnabled,
-                            onCheckedChange = actions::updatePlaybackAgentAutoSwitch,
-                        )
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "线路质量统计",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = state.playbackHealth.qualitySummaryText(),
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        SettingsActionButton(
-                            text = "清空统计",
-                            enabled = state.playbackHealth.entryCount > 0,
-                            onClick = { confirmClearPlaybackStats = true },
-                        )
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "更新",
-                        subtitle = "控制应用启动时是否自动检查 GitHub Release 更新。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "启动时检查更新",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = if (state.appSettings.checkUpdatesOnStartup) "已开启" else "已关闭",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                            if (state.updateError != null) {
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = state.updateError,
-                                    color = MaterialTheme.colorScheme.error,
-                                )
-                            }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            SettingsActionButton(
-                                text = if (state.updateChecking) "检查中" else "立即检查",
-                                enabled = !state.updateChecking,
-                                onClick = { actions.checkForAppUpdate(showError = true) },
-                            )
-                            Switch(
-                                checked = state.appSettings.checkUpdatesOnStartup,
-                                onCheckedChange = actions::updateStartupUpdateCheck,
-                            )
-                        }
-                    }
-                }
-            }
-        }
+    // 新设计：左侧分类菜单 + 右侧详情（借鉴 Apple TV / Netflix 极简沉浸式风格）
+    SettingsTvSplitScreen(state = state, actions = actions)
+    // 远程管理弹窗保持原有逻辑
+    if (state.remoteManageDialogVisible) {
+        RemoteManageDialog(state = state, actions = actions)
     }
 }
 
@@ -1904,11 +1602,6 @@ private fun FontScaleSetting(
 private fun Category.allChildrenLabel(): String {
     val baseName = name.removeSuffix("片")
     return "全部$baseName"
-}
-
-private fun PlaybackHealthSnapshot.qualitySummaryText(): String {
-    if (entryCount <= 0) return "暂无线路质量记录"
-    return "已记录 $entryCount 条线路表现｜成功 $successCount｜失败 $failureCount｜卡顿 $slowBufferCount｜保留最近 30 天"
 }
 
 private fun createQrBitmap(content: String, size: Int): Bitmap {
