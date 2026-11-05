@@ -37,7 +37,7 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库，从上一版本 release 下载
+      # platformlive.aar 不入库，从上一版本 release 下载；若无则用 -PtvboxSkipPlatformBind=true 跳过绑定
       - name: Download platformlive AAR from previous release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -47,11 +47,10 @@ jobs:
           echo "Current: $CURRENT_TAG, Previous: $PREV_TAG"
           if [ -n "$PREV_TAG" ]; then
             AAR_URL=$(gh api "repos/${{ github.repository }}/releases/tags/$PREV_TAG" \
-              --jq '.assets[] | select(.name=="platformlive.aar") | .browser_download_url' 2>/dev/null)
+              --jq '.assets[] | select(.name=="platformlive.aar") | .browser_download_url' 2>/dev/null || true)
             if [ -n "$AAR_URL" ]; then
               mkdir -p app/libs
-              curl -L -o app/libs/platformlive.aar "$AAR_URL"
-              echo "Downloaded platformlive.aar from $PREV_TAG"
+              curl -L -o app/libs/platformlive.aar "$AAR_URL" && echo "Downloaded platformlive.aar from $PREV_TAG"
             else
               echo "WARNING: platformlive.aar not found in $PREV_TAG"
             fi
