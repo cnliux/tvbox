@@ -25,3 +25,16 @@ app/libs/
 
 # 本地调试文档（不提交）
 LOCAL_DEV.md
+
+# 本地验收测试工具（Debug-only，不入 Release 包，不入库）
+app/src/debug/
+
+# Go 平台直播本地调试测试文件
+platform_live_go/zz_debug_test.go
+
+# 本地临时文件和工具脚本
+.tmp_*.ps1
+.tmp_*.py
+tools/_fix_*.py
+.trae/
+*.png
