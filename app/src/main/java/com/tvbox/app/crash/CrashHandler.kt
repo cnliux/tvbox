@@ -71,7 +71,9 @@ object CrashHandler {
                     fw.write("brand        = ${Build.BRAND}\n")
                     fw.write("sdk          = ${Build.VERSION.SDK_INT}\n")
                     fw.write("abi          = ${Build.SUPPORTED_ABIS.joinToString(",")}\n")
-                    fw.write("thread       = ${thread.name} (id=${thread.threadId})\n")
+                    // threadId 需 JDK19+，CI 是 JDK17，继续用 id 并抑制弃用警告。
+                    @Suppress("DEPRECATION")
+                    fw.write("thread       = ${thread.name} (id=${thread.id})\n")
                     fw.write("\n--- Stack Trace ---\n")
                     val sw = java.io.StringWriter()
                     throwable.printStackTrace(java.io.PrintWriter(sw))

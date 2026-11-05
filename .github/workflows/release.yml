@@ -43,27 +43,29 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库：命中缓存则直接复用；否则由 Build 步骤的 gomobile bind 现生成。
-      - name: Download platformlive AAR from previous release
+      # platformlive.aar 不入库、也不应每次编译：
+      # ① 按 Go 源码内容哈希走 actions/cache，源码没变直接命中；
+      # ② 未命中则从最近的 release 资产下载（Publish 步骤会把 AAR 随 release 归档）；
+      # ③ 都没有才由 Build 的 bindPlatformLive 现场生成（gomobile bind，需 Go+NDK）。
+      - name: Restore platformlive AAR cache
+        id: cache-aar
+        uses: actions/cache@v4
+        with:
+          path: app/libs/platformlive.aar
+          key: platformlive-aar-${{ hashFiles('platform_live_go/**', 'tools/bind-platform-live.sh') }}
+
+      - name: Download platformlive AAR from latest release
+        if: steps.cache-aar.outputs.cache-hit != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          CURRENT_TAG="${{ github.ref_name }}"
-          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -n 1)
-          echo "Current: $CURRENT_TAG, Previous: $PREV_TAG"
-          if [ -n "$PREV_TAG" ]; then
-            AAR_URL=$(gh api "repos/${{ github.repository }}/releases/tags/$PREV_TAG" \
-              --jq '.assets[] | select(.name=="platformlive.aar") | .browser_download_url' 2>/dev/null || true)
-            if [ -n "$AAR_URL" ]; then
-              mkdir -p app/libs
-              curl -L -o app/libs/platformlive.aar "$AAR_URL" && echo "Downloaded platformlive.aar from $PREV_TAG"
-            else
-              echo "WARNING: platformlive.aar not found in $PREV_TAG"
-            fi
+          mkdir -p app/libs
+          AAR_URL=$(gh api "repos/${{ github.repository }}/releases?per_page=30" \
+            --jq '[.[] | .assets[]? | select(.name=="platformlive.aar") | .browser_download_url] | first // empty' 2>/dev/null || true)
+          if [ -n "$AAR_URL" ]; then
+            curl -L -o app/libs/platformlive.aar "$AAR_URL" && echo "Downloaded platformlive.aar from releases"
           fi
-          if [ ! -f app/libs/platformlive.aar ]; then
-            echo "::notice::platformlive.aar 未命中缓存，将由 gomobile bind 现场生成"
-          fi
+          [ -f app/libs/platformlive.aar ] || echo "::notice::platformlive.aar 无缓存/无 release 资产，gomobile bind 现场生成"
 
       - name: Build release APK
         env:
