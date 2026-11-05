@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.extractM3uEpgUrl
 import com.tvbox.app.domain.parseLiveChannels
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +34,12 @@ interface LiveRepository {
 
     /** 当前配置的订阅地址列表，供直播页展示订阅切换入口。 */
     val sourceUrls: List<String> get() = emptyList()
+
+    /**
+     * 最近一次成功解析的源内置 EPG 地址（M3U 头部 `url-tvg` / `x-tvg-url` 等）。
+     * null 表示该源未声明节目单，调用方保持用户已配置的 EPG 不变。
+     */
+    val bundledEpgUrl: String? get() = null
 }
 
 class DefaultLiveRepository : LiveRepository {
@@ -52,6 +59,10 @@ class DefaultLiveRepository : LiveRepository {
     }
 
     override val sourceUrls: List<String> get() = customSourceUrls
+
+    private var lastBundledEpgUrl: String? = null
+
+    override val bundledEpgUrl: String? get() = lastBundledEpgUrl
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -97,7 +108,10 @@ class DefaultLiveRepository : LiveRepository {
                         android.util.Log.w(LIVE_SOURCE_TAG, "【源加载失败】$sourceUrl HTTP ${response.code}")
                         return@forEach
                     }
-                    val channels = parseLiveChannels(response.body.string())
+                    val rawText = response.body.string()
+                    // 源自带的节目单地址（M3U 头部 url-tvg 等）；TXT 源没有该声明，保持 null。
+                    lastBundledEpgUrl = runCatching { extractM3uEpgUrl(rawText) }.getOrNull()
+                    val channels = parseLiveChannels(rawText)
                         .map { ch ->
                             if (ch.groupName == "电视直播" && defaultGroup.isNotBlank()) ch.copy(groupName = defaultGroup) else ch
                         }

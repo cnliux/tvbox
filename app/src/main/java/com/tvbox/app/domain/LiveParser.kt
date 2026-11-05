@@ -77,6 +77,34 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
         }
 }
 
+/** M3U 头部可能出现的 EPG 属性名，按常见度依次尝试。 */
+private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-url", "epg")
+
+/**
+ * 从 M3U 头部 `#EXTM3U` 行读取节目单地址（`url-tvg` / `x-tvg-url` / `tvg-url` 等）。
+ *
+ * 只扫描文件前若干行，避免大文件全量正则；多个地址以逗号分隔时取第一个 http 地址。
+ * 返回 null 表示源未声明 EPG，调用方应保持「未配置」状态而不是写入空串。
+ */
+fun extractM3uEpgUrl(raw: String): String? {
+    for (line in raw.lineSequence().take(32)) {
+        val trimmed = line.trim()
+        if (!trimmed.startsWith("#EXTM3U", ignoreCase = true)) continue
+        for (attribute in M3U_EPG_ATTRIBUTES) {
+            val match = Regex(
+                "(?:^|\\s)${Regex.escape(attribute)}\\s*=\\s*\"([^\"]+)\"",
+                RegexOption.IGNORE_CASE,
+            ).find(trimmed) ?: continue
+            val value = match.groupValues[1]
+                .split(',')
+                .map { it.trim().trim('"') }
+                .firstOrNull { it.startsWith("http://", true) || it.startsWith("https://", true) }
+            if (value != null) return value
+        }
+    }
+    return null
+}
+
 private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
     val channels = linkedMapOf<LiveChannelKey, AggregatedChannel>()
     var pendingChannel: M3uChannelMetadata? = null

@@ -1769,10 +1769,18 @@ private fun LiveSourceSetting(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    var urlsText by remember { mutableStateOf(state.appSettings.liveSourceUrls.joinToString("\n")) }
-    var defaultGroup by remember { mutableStateOf(state.appSettings.liveSourceDefaultGroup) }
+    // 以持久化值为 key：设置是异步从 SharedPreferences 读入的，首帧 state 还是空值，
+    // 不绑 key 会让编辑框永久停留在"空"，用户看不到已保存的源，也无法确认默认标记。
+    var urlsText by remember(state.appSettings.liveSourceUrls) {
+        mutableStateOf(state.appSettings.liveSourceUrls.joinToString("\n"))
+    }
+    var defaultGroup by remember(state.appSettings.liveSourceDefaultGroup) {
+        mutableStateOf(state.appSettings.liveSourceDefaultGroup)
+    }
     // 本地保存默认源下标，与 state 保持同步（state 在加载时从持久化读取）。
-    var defaultIndex by remember { mutableStateOf(state.appSettings.liveSourceDefaultIndex) }
+    var defaultIndex by remember(state.appSettings.liveSourceDefaultIndex) {
+        mutableStateOf(state.appSettings.liveSourceDefaultIndex)
+    }
     var savedMessage by remember { mutableStateOf<String?>(null) }
 
     // 将当前文本区内容解析为 URL 列表（仅在首次渲染时计算）。

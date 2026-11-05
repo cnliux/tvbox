@@ -125,3 +125,37 @@ internal fun mimeFromBodyHead(buffer: ByteArray, length: Int): String {
 private val LIVE_PROBE_KNOWN_EXTENSIONS = listOf(
     "m3u8", "m3u", "flv", "ts", "mp4", "mkv", "mpd", "m4s", "mov", "mpeg", "mpg",
 )
+
+/**
+ * 测量一条直播线路的首包延迟（毫秒）。
+ *
+ * 复用 [probeClient] 的短超时与 Range 头策略：只读首个分片，避免为了测速把整路
+ * 直播流拉起来。返回 null 表示不可达/超时，调用方应展示"超时"而不是 0ms。
+ */
+suspend fun measureLiveLineLatencyMs(
+    url: String,
+    headers: Map<String, String> = emptyMap(),
+): Long? {
+    if (!url.startsWith("http", ignoreCase = true)) return null
+    return withContext(Dispatchers.IO) {
+        runCatching {
+            val builder = Request.Builder()
+                .url(url)
+                .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
+            headers.forEach { (key, value) ->
+                val clean = key.isNotBlank() && value.isNotBlank() &&
+                    value.none { ch -> ch == '\r' || ch == '\n' }
+                if (clean) builder.header(key, value)
+            }
+            val startedAt = System.currentTimeMillis()
+            probeClient.newCall(builder.build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                // 读到首字节即可结束：这才是播放器真正开始出画的时间点。
+                response.body.byteStream().use { stream ->
+                    val first = stream.read()
+                    if (first < 0) null else System.currentTimeMillis() - startedAt
+                }
+            }
+        }.getOrNull()
+    }
+}

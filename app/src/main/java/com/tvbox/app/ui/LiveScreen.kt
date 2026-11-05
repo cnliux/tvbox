@@ -800,26 +800,25 @@ private fun LivePlayerScreen(
                 )
             }
         }
-        // ── 右下 EPG 窄卡（280dp）：浮层打开时贴浮层右缘（340dp + 16dp），收起后回右下角 ──
-        val epgEndPadding by animateDpAsState(
-            targetValue = if (channelListVisible) 356.dp else 16.dp,
-            animationSpec = tween(120),
-            label = "live-epg-end-padding",
-        )
-        // 浮层浏览期间 EPG 卡跟随遥控焦点（预览），未移动焦点时仍显示正在播放的频道。
-        val epgChannel = previewChannel ?: currentChannel
-        LiveEpgCard(
-            channel = epgChannel,
-            lineIndex = if (previewChannel == null) state.liveLineIndex else 0,
-            nowProgram = actions.liveEpgNow(epgChannel),
-            programs = remember(epgChannel, clockTick, state.liveEpgByChannel) {
-                buildLiveEpgDisplay(actions.liveEpgPrograms(epgChannel))
-            },
-            nowMs = remember(clockTick) { System.currentTimeMillis() },
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = epgEndPadding, bottom = 72.dp),
-        )
+        // ── 右下 EPG 窄卡（280dp）────────────────────────────────────────────
+        // 规格：电视端节目单只在按确认键唤出浮层后才显示，全屏态不常驻，
+        // 保证画面主体干净。浮层打开时卡片贴浮层右缘（340dp + 16dp）。
+        if (channelListVisible) {
+            // 浮层浏览期间 EPG 卡跟随遥控焦点（预览），未移动焦点时显示正在播放的频道。
+            val epgChannel = previewChannel ?: currentChannel
+            LiveEpgCard(
+                channel = epgChannel,
+                lineIndex = if (previewChannel == null) state.liveLineIndex else 0,
+                nowProgram = actions.liveEpgNow(epgChannel),
+                programs = remember(epgChannel, clockTick, state.liveEpgByChannel) {
+                    buildLiveEpgDisplay(actions.liveEpgPrograms(epgChannel))
+                },
+                nowMs = remember(clockTick) { System.currentTimeMillis() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 356.dp, bottom = 72.dp),
+            )
+        }
         if (channelListVisible) {
             LiveChannelOverlayPanel(
                 state = state,

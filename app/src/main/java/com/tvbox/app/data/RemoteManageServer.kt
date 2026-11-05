@@ -44,6 +44,10 @@ data class RemoteManageSite(
 data class RemoteManageSnapshot(
     val videoSources: List<RemoteManageVideoSource> = emptyList(),
     val customLiveUrls: List<String> = emptyList(),
+    /** 电视直播默认源下标（-1 表示未设置），与设置页同一份配置。 */
+    val liveDefaultIndex: Int = -1,
+    /** 节目单（XMLTV）地址；空表示未配置，直播页将显示「暂无节目单」。 */
+    val epgUrl: String = "",
     val sites: List<RemoteManageSite> = emptyList(),
     val blockedVideoCategories: List<String> = emptyList(),
     val knownVideoCategories: List<String> = emptyList(),
@@ -243,6 +247,7 @@ class RemoteManageServer(
                 .form-row input { flex: 1; min-width: 140px; }
                 .message { background: #1c3a33; border: 1px solid #2f6b58; color: #8ff0cf; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
                 .empty { color: #8f9bb3; font-size: 14px; }
+                .sub { color: #9fb0c9; font-size: 13px; font-weight: 700; margin-top: 18px; margin-bottom: 8px; letter-spacing: .3px; }
                 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
                 .chip { background: #2a3446; color: #f5f7fb; border-radius: 999px; padding: 9px 15px; font-weight: 600; }
                 .chip.blocked { background: #5a2a2a; color: #ffb4ab; text-decoration: line-through; }
@@ -302,6 +307,8 @@ class RemoteManageServer(
                       }
                   }}
                   ${addForm("live-add", "", "直播源地址（M3U/TXT），每行一个", "添加直播源")}
+                  ${liveDefaultBlock(data)}
+                  ${epgBlock(data)}
                 </section>
 
                 <section class="panel">
@@ -354,6 +361,47 @@ class RemoteManageServer(
             ),
         )
         append(hiddenForm("source-delete", source.id, "删除"))
+    }
+
+    /** 直播默认源设置：与 App 内设置页共用同一份配置（同一时间只有一个默认源）。 */
+    private fun liveDefaultBlock(data: RemoteManageSnapshot): String {
+        if (data.customLiveUrls.isEmpty()) return ""
+        val rows = data.customLiveUrls.mapIndexed { index, url ->
+            val isDefault = index == data.liveDefaultIndex
+            val action = if (isDefault) {
+                "<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"live-default-clear\" />" +
+                    "<button class=\"ghost\">取消默认</button></form>"
+            } else {
+                "<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"live-default-set\" />" +
+                    "<input type=\"hidden\" name=\"value\" value=\"$index\" />" +
+                    "<button class=\"ghost\">设为默认</button></form>"
+            }
+            itemRow(
+                title = "源${index + 1}",
+                subtitle = url,
+                tag = if (isDefault) "默认" else "",
+                actions = action,
+            )
+        }.joinToString("")
+        return """
+            <div class="sub">默认直播源（优先使用；不可用时自动切换备用源）</div>
+            $rows
+        """
+    }
+
+    /** 节目单（EPG）地址设置：直播页的节目单与 EPG 卡片来自该 XMLTV 接口。 */
+    private fun epgBlock(data: RemoteManageSnapshot): String {
+        return """
+            <div class="sub">节目单（EPG）</div>
+            <form method="post">
+              <input type="hidden" name="action" value="live-epg" />
+              <div class="form-row">
+                <input class="text" name="url" value="${data.epgUrl.htmlEscape()}" placeholder="https://example.com/epg.xml" autocomplete="off" />
+                <button>保存</button>
+              </div>
+            </form>
+            <p class="empty">留空则直播页显示「暂无节目单」，不影响播放；M3U 源自带 url-tvg 时会自动采用。</p>
+        """
     }
 
     private fun itemRow(title: String, subtitle: String, tag: String, actions: String): String {

@@ -40,6 +40,7 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.data.EpgRepository
 import com.tvbox.app.data.RemoteEpgRepository
@@ -72,6 +73,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -187,6 +190,12 @@ data class TvBoxUiState(
     val liveEpgByChannel: Map<String, List<EpgProgram>> = emptyMap(),
     /** 节目单是否已完成一次拉取（无论成败），避免反复重试慢源。 */
     val liveEpgLoaded: Boolean = false,
+    /** 当前生效的「源自带 EPG 地址」，用于换源时判断是否需要重新采用。 */
+    val liveEpgBundledUrl: String = "",
+    /** 当前频道各线路的首包延迟（url → 毫秒）；null 值表示测速超时/不可达。 */
+    val liveLineLatencies: Map<String, Long?> = emptyMap(),
+    /** 线路测速是否进行中，供线路浮层展示"测速中"。 */
+    val liveLineTesting: Boolean = false,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
     /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
@@ -314,6 +323,7 @@ class TvBoxViewModel(
     private val historyWriteMutex = Mutex()
     private val liveFavoritesMutex = Mutex()
     private var epgJob: Job? = null
+    private var liveLineTestJob: Job? = null
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
@@ -866,6 +876,8 @@ class TvBoxViewModel(
         return RemoteManageSnapshot(
             videoSources = videoSources,
             customLiveUrls = settings.liveSourceUrls,
+            liveDefaultIndex = settings.liveSourceDefaultIndex,
+            epgUrl = settings.epgUrl,
             sites = sites,
             blockedVideoCategories = settings.blockedVideoCategories,
             knownVideoCategories = if (remoteCategorySourceId.isNotBlank()) {
@@ -977,6 +989,24 @@ class TvBoxViewModel(
                 val url = request.url.trim()
                 updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url, _state.value.appSettings.liveSourceDefaultGroup)
                 "已删除直播源：$url"
+            }
+            "live-default-set" -> {
+                val index = request.value.trim().toIntOrNull()
+                if (index == null || index !in _state.value.appSettings.liveSourceUrls.indices) {
+                    "默认源下标无效，请刷新网页后重试。"
+                } else {
+                    setLiveSourceDefaultIndex(index)
+                    "已把源${index + 1}设为默认直播源。"
+                }
+            }
+            "live-default-clear" -> {
+                clearLiveSourceDefaultIndex()
+                "已取消默认直播源。"
+            }
+            "live-epg" -> {
+                // 空串表示清除；与设置页同一入口，保存后立即重新拉取节目单。
+                updateEpgUrl(request.url.trim())
+                if (request.url.isBlank()) "已清除节目单地址。" else "已保存节目单地址，正在后台拉取。"
             }
             "site-toggle" -> {
                 togglePlatformLiveSiteBlocked(request.id)
@@ -1597,6 +1627,40 @@ class TvBoxViewModel(
         }
         liveLinePrefs?.saveLineIndex(channel.key(), previousIndex)
         return true
+    }
+
+    /**
+     * 对当前频道的所有线路发起首包测速，结果写入 [TvBoxUiState.liveLineLatencies]。
+     *
+     * 在线路浮层展开时调用：让用户按实际延迟挑线路，而不是逐条点播试错。
+     * 并发执行但每条独立失败（超时记 null），不阻塞播放，也不改变当前线路。
+     */
+    fun testLiveChannelLines() {
+        val state = _state.value
+        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return
+        val lines = channel.lines
+        if (lines.isEmpty()) return
+        if (state.liveLineTesting) return
+        // 新频道/新测速：清掉上一轮结果，避免旧延迟误导用户。
+        _state.update { it.copy(liveLineTesting = true, liveLineLatencies = emptyMap()) }
+        liveLineTestJob?.cancel()
+        liveLineTestJob = viewModelScope.launch {
+            android.util.Log.i(VM_LIVE_LOG_TAG, "【线路测速】开始 channel=${channel.name}, lines=${lines.size}")
+            val results = lines.map { line ->
+                async {
+                    val latency = runCatching {
+                        measureLiveLineLatencyMs(line.url, line.headers)
+                    }.getOrNull()
+                    line.url to latency
+                }
+            }.awaitAll().toMap()
+            android.util.Log.i(
+                VM_LIVE_LOG_TAG,
+                "【线路测速】完成 channel=${channel.name}, " +
+                    results.entries.joinToString { (url, ms) -> "${url.takeLast(18)}=${ms?.let { "${it}ms" } ?: "超时"}" },
+            )
+            _state.update { it.copy(liveLineLatencies = results, liveLineTesting = false) }
+        }
     }
 
     fun selectLiveLine(lineIndex: Int) {
@@ -2950,6 +3014,8 @@ class TvBoxViewModel(
         appSettingsRepository.commitLiveSourceDefaultIndex(index)
         saveSettings(settings)
         applyLiveSourceConfig(settings)
+        // 默认源立即生效：当前频道列表可能来自旧源，不重载会让用户以为"设置没成功"。
+        if (_state.value.screen == TvScreen.Live) refreshLive()
     }
 
     /** 清除电视直播默认源。 */
@@ -2961,6 +3027,7 @@ class TvBoxViewModel(
         appSettingsRepository.commitLiveSourceDefaultIndex(-1)
         saveSettings(settings)
         applyLiveSourceConfig(settings)
+        if (_state.value.screen == TvScreen.Live) refreshLive()
     }
 
     /** 切换剧集排序顺序（正序 ↔ 倒序），持久化到 SharedPreferences。 */
@@ -2968,7 +3035,6 @@ class TvBoxViewModel(
         val current = _state.value
         val settings = current.appSettings.copy(episodeSortReverse = !current.appSettings.episodeSortReverse)
         _state.update { it.copy(appSettings = settings) }
-        appSettingsRepository.commitLiveSourceDefaultIndex(settings.liveSourceDefaultIndex)
         saveSettings(settings)
     }
 
@@ -3378,6 +3444,9 @@ class TvBoxViewModel(
                             liveError = if (channels.isEmpty()) "没有可用直播频道" else null,
                         )
                     }
+                    // 源自带 EPG（M3U 头部 url-tvg 等）：用户未显式配置时自动采用，
+                    // 已手工配置则以用户配置优先，不覆盖。
+                    adoptBundledLiveEpg()
                     // 频道列表就绪后补拉节目单（幂等：已加载过则直接返回）。
                     loadLiveEpg()
                 }
@@ -3514,12 +3583,39 @@ class TvBoxViewModel(
     }
 
     /**
+     * 采用直播源自带的 EPG 地址（M3U 头部 `url-tvg` / `x-tvg-url` / `tvg-url`）。
+     *
+     * 优先级：用户手工配置的 [AppSettings.epgUrl] > 源自带地址。
+     * 即用户没配过 EPG 时自动启用源里的地址；配过则不覆盖（设置页可清除以回到自动）。
+     */
+    private fun adoptBundledLiveEpg() {
+        val bundled = liveRepository.bundledEpgUrl?.trim().orEmpty()
+        val current = _state.value
+        // 换源后旧源的自带地址必须失效：新源没有 url-tvg 时回退到"未配置"。
+        if (bundled == current.liveEpgBundledUrl) return
+        _state.update {
+            it.copy(
+                liveEpgBundledUrl = bundled,
+                liveEpgByChannel = emptyMap(),
+                liveEpgLoaded = false,
+            )
+        }
+        // 只作为"用户未配置时的回退值"，绝不写入 appSettings，避免被其它保存动作落盘，
+        // 导致换源后仍残留上一份源的 EPG 地址。
+        loadLiveEpg(force = true)
+    }
+
+    /** 当前实际使用的 EPG 地址：用户配置优先，其次源自带（M3U 头部 url-tvg）。 */
+    private fun effectiveEpgUrl(state: TvBoxUiState): String =
+        state.appSettings.epgUrl.trim().ifBlank { state.liveEpgBundledUrl.trim() }
+
+    /**
      * 拉取 XMLTV 节目单全量 Map 存入状态；EPG 是增强项：
      * 未配置地址直接返回，失败静默并标记已加载，避免反复重试慢源。
      * [force] 为 true 时忽略 [TvBoxUiState.liveEpgLoaded] 重新拉取（保存新地址时用）。
      */
     private fun loadLiveEpg(force: Boolean = false) {
-        val url = _state.value.appSettings.epgUrl
+        val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
         if (!force && _state.value.liveEpgLoaded) return
         epgJob?.cancel()
@@ -3527,7 +3623,7 @@ class TvBoxViewModel(
             val programs = runCatching { epgRepository.fetch(url) }.getOrDefault(emptyMap())
             _state.update { state ->
                 // 地址在拉取期间被改掉时丢弃本次结果。
-                if (state.appSettings.epgUrl != url) state
+                if (effectiveEpgUrl(state) != url) state
                 else state.copy(liveEpgByChannel = programs, liveEpgLoaded = true)
             }
         }

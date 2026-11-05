@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
@@ -200,8 +201,9 @@ private fun TvSettingsDetail(
                 TvSettingCategory.General -> GeneralTvContent(state, actions)
                 TvSettingCategory.Playback -> PlaybackTvContent(state, actions)
                 TvSettingCategory.Sources -> SourcesTvContent(state, actions)
+                TvSettingCategory.Data -> DataTvContent(state, actions)
                 TvSettingCategory.Remote -> RemoteTvContent(state, actions)
-                TvSettingCategory.About -> AboutTvContent()
+                TvSettingCategory.About -> AboutTvContent(state, actions)
             }
         }
     }
@@ -485,12 +487,55 @@ private fun RemoteTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
 }
 
 @Composable
-private fun AboutTvContent() {
+private fun DataTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var confirmClearHistory by remember { mutableStateOf(false) }
+    if (confirmClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmClearHistory = false },
+            title = { Text("清空历史记录", color = TvColors.TextPrimary) },
+            text = { Text("确定要清空所有观看历史记录吗？此操作不可撤销。", color = TvColors.TextSecondary) },
+            confirmButton = {
+                Button(onClick = { confirmClearHistory = false; actions.clearHistory() }) {
+                    Text("清空", color = MaterialTheme.colorScheme.onPrimary)
+                }
+            },
+            dismissButton = { TextButton(onClick = { confirmClearHistory = false }) { Text("取消", color = TvColors.TextSecondary) } },
+        )
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        TvSettingRow(
+            title = "观看历史",
+            subtitle = "共 ${state.historyItems.size} 条本地播放记录",
+            trailing = {
+                TvFocusButton(
+                    text = "清空历史",
+                    enabled = state.historyItems.isNotEmpty(),
+                    onClick = { confirmClearHistory = true },
+                )
+            },
+        )
+    }
+}
+
+@Composable
+private fun AboutTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
     Column(verticalArrangement = Arrangement.spacedBy(20.dp)) {
         TvSettingRow(title = "应用名称", subtitle = "TVBox", trailing = {})
         TvSettingRow(title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME}", trailing = {})
         TvSettingRow(title = "设计灵感", subtitle = "借鉴 tvOS、Android TV、Netflix 极简沉浸式设计", trailing = {})
         TvSettingRow(title = "开源协议", subtitle = "遵循 GPLv3，本地配置优先", trailing = {})
+        TvSettingRow(
+            title = "检查更新",
+            subtitle = state.updateError
+                ?: if (state.updateChecking) "检查中…" else "当前版本 v${BuildConfig.VERSION_NAME}",
+            trailing = {
+                TvFocusButton(
+                    text = if (state.updateChecking) "检查中…" else "检查",
+                    enabled = !state.updateChecking,
+                    onClick = { actions.checkForAppUpdate(showError = true) },
+                )
+            },
+        )
     }
 }
 
@@ -640,6 +685,7 @@ private enum class TvSettingCategory(
     General("通用", "设备模式、外观、首页行为", Icons.Default.Settings),
     Playback("播放", "播放管家、缩放、跳过", Icons.Default.PlayArrow),
     Sources("数据源", "视频源、直播源、平台直播", Icons.AutoMirrored.Filled.List),
+    Data("数据管理", "观看历史、线路统计", Icons.Default.Delete),
     Remote("远程管理", "局域网远程管理、源管理", Icons.Default.Settings),
     About("关于", "应用信息、版本、协议", Icons.Default.Info),
 }

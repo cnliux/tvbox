@@ -132,8 +132,9 @@ object SourceConfigCodec {
                     livesElement.forEach { element ->
                         val item = element as? JsonObject ?: return@forEach
                         val url = item.stringOrNull("url") ?: return@forEach
+                        // 直播订阅是文件地址：不能补尾斜杠，否则 xxx.m3u/ 必然 404。
                         url.split('#')
-                            .mapNotNull { fragment -> normalize(fragment) }
+                            .mapNotNull { fragment -> normalizeLiveUrl(fragment) }
                             .forEach { normalized -> if (normalized !in liveUrls) liveUrls += normalized }
                     }
                 }
@@ -196,7 +197,12 @@ object SourceConfigCodec {
     }
 
 
-    /** Strips query/fragment, enforces trailing slash like every other MacCms source URL inside the app. */
+    /**
+     * 归一化配置里的**视频接口**地址：去掉 query/fragment，并补成带尾斜杠的 MacCms 目录形式。
+     *
+     * 注意仅用于视频接口（`sites[].api`）——直播订阅是文件地址（.m3u/.txt/.json），
+     * 绝不能走这里，否则会得到 `xxx.m3u/` 这种必然 404 的地址（见 [normalizeLiveUrl]）。
+     */
     private fun normalize(rawUrl: String): String? {
         val trimmed = rawUrl.trim()
         val http = trimmed.startsWith("http://", ignoreCase = true) ||
@@ -205,6 +211,23 @@ object SourceConfigCodec {
         val withoutQuery = trimmed.substringBefore('?').substringBefore('#').trimEnd('/')
         if (withoutQuery.length <= "http://".length) return null
         return "$withoutQuery/"
+    }
+
+    /**
+     * 归一化直播订阅地址：只做 trim、去 query/fragment 与**去掉尾部斜杠**。
+     *
+     * 直播订阅指向的是具体文件（.m3u/.m3u8/.txt/.json）或 CDN 上的源文件，
+     * 追加尾斜杠会被服务端当成目录而返回 404/HTML 目录页。
+     */
+    private fun normalizeLiveUrl(rawUrl: String): String? {
+        val trimmed = rawUrl.trim().trim('"')
+        if (trimmed.isEmpty()) return null
+        val http = trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        if (!http) return null
+        val cleaned = trimmed.substringBefore('#').trimEnd('/')
+        if (cleaned.length <= "http://".length) return null
+        return cleaned
     }
 
     private fun normalizeLines(lines: List<CustomVideoApiLine>): List<CustomVideoApiLine> {

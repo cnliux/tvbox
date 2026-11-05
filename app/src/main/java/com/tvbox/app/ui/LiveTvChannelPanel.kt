@@ -428,6 +428,8 @@ internal fun LiveLineOverlay(
     LaunchedEffect(Unit) {
         delay(60)
         runCatching { focusRequester.requestFocus() }
+        // 展开线路即测速：让用户按实际延迟挑线路，而不是逐条点播试错。
+        actions.testLiveChannelLines()
     }
     Box(
         modifier = Modifier
@@ -518,7 +520,30 @@ internal fun LiveLineOverlay(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
-                        if (isPlaying) {
+                        // 测速结果：null=超时，进行中显示"测速中"。
+                        val latency = state.liveLineLatencies[line.url]
+                        if (state.liveLineTesting) {
+                            Text(
+                                text = "测速中",
+                                color = Color.White.copy(alpha = 0.45f),
+                                fontSize = 10.sp,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        } else if (state.liveLineLatencies.isNotEmpty()) {
+                            Text(
+                                text = latency?.let { "${it}ms" } ?: "超时",
+                                color = when {
+                                    latency == null -> Color(0xFFFF7171)
+                                    // 200ms 内视为流畅，800ms 内一般，更慢标黄提示。
+                                    latency < 200L -> Color(0xFF1ED760)
+                                    latency < 800L -> Color.White.copy(alpha = 0.7f)
+                                    else -> Color(0xFFFFB300)
+                                },
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        } else if (isPlaying) {
                             Box(Modifier.size(4.dp).background(LiveTvAccent, CircleShape))
                             Spacer(Modifier.width(4.dp))
                             Text("播放中", color = LiveTvAccent, fontSize = 10.sp)
@@ -530,6 +555,7 @@ internal fun LiveLineOverlay(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 ControlButton("复制 URL", onCopyUrl)
                 ControlButton("查看 URL", onViewUrl)
+                ControlButton("重新测速", { actions.testLiveChannelLines() })
                 ControlButton("关闭", onClose)
             }
         }
