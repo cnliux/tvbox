@@ -39,6 +39,7 @@ import com.tvbox.app.data.SharedDoubanHotCache
 import com.tvbox.app.data.SharedHistoryRepository
 import com.tvbox.app.data.SharedPlaybackHealthRepository
 import com.tvbox.app.data.SharedPlatformLiveFavoritesRepository
+import com.tvbox.app.data.SharedLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
 import com.tvbox.app.domain.DeviceMode
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -349,6 +350,7 @@ private class TvBoxViewModelFactory(
             historyRepository = SharedHistoryRepository(activity.applicationContext),
             platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(activity.applicationContext),
             liveLinePrefs = LiveLinePreference(activity.applicationContext),
+            liveFavoritesRepository = SharedLiveFavoritesRepository(activity.applicationContext),
         ) as T
     }
 }

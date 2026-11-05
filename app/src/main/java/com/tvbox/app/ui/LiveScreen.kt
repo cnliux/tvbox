@@ -1,12 +1,13 @@
 package com.tvbox.app.ui
 
-import android.content.Context
 import android.content.pm.ActivityInfo
-import android.content.res.Configuration
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,36 +19,25 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -67,17 +57,20 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
@@ -88,19 +81,31 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import com.tvbox.app.domain.LivePlaybackWatchdog
+import coil.compose.AsyncImage
+import com.tvbox.app.data.liveFavoriteKey
+import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.LivePlaybackWatchdog
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.probeLiveLineMimeType
-import android.widget.Toast
-import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlinx.coroutines.delay
 
+/**
+ * 电视直播页（电视专用）：全屏播放 + 半透明浮层菜单。
+ *
+ * 手机端直播交互已迁移到独立的 MobileLiveScreen；本文件只保留遥控器交互：
+ * 默认全屏播放，顶/底信息条 3 秒无操作自动淡出，MENU/确认唤出左侧半透明频道浮层，
+ * 右下角 EPG 窄卡常驻，数字键直选频道。
+ */
 @Composable
 fun LiveScreen(
     state: TvBoxUiState,
@@ -110,8 +115,9 @@ fun LiveScreen(
     BindPlaybackSession(session, null)
     PageSurface { padding ->
         when {
-            state.liveLoading -> LoadingState(
-                text = "正在加载直播源",
+            // 加载态用红色进度环（与直播页强调色一致），文案按"正在加载 <频道/直播源>"。
+            state.liveLoading -> LiveLoadingState(
+                text = "正在加载直播源...",
                 modifier = Modifier.padding(padding),
             )
             state.liveError != null -> ErrorState(
@@ -143,13 +149,15 @@ private fun LivePlayerScreen(
     val latestLineUrl = rememberUpdatedState(currentLine.url)
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
+    // 画面比例：false = 原始比例（FIT，默认），true = 铺满裁切（ZOOM）。底部「⛶」按钮切换。
+    var liveFillScreen by remember { mutableStateOf(false) }
+    // 缓冲标记必须走 Compose 状态：直接读 player.playbackState 不会触发重组，
+    // 加载环会一直挂在画面上。由播放器回调写入。
+    var playerBuffering by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
-    val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
-    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     val isTelevision = state.effectiveDeviceMode == DeviceMode.Television
-    val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
@@ -157,10 +165,6 @@ private fun LivePlayerScreen(
         ExoPlayer.Builder(context).build().apply {
             playWhenReady = true
         }
-    }
-    // 手机模式下直播播放页全屏展示，隐藏状态栏与导航栏，退出时恢复。
-    if (isMobile) {
-        FullscreenWhilePlayingPageVisible(activity)
     }
     val playerFocusRequester = remember { FocusRequester() }
     BindPlaybackSession(session, player)
@@ -175,24 +179,32 @@ private fun LivePlayerScreen(
     val playbackWatchdog = remember { LivePlaybackWatchdog() }
     var channelListVisible by remember { mutableStateOf(false) }
     var channelListInteraction by remember { mutableIntStateOf(0) }
-    var mobileControlsVisible by remember(isTelevision) { mutableStateOf(!isTelevision) }
-    var mobileControlsInteraction by remember { mutableIntStateOf(0) }
-    // 手机"全屏"：把横屏直播画面裁剪铺满整个屏幕，消除上下黑边。
-    var fullscreenZoom by remember { mutableStateOf(false) }
+    // 浮层内遥控焦点移动时的"预览频道"：只驱动 EPG 卡，不改变播放目标（确认键才切台）。
+    var previewChannel by remember { mutableStateOf<LiveChannel?>(null) }
+    // 顶/底信息条与频道 badge 共用一套显隐：任意按键/触摸恢复并重置 3 秒计时，超时整体淡出。
+    var barsVisible by remember { mutableStateOf(true) }
+    var barsNonce by remember { mutableIntStateOf(0) }
     var channelNumberInput by remember { mutableStateOf("") }
     var channelNumberNonce by remember { mutableIntStateOf(0) }
     var promptMessage by remember { mutableStateOf("") }
     var promptNonce by remember { mutableIntStateOf(0) }
     var promptVisible by remember { mutableStateOf(false) }
-    var channelBadgeVisible by remember { mutableStateOf(true) }
     var bufferingLineUrl by remember { mutableStateOf<String?>(null) }
     var bufferingCheckNonce by remember { mutableIntStateOf(0) }
     var automaticSwitchLineUrl by remember { mutableStateOf<String?>(null) }
+    // 顶栏时钟与 EPG 卡"当前节目/进度"共用 20 秒节拍，保证分钟级刷新。
+    var clockTick by remember { mutableIntStateOf(0) }
+    val clockText = remember(clockTick) { formatClock(System.currentTimeMillis()) }
     // 播放器回调注册在 DisposableEffect(player) 里，只会捕获首次组合时的频道快照；
     // 换台后日志里的频道名/线路号会停留在旧值，排查时极易误判。改用更新态读取。
     val latestChannelLabel = rememberUpdatedState("${currentChannel.groupName}/${currentChannel.name}")
     val latestLineIndex = rememberUpdatedState(state.liveLineIndex)
     val latestLineCount = rememberUpdatedState(currentChannel.lines.size)
+
+    fun bumpBars() {
+        barsVisible = true
+        barsNonce++
+    }
 
     fun showPrompt(message: String) {
         promptMessage = message
@@ -202,7 +214,7 @@ private fun LivePlayerScreen(
 
     fun showChannelList() {
         channelListVisible = true
-        actions.showLivePanelGroups()
+        bumpBars()
         channelListInteraction++
     }
 
@@ -210,16 +222,9 @@ private fun LivePlayerScreen(
         if (channelListVisible) channelListInteraction++
     }
 
-    fun showMobileControls() {
-        if (!isTelevision) {
-            mobileControlsVisible = true
-            mobileControlsInteraction++
-        }
-    }
-
     fun handleNumberKey(number: Int): Boolean {
         channelNumberInput = (channelNumberInput + number.toString()).takeLast(MAX_CHANNEL_NUMBER_DIGITS)
-        showPrompt("频道 $channelNumberInput")
+        bumpBars()
         channelNumberNonce++
         return true
     }
@@ -235,7 +240,7 @@ private fun LivePlayerScreen(
             return
         }
         if (latestLineCount.value <= 1 && reason == LiveLineFallbackReason.Error) {
-            // 当前频道只有一条线路且播放器硬错误：直接换台，避免手机端长时间黑屏。
+            // 当前频道只有一条线路且播放器硬错误：直接换台，避免长时间黑屏。
             android.util.Log.w(LIVE_LOG_TAG, "【自动切换】单线频道硬错误，切换到下一台")
             actions.playNextLiveChannel()
             showPrompt("当前频道无法播放，已自动切换到下一台")
@@ -251,51 +256,23 @@ private fun LivePlayerScreen(
         }
     }
 
-    var lastExitBackPressTime by remember { mutableStateOf(0L) }
-    var showExitLiveConfirm by remember { mutableStateOf(false) }
-    // 在 Compose 树顶层渲染确认弹窗，避免在 LaunchedEffect/BackHandler 回调里直接调 showDialog。
-    if (showExitLiveConfirm) {
-        AlertDialog(
-            onDismissRequest = { showExitLiveConfirm = false },
-            title = { Text("退出直播") },
-            text = { Text("确定要退出当前直播吗？") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showExitLiveConfirm = false
-                        actions.goBack()
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1ED760)),
-                ) { Text("退出") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showExitLiveConfirm = false }) { Text("取消") }
-            },
-        )
-    }
     BackHandler {
-        android.util.Log.d(LIVE_LOG_TAG, "【返回键】页面级返回, channelListVisible=$channelListVisible, isMobile=$isMobile")
-        // 手机模式用确认弹窗代替 Toast，避免误触退出。
-        if (isMobile) {
-            showExitLiveConfirm = true
-        } else {
-            actions.goBack()
-        }
+        android.util.Log.d(
+            LIVE_LOG_TAG,
+            "【返回键】页面级返回, channelListVisible=$channelListVisible, showLineControl=$showLineControl",
+        )
+        // 线路浮层打开时返回先收起浮层，避免"返回=退出直播页"越级。
+        if (showLineControl) showLineControl = false else actions.goBack()
     }
 
     BackHandler(enabled = channelListVisible) {
-        // 两级返回：频道列表 → 分类列表 → 关闭面板。
-        android.util.Log.d(
-            LIVE_LOG_TAG,
-            "【返回键】面板内 stage=${state.liveGroupPanelStage}",
-        )
-        if (state.liveGroupPanelStage == LiveGroupStage.Channels) {
-            actions.backToLiveGroups()
-        } else {
-            channelListVisible = false
-            showMobileControls()
-            if (isTelevision) playerFocusRequester.requestFocus()
-        }
+        android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起频道浮层")
+        channelListVisible = false
+        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+    }
+
+    BackHandler(enabled = showLineControl) {
+        showLineControl = false
     }
 
     DisposableEffect(activity, initialRequestedOrientation, isTelevision) {
@@ -327,6 +304,8 @@ private fun LivePlayerScreen(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
+                // 加载环走 Compose 状态：直接读 player.playbackState 不会触发重组。
+                playerBuffering = playbackState == Player.STATE_BUFFERING
                 val stateName = when (playbackState) {
                     Player.STATE_IDLE -> "IDLE"
                     Player.STATE_BUFFERING -> "BUFFERING"
@@ -389,7 +368,8 @@ private fun LivePlayerScreen(
         playbackWatchdog.onMediaChanged()
         bufferingLineUrl = null
         automaticSwitchLineUrl = null
-        channelBadgeVisible = true
+        // 换台/换线即一次"操作"：信息条与频道 badge 恢复显示并重新计时。
+        bumpBars()
         // 逐线路下发 UA / Referer / Cookie：M3U 的 #EXTVLCOPT 头部只对所在那条线路生效，
         // 播放器若用全局默认 UA，虎牙/咪咕一类校验 Referer 的线路会直接 403 或黑屏。
         val httpFactory = DefaultHttpDataSource.Factory()
@@ -420,8 +400,7 @@ private fun LivePlayerScreen(
         player.setMediaSource(mediaSourceFactory.createMediaSource(mediaItem))
         player.prepare()
         session.preparePlayback(player)
-        delay(CHANNEL_BADGE_HIDE_DELAY_MS)
-        channelBadgeVisible = false
+        // 换台后 badge 与信息条同步显示，3 秒后由 barsNonce 计时统一淡出。
     }
 
     LaunchedEffect(bufferingCheckNonce, bufferingLineUrl) {
@@ -475,17 +454,26 @@ private fun LivePlayerScreen(
         actions.consumeLiveNotice()
     }
 
-    LaunchedEffect(isTelevision, channelListVisible, channelListInteraction) {
-        if (!isTelevision || !channelListVisible) return@LaunchedEffect
+    // 浮层打开时 6 秒无操作自动收起（由浮层自己的计时负责，不与信息条 3 秒计时互相打断）。
+    LaunchedEffect(channelListVisible, channelListInteraction) {
+        if (!channelListVisible) return@LaunchedEffect
         delay(CHANNEL_LIST_HIDE_DELAY_MS)
         channelListVisible = false
-        playerFocusRequester.requestFocus()
+        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
     }
 
-    LaunchedEffect(isTelevision, mobileControlsVisible, mobileControlsInteraction, channelListVisible) {
-        if (isTelevision || !mobileControlsVisible || channelListVisible) return@LaunchedEffect
-        delay(MOBILE_CONTROLS_HIDE_DELAY_MS)
-        mobileControlsVisible = false
+    // 顶/底信息条 3 秒无操作淡出；换台（取流 effect bumpBars）同样重新计时。
+    LaunchedEffect(barsNonce, barsVisible) {
+        if (!barsVisible) return@LaunchedEffect
+        delay(LIVE_BARS_HIDE_DELAY_MS)
+        barsVisible = false
+    }
+
+    LaunchedEffect(currentChannel, clockTick) {
+        while (true) {
+            delay(CLOCK_REFRESH_INTERVAL_MS)
+            clockTick++
+        }
     }
 
     LaunchedEffect(channelNumberNonce) {
@@ -502,44 +490,53 @@ private fun LivePlayerScreen(
 
     PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
 
+    val barsAlpha by animateFloatAsState(
+        targetValue = if (barsVisible) 1f else 0f,
+        animationSpec = tween(300),
+        label = "live-bars-alpha",
+    )
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(playerFocusRequester)
-            .pointerInput(channels.size, isTelevision) {
+            .pointerInput(channels.size) {
                 detectTapGestures(
-                    onTap = {
-                        if (isTelevision) {
-                            showChannelList()
-                        } else {
-                            mobileControlsVisible = !mobileControlsVisible
-                            if (mobileControlsVisible) mobileControlsInteraction++
-                        }
-                    },
-                    onDoubleTap = { offset ->
-                        if (offset.x < size.width / 2f) {
+                    onTap = { bumpBars() },
+                    onDoubleTap = { tapOffset ->
+                        if (tapOffset.x < size.width / 2f) {
                             actions.playPreviousLiveChannel()
                             showPrompt("上一个频道")
                         } else {
                             actions.playNextLiveChannel()
                             showPrompt("下一个频道")
                         }
-                        showMobileControls()
+                        bumpBars()
                     },
                 )
             }
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
-                // 面板打开时方向键/确认键交给列表自身的焦点系统，只顺手重置自动隐藏计时；
-                // 若在根节点把 D-PAD 吞掉换台，分类/频道列表将无法用遥控器操作。
+                // 规范：全屏态下任意按键唤出顶部/底部信息条（并重置 3 秒淡出计时）。
+                // 放在最前面统一处理，各分支里重复的 bumpBars 仅作为"操作生效"的冗余保险。
+                bumpBars()
+                // 浮层打开时方向键/确认键交给浮层自身的焦点系统，只顺手重置自动隐藏计时；
+                // 若在根节点把 D-PAD 吞掉换台，分组/频道列表将无法用遥控器操作。
                 if (channelListVisible) {
+                    // 浮层打开时数字键仍可直选：先收起浮层，再走统一的数字输入计时跳转。
+                    val overlayDigit = liveNumberKeyOf(event.nativeKeyEvent.keyCode)
+                    if (overlayDigit != null) {
+                        channelListVisible = false
+                        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                        handleNumberKey(overlayDigit)
+                        return@onPreviewKeyEvent true
+                    }
                     when (event.nativeKeyEvent.keyCode) {
                         AndroidKeyEvent.KEYCODE_MENU,
                         AndroidKeyEvent.KEYCODE_INFO,
                         -> {
                             channelListVisible = false
-                            if (isTelevision) playerFocusRequester.requestFocus()
+                            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
                             true
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_UP,
@@ -550,17 +547,32 @@ private fun LivePlayerScreen(
                         AndroidKeyEvent.KEYCODE_ENTER,
                         -> {
                             keepChannelListVisibleWhileBrowsing()
+                            bumpBars()
                             false
+                        }
+                        else -> false
+                    }
+                } else if (showLineControl) {
+                    // 线路浮层：方向/确认键放行给浮层焦点系统；MENU 收起浮层。
+                    when (event.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_MENU,
+                        AndroidKeyEvent.KEYCODE_INFO,
+                        -> {
+                            showLineControl = false
+                            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                            true
                         }
                         else -> false
                     }
                 } else when (event.nativeKeyEvent.keyCode) {
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                         actions.playPreviousLiveChannel()
+                        bumpBars()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
                         actions.playNextLiveChannel()
+                        bumpBars()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER,
@@ -573,37 +585,26 @@ private fun LivePlayerScreen(
                             player.seekToDefaultPosition()
                             session.play(player)
                         } else {
-                            showLineControl = true
+                            // 确认键唤出频道浮层（底部「线路」按钮负责打开线路弹层）。
+                            showChannelList()
                         }
+                        bumpBars()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_MENU,
                     AndroidKeyEvent.KEYCODE_INFO,
                     -> {
-                        if (channelListVisible) {
-                            channelListVisible = false
-                            if (isTelevision) playerFocusRequester.requestFocus()
-                        } else {
-                            showChannelList()
-                        }
+                        showChannelList()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                        if (channelListVisible) {
-                            actions.playPreviousLiveChannel()
-                            keepChannelListVisibleWhileBrowsing()
-                        } else {
-                            actions.playPreviousLiveLine()
-                        }
+                        actions.playPreviousLiveLine()
+                        bumpBars()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                        if (channelListVisible) {
-                            actions.playNextLiveChannel()
-                            keepChannelListVisibleWhileBrowsing()
-                        } else {
-                            actions.playNextLiveLine()
-                        }
+                        actions.playNextLiveLine()
+                        bumpBars()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_0,
@@ -654,7 +655,7 @@ private fun LivePlayerScreen(
             },
             update = {
                 it.player = player
-                it.resizeMode = if (fullscreenZoom) {
+                it.resizeMode = if (liveFillScreen) {
                     AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                 } else {
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -662,119 +663,208 @@ private fun LivePlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        // 缓冲/加载中：红色进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
+        if (playerBuffering && !session.interrupted) {
+            LiveLoadingState(
+                text = "正在加载 ${currentChannel.name}...",
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
         if (session.interrupted) {
             ControlButton("继续播放", {
                 player.seekToDefaultPosition()
                 session.play(player)
             }, Modifier.align(Alignment.Center), primary = true)
         }
-        // 手机模式常驻显示频道名与线路信息，方便全屏时确认当前频道。
-        if (!channelListVisible && (if (isTelevision) channelBadgeVisible else true)) {
-            LiveChannelBadge(
-                channel = currentChannel,
-                lineIndex = state.liveLineIndex,
-                lineCount = currentChannel.lines.size,
-                channelCount = channels.size,
+        // 频道 badge 与信息条同步淡出（换台时由取流 effect bumpBars 重新点亮）。
+        if (!channelListVisible) {
+            Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
+                    .align(Alignment.BottomStart)
+                    .graphicsLayer { alpha = barsAlpha }
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(20.dp),
-            )
-        }
-        if (!isTelevision) {
-            ControlButton(
-                text = "返回",
-                onClick = { actions.goBack() },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(12.dp),
-            )
-        }
-        if (channelListVisible) {
-            if (isTelevision) {
-                LiveThreeSectionPanel(
-                    state = state,
-                    actions = actions,
-                    onClose = {
-                        channelListVisible = false
-                        playerFocusRequester.requestFocus()
-                    },
-                )
-            } else {
-                val channelPanelModifier = when {
-                    isPortrait -> Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
-                        .fillMaxHeight(MOBILE_PORTRAIT_CHANNEL_PANEL_HEIGHT_FRACTION)
-                    else -> Modifier
-                        .align(Alignment.CenterStart)
-                        .fillMaxHeight()
-                        .width((maxWidth * MOBILE_LANDSCAPE_CHANNEL_PANEL_WIDTH_FRACTION).coerceIn(240.dp, 340.dp))
-                }
-                LiveTwoLevelPanel(
-                    state = state,
-                    actions = actions,
-                    isPortraitPhone = isPortrait,
-                    onClosePanel = {
-                        channelListVisible = false
-                        showMobileControls()
-                        playerFocusRequester.requestFocus()
-                    },
-                    onChannelPicked = { index ->
-                        actions.selectLiveChannel(index)
-                        channelListVisible = false
-                        showPrompt(channels[index].name)
-                        showMobileControls()
-                    },
-                    onInteraction = ::keepChannelListVisibleWhileBrowsing,
-                    modifier = channelPanelModifier,
+                    .padding(start = 20.dp, bottom = 68.dp),
+            ) {
+                LiveChannelBadge(
+                    channel = currentChannel,
+                    lineIndex = state.liveLineIndex,
+                    lineCount = currentChannel.lines.size,
+                    channelCount = channels.size,
                 )
             }
         }
-        if (!isTelevision && mobileControlsVisible && !channelListVisible) {
-            MobileLiveControls(
-                isPortrait = isPortrait,
-                channelName = currentChannel.name,
-                lineLabel = "${currentChannel.groupName} · 线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
-                orientationActionLabel = if (isPortrait) "横屏" else "自动",
-                onPrevious = {
-                    actions.playPreviousLiveChannel()
-                    showPrompt("上一个频道")
-                    showMobileControls()
+        // ── 顶部导航条（52dp，黑 0.75→透明渐变，随 barsVisible 淡出）──────────
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .graphicsLayer { alpha = barsAlpha },
+        ) {
+            LiveTopBar(
+                favorite = actions.isLiveFavorite(currentChannel),
+                clockText = clockText,
+                onPlatformLive = {
+                    bumpBars()
+                    actions.openPlatformLive()
                 },
-                onChannels = {
-                    showChannelList()
-                    mobileControlsVisible = false
+                onToggleFavorite = {
+                    actions.toggleLiveFavorite(currentChannel)
+                    bumpBars()
                 },
-                onNext = {
-                    actions.playNextLiveChannel()
-                    showPrompt("下一个频道")
-                    showMobileControls()
-                },
-                onNextLine = {
-                    showPrompt(if (actions.playNextLiveLine()) "正在切换线路" else "当前频道只有一条线路")
-                    showMobileControls()
-                },
-                onRefresh = actions::refreshLive,
-                onFullscreen = {
-                    fullscreenZoom = !fullscreenZoom
-                    showPrompt(if (fullscreenZoom) "全屏铺满" else "恢复原始比例")
-                    showMobileControls()
-                },
-                fullscreenActionLabel = if (fullscreenZoom) "还原" else "全屏",
-                onOrientation = {
-                    activity?.requestedOrientation = if (isPortrait) {
-                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    } else {
-                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                    }
-                    showMobileControls()
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .windowInsetsPadding(WindowInsets.safeDrawing),
             )
+        }
+        // ── 底部状态条（56dp，透明→黑 0.88 渐变，随 barsVisible 淡出）─────────
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(56.dp)
+                .graphicsLayer { alpha = barsAlpha },
+        ) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f)),
+                        ),
+                    ),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 20.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Box(Modifier.size(7.dp).background(LiveTvAccent, CircleShape))
+                Text(
+                    text = "直播中",
+                    color = LiveTvAccent,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = currentChannel.name,
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 12.sp,
+                )
+                if (currentLine.protocolHint.isNotBlank()) {
+                    Text(
+                        text = currentLine.protocolHint.uppercase(),
+                        color = Color.White.copy(alpha = 0.4f),
+                        fontSize = 10.sp,
+                        modifier = Modifier
+                            .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
+                            .padding(horizontal = 5.dp, vertical = 1.dp),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                LiveBottomBarButton(
+                    text = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
+                    onClick = {
+                        actions.toggleLiveFavorite(currentChannel)
+                        bumpBars()
+                    },
+                )
+                LiveBottomBarButton(
+                    text = "⇄ 线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
+                    onClick = {
+                        showLineControl = true
+                        bumpBars()
+                    },
+                )
+                LiveBottomBarButton(
+                    text = if (session.interrupted) "⛶ 继续播放" else if (liveFillScreen) "⛶ 原始比例" else "⛶ 全屏",
+                    onClick = {
+                        if (session.interrupted) {
+                            player.seekToDefaultPosition()
+                            session.play(player)
+                        } else {
+                            // 「⛶」= 画面比例在"原始(FIT)"与"铺满裁切(ZOOM)"间切换。
+                            // 真实 URL 调试入口保留在线路浮层的「查看 URL」。
+                            liveFillScreen = !liveFillScreen
+                            showPrompt(if (liveFillScreen) "画面已铺满" else "已恢复原始比例")
+                        }
+                        bumpBars()
+                    },
+                )
+            }
+        }
+        // ── 右下 EPG 窄卡（280dp）：浮层打开时贴浮层右缘（340dp + 16dp），收起后回右下角 ──
+        val epgEndPadding by animateDpAsState(
+            targetValue = if (channelListVisible) 356.dp else 16.dp,
+            animationSpec = tween(120),
+            label = "live-epg-end-padding",
+        )
+        // 浮层浏览期间 EPG 卡跟随遥控焦点（预览），未移动焦点时仍显示正在播放的频道。
+        val epgChannel = previewChannel ?: currentChannel
+        LiveEpgCard(
+            channel = epgChannel,
+            lineIndex = if (previewChannel == null) state.liveLineIndex else 0,
+            nowProgram = actions.liveEpgNow(epgChannel),
+            programs = remember(epgChannel, clockTick, state.liveEpgByChannel) {
+                buildLiveEpgDisplay(actions.liveEpgPrograms(epgChannel))
+            },
+            nowMs = remember(clockTick) { System.currentTimeMillis() },
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = epgEndPadding, bottom = 72.dp),
+        )
+        if (channelListVisible) {
+            LiveChannelOverlayPanel(
+                state = state,
+                actions = actions,
+                onClose = {
+                    channelListVisible = false
+                    previewChannel = null
+                    bumpBars()
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                },
+                onChannelPicked = { index ->
+                    actions.selectLiveChannel(index)
+                    channelListVisible = false
+                    previewChannel = null
+                    bumpBars()
+                    showPrompt(channels[index].name)
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                },
+                onInteraction = ::keepChannelListVisibleWhileBrowsing,
+                onPreview = { previewChannel = it },
+            )
+        }
+        // ── 数字直选：中央大浮层，输入中常驻，2 秒后自动跳转 ───────────────────
+        if (channelNumberInput.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xB8000000))
+                    .padding(horizontal = 48.dp, vertical = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = channelNumberInput,
+                    color = Color.White,
+                    fontSize = 48.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "频道号",
+                    color = Color.White.copy(alpha = 0.6f),
+                    fontSize = 12.sp,
+                )
+            }
         }
         if (promptVisible && promptMessage.isNotBlank()) {
             LivePrompt(
@@ -782,7 +872,7 @@ private fun LivePlayerScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(bottom = if (!isTelevision && mobileControlsVisible) 132.dp else 80.dp),
+                    .padding(bottom = 80.dp),
             )
         }
 
@@ -802,7 +892,7 @@ private fun LivePlayerScreen(
                     Text("当前播放真实 URL", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(
                         text = currentLine.url,
-                        color = Color(0xFF7AE2BA),
+                        color = LiveTvAccent,
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier
                             .clip(RoundedCornerShape(8.dp))
@@ -820,1009 +910,25 @@ private fun LivePlayerScreen(
         }
 
         if (showLineControl) {
-            androidx.activity.compose.BackHandler { showLineControl = false }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.7f))
-                    .pointerInput(Unit) { detectTapGestures { showLineControl = false } }
-            ) {
-                androidx.compose.material3.Surface(
-                    modifier = Modifier
-                        .align(Alignment.Center)
-                        .width(if (isTelevision) 420.dp else 360.dp)
-                        .clip(RoundedCornerShape(16.dp)),
-                    color = Color(0xFF1A1A1A),
-                    contentColor = Color.White
-                ) {
-                    Column(modifier = Modifier.padding(24.dp)) {
-                        Text("线路切换 - ${currentChannel.name}", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(16.dp))
-                        androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            itemsIndexed(currentChannel.lines) { index, line ->
-                                val selected = index == state.liveLineIndex
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(if (selected) Color(0xFF7AE2BA).copy(alpha = 0.2f) else Color.Transparent)
-                                        .clickable {
-                                            // 只改状态：URL 变化会驱动上方取流逻辑（含逐线路 header、看门狗复位），
-                                            // 这里不再重复 prepare，避免同一线路被 prepare 两次。
-                                            actions.selectLiveLine(index)
-                                            showLineControl = false
-                                            showPrompt("已切换到线路 ${index + 1}")
-                                        }
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f))
-                                    // 展示源里真实线路名（如"线路3"/"电信"），并附协议标识便于排查取流失败。
-                                    Text(
-                                        text = line.name + if (line.protocolHint.isNotBlank()) " · ${line.protocolHint}" else "",
-                                        modifier = Modifier.weight(1f),
-                                        color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                    if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(16.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            androidx.compose.material3.TextButton(onClick = {
-                                val clip = android.content.ClipData.newPlainText("live_url", currentLine.url)
-                                (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
-                                showPrompt("URL 已复制到剪贴板")
-                            }) { Text("复制 URL") }
-                            androidx.compose.material3.TextButton(onClick = { showUrlOverlay = true; showLineControl = false }) { Text("查看完整 URL") }
-                            androidx.compose.material3.TextButton(onClick = { showLineControl = false }) { Text("关闭") }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveChannelBadge(
-    channel: LiveChannel,
-    lineIndex: Int,
-    lineCount: Int,
-    channelCount: Int,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-    ) {
-        Text(
-            text = channel.name,
-            color = Color.White,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = "${channel.groupName} · ${channel.number}/$channelCount · 线路 ${lineIndex + 1}/$lineCount",
-            color = Color.White.copy(alpha = 0.6f),
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun LiveTwoLevelPanel(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-    isPortraitPhone: Boolean,
-    onClosePanel: () -> Unit,
-    onChannelPicked: (Int) -> Unit,
-    onInteraction: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val channels = state.liveChannels
-    val groups = channels.map { it.groupName }.distinct()
-    val inChannelsStage = state.liveGroupPanelStage == LiveGroupStage.Channels
-    val groupIndex = state.liveGroupIndex.coerceIn(0, groups.size)
-    // 分类过滤后的频道；"全部"（index 0）时展示全量。
-    val visibleChannels = if (groupIndex == 0) {
-        channels
-    } else {
-        val name = groups[groupIndex - 1]
-        channels.filter { it.groupName == name }
-    }
-    val groupListState = rememberLazyListState()
-    val channelListState = rememberLazyListState()
-    val groupFocusRequester = remember { FocusRequester() }
-    val channelFocusRequester = remember { FocusRequester() }
-    val safeSelectedIndex = state.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0))
-    val visibleSelectedIndex = visibleChannels.indexOfFirst { it.number == channels.getOrNull(safeSelectedIndex)?.number }
-    // 焦点落点：优先当前播放频道；进入的分类不含当前频道时回落到首行，
-    // 否则没有任何行挂上 FocusRequester，遥控器方向键会"失灵"。
-    val focusTargetIndex = if (visibleSelectedIndex >= 0) visibleSelectedIndex else 0
-
-    // 进入频道层级时才把列表定位到焦点行，并把焦点交给它，保证遥控器可直接上下选台。
-    LaunchedEffect(inChannelsStage, groupIndex) {
-        if (!inChannelsStage) return@LaunchedEffect
-        channelListState.scrollToItem(focusTargetIndex)
-        // LazyColumn 目标项要先完成组合才能挂上 FocusRequester。
-        delay(80)
-        runCatching { channelFocusRequester.requestFocus() }
-            .onSuccess { android.util.Log.d(LIVE_LOG_TAG, "【焦点】已转移到频道列表项 #$focusTargetIndex（当前播放频道命中=${visibleSelectedIndex >= 0}）") }
-            .onFailure { android.util.Log.w(LIVE_LOG_TAG, "【焦点】频道列表焦点请求失败：${it.message}") }
-    }
-    // 分类层级：打开面板回到当前选中分类并把焦点交给它。
-    LaunchedEffect(inChannelsStage) {
-        if (inChannelsStage) return@LaunchedEffect
-        groupListState.scrollToItem(groupIndex)
-        delay(80)
-        runCatching { groupFocusRequester.requestFocus() }
-            .onSuccess { android.util.Log.d(LIVE_LOG_TAG, "【焦点】已转移到分类项 #$groupIndex") }
-            .onFailure { android.util.Log.w(LIVE_LOG_TAG, "【焦点】分类列表焦点请求失败：${it.message}") }
-    }
-
-    Surface(
-        modifier = modifier
-            .windowInsetsPadding(WindowInsets.safeDrawing)
-            .pointerInput(Unit) {
-                awaitPointerEventScope {
-                    while (true) {
-                        awaitPointerEvent()
-                        onInteraction()
-                    }
-                }
-            },
-        shape = if (isPortraitPhone) {
-            RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
-        } else {
-            RoundedCornerShape(0.dp)
-        },
-        color = Color(0xEF101514),
-        contentColor = Color.White,
-    ) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-            if (isPortraitPhone) {
-                Box(Modifier.align(Alignment.CenterHorizontally).padding(top = 10.dp)
-                    .size(width = 36.dp, height = 3.dp).background(Color.White.copy(alpha = 0.25f), CircleShape))
-            }
-            Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    if (inChannelsStage) {
-                        Text(
-                            text = groups.getOrNull(groupIndex - 1) ?: "全部频道",
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                    } else {
-                        Text("直播分类", style = MaterialTheme.typography.titleMedium)
-                    }
-                    Text(
-                        text = if (inChannelsStage) {
-                            // Phone 触摸端与 TV 遥控器端提示用语不同，避免手机上看到"确定键"这类遥控器术语。
-                            "共 ${visibleChannels.size} 个频道 · " +
-                                if (isPortraitPhone) "点按选频道，返回回分类" else "返回键回分类"
-                        } else {
-                            "共 ${groups.size} 个分类 · " +
-                                if (isPortraitPhone) "点按进入频道" else "确定键进入频道"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.5f),
-                    )
-                }
-                if (inChannelsStage) {
-                    ControlButton("分类", { actions.backToLiveGroups() })
-                }
-                ControlButton("关闭", onClosePanel)
-            }
-            // 订阅切换入口：仅分类层级展示，切换后分类保持同名恢复（详见 selectLiveSource）。
-            if (!inChannelsStage) {
-                val sourceLabels = actions.liveSourceLabels()
-                if (sourceLabels.size > 1) {
-                    val currentIndex = state.liveSelectedSourceIndex.coerceIn(0, sourceLabels.lastIndex)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            text = "订阅：${sourceLabels[currentIndex]}",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = Color.White.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        ControlButton("切换", { actions.cycleLiveSource(1) })
-                    }
-                    Spacer(Modifier.height(6.dp))
-                }
-            }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.08f)))
-            if (!inChannelsStage) {
-                LazyColumn(
-                    state = groupListState,
-                    contentPadding = PaddingValues(vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    itemsIndexed(listOf("全部") + groups, key = { index, name -> "g-$index-$name" }) { index, name ->
-                        val playingGroupIndex = channels.getOrNull(safeSelectedIndex)
-                            ?.let { current -> groups.indexOf(current.groupName) + 1 } ?: 0
-                        LiveGroupRow(
-                            name = name,
-                            count = if (index == 0) channels.size else channels.count { it.groupName == name },
-                            selected = groupIndex == index,
-                            playing = playingGroupIndex == index,
-                            focusModifier = if (index == groupIndex) Modifier.focusRequester(groupFocusRequester) else Modifier,
-                            onClick = { actions.enterLiveGroup(index) },
-                        )
-                    }
-                }
-            } else {
-                // 手机触摸模式：网格布局自适应列数；TV 模式：单列列表便于遥控器导航。
-                if (isPortraitPhone) {
-                    val gridState = rememberLazyGridState()
-                    LaunchedEffect(inChannelsStage) {
-                        if (inChannelsStage) {
-                            gridState.scrollToItem(focusTargetIndex)
-                            delay(80)
-                            runCatching { channelFocusRequester.requestFocus() }
-                                .onSuccess { android.util.Log.d(LIVE_LOG_TAG, "【焦点】网格已定位到 #${focusTargetIndex}") }
-                                .onFailure { android.util.Log.w(LIVE_LOG_TAG, "【焦点】网格焦点请求失败") }
-                        }
-                    }
-                    LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Fixed(4),
-                        contentPadding = PaddingValues(4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        itemsIndexed(visibleChannels, key = { _, channel -> channel.number }) { indexInVisible, channel ->
-                            val globalIndex = channels.indexOfFirst { it.number == channel.number }
-                            LiveChannelGridItem(
-                                channel = channel,
-                                selected = globalIndex == safeSelectedIndex,
-                                modifier = if (indexInVisible == focusTargetIndex) Modifier.focusRequester(channelFocusRequester) else Modifier,
-                                onClick = { onChannelPicked(globalIndex) },
-                            )
-                        }
-                    }
-                } else {
-                    LazyColumn(
-                        state = channelListState,
-                        contentPadding = PaddingValues(vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        itemsIndexed(visibleChannels, key = { _, channel -> channel.number }) { indexInVisible, channel ->
-                            val globalIndex = channels.indexOfFirst { it.number == channel.number }
-                            LiveChannelRow(
-                                channel = channel,
-                                selected = globalIndex == safeSelectedIndex,
-                                focusModifier = if (indexInVisible == focusTargetIndex) {
-                                    Modifier.focusRequester(channelFocusRequester)
-                                } else {
-                                    Modifier
-                                },
-                                onClick = { onChannelPicked(globalIndex) },
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveGroupRow(
-    name: String,
-    count: Int,
-    selected: Boolean,
-    playing: Boolean,
-    onClick: () -> Unit,
-    focusModifier: Modifier = Modifier,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val accent = Color(0xFF7AE2BA)
-    val background = when { selected -> accent.copy(alpha = 0.12f); focused -> Color.White.copy(alpha = 0.1f); else -> Color.Transparent }
-    val shape = RoundedCornerShape(10.dp)
-    Row(
-        modifier = focusModifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(background)
-            .border(1.dp, if (focused || selected) accent else Color.Transparent, shape)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .heightIn(min = 52.dp)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = name,
-            modifier = Modifier.weight(1f),
-            color = Color.White.copy(alpha = if (selected || focused) 1f else 0.82f),
-            style = MaterialTheme.typography.bodyLarge,
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (playing) {
-            Text("播放中", color = accent, style = MaterialTheme.typography.labelSmall)
-        }
-        Text(
-            text = "$count",
-            color = Color.White.copy(alpha = 0.45f),
-            style = MaterialTheme.typography.labelMedium,
-        )
-        Text(" ›", color = Color.White.copy(alpha = 0.35f), style = MaterialTheme.typography.titleSmall)
-    }
-}
-
-@Composable
-private fun LiveChannelRow(
-    channel: LiveChannel,
-    selected: Boolean,
-    onClick: () -> Unit,
-    focusModifier: Modifier = Modifier,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val accent = Color(0xFF7AE2BA)
-    val background = when { selected -> accent.copy(alpha = 0.1f); focused -> Color.White.copy(alpha = 0.1f); else -> Color.Transparent }
-    val contentColor = Color.White.copy(alpha = if (selected || focused) 1f else 0.78f)
-    val shape = RoundedCornerShape(10.dp)
-    Row(
-        modifier = focusModifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(background)
-            .border(1.dp, if (focused) accent else Color.Transparent, shape)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = channel.number.toString(),
-            modifier = Modifier.width(34.dp),
-            color = if (selected) accent else Color.White.copy(alpha = 0.45f),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = channel.name,
-            modifier = Modifier.weight(1f),
-            color = contentColor,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
-@Composable
-private fun LiveChannelGridItem(
-    channel: LiveChannel,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val accent = Color(0xFF7AE2BA)
-    val background = when { selected -> accent.copy(alpha = 0.12f); focused -> Color.White.copy(alpha = 0.12f); else -> Color.Transparent }
-    val contentColor = Color.White.copy(alpha = if (selected || focused) 1f else 0.82f)
-    val shape = RoundedCornerShape(8.dp)
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .background(background)
-            .border(1.dp, if (focused) accent else Color.Transparent, shape)
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-        horizontalAlignment = Alignment.Start,
-    ) {
-        Text(
-            text = channel.number.toString(),
-            color = if (selected) accent else Color.White.copy(alpha = 0.4f),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Bold,
-        )
-        Text(
-            text = channel.name,
-            color = contentColor,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.padding(top = 2.dp),
-        )
-    }
-}
-
-@Composable
-private fun MobileLiveControls(
-    isPortrait: Boolean,
-    channelName: String,
-    lineLabel: String,
-    orientationActionLabel: String,
-    onPrevious: () -> Unit,
-    onChannels: () -> Unit,
-    onNext: () -> Unit,
-    onNextLine: () -> Unit,
-    onRefresh: () -> Unit,
-    onFullscreen: () -> Unit,
-    fullscreenActionLabel: String,
-    onOrientation: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier.fillMaxWidth()
-            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(Modifier.size(6.dp).background(Color(0xFF7AE2BA), CircleShape))
-            Text(channelName, Modifier.weight(1f), color = Color.White,
-                style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            if (!isPortrait) Text(lineLabel, color = Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.labelMedium, maxLines = 1)
-        }
-        if (isPortrait) {
-            Text(lineLabel, color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MobileLiveControlButton("上一台", onPrevious, expand = true)
-                MobileLiveControlButton("频道", onChannels, expand = true, primary = true)
-                MobileLiveControlButton("下一台", onNext, expand = true)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MobileLiveControlButton("换线", onNextLine, expand = true)
-                MobileLiveControlButton("刷新", onRefresh, expand = true)
-                MobileLiveControlButton(fullscreenActionLabel, onFullscreen, expand = true)
-                MobileLiveControlButton(orientationActionLabel, onOrientation, expand = true)
-            }
-        } else {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically) {
-                MobileLiveControlButton("上一台", onPrevious)
-                MobileLiveControlButton("频道", onChannels, primary = true)
-                MobileLiveControlButton("下一台", onNext)
-                Spacer(Modifier.weight(1f))
-                MobileLiveControlButton("换线", onNextLine)
-                MobileLiveControlButton("刷新", onRefresh)
-                MobileLiveControlButton(fullscreenActionLabel, onFullscreen)
-                MobileLiveControlButton(orientationActionLabel, onOrientation)
-            }
-        }
-    }
-}
-
-@Composable
-private fun RowScope.MobileLiveControlButton(
-    label: String,
-    onClick: () -> Unit,
-    expand: Boolean = false,
-    primary: Boolean = false,
-) {
-    ControlButton(label, onClick, if (expand) Modifier.weight(1f) else Modifier, primary = primary)
-}
-
-@Composable
-private fun LivePrompt(
-    message: String,
-    modifier: Modifier = Modifier,
-) {
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xB8000000))
-            .padding(horizontal = 18.dp, vertical = 10.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = message,
-            color = Color.White,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-        )
-    }
-}
-
-// ── TV 三段式面板：分类(左) + 频道(中) + 节目单(右) ──────────────────────────
-
-@Composable
-private fun ControlButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, primary: Boolean = false) {
-    androidx.compose.material3.TextButton(
-        modifier = modifier,
-        onClick = onClick,
-        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-            containerColor = if (primary) Color(0xFF7AE2BA).copy(alpha = 0.2f) else Color.Transparent,
-            contentColor = if (primary) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.8f),
-        ),
-    ) {
-        Text(text, style = MaterialTheme.typography.bodyMedium)
-    }
-}
-
-@Composable
-private fun GroupItem(
-    name: String,
-    count: Int,
-    selected: Boolean,
-    scale: Float,
-    onClick: () -> Unit,
-    focusModifier: Modifier = Modifier,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = focusModifier
-            .fillMaxWidth()
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(horizontal = 10.dp, vertical = 10.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (selected) Box(Modifier.size(6.dp).background(Color(0xFF7AE2BA), CircleShape))
-            else Spacer(Modifier.size(6.dp))
-            Text(
-                text = name,
-                modifier = Modifier.weight(1f),
-                color = if (selected) Color(0xFF7AE2BA) else if (focused) Color.White else Color.White.copy(alpha = 0.6f),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "$count",
-                color = Color.White.copy(alpha = 0.3f),
-                style = MaterialTheme.typography.labelSmall,
+            LiveLineOverlay(
+                state = state,
+                actions = actions,
+                channel = currentChannel,
+                onClose = {
+                    showLineControl = false
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                },
+                onCopyUrl = {
+                    val clip = android.content.ClipData.newPlainText("live_url", currentLine.url)
+                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                    showPrompt("URL 已复制到剪贴板")
+                },
+                onViewUrl = {
+                    showUrlOverlay = true
+                    showLineControl = false
+                },
             )
         }
     }
 }
 
-@Composable
-private fun ChannelListItem(
-    channel: LiveChannel,
-    playing: Boolean,
-    selected: Boolean,
-    scale: Float,
-    onClick: () -> Unit,
-) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(horizontal = 8.dp, vertical = 8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // 24dp 圆形 Logo（首字母）
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(if (playing) Color(0xFF7AE2BA).copy(alpha = 0.2f) else Color(0xFF1A2A24)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = channel.name.take(1).uppercase(),
-                    color = if (playing) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f),
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                )
-            }
-            Text(
-                text = channel.name,
-                modifier = Modifier.weight(1f),
-                color = if (playing) Color(0xFF7AE2BA) else if (focused || selected) Color.White else Color.White.copy(alpha = 0.72f),
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (playing) {
-                Box(Modifier.size(6.dp).background(Color(0xFF7AE2BA), CircleShape))
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveThreeSectionPanel(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-    onClose: () -> Unit,
-) {
-    val channels = state.liveChannels
-    val groups = channels.map { it.groupName }.distinct()
-    // 一级：选中分类（0 = 全部，1.. = 对应 groups 下标）
-    var selectedGroupIndex by remember { mutableIntStateOf(state.liveGroupIndex.coerceAtLeast(0)) }
-    // 二级：用户点击的频道号（null = 未选，回退到正在播放的频道）
-    var selectedChannelNumber by remember { mutableStateOf<Int?>(channels.getOrNull(state.liveChannelIndex)?.number) }
-    var showLineSwitch by remember { mutableStateOf(false) }
-
-    // 二级分类过滤后的频道列表
-    val filteredChannels = when {
-        selectedGroupIndex == 0 -> channels
-        else -> channels.filter { it.groupName == groups.getOrNull(selectedGroupIndex - 1) }
-    }
-    val playingChannel = channels.getOrNull(state.liveChannelIndex)
-    // 右侧详情频道
-    val detailChannel: LiveChannel? = selectedChannelNumber
-        ?.let { num -> channels.firstOrNull { it.number == num } }
-        ?: playingChannel
-
-    // 焦点管理：打开面板时自动把焦点交给一级分类列表的当前选中项
-    val groupFocusRequester = remember { FocusRequester() }
-    val groupListState = rememberLazyListState()
-    val lineFocusRequester = remember { FocusRequester() }
-    val lineListState = rememberLazyListState()
-    LaunchedEffect(Unit) {
-        delay(80)
-        runCatching {
-            groupListState.scrollToItem(selectedGroupIndex.coerceAtLeast(0))
-            groupFocusRequester.requestFocus()
-        }
-            .onSuccess { android.util.Log.d(LIVE_LOG_TAG, "【三段式面板】焦点已交给分类列表") }
-            .onFailure { android.util.Log.w(LIVE_LOG_TAG, "【三段式面板】焦点请求失败") }
-    }
-
-    // 线路浮层打开后把焦点交给当前线路，保证遥控器可直接确认切换
-    LaunchedEffect(showLineSwitch) {
-        if (!showLineSwitch) return@LaunchedEffect
-        delay(60)
-        val target = (detailChannel?.lines?.indices)?.let { state.liveLineIndex.coerceIn(it) } ?: 0
-        runCatching {
-            lineListState.scrollToItem(target)
-            lineFocusRequester.requestFocus()
-        }
-    }
-
-    androidx.activity.compose.BackHandler {
-        if (showLineSwitch) showLineSwitch = false
-        else onClose()
-    }
-
-    // 模拟节目单：基于频道名哈希生成 24 小时条目
-    fun generateEpg(channelName: String): List<Pair<String, String>> {
-        val hash = channelName.hashCode().coerceAtLeast(0)
-        val progType = listOf("新闻联播", "电视剧", "综艺节目", "体育赛事", "纪录片", "电影", "天气预报")
-        return (0 until 24).map { i ->
-            val hourStr = i.toString().padStart(2, '0')
-            val prog = progType[(hash + i) % progType.size]
-            "${hourStr}:00" to "正在直播 · ${prog}"
-        }
-    }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxSize()
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
-                when (event.nativeKeyEvent.keyCode) {
-                    AndroidKeyEvent.KEYCODE_BACK,
-                    AndroidKeyEvent.KEYCODE_ESCAPE,
-                    -> {
-                        if (showLineSwitch) showLineSwitch = false
-                        else onClose()
-                        true
-                    }
-                    // 确认键必须交给子项（频道/线路/按钮的 clickable 在 KeyUp 触发点击），
-                    // 这里消费会把"选台/换线"变成"关闭面板"。
-                    AndroidKeyEvent.KEYCODE_DPAD_UP,
-                    AndroidKeyEvent.KEYCODE_DPAD_DOWN,
-                    AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER,
-                    -> false
-                    else -> false
-                }
-            },
-        shape = RoundedCornerShape(0.dp),
-        color = Color.Black,
-        contentColor = Color.White,
-    ) {
-        Row(modifier = Modifier.fillMaxSize()) {
-            // ── 左列：一级分类（全部 + 各 groupName）────────────────
-            Column(
-                modifier = Modifier
-                    .width(160.dp)
-                    .fillMaxHeight()
-                    .padding(vertical = 12.dp),
-            ) {
-                Text("一级分类", style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp))
-                LazyColumn(
-                    state = groupListState,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    itemsIndexed(listOf("全部") + groups) { index, name ->
-                        val isSelected = selectedGroupIndex == index
-                        val scale by animateFloatAsState(
-                            targetValue = if (isSelected) 1.04f else 1f, label = "group-scale",
-                        )
-                        GroupItem(
-                            name = name,
-                            count = if (index == 0) channels.size else channels.count { it.groupName == name },
-                            selected = isSelected,
-                            scale = scale,
-                            focusModifier = if (isSelected) Modifier.focusRequester(groupFocusRequester) else Modifier,
-                            onClick = { selectedGroupIndex = index; showLineSwitch = false },
-                        )
-                    }
-                }
-            }
-
-            // 分隔线
-            Box(Modifier.width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.07f)))
-
-            // ── 中列：二级频道（根据一级分类过滤）────────────────────
-            Column(
-                modifier = Modifier
-                    .width(240.dp)
-                    .fillMaxHeight()
-                    .padding(vertical = 12.dp),
-            ) {
-                Text(
-                    text = groups.getOrNull(selectedGroupIndex - 1) ?: "全部频道",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.padding(start = 12.dp, bottom = 8.dp),
-                )
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 6.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    itemsIndexed(filteredChannels) { _, channel ->
-                        val isPlaying = channel.number == playingChannel?.number
-                        val isSelected = channel.number == selectedChannelNumber
-                        val scale by animateFloatAsState(
-                            targetValue = if (isSelected) 1.03f else 1f, label = "ch-scale",
-                        )
-                        ChannelListItem(
-                            channel = channel,
-                            playing = isPlaying,
-                            selected = isSelected,
-                            scale = scale,
-                            onClick = {
-                                selectedChannelNumber = channel.number
-                                val chIdx = channels.indexOf(channel)
-                                if (chIdx >= 0) actions.selectLiveChannel(chIdx)
-                            },
-                        )
-                    }
-                }
-            }
-
-            // 分隔线
-            Box(Modifier.width(1.dp).fillMaxHeight().background(Color.White.copy(alpha = 0.07f)))
-
-            // ── 右列：频道详情 + 节目单 ─────────────────────────────
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .padding(vertical = 12.dp, horizontal = 16.dp),
-            ) {
-                val dc = detailChannel
-                if (dc != null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        // 80dp 圆形 Logo（首字母占位）
-                        Box(
-                            modifier = Modifier
-                                .size(80.dp)
-                                .clip(CircleShape)
-                                .background(Color(0xFF1A2A24)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = dc.name.take(1).uppercase(),
-                                color = Color(0xFF7AE2BA),
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                            )
-                        }
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = dc.name,
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Text(
-                                text = "${dc.groupName}  ·  ${dc.lines.size} 条线路",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.5f),
-                            )
-                        }
-                        ControlButton(text = "换线", onClick = { showLineSwitch = true })
-                        ControlButton(text = "关闭", onClick = { showLineSwitch = false; onClose() })
-                    }
-                } else {
-                    Text("选择频道查看节目单", color = Color.White.copy(alpha = 0.4f),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(bottom = 14.dp))
-                }
-
-                // 节目单表头
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text("时间", modifier = Modifier.width(56.dp),
-                        style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.4f))
-                    Text("节目", modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.4f))
-                }
-                Box(Modifier.height(1.dp).background(Color.White.copy(alpha = 0.08f)).padding(bottom = 6.dp))
-
-                // 节目单列表
-                val epgPrograms = dc?.let { generateEpg(it.name) } ?: emptyList()
-                LazyColumn(
-                    modifier = Modifier.fillMaxHeight(),
-                    contentPadding = PaddingValues(vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(1.dp),
-                ) {
-                    items(epgPrograms.size) { i ->
-                        val (time, program) = epgPrograms[i]
-                        val isPlaying = i == 0
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 4.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = time,
-                                modifier = Modifier.width(56.dp),
-                                color = if (isPlaying) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.45f),
-                                style = MaterialTheme.typography.labelMedium,
-                            )
-                            Row(
-                                modifier = Modifier.weight(1f),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            ) {
-                                Text(
-                                    text = program,
-                                    color = if (isPlaying) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.75f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.weight(1f),
-                                )
-                                if (isPlaying) {
-                                    Box(
-                                        modifier = Modifier
-                                            .width(60.dp)
-                                            .height(3.dp)
-                                            .background(Color(0xFF7AE2BA), RoundedCornerShape(2.dp)),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── 线路切换浮层 ──────────────────────────────────────────
-        if (showLineSwitch && detailChannel != null) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                androidx.compose.material3.Surface(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 16.dp)
-                        .width(360.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    color = Color(0xCC101010),
-                    contentColor = Color.White,
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("切换线路 - ${detailChannel.name}",
-                            style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(8.dp))
-                        var focusedLineIndex by remember { mutableStateOf(-1) }
-                        LazyColumn(
-                            state = lineListState,
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            itemsIndexed(detailChannel.lines) { index, line ->
-                                val selected = index == state.liveLineIndex
-                                val focused = focusedLineIndex == index
-                                val rowShape = RoundedCornerShape(6.dp)
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(rowShape)
-                                        .background(
-                                            if (focused) Color.White.copy(alpha = 0.08f) else Color.Transparent,
-                                        )
-                                        .border(
-                                            width = if (focused) 1.dp else 0.dp,
-                                            color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
-                                            shape = rowShape,
-                                        )
-                                        .then(
-                                            if (selected) Modifier.focusRequester(lineFocusRequester) else Modifier,
-                                        )
-                                        .onFocusChanged { if (it.isFocused) focusedLineIndex = index }
-                                        .clickable {
-                                            actions.selectLiveLine(index)
-                                            showLineSwitch = false
-                                        }
-                                        .padding(horizontal = 6.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Text("${index + 1}",
-                                        modifier = Modifier.width(24.dp),
-                                        color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.5f))
-                                    Text(line.name,
-                                        modifier = Modifier.weight(1f),
-                                        color = if (selected) Color.White else Color.White.copy(alpha = 0.75f),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis)
-                                    if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        androidx.compose.material3.TextButton(onClick = { showLineSwitch = false }) {
-                            Text("关闭", color = Color.White.copy(alpha = 0.7f))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private const val CHANNEL_LIST_HIDE_DELAY_MS = 6_000L
-private const val LIVE_CONNECT_TIMEOUT_MS = 8_000
-private const val LIVE_READ_TIMEOUT_MS = 12_000
-private const val MOBILE_CONTROLS_HIDE_DELAY_MS = 4_000L
-private const val CHANNEL_BADGE_HIDE_DELAY_MS = 2_000L
-private const val CHANNEL_NUMBER_COMMIT_DELAY_MS = 1_000L
-private const val PROMPT_HIDE_DELAY_MS = 1_500L
-private const val MAX_CHANNEL_NUMBER_DIGITS = 4
-private const val LIVE_CONTINUOUS_BUFFER_THRESHOLD_MS = 6_000L
-private const val LIVE_FREQUENT_BUFFER_WINDOW_MS = 60_000L
-private const val LIVE_FREQUENT_BUFFER_COUNT = 3
-private const val LIVE_CUMULATIVE_BUFFER_THRESHOLD_MS = 12_000L
-private const val LIVE_PROGRESS_SAMPLE_INTERVAL_MS = 1_000L
-private const val MOBILE_PORTRAIT_CHANNEL_PANEL_HEIGHT_FRACTION = 0.62f
-private const val MOBILE_LANDSCAPE_CHANNEL_PANEL_WIDTH_FRACTION = 0.44f
-private const val LIVE_LOG_TAG = "TVBoxLive"

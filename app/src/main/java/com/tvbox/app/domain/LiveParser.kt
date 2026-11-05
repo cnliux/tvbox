@@ -24,7 +24,7 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
     // 避免把 HTML 里的字符串当成频道名，产生大量"必然播放失败"的假频道。
     if (looksLikeHtml(normalized)) return emptyList()
 
-    val channels = linkedMapOf<LiveChannelKey, MutableList<LiveChannelLine>>()
+    val channels = linkedMapOf<LiveChannelKey, AggregatedChannel>()
     var currentGroupName: String? = null
 
     normalized.lineSequence().forEach { rawLine ->
@@ -50,7 +50,8 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
         val groupName = currentGroupName ?: DEFAULT_TXT_GROUP_NAME
         val channelKeyName = cleanHtml(name).trim()
         val key = LiveChannelKey(groupName = groupName, channelName = channelKeyName)
-        val lines = channels.getOrPut(key) { mutableListOf() }
+        val aggregated = channels.getOrPut(key) { AggregatedChannel() }
+        val lines = aggregated.lines
         for (part in splitTxtLineParts(sourcePart)) {
             val parsedLine = parseTxtLinePart(part, channelKeyName) ?: continue
             if (lines.none { it.url == parsedLine.url }) {
@@ -63,19 +64,21 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
     }
 
     return channels.entries
-        .filter { (_, lines) -> lines.isNotEmpty() }
-        .mapIndexed { index, (key, lines) ->
+        .filter { (_, aggregated) -> aggregated.lines.isNotEmpty() }
+        .mapIndexed { index, entry ->
             LiveChannel(
                 number = index + 1,
-                groupName = key.groupName,
-                name = key.channelName,
-                lines = lines.toList(),
+                groupName = entry.key.groupName,
+                name = entry.key.channelName,
+                lines = entry.value.lines.toList(),
+                // TXT 源没有台标字段，logo 恒为空。
+                logo = entry.value.logo,
             )
         }
 }
 
 private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
-    val channels = linkedMapOf<LiveChannelKey, MutableList<LiveChannelLine>>()
+    val channels = linkedMapOf<LiveChannelKey, AggregatedChannel>()
     var pendingChannel: M3uChannelMetadata? = null
     var pendingHeaders: Map<String, String> = emptyMap()
     var urlCount = 0
@@ -106,7 +109,8 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
                     groupName = metadata.groupName.ifBlank { DEFAULT_M3U_GROUP_NAME },
                     channelName = metadata.channelName.ifBlank { "频道" },
                 )
-                val lines = channels.getOrPut(key) { mutableListOf() }
+                val aggregated = channels.getOrPut(key) { AggregatedChannel() }
+                val lines = aggregated.lines
                 if (lines.none { it.url == line }) {
                     lines += LiveChannelLine(
                         name = metadata.lineName.ifBlank { "线路${lines.size + 1}" },
@@ -114,6 +118,8 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
                         headers = pendingHeaders,
                     )
                 }
+                // 同一频道多行时取第一个非空 tvg-logo。
+                if (aggregated.logo.isBlank()) aggregated.logo = metadata.logo
                 pendingChannel = null
                 pendingHeaders = emptyMap()
             }
@@ -124,12 +130,13 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
         }
     }
 
-    return channels.entries.mapIndexed { index, (key, lines) ->
+    return channels.entries.mapIndexed { index, entry ->
         LiveChannel(
             number = index + 1,
-            groupName = key.groupName,
-            name = key.channelName,
-            lines = lines.toList(),
+            groupName = entry.key.groupName,
+            name = entry.key.channelName,
+            lines = entry.value.lines.toList(),
+            logo = entry.value.logo,
         )
     }
 }
@@ -148,6 +155,10 @@ private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
         // EXTINF 逗号后的展示名通常是"频道名 高清/标太"这类人工标签，
         // 聚合为同一频道时用它做线路名，比"线路N"更可辨。
         lineName = cleanHtml(displayName).trim(),
+        // 台标字段各家源命名不统一，按常见度依次尝试。
+        logo = extractM3uAttribute("tvg-logo")
+            .ifBlank { extractM3uAttribute("tvg-icon") }
+            .ifBlank { extractM3uAttribute("logo") },
     )
 }
 
@@ -198,10 +209,18 @@ private data class LiveChannelKey(
     val channelName: String,
 )
 
+/** 解析期聚合体：同一频道的多线路 + 第一个非空台标。 */
+private class AggregatedChannel(
+    val lines: MutableList<LiveChannelLine> = mutableListOf(),
+    var logo: String = "",
+)
+
 private data class M3uChannelMetadata(
     val groupName: String,
     val channelName: String,
     val lineName: String = "",
+    /** `tvg-logo`（兼容 `tvg-icon` / `logo`）台标 URL；空表示源未提供。 */
+    val logo: String = "",
 )
 
 private data class ParsedLiveChannelLine(

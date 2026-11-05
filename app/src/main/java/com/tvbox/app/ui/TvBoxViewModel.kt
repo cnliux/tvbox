@@ -41,6 +41,12 @@ import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.data.EpgRepository
+import com.tvbox.app.data.RemoteEpgRepository
+import com.tvbox.app.data.LiveFavoritesRepository
+import com.tvbox.app.data.liveFavoriteKey
+import com.tvbox.app.domain.EpgProgram
+import com.tvbox.app.domain.findEpgPrograms
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlaybackAgent
 import com.tvbox.app.domain.PlaybackAgentDecision
@@ -175,6 +181,12 @@ data class TvBoxUiState(
     /** 直播面板两级层级：分类列表 / 频道列表。 */
     val liveGroupPanelStage: LiveGroupStage = LiveGroupStage.Groups,
     val liveFavoriteChannelNumbers: Set<Int> = emptySet(),
+    /** 电视直播收藏键集合（`分组#频道名`），持久化于 LiveFavoritesRepository；旧频道号集合保留兼容。 */
+    val liveFavoriteKeys: Set<String> = emptySet(),
+    /** XMLTV 节目单：key 为频道 id / display-name，value 按开始时间升序。 */
+    val liveEpgByChannel: Map<String, List<EpgProgram>> = emptyMap(),
+    /** 节目单是否已完成一次拉取（无论成败），避免反复重试慢源。 */
+    val liveEpgLoaded: Boolean = false,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
     /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
@@ -260,6 +272,10 @@ class TvBoxViewModel(
     private val historyRepository: HistoryRepository,
     private val platformLiveFavoritesRepository: PlatformLiveFavoritesRepository,
     private val liveLinePrefs: LiveLinePreference? = null,
+    /** 电视直播节目单（XMLTV）仓库；无网络配置时 fetch 返回空 Map。 */
+    private val epgRepository: EpgRepository = RemoteEpgRepository(),
+    /** 电视直播频道收藏仓库；null 时收藏退化为仅内存 Set（如未注入的单测环境）。 */
+    private val liveFavoritesRepository: LiveFavoritesRepository? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvBoxUiState())
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
@@ -296,6 +312,8 @@ class TvBoxViewModel(
     private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
     private val historyWriteMutex = Mutex()
+    private val liveFavoritesMutex = Mutex()
+    private var epgJob: Job? = null
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
@@ -320,6 +338,7 @@ class TvBoxViewModel(
             )
         }
         loadPlatformLiveFavorites()
+        loadLiveFavorites()
         viewModelScope.launch {
             val settings = runCatching { appSettingsRepository.getSettings() }
                 .getOrDefault(AppSettings())
@@ -352,6 +371,7 @@ class TvBoxViewModel(
             if (normalizedSettings.checkUpdatesOnStartup) {
                 checkForAppUpdate()
             }
+            loadLiveEpg()
         }
     }
 
@@ -1942,6 +1962,69 @@ class TvBoxViewModel(
         }
     }
 
+    /**
+     * 收藏/取消收藏直播频道（按 `分组#频道名` 键，跨源刷新不丢失）。
+     *
+     * 有持久化仓库时异步落盘并以仓库返回值刷新 [TvBoxUiState.liveFavoriteKeys]；
+     * 仓库缺失时退回旧的仅内存 Set 语义（按键增删）。
+     */
+    fun toggleLiveFavorite(channel: LiveChannel) {
+        val key = liveFavoriteKey(channel.groupName, channel.name)
+        val repository = liveFavoritesRepository
+        if (repository == null) {
+            _state.update { state ->
+                val favorites = state.liveFavoriteKeys.toMutableSet()
+                if (!favorites.remove(key)) favorites += key
+                state.copy(liveFavoriteKeys = favorites)
+            }
+            return
+        }
+        viewModelScope.launch {
+            liveFavoritesMutex.withLock {
+                runCatching { repository.toggleFavorite(channel.groupName, channel.name) }
+                    .onSuccess { keys -> _state.update { it.copy(liveFavoriteKeys = keys) } }
+            }
+        }
+    }
+
+    /** 某频道是否已收藏（按 `分组#频道名` 键）。 */
+    fun isLiveFavorite(channel: LiveChannel): Boolean =
+        _state.value.liveFavoriteKeys.contains(liveFavoriteKey(channel.groupName, channel.name))
+
+    /** 某频道的完整节目单（已按开始时间升序）；未配置/未命中返回空列表。 */
+    fun liveEpgPrograms(channel: LiveChannel): List<EpgProgram> =
+        findEpgPrograms(
+            map = _state.value.liveEpgByChannel,
+            groupName = channel.groupName,
+            channelName = channel.name,
+            logoId = channel.logo,
+        )
+
+    /** 某频道当前正在播出的节目；无节目单或不在播出时段返回 null。 */
+    fun liveEpgNow(channel: LiveChannel): EpgProgram? {
+        val now = System.currentTimeMillis()
+        return liveEpgPrograms(channel).firstOrNull { it.startMs <= now && now < it.stopMs }
+    }
+
+    /** 某频道紧接当前节目之后的下一条节目；无节目单或已全部播完返回 null。 */
+    fun liveEpgNext(channel: LiveChannel): EpgProgram? {
+        val now = System.currentTimeMillis()
+        return liveEpgPrograms(channel).firstOrNull { it.startMs > now }
+    }
+
+    /** 保存/清除节目单接口地址：立即持久化，并清缓存后重新拉取。 */
+    fun updateEpgUrl(url: String) {
+        val trimmed = url.trim()
+        if (_state.value.appSettings.epgUrl == trimmed) return
+        val settings = _state.value.appSettings.copy(epgUrl = trimmed)
+        _state.update {
+            it.copy(appSettings = settings, liveEpgByChannel = emptyMap(), liveEpgLoaded = false)
+        }
+        saveSettings(settings)
+        appSettingsRepository.commitEpgUrl(trimmed)
+        loadLiveEpg(force = true)
+    }
+
     /** 订阅地址标签：第 0 项"全部"，之后为各订阅地址。 */
     fun liveSourceLabels(): List<String> = buildList {
         add("全部")
@@ -3295,6 +3378,8 @@ class TvBoxViewModel(
                             liveError = if (channels.isEmpty()) "没有可用直播频道" else null,
                         )
                     }
+                    // 频道列表就绪后补拉节目单（幂等：已加载过则直接返回）。
+                    loadLiveEpg()
                 }
                 .onFailure { error ->
                     _state.update {
@@ -3413,6 +3498,37 @@ class TvBoxViewModel(
                         if (error is CancellationException) throw error
                         _state.update { it.copy(platformLiveFavoriteError = error.userMessage()) }
                     }
+            }
+        }
+    }
+
+    /** 读取持久化的电视直播收藏键；仓库缺失或读取失败时保持现值（内存收藏不受影响）。 */
+    private fun loadLiveFavorites() {
+        val repository = liveFavoritesRepository ?: return
+        viewModelScope.launch {
+            liveFavoritesMutex.withLock {
+                runCatching { repository.getFavoriteKeys() }
+                    .onSuccess { keys -> _state.update { it.copy(liveFavoriteKeys = keys) } }
+            }
+        }
+    }
+
+    /**
+     * 拉取 XMLTV 节目单全量 Map 存入状态；EPG 是增强项：
+     * 未配置地址直接返回，失败静默并标记已加载，避免反复重试慢源。
+     * [force] 为 true 时忽略 [TvBoxUiState.liveEpgLoaded] 重新拉取（保存新地址时用）。
+     */
+    private fun loadLiveEpg(force: Boolean = false) {
+        val url = _state.value.appSettings.epgUrl
+        if (url.isBlank()) return
+        if (!force && _state.value.liveEpgLoaded) return
+        epgJob?.cancel()
+        epgJob = viewModelScope.launch {
+            val programs = runCatching { epgRepository.fetch(url) }.getOrDefault(emptyMap())
+            _state.update { state ->
+                // 地址在拉取期间被改掉时丢弃本次结果。
+                if (state.appSettings.epgUrl != url) state
+                else state.copy(liveEpgByChannel = programs, liveEpgLoaded = true)
             }
         }
     }

@@ -1198,7 +1198,7 @@ private fun VideoSize.toVideoDisplayMode(): VideoDisplayMode {
     }
 }
 
-private fun Window.currentScreenBrightness(context: Context): Float {
+internal fun Window.currentScreenBrightness(context: Context): Float {
     val current = attributes.screenBrightness
     if (current >= 0f) return current.coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
     val systemBrightness = runCatching {
@@ -1207,7 +1207,7 @@ private fun Window.currentScreenBrightness(context: Context): Float {
     return (systemBrightness / MAX_SYSTEM_BRIGHTNESS).coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
 }
 
-private fun Window.setScreenBrightness(brightness: Float) {
+internal fun Window.setScreenBrightness(brightness: Float) {
     attributes = attributes.apply {
         screenBrightness = brightness.coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
     }

@@ -1910,6 +1910,51 @@ private fun LiveSourceSetting(
 }
 
 @Composable
+private fun EpgUrlSetting(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    var epgDraft by remember(state.appSettings.epgUrl) { mutableStateOf(state.appSettings.epgUrl) }
+    var savedMessage by remember { mutableStateOf<String?>(null) }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        OutlinedTextField(
+            value = epgDraft,
+            onValueChange = { epgDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("https://example.com/epg.xml") },
+            label = { Text("XMLTV 节目单地址") },
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            SettingsActionButton(
+                text = "保存节目单地址",
+                onClick = {
+                    actions.updateEpgUrl(epgDraft)
+                    savedMessage = if (epgDraft.isBlank()) "已清除节目单地址" else "已保存，正在后台拉取节目单"
+                },
+            )
+            SettingsActionButton(
+                text = "清除",
+                enabled = state.appSettings.epgUrl.isNotBlank() || epgDraft.isNotBlank(),
+                onClick = {
+                    epgDraft = ""
+                    actions.updateEpgUrl("")
+                    savedMessage = "已清除节目单地址"
+                },
+            )
+        }
+        savedMessage?.let { msg ->
+            Text(text = msg, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+        }
+        Text(
+            text = "节目单按频道名匹配（忽略大小写与空格）；未命中或无配置时播放不受影响。",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+
+@Composable
 private fun PlatformLiveSiteSetting(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
@@ -2168,6 +2213,15 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
+                        title = "节目单（EPG）",
+                        subtitle = "XMLTV 格式接口地址，用于直播页的频道节目单与 EPG 卡片；留空则直播页显示「暂无节目单」，不影响播放。",
+                    )
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    EpgUrlSetting(state = state, actions = actions)
+                }
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    SettingsSectionTitle(
                         title = "平台直播站点",
                         subtitle = "斗鱼、虎牙等平台直播站点；删除后可在本页恢复。",
                     )
@@ -2286,7 +2340,12 @@ private fun MobileNavScreenContent(
                 MobileNavScreen.Home -> HomeScreen(state = state, actions = actions)
                 MobileNavScreen.History -> HistoryScreen(state = state, actions = actions)
                 MobileNavScreen.Search -> SearchScreen(state = state, actions = actions)
-                MobileNavScreen.Live -> LiveScreen(state = state, actions = actions)
+                // 手机模式「电视直播」：两层页面（列表页 + 播放页），电视端仍走 LiveScreen。
+                MobileNavScreen.Live -> MobileLiveScreen(
+                    state = state,
+                    actions = actions,
+                    onOpenPlatformLive = actions::openPlatformLive,
+                )
                 // 平台直播在 TvBoxScreen 里整页渲染，这里只是保证 when 完整。
                 MobileNavScreen.PlatformLive -> PlatformLiveScreen(state = state, actions = actions)
             }

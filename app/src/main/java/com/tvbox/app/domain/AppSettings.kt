@@ -34,6 +34,8 @@ data class AppSettings(
     val episodeSortReverse: Boolean = false,
     /** 首页视频卡片每行数量；0 表示跟随布局自适应。 */
     val videoGridColumns: Int = 0,
+    /** 电视直播节目单 XMLTV 接口地址；空表示未配置。 */
+    val epgUrl: String = "",
     /** 平台直播卡片每行数量；0 表示跟随布局默认（触屏 4 / 遥控 6）。 */
     val platformLiveGridColumns: Int = 0,
 )

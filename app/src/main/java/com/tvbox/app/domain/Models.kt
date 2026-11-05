@@ -73,6 +73,8 @@ data class LiveChannel(
     val name: String,
     /** 多线路列表；单线路即 size == 1，顺序与源文件中出现顺序一致。 */
     val lines: List<LiveChannelLine>,
+    /** 频道台标 URL，来自 M3U `tvg-logo` 等源扩展字段；空表示无台标，UI 需降级为首字占位。 */
+    val logo: String = "",
 )
 
 data class LiveChannelLine(

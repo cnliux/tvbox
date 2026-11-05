@@ -43,39 +43,16 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库、也不应每次编译：
+      # platformlive.aar 不入库，作为 Go 源码的构建产物在内置到 APK：
       # ① 按 Go 源码内容哈希走 actions/cache，源码没变直接命中；
-      # ② 未命中则从最近的 release 资产下载（Publish 步骤会把 AAR 随 release 归档）；
-      # ③ 都没有才由 Build 的 bindPlatformLive 现场生成（gomobile bind，需 Go+NDK）。
+      # ② 未命中才由 Build 的 bindPlatformLive 现场生成（gomobile bind，需 Go+NDK）。
+      # AAR 只通过 implementation(files(...)) 打进 APK，不再作为 release 资产分发。
       - name: Restore platformlive AAR cache
         id: cache-aar
         uses: actions/cache@v4
         with:
           path: app/libs/platformlive.aar
           key: platformlive-aar-${{ hashFiles('platform_live_go/**', 'tools/bind-platform-live.sh') }}
-
-      - name: Download platformlive AAR from latest release
-        if: steps.cache-aar.outputs.cache-hit != 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p app/libs
-          AAR_URL=$(gh api "repos/${{ github.repository }}/releases?per_page=30" \
-            --jq '[.[] | .assets[]? | select(.name=="platformlive.aar") | .browser_download_url] | first // empty' 2>/dev/null || true)
-          if [ -n "$AAR_URL" ]; then
-            curl -fL -o app/libs/platformlive.aar "$AAR_URL" || true
-          fi
-          # 校验下载产物：历史上存在 0 字节的坏资产，坏文件会让 AarTransform 报 "entry" 且不可恢复，
-          # 必须删掉回落到 gomobile bind。要求：≥1MB 且以 PK zip 魔数开头。
-          if [ -f app/libs/platformlive.aar ]; then
-            SZ=$(stat -c%s app/libs/platformlive.aar)
-            MAGIC=$(head -c2 app/libs/platformlive.aar)
-            if [ "$SZ" -lt 1048576 ] || [ "$MAGIC" != "PK" ]; then
-              echo "::warning::下载的 platformlive.aar 无效（size=$SZ magic=$MAGIC），删除并回落到现场生成"
-              rm -f app/libs/platformlive.aar
-            fi
-          fi
-          [ -f app/libs/platformlive.aar ] || echo "::notice::platformlive.aar 无缓存/无有效 release 资产，gomobile bind 现场生成"
 
       - name: Build release APK
         env:
@@ -99,8 +76,10 @@ jobs:
           mv app/build/outputs/apk/release/${APK_NAME} dist/${APK_NAME}
           # 只保留带版本号的 APK，删除任何无版本号的构建产物。
           rm -f app/build/outputs/apk/release/app-release.apk
-          # AAR 随 release 归档，供后续版本下载复用（避免每次都跑 gomobile bind）。
-          cp app/libs/platformlive.aar dist/platformlive.aar || true
+          # platformlive.aar 已由 implementation(files(...)) 打进 APK，不再作为独立发布资产。
+          # 若历史构建残留了同名文件，一并清掉，避免再次被 dist/* 上传。
+          rm -f dist/platformlive.aar
+          ls -la dist
           echo "APK_NAME=${APK_NAME}" >> "$GITHUB_ENV"
 
       - name: Verify arm64-v8a only

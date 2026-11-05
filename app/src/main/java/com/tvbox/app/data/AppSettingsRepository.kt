@@ -23,6 +23,9 @@ interface AppSettingsRepository {
 
     /** 立即同步提交直播默认源下标（commit 而非 apply），确保设置后立即生效。 */
     fun commitLiveSourceDefaultIndex(index: Int) {}
+
+    /** 立即同步提交节目单接口地址（commit 而非 apply），确保设置后立即生效。 */
+    fun commitEpgUrl(url: String) {}
 }
 
 class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
@@ -59,6 +62,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             liveSourceDefaultIndex = prefs.getInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, -1),
             episodeSortReverse = prefs.getBoolean(KEY_EPISODE_SORT_REVERSE, false),
             videoGridColumns = prefs.getInt(KEY_VIDEO_GRID_COLUMNS, 0),
+            epgUrl = prefs.getString(KEY_EPG_URL, "") ?: "",
             platformLiveGridColumns = prefs.getInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, 0),
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
@@ -92,6 +96,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, settings.liveSourceDefaultIndex)
             .putBoolean(KEY_EPISODE_SORT_REVERSE, settings.episodeSortReverse)
             .putInt(KEY_VIDEO_GRID_COLUMNS, settings.videoGridColumns)
+            .putString(KEY_EPG_URL, settings.epgUrl)
             .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
             .apply()
         settings
@@ -100,6 +105,11 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
     /** 立即同步提交指定键到 SharedPreferences，用于关键设置（如默认直播源）的即时持久化。 */
     override fun commitLiveSourceDefaultIndex(index: Int) {
         prefs.edit().putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, index).commit()
+    }
+
+    /** 立即同步提交节目单接口地址，与 [commitLiveSourceDefaultIndex] 同模式。 */
+    override fun commitEpgUrl(url: String) {
+        prefs.edit().putString(KEY_EPG_URL, url).commit()
     }
 
     private fun readCustomVideoApiLines(): List<CustomVideoApiLine> {
@@ -161,6 +171,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_LIVE_SOURCE_DEFAULT_INDEX = "live_source_default_index"
         const val KEY_EPISODE_SORT_REVERSE = "episode_sort_reverse"
         const val KEY_VIDEO_GRID_COLUMNS = "video_grid_columns"
+        const val KEY_EPG_URL = "epg_url"
         const val KEY_PLATFORM_LIVE_GRID_COLUMNS = "platform_live_grid_columns"
     }
 }

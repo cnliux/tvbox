@@ -81,9 +81,12 @@ fun MobileNavWrapper(
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
         -> MobileNavScreen.Home
     }
-    // 直播播放页（电视直播与平台直播）在手机模式下全屏展示，隐藏顶部栏与底部导航。
+    // 直播沉浸：仅播放页全屏（隐藏顶部栏与底部导航）；手机模式电视直播列表页保持
+    // 状态栏 + Tab 导航可见（播放层状态由 MobileLiveScreen 写入 mobileLivePlayerImmersed，
+    // 其播放层内部再调 FullscreenWhilePlayingPageVisible 隐藏系统栏）。
+    // 平台直播播放页仍走旧的整页沉浸分支。
     val liveImmersive = when (state.screen) {
-        TvScreen.Live -> state.liveChannels.isNotEmpty() && state.liveError == null
+        TvScreen.Live -> !isMobile || mobileLivePlayerImmersed.value
         TvScreen.PlatformLive -> state.platformLiveDestination == PlatformLiveDestination.Player
         else -> false
     }
@@ -94,10 +97,13 @@ fun MobileNavWrapper(
         -> false
         else -> true
     }
+    // 手机模式电视直播页自带 52dp 搜索栏（见 MobileLiveScreen），不再叠加公共顶栏；
+    // 底部 Tab 导航照常显示（列表页不沉浸）。
+    val showTopBar = showChrome && state.screen != TvScreen.Live
     // 手机模式统一按触摸界面渲染：关闭遥控器焦点框，避免触摸后高亮残留。
     CompositionLocalProvider(LocalTouchMode provides true) {
         Column(modifier = Modifier.fillMaxSize()) {
-            if (showChrome) {
+            if (showTopBar) {
                 MobileTopBar(state = state, actions = actions)
             }
             Box(modifier = Modifier.weight(1f)) {
@@ -115,6 +121,8 @@ fun MobileNavWrapper(
                 ) {
                     tabs.forEach { (screen, label) ->
                         val isSelected = screen == currentTab
+                        // 「电视」（电视直播）Tab 使用新页面的红色强调色，其余保持绿色。
+                        val selectedColor = if (screen == MobileNavScreen.Live) MobileNavLiveAccent else MobileNavDefaultAccent
                         NavigationBarItem(
                             icon = { NavIcon(screen, isSelected) },
                             label = {
@@ -122,7 +130,7 @@ fun MobileNavWrapper(
                                     label,
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f),
+                                    color = if (isSelected) selectedColor else Color.White.copy(alpha = 0.6f),
                                 )
                             },
                             selected = isSelected,
@@ -130,7 +138,7 @@ fun MobileNavWrapper(
                                 if (!isSelected) actions.navigateToMobileScreen(screen)
                             },
                             colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = Color(0xFF1ED760),
+                                selectedIconColor = selectedColor,
                                 unselectedIconColor = Color.White.copy(alpha = 0.6f),
                                 indicatorColor = Color.Transparent,
                             ),
@@ -144,7 +152,11 @@ fun MobileNavWrapper(
 
 @Composable
 private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
-    val tint = if (selected) Color(0xFF1ED760) else Color.White.copy(alpha = 0.6f)
+    val tint = when {
+        selected && screen == MobileNavScreen.Live -> MobileNavLiveAccent
+        selected -> MobileNavDefaultAccent
+        else -> Color.White.copy(alpha = 0.6f)
+    }
     val icon = when (screen) {
         MobileNavScreen.Home -> Icons.Filled.Home
         MobileNavScreen.History -> Icons.Filled.DateRange
@@ -161,6 +173,12 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
 }
 
 public enum class MobileNavScreen { Home, History, Search, Live, PlatformLive }
+
+/** 底部导航默认选中色（绿）。 */
+private val MobileNavDefaultAccent = Color(0xFF1ED760)
+
+/** 「电视」（电视直播）Tab 选中色：与手机直播页强调色一致的红色 #E50914。 */
+private val MobileNavLiveAccent = Color(0xFFE50914)
 
 private fun TvBoxViewModel.navigateToMobileScreen(screen: MobileNavScreen) {
     when (screen) {
