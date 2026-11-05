@@ -22,20 +22,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # 平台直播解析为 Go 实现（platform_live_go），以 gomobile bind 产出 AAR。
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: platform_live_go/go.mod
-          cache-dependency-path: platform_live_go/go.sum
-
-      - name: Install gomobile
-        run: go install golang.org/x/mobile/cmd/gomobile@latest
-
-      # gomobile 经 ANDROID_NDK_HOME 定位 NDK。
-      - name: Point gomobile at NDK
-        run: echo "ANDROID_NDK_HOME=$(ls -d ${ANDROID_HOME}/ndk/* | sort -V | tail -n 1)" >> "$GITHUB_ENV"
-
       # ubuntu-latest 自带 Android SDK（ANDROID_HOME 已设置），
       # 缺失的 platform/build-tools 由 AGP 自动下载，无需 setup-android。
       - name: Set up Gradle
@@ -50,12 +36,37 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
+      # platformlive.aar 不入库，从上一版本 release 下载；若无则用 -PtvboxSkipPlatformBind=true 跳过绑定。
+      - name: Download platformlive AAR from previous release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$TAG" ] && [ "$TAG" != "$(git rev-parse --short HEAD)" ]; then
+            # 尝试从前一个 release 下载 AAR
+            DOWNLOAD_URL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
+              --jq '.assets[] | select(.name=="platformlive.aar") | .browser_download_url' 2>/dev/null)
+            if [ -n "$DOWNLOAD_URL" ]; then
+              curl -L -o app/libs/platformlive.aar "$DOWNLOAD_URL"
+              echo "Downloaded platformlive.aar from $TAG"
+            fi
+          fi
+          # 如果 AAR 仍不存在，则跳过 gomobile bind 并提示用户手动添加
+          if [ ! -f app/libs/platformlive.aar ]; then
+            echo "WARNING: platformlive.aar not found, build with skip flag"
+          fi
+
       - name: Build release APK
         env:
           TVBOX_RELEASE_STORE_PASSWORD: ${{ secrets.TVBOX_RELEASE_STORE_PASSWORD }}
           TVBOX_RELEASE_KEY_ALIAS: ${{ secrets.TVBOX_RELEASE_KEY_ALIAS }}
           TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon assembleRelease
+        run: |
+          if [ -f app/libs/platformlive.aar ]; then
+            ./gradlew --no-daemon assembleRelease
+          else
+            ./gradlew --no-daemon assembleRelease -PtvboxSkipPlatformBind=true
+          fi
 
       # 单一合集版本：同一套代码运行时适配电视/手机；原生库只发布 arm64-v8a。
       # 只发布 APK，不再产出 AAB。
