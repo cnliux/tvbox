@@ -36,6 +36,7 @@ import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AiRecommendationItem
 import com.tvbox.app.domain.AppSettings
+import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.AiProviders
 import com.tvbox.app.domain.ApiLine
@@ -126,6 +127,11 @@ data class TvBoxUiState(
     // 包含已屏蔽/已删除的源，仅用于源管理页展示与恢复。
     val allSourceLines: List<ApiLine> = emptyList(),
     val selectedApiLineId: String = "",
+    /**
+     * 生效设备模式（计算值）：appSettings.deviceMode 为 Auto 时取系统识别结果，
+     * 手动值则原样生效；永不为 Auto。UI 布局判定一律使用本字段而非保存的偏好。
+     */
+    val effectiveDeviceMode: DeviceMode = DeviceMode.Television,
     val categories: List<Category> = emptyList(),
     val homeFeedMode: HomeFeedMode = HomeFeedMode.DoubanHot,
     val selectedParentCategoryId: Int? = null,
@@ -257,6 +263,8 @@ data class TvBoxUiState(
 }
 
 class TvBoxViewModel(
+    /** Application Context：仅用于设备模式自动识别等系统特征读取，不持有 Activity。 */
+    private val appContext: android.content.Context,
     private val repository: MovieRepository = DefaultMovieRepository(),
     private val doubanHotRepository: DoubanHotRepository = DefaultDoubanHotRepository(),
     private val searchHotWordRepository: SearchHotWordRepository = DefaultSearchHotWordRepository(),
@@ -300,6 +308,8 @@ class TvBoxViewModel(
     private var platformLiveSameLineRetries = 0
     // 电视直播：缓冲/卡死类失败在当前线路上的原地重连次数。
     private var liveStallRetries = 0
+    // 电视直播：记录最近一次"所有线路均失败"的频道号，避免重复提示。
+    private var lastExhaustedChannelNumber: Int? = null
     // 切换订阅后要恢复的分类名（新订阅没有该分类时回"全部"）。
     private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
@@ -351,6 +361,7 @@ class TvBoxViewModel(
                     allSourceLines = allApiLines,
                     selectedApiLineId = selectedApiLineId,
                     appSettings = normalizedSettings,
+                    effectiveDeviceMode = normalizedSettings.effectiveMode(appContext),
                     playbackHealth = playbackHealth,
                     sourceLatencies = speedLatencies,
                 )
@@ -467,9 +478,15 @@ class TvBoxViewModel(
         refreshHome()
     }
 
+    /** 首页分页防抖：防止快速滑动触发多次请求。 */
+    private var lastLoadNextPageMs = 0L
+
     fun loadNextPage() {
         val current = _state.value
         if (!current.canLoadMore) return
+        val now = System.currentTimeMillis()
+        if (now - lastLoadNextPageMs < 800L) return
+        lastLoadNextPageMs = now
         loadHomePage(reset = false, forceRefresh = current.homeNotice != null)
     }
 
@@ -1648,6 +1665,7 @@ class TvBoxViewModel(
     }
 
     fun playNextLiveChannel() {
+        lastExhaustedChannelNumber = null
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state
@@ -1663,6 +1681,7 @@ class TvBoxViewModel(
     }
 
     fun playPreviousLiveChannel() {
+        lastExhaustedChannelNumber = null
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state
@@ -1680,8 +1699,27 @@ class TvBoxViewModel(
     fun updateDeviceMode(mode: DeviceMode) {
         if (_state.value.appSettings.deviceMode == mode) return
         val settings = _state.value.appSettings.copy(deviceMode = mode)
-        _state.update { it.copy(appSettings = settings) }
+        val effective = settings.effectiveMode(appContext)
+        _state.update { it.copy(appSettings = settings, effectiveDeviceMode = effective) }
         saveSettings(settings)
+    }
+
+    /** 清除手动覆盖，恢复为自动识别模式。 */
+    fun restoreAutoDeviceMode() {
+        updateDeviceMode(DeviceMode.Auto)
+    }
+
+    /**
+     * 按当前系统状态重算生效设备模式（Auto 模式下系统特征可能因插拔 HDMI /
+     * 外接键鼠 / 返回前台而变化）。只更新展示用 effectiveDeviceMode，
+     * 不写回用户保存的 deviceMode，避免自动识别覆盖手动值。
+     */
+    fun refreshEffectiveDeviceMode() {
+        val current = _state.value
+        val effective = current.appSettings.effectiveMode(appContext)
+        if (current.effectiveDeviceMode != effective) {
+            _state.update { it.copy(effectiveDeviceMode = effective) }
+        }
     }
 
     fun updateTheme(theme: TvTheme) {
@@ -1781,12 +1819,16 @@ class TvBoxViewModel(
             "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.liveLineIndex}, nextLine=$nextIndex, totalLines=${lines.size}",
         )
         if (nextIndex !in lines.indices) {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【自动容错】已是最后一条线路，回到线路 1 继续尝试")
-            _state.update { it.copy(liveLineIndex = 0, liveReconnectNonce = it.liveReconnectNonce + 1) }
-            if (reason == LiveLineFallbackReason.Error) {
-                liveLinePrefs?.saveLineIndex(channel.key(), 0)
+            // 所有线路均已尝试过，停止循环并提示用户。
+            val channelNumber = channel.number
+            if (lastExhaustedChannelNumber != channelNumber) {
+                lastExhaustedChannelNumber = channelNumber
+                _state.update {
+                    it.copy(liveNotice = "频道 ${channelNumber} 所有线路均不可用，请换台或检查直播源")
+                }
             }
-            return true
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【自动容错】频道 ${channel.name} 所有线路已用尽，停止切换")
+            return false
         }
         _state.update { it.copy(liveLineIndex = nextIndex) }
         if (reason == LiveLineFallbackReason.Error) {
@@ -1809,6 +1851,13 @@ class TvBoxViewModel(
 
     fun reportLiveNotice(message: String) {
         _state.update { it.copy(liveNotice = message) }
+    }
+
+    /**
+     * 当某频道所有线路均失败时，记录该频道并清除已耗尽标记（换台后重新尝试）。
+     */
+    fun onLiveChannelChanged() {
+        lastExhaustedChannelNumber = null
     }
 
     /**
@@ -1989,6 +2038,7 @@ class TvBoxViewModel(
 
     fun selectLiveChannel(index: Int) {
         liveStallRetries = 0
+        lastExhaustedChannelNumber = null
         _state.update { state ->
             val channels = state.liveChannels
             if (channels.isEmpty()) return@update state

@@ -43,7 +43,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           CURRENT_TAG="${{ github.ref_name }}"
-          # 获取上一个 tag
           PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -n 1)
           echo "Current: $CURRENT_TAG, Previous: $PREV_TAG"
           if [ -n "$PREV_TAG" ]; then
@@ -89,6 +88,15 @@ jobs:
             exit 1
           fi
 
+      - name: APK size check
+        run: |
+          SIZE=$(stat -c%s dist/app-release.apk)
+          SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
+          echo "APK size: ${SIZE_MB} MB ($SIZE bytes)"
+          if [ "$SIZE" -gt 26214400 ]; then
+            echo "::warning::APK 体积超过 25MB（当前 ${SIZE_MB}MB），请检查是否有意外的体积增长"
+          fi
+
       - name: Upload platformlive AAR to this release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -97,6 +105,30 @@ jobs:
             gh release upload "${{ github.ref_name }}" app/libs/platformlive.aar \
               --repo "${{ github.repository }}" --clobber
           fi
+
+      - name: Compute and commit update.json
+        run: |
+          APK_PATH="dist/app-release.apk"
+          SHA256=$(sha256sum "$APK_PATH" | cut -d' ' -f1)
+          SIZE=$(stat -c%s "$APK_PATH")
+          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          cat > update.json <<ENDJSON
+          {
+            "versionCode": $VERSION_CODE,
+            "versionName": "$VERSION_NAME",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/app-release.apk",
+            "apkSha256": "$SHA256",
+            "apkSize": $SIZE,
+            "force": false,
+            "changelog": []
+          }
+          ENDJSON
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add update.json
+          git diff --cached --quiet || git commit -m "chore: auto-update update.json for v${VERSION_NAME}"
+          git push
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

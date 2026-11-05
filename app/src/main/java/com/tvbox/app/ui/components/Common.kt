@@ -419,6 +419,7 @@ fun MoviePosterCard(
                     contentDescription = movie.name,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
@@ -518,6 +519,7 @@ fun DoubanHotPosterCard(
                     contentScale = ContentScale.Crop,
                     onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
+                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
@@ -604,6 +606,7 @@ fun HistoryItemCard(
                     contentDescription = item.movieName,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
+                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
@@ -662,11 +665,17 @@ fun PosterImage(movie: Movie, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         if (movie.posterUrl.isNotBlank()) {
+            val imageLoader = rememberTvImageLoader()
             AsyncImage(
-                model = movie.posterUrl,
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(movie.posterUrl)
+                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                    .build(),
                 contentDescription = movie.name,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
+                imageLoader = imageLoader,
             )
         } else {
             Text("无海报", color = MaterialTheme.colorScheme.onSurfaceVariant)

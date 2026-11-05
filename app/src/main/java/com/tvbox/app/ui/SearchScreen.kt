@@ -71,6 +71,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
+import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.components.ErrorState
@@ -96,7 +97,7 @@ fun SearchScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    if (state.appSettings.deviceMode == DeviceMode.Mobile) {
+    if (state.effectiveDeviceMode == DeviceMode.Mobile) {
         MobileSearchScreen(state = state, actions = actions)
         return
     }
@@ -780,7 +781,7 @@ internal fun MobileSearchScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     if (!isMobile) return
     // 用 TextFieldValue 保留光标在末尾的语义（PR#5 修复的核心逻辑）。
     // TextFieldValue 无法写入 Bundle，不能用 rememberSaveable，不然切换页面保存状态时会抛 IllegalArgumentException。
@@ -1004,10 +1005,13 @@ private fun SearchResultCardMobile(
                 .background(Color(0xFF2A2A2A)),
         ) {
             if (movie.posterUrl.isNotBlank()) {
+                val imageLoader = rememberTvImageLoader()
                 Image(
                     painter = rememberAsyncImagePainter(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(movie.posterUrl).build()
+                            .data(movie.posterUrl)
+                            .build(),
+                        imageLoader = imageLoader,
                     ),
                     contentDescription = movie.name,
                     contentScale = ContentScale.Crop,

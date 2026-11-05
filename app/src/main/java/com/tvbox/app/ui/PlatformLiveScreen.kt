@@ -620,6 +620,7 @@ private fun PlatformLiveImageCard(
                         contentDescription = title,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize(),
+                        imageLoader = com.tvbox.app.ui.components.rememberTvImageLoader(),
                     )
                 } else {
                     Text(
@@ -754,7 +755,7 @@ private fun PlatformLivePlayerScreen(
     }
     val playbackUrl = continuityProxy?.localUrl() ?: stream?.url
     val context = androidx.compose.ui.platform.LocalContext.current
-    val isMobile = state.appSettings.deviceMode == com.tvbox.app.domain.DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == com.tvbox.app.domain.DeviceMode.Mobile
     val activity = remember(context) { context.findActivity() }
     var landscapeRequested by remember { mutableStateOf(false) }
     val initialRequestedOrientation = remember(activity) { activity?.requestedOrientation }

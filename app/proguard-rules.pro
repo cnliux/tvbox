@@ -22,3 +22,10 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# Baseline Profiles：保留 profileinstaller 生成所需的标记类。
+-keep class com.tvbox.app.ui.** { *; }
+-keepclassmembers class com.tvbox.app.ui.** {
+    void set*(...);
+    *** get*();
+}

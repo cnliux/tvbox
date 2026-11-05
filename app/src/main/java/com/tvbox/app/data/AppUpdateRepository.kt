@@ -37,7 +37,6 @@ interface AppUpdateRepository {
 
 class DefaultAppUpdateRepository(
     context: Context,
-    private val manifestUrl: String = UPDATE_MANIFEST_URL,
 ) : AppUpdateRepository {
     private val appContext = context.applicationContext
     private val downloadPrefs = appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE)
@@ -54,21 +53,28 @@ class DefaultAppUpdateRepository(
         .build()
 
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = withContext(Dispatchers.IO) {
-        val request = Request.Builder()
-            .url(manifestUrl)
-            .header("Cache-Control", "no-cache")
-            .header("User-Agent", USER_AGENT)
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IOException("更新检查失败：${response.code}")
+        var lastError: Throwable? = null
+        for (url in UPDATE_MANIFEST_URLS) {
+            val request = Request.Builder()
+                .url(url)
+                .header("Cache-Control", "no-cache")
+                .header("User-Agent", USER_AGENT)
+                .build()
+            try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) throw IOException("更新检查失败：${response.code}")
+                    return@withContext parseAppUpdateManifest(
+                        raw = response.body.string(),
+                        currentVersionCode = currentVersionCode,
+                        json = json,
+                    )
+                }
+            } catch (e: Throwable) {
+                lastError = e
+                android.util.Log.w("TVBoxUpdate", "主备URL[$url]失败，尝试下一个: ${e.message}")
             }
-            parseAppUpdateManifest(
-                raw = response.body.string(),
-                currentVersionCode = currentVersionCode,
-                json = json,
-            )
         }
+        throw IOException("更新检查失败，所有源均不可用：${lastError?.message}")
     }
 
     override suspend fun pendingDownload(): AppUpdate? = withContext(Dispatchers.IO) {
@@ -282,7 +288,15 @@ private data class UpdateManifestDto(
     @SerialName("changelog") val changelog: List<String> = emptyList(),
 )
 
-private const val UPDATE_MANIFEST_URL = "https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json"
+/**
+ * 更新清单候选 URL 列表：主源优先，失败时自动尝试备用源。
+ * 主源（ghfast.top）国内访问稳定；备用源直连 GitHub，主源故障时作为兜底。
+ */
+private val UPDATE_MANIFEST_URLS = listOf(
+    "https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json",
+    "https://raw.githubusercontent.com/cnliux/tvbox/main/update.json",
+)
+
 private const val USER_AGENT = "TVBox-Android"
 
 @Serializable
