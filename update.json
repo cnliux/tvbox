@@ -1,12 +1,9 @@
 {
-  "versionCode": 10339,
-  "versionName": "1.3.39",
-  "apkUrl": "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.39/app-release.apk",
-  "apkSha256": "7dac1949bd0b8ef2071dc132dc467fa2606f5c8f52e1d5e3c546c4900e0dadff",
-  "apkSize": 19510214,
+  "versionCode": 10342,
+  "versionName": "1.3.42",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.42/tvbox-v1.3.42.apk",
+  "apkSha256": "7b8d46d36ea438b7d09919bb5c06d99b32635c14f36e0fc310e34edb3aa2dc27",
+  "apkSize": 19640974,
   "force": false,
-  "changelog": [
-    "直播卡片布局统一：手机模式下电视直播频道列表与平台直播房间列表固定 4 列网格，宽窄屏观感一致。",
-    "更新机制修复：修正 1.3.32/1.3.33 期间版本号未递增导致部分设备收不到更新提示的问题。"
-  ]
+  "changelog": []
 }
