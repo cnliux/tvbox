@@ -41,14 +41,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
-import com.tvbox.app.domain.AiProviders
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
@@ -203,7 +200,7 @@ private fun TvSettingsDetail(
                 TvSettingCategory.General -> GeneralTvContent(state, actions)
                 TvSettingCategory.Playback -> PlaybackTvContent(state, actions)
                 TvSettingCategory.Sources -> SourcesTvContent(state, actions)
-                TvSettingCategory.AiRemote -> AiRemoteTvContent(state, actions)
+                TvSettingCategory.Remote -> RemoteTvContent(state, actions)
                 TvSettingCategory.About -> AboutTvContent()
             }
         }
@@ -217,7 +214,14 @@ private fun GeneralTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
         TvSettingRow(
             title = "设备模式",
             subtitle = "当前：${state.appSettings.deviceMode.summaryLabel(detectedMode)}",
-            trailing = {},
+            trailing = {
+                TvChoiceChips(
+                    options = DeviceMode.entries,
+                    selected = state.appSettings.deviceMode,
+                    label = { it.displayName },
+                    onSelect = actions::updateDeviceMode,
+                )
+            },
         )
         TvSettingRow(
             title = "界面主题",
@@ -305,6 +309,30 @@ private fun PlaybackTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         TvSettingRow(
+            title = "首页卡片数量",
+            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度）",
+            trailing = {
+                TvChoiceChips(
+                    options = listOf(0, 3, 4, 5, 6),
+                    selected = state.appSettings.videoGridColumns,
+                    label = { if (it == 0) "自动" else "$it" },
+                    onSelect = actions::updateVideoGridColumns,
+                )
+            },
+        )
+        TvSettingRow(
+            title = "直播卡片数量",
+            subtitle = if (state.appSettings.platformLiveGridColumns > 0) "每行 ${state.appSettings.platformLiveGridColumns} 个" else "自动（按设备类型）",
+            trailing = {
+                TvChoiceChips(
+                    options = listOf(0, 4, 5, 6, 7, 8),
+                    selected = state.appSettings.platformLiveGridColumns,
+                    label = { if (it == 0) "自动" else "$it" },
+                    onSelect = actions::updatePlatformLiveGridColumns,
+                )
+            },
+        )
+        TvSettingRow(
             title = "剧集排序",
             subtitle = if (state.appSettings.episodeSortReverse) "倒序（…,3,2,1）" else "正序（1,2,3,…）",
             trailing = {
@@ -372,20 +400,10 @@ private fun SourcesTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
 }
 
 @Composable
-private fun AiRemoteTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
+private fun RemoteTvContent(state: TvBoxUiState, actions: TvBoxViewModel) {
     val localIp by remember { mutableStateOf(getLocalIpv4Address() ?: "192.168.x.x") }
-    val aiProvider = AiProviders.find(state.appSettings.aiProviderId)
 
     Column(verticalArrangement = Arrangement.spacedBy(24.dp)) {
-        // AI 配置
-        TvSettingRow(
-            title = "AI 模型",
-            subtitle = "${aiProvider.name} · ${if (state.appSettings.aiApiKey.isBlank()) "未配置 API Key" else "已配置 API Key"}",
-            trailing = { TvFocusButton(text = "配置", onClick = actions::openRemoteManageDialog) },
-        )
-
-        HorizontalDivider(color = TvColors.Border.copy(alpha = 0.3f), thickness = 1.dp)
-
         // 远程管理
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(
@@ -622,47 +640,9 @@ private enum class TvSettingCategory(
     General("通用", "设备模式、外观、首页行为", Icons.Default.Settings),
     Playback("播放", "播放管家、缩放、跳过", Icons.Default.PlayArrow),
     Sources("数据源", "视频源、直播源、平台直播", Icons.AutoMirrored.Filled.List),
-    AiRemote("AI 与远程", "AI 模型、远程管理、源管理", AiSparkleIcon),
+    Remote("远程管理", "局域网远程管理、源管理", Icons.Default.Settings),
     About("关于", "应用信息、版本、协议", Icons.Default.Info),
 }
-
-// 自定义 AI 星光图标
-private val AiSparkleIcon: ImageVector = ImageVector.Builder(
-    name = "AiSparkle",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    addPath(
-        pathData = listOf(
-            PathNode.MoveTo(12f, 2f),
-            PathNode.LineTo(13.8f, 8.2f),
-            PathNode.LineTo(20f, 10f),
-            PathNode.LineTo(13.8f, 11.8f),
-            PathNode.LineTo(12f, 18f),
-            PathNode.LineTo(10.2f, 11.8f),
-            PathNode.LineTo(4f, 10f),
-            PathNode.LineTo(10.2f, 8.2f),
-            PathNode.Close,
-        ),
-        fill = SolidColor(Color.White),
-    )
-    addPath(
-        pathData = listOf(
-            PathNode.MoveTo(19f, 14f),
-            PathNode.LineTo(19.9f, 17.1f),
-            PathNode.LineTo(23f, 18f),
-            PathNode.LineTo(19.9f, 18.9f),
-            PathNode.LineTo(19f, 22f),
-            PathNode.LineTo(18.1f, 18.9f),
-            PathNode.LineTo(15f, 18f),
-            PathNode.LineTo(18.1f, 17.1f),
-            PathNode.Close,
-        ),
-        fill = SolidColor(Color.White),
-    )
-}.build()
 
 // 工具：获取本机局域网 IPv4
 private fun getLocalIpv4Address(): String? {

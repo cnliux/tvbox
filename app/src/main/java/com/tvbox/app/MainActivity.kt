@@ -10,10 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
-import android.speech.RecognitionListener
-import android.speech.RecognitionService
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -79,17 +75,6 @@ class MainActivity : ComponentActivity() {
         pendingInstallPermissionAction = null
         handleInstallPermissionResult(action)
     }
-    private var speechRecognizer: SpeechRecognizer? = null
-    private val speechPermissionLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        if (granted) {
-            startInAppSpeechRecognition()
-        } else {
-            viewModel.showAiMessage("没有麦克风权限，无法语音找片")
-        }
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 手机模式默认竖屏、电视模式横屏：先同步读取已保存的设备模式，避免冷启动闪一下错误方向。
@@ -142,7 +127,6 @@ class MainActivity : ComponentActivity() {
                 TvBoxApp(
                     state = state,
                     actions = viewModel,
-                    onStartAiVoiceInput = ::startAiVoiceInput,
                     onStartUpdateDownload = ::startBackgroundUpdateDownload,
                     onInstallUpdate = ::installUpdateApk,
                     onOpenUpdateSettings = ::openUpdateSystemSettings,
@@ -169,130 +153,6 @@ class MainActivity : ComponentActivity() {
         // 手机模式使用 edge-to-edge 布局，由各页面自行吸收状态栏/导航栏安全区；
         // 电视模式保持原有的系统避让行为，避免盒子端画面被系统栏挤压。
         WindowCompat.setDecorFitsSystemWindows(window, mode != DeviceMode.Mobile)
-    }
-
-    private fun startAiVoiceInput() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            viewModel.showAiMessage("请允许麦克风权限后再语音找片")
-            speechPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        startInAppSpeechRecognition()
-    }
-
-    private fun startInAppSpeechRecognition() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            viewModel.showAiMessage("当前设备不支持语音识别，请使用文字输入")
-            return
-        }
-        val speechServicePackage = resolveSpeechRecognitionServicePackage()
-        if (speechServicePackage != null && !hasMicrophonePermission(speechServicePackage)) {
-            viewModel.showAiMessage("系统语音服务缺少麦克风权限，请允许后再试")
-            openSpeechServiceSettings(speechServicePackage)
-            return
-        }
-
-        releaseSpeechRecognizer()
-        viewModel.startAiVoiceListening()
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
-            setRecognitionListener(createSpeechRecognitionListener())
-            startListening(createSpeechRecognitionIntent())
-        }
-    }
-
-    private fun createSpeechRecognitionIntent(): Intent {
-        return Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "说出你的找片需求")
-            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-        }
-    }
-
-    private fun createSpeechRecognitionListener(): RecognitionListener {
-        return object : RecognitionListener {
-            override fun onReadyForSpeech(params: Bundle?) {
-                viewModel.startAiVoiceListening()
-            }
-
-            override fun onBeginningOfSpeech() = Unit
-
-            override fun onRmsChanged(rmsdB: Float) = Unit
-
-            override fun onBufferReceived(buffer: ByteArray?) = Unit
-
-            override fun onEndOfSpeech() = Unit
-
-            override fun onError(error: Int) {
-                releaseSpeechRecognizer(cancel = false)
-                if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
-                    resolveSpeechRecognitionServicePackage()
-                        ?.takeIf { !hasMicrophonePermission(it) }
-                        ?.let(::openSpeechServiceSettings)
-                }
-                viewModel.showAiMessage(speechErrorMessage(error))
-            }
-
-            override fun onResults(results: Bundle?) {
-                releaseSpeechRecognizer(cancel = false)
-                handleSpeechResults(results)
-            }
-
-            override fun onPartialResults(partialResults: Bundle?) = Unit
-
-            override fun onEvent(eventType: Int, params: Bundle?) = Unit
-        }
-    }
-
-    private fun handleSpeechResults(results: Bundle?) {
-        val text = results
-            ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            ?.firstOrNull()
-            ?.trim()
-            .orEmpty()
-        if (text.isBlank()) {
-            viewModel.showAiMessage("没有听清，请再说一次")
-        } else {
-            viewModel.submitAiRecommendation(text)
-        }
-    }
-
-    private fun releaseSpeechRecognizer(cancel: Boolean = true) {
-        if (cancel) {
-            speechRecognizer?.cancel()
-        }
-        speechRecognizer?.destroy()
-        speechRecognizer = null
-    }
-
-    private fun resolveSpeechRecognitionServicePackage(): String? {
-        val intent = Intent(RecognitionService.SERVICE_INTERFACE)
-        val services = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.queryIntentServices(intent, PackageManager.ResolveInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            packageManager.queryIntentServices(intent, 0)
-        }
-        return services.firstOrNull()?.serviceInfo?.packageName
-    }
-
-    private fun hasMicrophonePermission(packageName: String): Boolean {
-        return packageManager.checkPermission(Manifest.permission.RECORD_AUDIO, packageName) ==
-            PackageManager.PERMISSION_GRANTED
-    }
-
-    private fun openSpeechServiceSettings(packageName: String) {
-        Toast.makeText(this, "请允许系统语音服务使用麦克风", Toast.LENGTH_LONG).show()
-        val intent = Intent(
-            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            Uri.parse("package:$packageName"),
-        ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { startActivity(intent) }
-            .onFailure {
-                Toast.makeText(this, "无法打开系统语音服务设置，请在系统设置中手动允许麦克风权限", Toast.LENGTH_LONG).show()
-            }
     }
 
     private fun saveUpdateApk(apkPath: String) {
@@ -456,7 +316,6 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        releaseSpeechRecognizer()
         super.onDestroy()
     }
 }
@@ -496,21 +355,4 @@ private class TvBoxViewModelFactory(
 
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 private const val HOME_BACK_EXIT_INTERVAL_MS = 2000L
-
-private fun speechErrorMessage(error: Int): String {
-    return when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "麦克风录音异常，请检查权限"
-        SpeechRecognizer.ERROR_CLIENT -> "语音识别已取消，请再试一次"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "系统语音服务缺少麦克风权限，请允许后再试"
-        SpeechRecognizer.ERROR_NETWORK,
-        SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
-        SpeechRecognizer.ERROR_SERVER,
-        -> "语音识别网络异常，请稍后再试"
-        SpeechRecognizer.ERROR_NO_MATCH,
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-        -> "没有听清，请再说一次"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "语音识别正在准备，请稍后再试"
-        else -> "语音识别失败，请再试一次"
-    }
-}
 

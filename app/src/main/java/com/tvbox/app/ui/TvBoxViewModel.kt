@@ -4,10 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
 import com.tvbox.app.BuildConfig
-import com.tvbox.app.data.AiRequestConfig
-import com.tvbox.app.data.AiRecommendationRepository
 import com.tvbox.app.data.AppUpdateRepository
-import com.tvbox.app.data.DefaultAiRecommendationRepository
 import com.tvbox.app.data.DefaultMovieRepository
 import com.tvbox.app.data.SourceConfigCodec
 import com.tvbox.app.data.SourceConfigFetcher
@@ -34,11 +31,9 @@ import com.tvbox.app.data.RemoteManageServer
 import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
-import com.tvbox.app.domain.AiRecommendationItem
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
-import com.tvbox.app.domain.AiProviders
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.AppUpdate
 import com.tvbox.app.domain.Category
@@ -85,7 +80,6 @@ enum class TvScreen {
     Live,
     PlatformLive,
     Settings,
-    AiRecommend,
     SourceManager,
     LiveSourceManager,
     VideoSourceManager,
@@ -115,10 +109,6 @@ enum class LiveGroupStage {
 data class PlatformLiveQuickCategory(
     val site: PlatformLiveSite,
     val category: PlatformLiveCategory,
-)
-
-data class AiRecommendationUiItem(
-    val recommendation: AiRecommendationItem,
 )
 
 data class TvBoxUiState(
@@ -226,13 +216,6 @@ data class TvBoxUiState(
     val updateError: String? = null,
     val appSettings: AppSettings = AppSettings(),
     val playbackHealth: PlaybackHealthSnapshot = PlaybackHealthSnapshot(),
-    val aiQuery: String = "",
-    val aiTitle: String = "推荐",
-    val aiResults: List<AiRecommendationUiItem> = emptyList(),
-    val aiLoading: Boolean = false,
-    val aiVoiceListening: Boolean = false,
-    val aiError: String? = null,
-    val aiResolvingKeyword: String? = null,
     val remoteManageDialogVisible: Boolean = false,
     val remoteManageServerUrl: String? = null,
     val remoteManageServerError: String? = null,
@@ -271,7 +254,6 @@ class TvBoxViewModel(
     private val searchKeywordExpander: SearchKeywordExpander = DefaultSearchKeywordExpander(),
     private val liveRepository: LiveRepository = DefaultLiveRepository(),
     private val platformLiveRepository: PlatformLiveRepository = EmbeddedPlatformLiveRepository(),
-    private val aiRecommendationRepository: AiRecommendationRepository = DefaultAiRecommendationRepository(BuildConfig.AI_API_KEY),
     private val appUpdateRepository: AppUpdateRepository = DefaultAppUpdateRepositoryPlaceholder(),
     private val appSettingsRepository: AppSettingsRepository = DefaultAppSettingsRepositoryPlaceholder(),
     private val playbackHealthRepository: PlaybackHealthRepository = DefaultPlaybackHealthRepositoryPlaceholder(),
@@ -314,7 +296,6 @@ class TvBoxViewModel(
     private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
     private val historyWriteMutex = Mutex()
-    private var aiJob: Job? = null
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
@@ -523,10 +504,6 @@ class TvBoxViewModel(
                 )
             }
         }
-    }
-
-    fun openAiRecommend() {
-        _state.update { it.copy(screen = TvScreen.AiRecommend, aiVoiceListening = false, aiError = null) }
     }
 
     fun openLive() {
@@ -791,28 +768,6 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
-    fun updateAiProvider(providerId: String) {
-        val provider = AiProviders.find(providerId)
-        val settings = _state.value.appSettings.copy(
-            aiProviderId = provider.id,
-            aiModelName = provider.defaultModel,
-        )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings, aiError = null) }
-    }
-
-    fun updateAiModelName(modelName: String) {
-        val settings = _state.value.appSettings.copy(aiModelName = modelName)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings, aiError = null) }
-    }
-
-    fun updateAiApiKey(apiKey: String) {
-        val settings = _state.value.appSettings.copy(aiApiKey = apiKey)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings, aiError = null) }
-    }
-
     fun openRemoteManageDialog() {
         closeRemoteManageDialog(stopOnly = true)
         val server = RemoteManageServer(
@@ -901,9 +856,6 @@ class TvBoxViewModel(
             categorySourceId = remoteCategorySourceId,
             categorySourceName = current.allSourceLines
                 .firstOrNull { it.id == remoteCategorySourceId }?.name.orEmpty(),
-            aiProviderName = AiProviders.find(settings.aiProviderId).name,
-            aiModelName = settings.aiModelName,
-            aiKeyConfigured = settings.aiApiKey.isNotBlank(),
         )
     }
 
@@ -1025,34 +977,7 @@ class TvBoxViewModel(
                 removeBlockedVideoCategory(name)
                 "已恢复视频分类：$name"
             }
-            "ai-save" -> {
-                val modelName = request.name.trim()
-                val apiKey = request.value.trim()
-                if (modelName.isBlank()) {
-                    "模型名称不能为空。"
-                } else {
-                    applyAiConfig(modelName = modelName, apiKey = apiKey.ifBlank { null })
-                    "AI 配置已保存。"
-                }
-            }
             else -> "未知操作：${request.action}"
-        }
-    }
-
-    /** 手机网页保存 AI 配置：apiKey 为 null 表示沿用原有 Key。 */
-    private fun applyAiConfig(modelName: String, apiKey: String?) {
-        val current = _state.value.appSettings
-        val settings = current.copy(
-            aiModelName = modelName,
-            aiApiKey = apiKey ?: current.aiApiKey,
-        )
-        saveSettings(settings)
-        _state.update {
-            it.copy(
-                appSettings = settings,
-                aiError = null,
-                remoteManageMessage = "已收到手机配置，模型和 API Key 已保存。",
-            )
         }
     }
 
@@ -1116,142 +1041,6 @@ class TvBoxViewModel(
                 searchCompletedSources = 0,
                 searchTotalSources = 0,
             )
-        }
-    }
-
-    fun updateAiQuery(query: String) {
-        _state.update { it.copy(aiQuery = query, aiVoiceListening = false, aiError = null) }
-    }
-
-    fun submitAiRecommendation() {
-        submitAiRecommendation(query = _state.value.aiQuery)
-    }
-
-    fun submitAiRecommendation(query: String) {
-        submitAiRecommendationInternal(query = query, refreshBatch = false)
-    }
-
-    fun refreshAiRecommendationBatch() {
-        submitAiRecommendationInternal(query = _state.value.aiQuery, refreshBatch = true)
-    }
-
-    fun showAiMessage(message: String) {
-        _state.update {
-            it.copy(
-                screen = TvScreen.AiRecommend,
-                aiLoading = false,
-                aiVoiceListening = false,
-                aiResolvingKeyword = null,
-                aiError = message,
-            )
-        }
-    }
-
-    fun startAiVoiceListening() {
-        _state.update {
-            it.copy(
-                screen = TvScreen.AiRecommend,
-                aiLoading = false,
-                aiVoiceListening = true,
-                aiResolvingKeyword = null,
-                aiError = null,
-            )
-        }
-    }
-
-    private fun submitAiRecommendationInternal(query: String, refreshBatch: Boolean) {
-        val trimmedQuery = query.trim()
-        if (trimmedQuery.isBlank()) {
-            _state.update { it.copy(aiVoiceListening = false, aiResults = emptyList(), aiError = "请输入找片需求") }
-            return
-        }
-        val excludedNames = if (refreshBatch) {
-            _state.value.aiResults.map { it.recommendation.name }
-        } else {
-            emptyList()
-        }
-        val requestQuery = buildAiRecommendationRequest(trimmedQuery, excludedNames)
-        aiJob?.cancel()
-        aiJob = viewModelScope.launch {
-            _state.update {
-                it.copy(
-                    aiQuery = trimmedQuery,
-                    aiLoading = true,
-                    aiVoiceListening = false,
-                    aiError = null,
-                    aiResults = emptyList(),
-                    aiResolvingKeyword = null,
-                    aiTitle = if (refreshBatch) "AI 正在换一批" else "AI 正在找片",
-                )
-            }
-            runCatching {
-                val recommendations = aiRecommendationRepository.getRecommendations(
-                    query = requestQuery,
-                    userConfig = _state.value.appSettings.userAiRequestConfigOrNull(),
-                )
-                recommendations.title to recommendations.items.map { AiRecommendationUiItem(recommendation = it) }
-            }.onSuccess { (title, items) ->
-                _state.update {
-                    it.copy(
-                        aiLoading = false,
-                        aiVoiceListening = false,
-                        aiTitle = title.ifBlank { "AI 推荐" },
-                        aiResults = items,
-                        aiError = if (items.isEmpty()) "AI 没有返回可展示的推荐" else null,
-                    )
-                }
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        aiLoading = false,
-                        aiVoiceListening = false,
-                        aiResults = emptyList(),
-                        aiResolvingKeyword = null,
-                        aiError = error.userMessage(),
-                    )
-                }
-            }
-        }
-    }
-
-    fun openAiRecommendation(item: AiRecommendationItem) {
-        val keyword = item.searchKeyword.ifBlank { item.name }.trim()
-        if (keyword.isBlank()) {
-            _state.update { it.copy(aiError = "暂无该视频资源") }
-            return
-        }
-        aiJob?.cancel()
-        aiJob = viewModelScope.launch {
-            _state.update {
-                it.copy(
-                    aiError = null,
-                    aiResolvingKeyword = keyword,
-                )
-            }
-            runCatching { findPlayableMovie(item) }
-                .onSuccess { movie ->
-                    if (movie == null) {
-                        _state.update {
-                            it.copy(
-                                screen = TvScreen.AiRecommend,
-                                aiResolvingKeyword = null,
-                                aiError = "暂无该视频资源",
-                            )
-                        }
-                    } else {
-                        _state.update { it.copy(aiResolvingKeyword = null, aiError = null) }
-                        openDetail(movie.id)
-                    }
-                }
-                .onFailure { error ->
-                    _state.update {
-                        it.copy(
-                            screen = TvScreen.AiRecommend,
-                            aiResolvingKeyword = null,
-                            aiError = error.userMessage(),
-                        )
-                    }
-                }
         }
     }
 
@@ -1392,7 +1181,6 @@ class TvBoxViewModel(
         detailSourceTestJob?.cancel()
         val current = _state.value
         val returnScreen = when (current.screen) {
-            TvScreen.AiRecommend -> TvScreen.AiRecommend
             TvScreen.Search -> TvScreen.Search
             TvScreen.History -> TvScreen.History
             TvScreen.Detail -> current.detailReturnScreen
@@ -1694,6 +1482,20 @@ class TvBoxViewModel(
                 liveLineIndex = targetLineIndex,
             )
         }
+    }
+
+    /** 更新首页视频卡片每行数量；0 表示跟随布局自适应。 */
+    fun updateVideoGridColumns(columns: Int) {
+        val settings = _state.value.appSettings.copy(videoGridColumns = columns.coerceIn(0, 8))
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新平台直播卡片每行数量；0 表示跟随布局默认。 */
+    fun updatePlatformLiveGridColumns(columns: Int) {
+        val settings = _state.value.appSettings.copy(platformLiveGridColumns = columns.coerceIn(0, 10))
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
     }
 
     fun updateDeviceMode(mode: DeviceMode) {
@@ -2434,7 +2236,6 @@ class TvBoxViewModel(
             TvScreen.Live -> refreshLive()
             TvScreen.PlatformLive -> retryPlatformLiveChannel()
             TvScreen.Settings -> checkForAppUpdate(showError = true)
-            TvScreen.AiRecommend -> submitAiRecommendation()
             TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager -> Unit
         }
     }
@@ -2463,7 +2264,7 @@ class TvBoxViewModel(
                 _state.update { it.copy(screen = TvScreen.Home) }
                 true
             }
-            TvScreen.History, TvScreen.Settings, TvScreen.AiRecommend -> {
+            TvScreen.History, TvScreen.Settings -> {
                 _state.update { it.copy(screen = TvScreen.Home) }
                 true
             }
@@ -3387,28 +3188,6 @@ class TvBoxViewModel(
         }
     }
 
-    private suspend fun findPlayableMovie(item: AiRecommendationItem): Movie? {
-        val keyword = item.searchKeyword.ifBlank { item.name }.trim()
-        if (keyword.isBlank()) return null
-        val movies = repository.getMovies(
-            apiLineId = _state.value.selectedApiLineId,
-            page = 1,
-            keyword = keyword,
-        ).movies
-        if (movies.isEmpty()) return null
-
-        val normalizedKeyword = keyword.normalizeAiMatchText()
-        val normalizedName = item.name.normalizeAiMatchText()
-        return movies.firstOrNull { movie ->
-            val candidate = movie.name.normalizeAiMatchText()
-            candidate == normalizedKeyword || candidate == normalizedName
-        } ?: movies.firstOrNull { movie ->
-            val candidate = movie.name.normalizeAiMatchText()
-            candidate.isNotBlank() &&
-                (candidate.contains(normalizedKeyword) || normalizedKeyword.contains(candidate))
-        } ?: movies.first()
-    }
-
     private suspend fun findPlayableDoubanMovie(title: String, apiLineId: String): Movie? {
         val keyword = title.trim()
         if (keyword.isBlank()) return null
@@ -3419,21 +3198,6 @@ class TvBoxViewModel(
         ).movies
         val matchedIndex = findBestTitleMatchIndex(keyword, movies.map { it.name }) ?: return null
         return movies.getOrNull(matchedIndex)
-    }
-
-    private fun buildAiRecommendationRequest(query: String, excludedNames: List<String>): String {
-        val distinctNames = excludedNames
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(12)
-        if (distinctNames.isEmpty()) return query
-        return buildString {
-            append(query)
-            append("\n请换一批推荐，不要重复这些作品：")
-            append(distinctNames.joinToString("、"))
-            append("。")
-        }
     }
 
     private fun loadHistory() {
@@ -3887,21 +3651,6 @@ private fun TvBoxUiState.playbackHealthKeyOrNull(): String? {
         episodeIndex = playerEpisodeIndex,
         source = source,
     )
-}
-
-private fun AppSettings.userAiRequestConfigOrNull(): AiRequestConfig? {
-    val apiKey = aiApiKey.trim()
-    if (apiKey.isBlank()) return null
-    val provider = AiProviders.find(aiProviderId)
-    return AiRequestConfig(
-        chatCompletionsUrl = provider.chatCompletionsUrl,
-        model = aiModelName.trim().ifBlank { provider.defaultModel },
-        apiKey = apiKey,
-    )
-}
-
-private fun String.normalizeAiMatchText(): String {
-    return lowercase().filter { it.isLetterOrDigit() }
 }
 
 private fun normalizeMacCmsApiUrl(rawUrl: String): String? {

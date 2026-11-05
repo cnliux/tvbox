@@ -19,9 +19,6 @@ data class AppSettings(
     val homeContinueWatchingEnabled: Boolean = false,
     val theme: TvTheme = TvTheme.Default,
     val fontScale: TvFontScale = TvFontScale.Normal,
-    val aiProviderId: String = AiProviders.default.id,
-    val aiModelName: String = AiProviders.default.defaultModel,
-    val aiApiKey: String = "",
     val checkUpdatesOnStartup: Boolean = true,
     val playbackAgentAutoSwitchEnabled: Boolean = true,
     val videoScaleMode: VideoScaleMode = VideoScaleMode.Fit,
@@ -35,6 +32,10 @@ data class AppSettings(
     val liveSourceDefaultIndex: Int = -1,
     /** 剧集排序顺序：false=正序（1,2,3…），true=倒序（…,3,2,1）。 */
     val episodeSortReverse: Boolean = false,
+    /** 首页视频卡片每行数量；0 表示跟随布局自适应。 */
+    val videoGridColumns: Int = 0,
+    /** 平台直播卡片每行数量；0 表示跟随布局默认（触屏 4 / 遥控 6）。 */
+    val platformLiveGridColumns: Int = 0,
 )
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {
@@ -151,54 +152,4 @@ data class CustomVideoApiLine(
 
 fun List<CustomVideoApiLine>.toApiLines(): List<ApiLine> {
     return map { it.toApiLine() }
-}
-
-data class AiProvider(
-    val id: String,
-    val name: String,
-    val apiBaseUrl: String,
-    val defaultModel: String,
-) {
-    val chatCompletionsUrl: String
-        get() {
-            val normalized = apiBaseUrl.trim().trimEnd('/')
-            return if (normalized.endsWith("/chat/completions")) {
-                normalized
-            } else {
-                "$normalized/chat/completions"
-            }
-        }
-}
-
-object AiProviders {
-    val all = listOf(
-        AiProvider(
-            id = "agnes",
-            name = "Agnes",
-            apiBaseUrl = "https://apihub.agnes-ai.com/v1/chat/completions",
-            defaultModel = "agnes-2.5-flash",
-        ),
-        AiProvider(
-            id = "deepseek",
-            name = "DeepSeek",
-            apiBaseUrl = "https://api.deepseek.com",
-            defaultModel = "deepseek-v4-flash",
-        ),
-        AiProvider(
-            id = "siliconflow",
-            name = "SiliconFlow",
-            apiBaseUrl = "https://api.siliconflow.cn/v1",
-            defaultModel = "Qwen/Qwen2.5-7B-Instruct",
-        ),
-        AiProvider(
-            id = "qwen",
-            name = "Qwen",
-            apiBaseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
-            defaultModel = "qwen-plus",
-        ),
-    )
-
-    val default: AiProvider = all.first()
-
-    fun find(id: String): AiProvider = all.firstOrNull { it.id == id } ?: default
 }

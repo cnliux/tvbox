@@ -78,12 +78,17 @@ jobs:
 
       - name: Stage release artifacts
         run: |
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          APK_NAME="tvbox-v${VERSION_NAME}.apk"
           mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/app-release.apk
+          mv app/build/outputs/apk/release/${APK_NAME} dist/${APK_NAME}
+          # 只保留带版本号的 APK，删除任何无版本号的构建产物。
+          rm -f app/build/outputs/apk/release/app-release.apk
+          echo "APK_NAME=${APK_NAME}" >> "$GITHUB_ENV"
 
       - name: Verify arm64-v8a only
         run: |
-          ABIS=$(unzip -Z1 dist/app-release.apk 'lib/*' | cut -d/ -f2 | sort -u)
+          ABIS=$(unzip -Z1 dist/${APK_NAME} 'lib/*' | cut -d/ -f2 | sort -u)
           echo "APK ABIs: $ABIS"
           if [ "$ABIS" != "arm64-v8a" ]; then
             echo "::error::Release 只允许 arm64-v8a，实际为: $ABIS"
@@ -92,7 +97,7 @@ jobs:
 
       - name: APK size check
         run: |
-          SIZE=$(stat -c%s dist/app-release.apk)
+          SIZE=$(stat -c%s dist/${APK_NAME})
           SIZE_MB=$(echo "scale=2; $SIZE / 1048576" | bc)
           echo "APK size: ${SIZE_MB} MB ($SIZE bytes)"
           if [ "$SIZE" -gt 26214400 ]; then
@@ -101,7 +106,7 @@ jobs:
 
       - name: Compute and commit update.json
         run: |
-          APK_PATH="dist/app-release.apk"
+          APK_PATH="dist/${APK_NAME}"
           SHA256=$(sha256sum "$APK_PATH" | cut -d' ' -f1)
           SIZE=$(stat -c%s "$APK_PATH")
           VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts)
@@ -110,7 +115,7 @@ jobs:
           {
             "versionCode": $VERSION_CODE,
             "versionName": "$VERSION_NAME",
-            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/app-release.apk",
+            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/${APK_NAME}",
             "apkSha256": "$SHA256",
             "apkSize": $SIZE,
             "force": false,

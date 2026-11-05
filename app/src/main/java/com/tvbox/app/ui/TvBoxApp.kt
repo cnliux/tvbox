@@ -93,8 +93,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
-import com.tvbox.app.domain.AiProvider
-import com.tvbox.app.domain.AiProviders
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.PlaybackHealthSnapshot
@@ -127,7 +125,6 @@ import com.google.zxing.qrcode.QRCodeWriter
 fun TvBoxApp(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-    onStartAiVoiceInput: () -> Unit = {},
     onStartUpdateDownload: () -> Unit = actions::startUpdateDownload,
     onInstallUpdate: (String) -> Unit = {},
     onOpenUpdateSettings: () -> Unit = {},
@@ -143,7 +140,6 @@ fun TvBoxApp(
                 AppNavigationRail(
                     screen = state.screen,
                     onHome = actions::openHome,
-                    onAiRecommend = actions::openAiRecommend,
                     onLive = actions::openLive,
                     onPlatformLive = actions::openPlatformLive,
                     onSettings = actions::openSettings,
@@ -159,7 +155,6 @@ fun TvBoxApp(
                         holder = screenStateHolder,
                         state = state,
                         actions = actions,
-                        onStartAiVoiceInput = onStartAiVoiceInput,
                     )
                 }
             }
@@ -169,14 +164,12 @@ fun TvBoxApp(
                 MobileNavWrapper(
                     state = state,
                     actions = actions,
-                    onStartAiVoiceInput = onStartAiVoiceInput,
                 ) { navScreen ->
                     MobileNavScreenContent(
                         holder = screenStateHolder,
                         state = state,
                         actions = actions,
                         navScreen = navScreen,
-                        onStartAiVoiceInput = onStartAiVoiceInput,
                     )
                 }
             } else {
@@ -184,8 +177,7 @@ fun TvBoxApp(
                     holder = screenStateHolder,
                     state = state,
                     actions = actions,
-                    onStartAiVoiceInput = onStartAiVoiceInput,
-                )
+                        )
             }
         }
         AppUpdateDialog(
@@ -271,7 +263,6 @@ private fun TvBoxScreen(
     holder: SaveableStateHolder,
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-    onStartAiVoiceInput: () -> Unit,
 ) {
     holder.SaveableStateProvider(state.screen.name) {
     when (state.screen) {
@@ -286,11 +277,6 @@ private fun TvBoxScreen(
         TvScreen.SourceManager -> SourceManagementScreen(state = state, actions = actions)
         TvScreen.LiveSourceManager -> LiveSourceManagementScreen(state = state, actions = actions)
         TvScreen.VideoSourceManager -> VideoSourceManagementScreen(state = state, actions = actions)
-        TvScreen.AiRecommend -> AiRecommendScreen(
-            state = state,
-            actions = actions,
-            onStartVoiceInput = onStartAiVoiceInput,
-        )
     }
 }
 }
@@ -445,8 +431,6 @@ private fun HomeScreen(
                         AndroidKeyEvent.KEYCODE_NUMPAD_1 to { actions.openHistory() },
                         AndroidKeyEvent.KEYCODE_2       to { actions.openSearch() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_2 to { actions.openSearch() },
-                        AndroidKeyEvent.KEYCODE_3       to { actions.openAiRecommend() },
-                        AndroidKeyEvent.KEYCODE_NUMPAD_3 to { actions.openAiRecommend() },
                         AndroidKeyEvent.KEYCODE_4       to { actions.openLive() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_4 to { actions.openLive() },
                         AndroidKeyEvent.KEYCODE_5       to { actions.openPlatformLive() },
@@ -465,7 +449,6 @@ private fun HomeScreen(
                         subtitle = homeSubtitle,
                         onHistory = actions::openHistory,
                         onSearch = actions::openSearch,
-                        onAiRecommend = actions::openAiRecommend,
                         onLive = actions::openLive,
                         onPlatformLive = actions::openPlatformLive,
                         onSettings = actions::openSettings,
@@ -799,7 +782,7 @@ public fun RemoteManageDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = "页面里的修改会立即同步到电视；也可填写 AI 模型与 API Key。",
+                        text = "页面里的修改会立即同步到电视。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -826,62 +809,6 @@ public fun RemoteManageDialog(
     )
 }
 
-
-@Composable
-private fun AiProviderSetting(
-    selectedProvider: AiProvider,
-    modelName: String,
-    apiKey: String,
-    onProviderSelect: (String) -> Unit,
-    onOpenConfig: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val displayModelName = modelName.ifBlank { selectedProvider.defaultModel }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(0.9f)) {
-            Text(
-                text = "大模型选择",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Box {
-                SettingsActionButton(
-                    text = "${selectedProvider.name} ▾",
-                    onClick = { expanded = true },
-                )
-                DropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                ) {
-                    AiProviders.all.forEach { provider ->
-                        val selected = provider.id == selectedProvider.id
-                        DropdownMenuItem(
-                            text = { Text(if (selected) "已选 · ${provider.name}" else provider.name) },
-                            onClick = {
-                                expanded = false
-                                onProviderSelect(provider.id)
-                            },
-                        )
-                    }
-                }
-            }
-        }
-        SettingsActionButton(
-            text = "模型：$displayModelName",
-            onClick = onOpenConfig,
-            modifier = Modifier.weight(1.25f),
-        )
-        SettingsActionButton(
-            text = if (apiKey.isBlank()) "API Key：未配置" else "API Key：已配置",
-            onClick = onOpenConfig,
-            modifier = Modifier.weight(1.1f),
-        )
-    }
-}
 
 @Composable
 private fun SettingsActionButton(
@@ -1206,7 +1133,9 @@ private fun MovieGrid(
             }
         }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
+            columns = state.appSettings.videoGridColumns.takeIf { it > 0 }
+                ?.let { GridCells.Fixed(it) }
+                ?: GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
             state = gridState,
             contentPadding = PaddingValues(bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -2340,7 +2269,6 @@ private fun MobileNavScreenContent(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
     navScreen: MobileNavScreen,
-    onStartAiVoiceInput: () -> Unit,
 ) {
     when (state.screen) {
         // 详情页、播放页、设置页与源管理页不是底部导航标签页，必须交给 TvBoxScreen 按 screen 渲染，
@@ -2348,12 +2276,10 @@ private fun MobileNavScreenContent(
         // 另外 TvBoxScreen 内部已经用同一个 key 注册 SaveableStateProvider，这里不能再包一层，否则 key 重复会崩溃。
         TvScreen.Detail, TvScreen.Player, TvScreen.Settings,
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
-        TvScreen.PlatformLive, TvScreen.AiRecommend,
-        -> TvBoxScreen(
+        TvScreen.PlatformLive -> TvBoxScreen(
             holder = holder,
             state = state,
             actions = actions,
-            onStartAiVoiceInput = onStartAiVoiceInput,
         )
         else -> holder.SaveableStateProvider(state.screen.name) {
             when (navScreen) {

@@ -61,7 +61,6 @@ import com.tvbox.app.domain.DeviceMode
 fun MobileNavWrapper(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-    onStartAiVoiceInput: () -> Unit,
     content: @Composable (navScreen: MobileNavScreen) -> Unit,
 ) {
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
@@ -73,7 +72,7 @@ fun MobileNavWrapper(
         MobileNavScreen.PlatformLive to "直播",
     )
     val currentTab = when (state.screen) {
-        TvScreen.Home, TvScreen.Detail, TvScreen.AiRecommend -> MobileNavScreen.Home
+        TvScreen.Home, TvScreen.Detail -> MobileNavScreen.Home
         TvScreen.History -> MobileNavScreen.History
         TvScreen.Search -> MobileNavScreen.Search
         TvScreen.Live -> MobileNavScreen.Live

@@ -68,7 +68,6 @@ fun AppHeader(
     subtitle: String,
     onHistory: () -> Unit,
     onSearch: () -> Unit,
-    onAiRecommend: () -> Unit = {},
     onLive: () -> Unit = {},
     onPlatformLive: () -> Unit = {},
     onSettings: () -> Unit = {},
@@ -118,7 +117,6 @@ fun AppHeader(
             if (showShortcutActions) {
                 HeaderActionButton(text = "历史(1)", onClick = onHistory, legacyStyle = true, modifier = firstActionModifier)
                 HeaderActionButton(text = "搜索(2)", onClick = onSearch, legacyStyle = true)
-                HeaderActionButton(text = "推荐(3)", onClick = onAiRecommend, legacyStyle = true)
                 HeaderActionButton(text = "电视(4)", onClick = onLive, legacyStyle = true)
                 HeaderActionButton(text = "直播(5)", onClick = onPlatformLive, legacyStyle = true)
                 HeaderActionButton(text = "设置(6)", onClick = onSettings, legacyStyle = true)
@@ -134,7 +132,6 @@ fun AppHeader(
 fun AppNavigationRail(
     screen: TvScreen,
     onHome: () -> Unit,
-    onAiRecommend: () -> Unit,
     onLive: () -> Unit,
     onPlatformLive: () -> Unit,
     onSettings: () -> Unit,
@@ -168,7 +165,6 @@ fun AppNavigationRail(
             TvNavigationItem("首页", NavigationIcon.Home, screen.isHomeDestination(), onHome)
             TvNavigationItem("电视", NavigationIcon.Live, screen == TvScreen.Live, onLive)
             TvNavigationItem("直播", NavigationIcon.PlatformLive, screen == TvScreen.PlatformLive, onPlatformLive)
-            TvNavigationItem("推荐", NavigationIcon.Recommend, screen == TvScreen.AiRecommend, onAiRecommend)
             Spacer(modifier = Modifier.weight(1f))
             TvNavigationItem("设置", NavigationIcon.Settings, screen == TvScreen.Settings, onSettings)
         }
@@ -231,7 +227,6 @@ private enum class NavigationIcon(val glyph: String) {
     Home("\uE608"),
     Live("\uEB34"),
     PlatformLive("\uE6E6"),
-    Recommend("\uEB7D"),
     Settings("\uE6F0"),
 }
 

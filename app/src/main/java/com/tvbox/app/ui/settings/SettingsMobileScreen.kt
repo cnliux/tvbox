@@ -58,15 +58,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.PathNode
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
-import com.tvbox.app.domain.AiProviders
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
@@ -191,7 +188,6 @@ private fun SettingsMobileLanding(
 @Composable
 private fun SettingsHeroCard(state: TvBoxUiState) {
     val detectedMode = DeviceMode.detectFromSystem(LocalContext.current)
-    val aiProvider = AiProviders.find(state.appSettings.aiProviderId)
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -234,11 +230,6 @@ private fun SettingsHeroCard(state: TvBoxUiState) {
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                HeroStat(
-                    label = "AI 模型",
-                    value = aiProvider.name + if (state.appSettings.aiApiKey.isBlank()) " 未配置" else " 已配置",
-                    modifier = Modifier.weight(1f),
-                )
                 HeroStat(label = "设备", value = state.appSettings.deviceMode.summaryLabel(detectedMode), modifier = Modifier.weight(1f))
             }
         }
@@ -398,9 +389,6 @@ private fun SettingsMobileDetail(
                 MobileSettingCategory.Sources -> {
                     item { SourcesDetail(state, actions) }
                 }
-                MobileSettingCategory.Ai -> {
-                    item { AiDetail(state, actions) }
-                }
                 MobileSettingCategory.Data -> {
                     item { DataDetail(state, actions, onClearHistory) }
                 }
@@ -416,10 +404,18 @@ private fun SettingsMobileDetail(
 private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     val detectedMode = DeviceMode.detectFromSystem(LocalContext.current)
     SettingsGroup {
-        InfoRow(
+        SettingsRow(
             icon = Icons.Default.Settings,
             title = "设备模式",
             subtitle = state.appSettings.deviceMode.summaryLabel(detectedMode),
+            trailing = {
+                ChoiceChips(
+                    options = DeviceMode.entries,
+                    selected = state.appSettings.deviceMode,
+                    label = { it.displayName },
+                    onSelect = actions::updateDeviceMode,
+                )
+            },
         )
         DividerInGroup()
         SettingsRow(
@@ -507,6 +503,34 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
+            title = "首页卡片数量",
+            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度）",
+            trailing = {
+                ChoiceChips(
+                    options = listOf(0, 3, 4, 5, 6),
+                    selected = state.appSettings.videoGridColumns,
+                    label = { if (it == 0) "自动" else "$it" },
+                    onSelect = actions::updateVideoGridColumns,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "直播卡片数量",
+            subtitle = if (state.appSettings.platformLiveGridColumns > 0) "每行 ${state.appSettings.platformLiveGridColumns} 个" else "自动（按设备类型）",
+            trailing = {
+                ChoiceChips(
+                    options = listOf(0, 4, 5, 6, 7, 8),
+                    selected = state.appSettings.platformLiveGridColumns,
+                    label = { if (it == 0) "自动" else "$it" },
+                    onSelect = actions::updatePlatformLiveGridColumns,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
             title = "剧集排序",
             subtitle = if (state.appSettings.episodeSortReverse) "倒序（…,3,2,1）" else "正序（1,2,3,…）",
             trailing = {
@@ -572,23 +596,6 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 "已屏蔽 ${state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() }} 个站点"
             } else "管理虎牙/斗鱼/哔哩",
             trailing = { TextButton(onClick = actions::openPlatformLive) { Text("管理", color = TvColors.Accent) } },
-        )
-    }
-}
-
-@Composable
-private fun AiDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
-    val aiProvider = AiProviders.find(state.appSettings.aiProviderId)
-    SettingsGroup {
-        SettingsRow(
-            icon = AiSparkleIcon,
-            title = "AI 模型",
-            subtitle = if (state.appSettings.aiApiKey.isBlank()) {
-                "${aiProvider.name} · 未配置 API Key"
-            } else {
-                "${aiProvider.name} · 已配置 API Key"
-            },
-            trailing = { TextButton(onClick = actions::openRemoteManageDialog) { Text("配置", color = TvColors.Accent) } },
         )
     }
 }
@@ -795,45 +802,6 @@ private enum class MobileSettingCategory(
     General("通用", "设备·外观·启动", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
     Playback("播放", "播放管家·缩放·跳过", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
     Sources("数据源", "视频源·直播源", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
-    Ai("AI", "AI 推荐·模型配置", AiSparkleIcon, Color(0xFFB06BFF), Color(0xFF3D1E66)),
     Data("数据管理", "观看历史·统计", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
     About("关于", "版本·协议", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
 }
-
-// 自定义 AI 星光图标（material-icons-core 无 AI 图标）
-private val AiSparkleIcon: ImageVector = ImageVector.Builder(
-    name = "AiSparkle",
-    defaultWidth = 24.dp,
-    defaultHeight = 24.dp,
-    viewportWidth = 24f,
-    viewportHeight = 24f,
-).apply {
-    addPath(
-        pathData = listOf(
-            PathNode.MoveTo(12f, 2f),
-            PathNode.LineTo(13.8f, 8.2f),
-            PathNode.LineTo(20f, 10f),
-            PathNode.LineTo(13.8f, 11.8f),
-            PathNode.LineTo(12f, 18f),
-            PathNode.LineTo(10.2f, 11.8f),
-            PathNode.LineTo(4f, 10f),
-            PathNode.LineTo(10.2f, 8.2f),
-            PathNode.Close,
-        ),
-        fill = SolidColor(Color.White),
-    )
-    addPath(
-        pathData = listOf(
-            PathNode.MoveTo(19f, 14f),
-            PathNode.LineTo(19.9f, 17.1f),
-            PathNode.LineTo(23f, 18f),
-            PathNode.LineTo(19.9f, 18.9f),
-            PathNode.LineTo(19f, 22f),
-            PathNode.LineTo(18.1f, 18.9f),
-            PathNode.LineTo(15f, 18f),
-            PathNode.LineTo(18.1f, 17.1f),
-            PathNode.Close,
-        ),
-        fill = SolidColor(Color.White),
-    )
-}.build()

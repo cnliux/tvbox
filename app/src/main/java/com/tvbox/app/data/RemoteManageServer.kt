@@ -50,9 +50,6 @@ data class RemoteManageSnapshot(
     /** 网页最近一次“获取分类”的视频源；为空表示尚未获取。 */
     val categorySourceId: String = "",
     val categorySourceName: String = "",
-    val aiProviderName: String = "",
-    val aiModelName: String = "",
-    val aiKeyConfigured: Boolean = false,
 )
 
 /** 手机网页提交的一次管理操作。 */
@@ -67,7 +64,7 @@ data class RemoteManageRequest(
 
 /**
  * 局域网远程管理服务：无需 token，手机与电视在同一网络时直接访问即可。
- * 支持视频源管理（导入/选择/屏蔽/删除/测速）、直播源、平台站点、屏蔽视频分类与 AI 配置。
+ * 支持视频源管理（导入/选择/屏蔽/删除/测速）、直播源、平台站点与屏蔽视频分类。
  */
 class RemoteManageServer(
     private val scope: CoroutineScope,
@@ -327,21 +324,6 @@ class RemoteManageServer(
                           )
                       }
                   }}
-                </section>
-
-                <section class="panel">
-                  <h2>AI 配置</h2>
-                  <p class="empty">当前大模型：${data.aiProviderName.htmlEscape()}；API Key：${
-                      if (data.aiKeyConfigured) "已配置" else "未配置"
-                  }</p>
-                  <form method="post">
-                    <input type="hidden" name="action" value="ai-save" />
-                    <label class="url">模型名称</label>
-                    <input class="text" name="name" value="${data.aiModelName.htmlEscape()}" autocomplete="off" />
-                    <label class="url">API Key（留空表示不修改）</label>
-                    <input class="text" name="value" type="password" autocomplete="off" />
-                    <div class="form-row"><button>保存 AI 配置</button></div>
-                  </form>
                 </section>
 
                 <footer>TVBox 局域网远程管理 · 无需 token</footer>

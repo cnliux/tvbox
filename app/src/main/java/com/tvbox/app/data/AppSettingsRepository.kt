@@ -50,12 +50,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             homeContinueWatchingEnabled = prefs.getBoolean(KEY_HOME_CONTINUE_WATCHING, false),
             theme = TvTheme.fromStorageKey(prefs.getString(KEY_THEME, TvTheme.Default.storageKey)),
             fontScale = TvFontScale.fromStorageKey(prefs.getString(KEY_FONT_SCALE, TvFontScale.Normal.storageKey)),
-            aiProviderId = prefs.getString(KEY_AI_PROVIDER_ID, AppSettings().aiProviderId)
-                ?: AppSettings().aiProviderId,
-            aiModelName = prefs.getString(KEY_AI_MODEL_NAME, AppSettings().aiModelName)
-                ?: AppSettings().aiModelName,
-            aiApiKey = prefs.getString(KEY_AI_API_KEY, AppSettings().aiApiKey)
-                ?: AppSettings().aiApiKey,
             checkUpdatesOnStartup = prefs.getBoolean(KEY_CHECK_UPDATES_ON_STARTUP, true),
             playbackAgentAutoSwitchEnabled = prefs.getBoolean(KEY_PLAYBACK_AGENT_AUTO_SWITCH, true),
             videoScaleMode = VideoScaleMode.fromStorageKey(prefs.getString(KEY_VIDEO_SCALE_MODE, null)),
@@ -64,6 +58,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             mobileOnboarded = prefs.getBoolean(KEY_MOBILE_ONBOARDED, false),
             liveSourceDefaultIndex = prefs.getInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, -1),
             episodeSortReverse = prefs.getBoolean(KEY_EPISODE_SORT_REVERSE, false),
+            videoGridColumns = prefs.getInt(KEY_VIDEO_GRID_COLUMNS, 0),
+            platformLiveGridColumns = prefs.getInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, 0),
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
         if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
@@ -87,9 +83,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putBoolean(KEY_HOME_CONTINUE_WATCHING, settings.homeContinueWatchingEnabled)
             .putString(KEY_THEME, settings.theme.storageKey)
             .putString(KEY_FONT_SCALE, settings.fontScale.storageKey)
-            .putString(KEY_AI_PROVIDER_ID, settings.aiProviderId)
-            .putString(KEY_AI_MODEL_NAME, settings.aiModelName)
-            .putString(KEY_AI_API_KEY, settings.aiApiKey)
             .putBoolean(KEY_CHECK_UPDATES_ON_STARTUP, settings.checkUpdatesOnStartup)
             .putBoolean(KEY_PLAYBACK_AGENT_AUTO_SWITCH, settings.playbackAgentAutoSwitchEnabled)
             .putString(KEY_VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
@@ -98,6 +91,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putBoolean(KEY_MOBILE_ONBOARDED, settings.mobileOnboarded)
             .putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, settings.liveSourceDefaultIndex)
             .putBoolean(KEY_EPISODE_SORT_REVERSE, settings.episodeSortReverse)
+            .putInt(KEY_VIDEO_GRID_COLUMNS, settings.videoGridColumns)
+            .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
             .apply()
         settings
     }
@@ -157,9 +152,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_SOURCE_SPEED_LATENCIES = "source_speed_latencies"
         const val KEY_THEME = "theme"
         const val KEY_FONT_SCALE = "font_scale"
-        const val KEY_AI_PROVIDER_ID = "ai_provider_id"
-        const val KEY_AI_MODEL_NAME = "ai_model_name"
-        const val KEY_AI_API_KEY = "ai_api_key"
         const val KEY_CHECK_UPDATES_ON_STARTUP = "check_updates_on_startup"
         const val KEY_PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
         const val KEY_VIDEO_SCALE_MODE = "video_scale_mode"
@@ -168,5 +160,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_MOBILE_ONBOARDED = "mobile_onboarded"
         const val KEY_LIVE_SOURCE_DEFAULT_INDEX = "live_source_default_index"
         const val KEY_EPISODE_SORT_REVERSE = "episode_sort_reverse"
+        const val KEY_VIDEO_GRID_COLUMNS = "video_grid_columns"
+        const val KEY_PLATFORM_LIVE_GRID_COLUMNS = "platform_live_grid_columns"
     }
 }

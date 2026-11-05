@@ -132,6 +132,7 @@ private fun PlatformLiveSitesScreen(
         emptyMessage = "没有可用平台直播服务",
         onRetry = actions::refreshPlatformLive,
         touchColumns = 2,
+        columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         item(key = "favorites") {
             PlatformLiveTextCard(
@@ -201,6 +202,7 @@ private fun PlatformLiveParentCategoriesScreen(
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
         touchColumns = 2,
+        columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         itemsIndexed(
             state.platformLiveParentCategories,
@@ -245,6 +247,7 @@ private fun PlatformLiveCategoriesScreen(
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
         touchColumns = 3,
+        columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         itemsIndexed(categories, key = { _, category -> category.id }) { index, category ->
             PlatformLiveCategoryCard(
@@ -386,6 +389,7 @@ private fun PlatformLiveBrowseSurface(
     notice: String? = null,
     loadingMore: Boolean = false,
     touchColumns: Int = 2,
+    columnsOverride: Int = 0,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
     PageSurface { padding ->
@@ -427,8 +431,10 @@ private fun PlatformLiveBrowseSurface(
                     Box(modifier = Modifier.fillMaxSize()) {
                         LazyVerticalGrid(
                             state = resolvedGridState,
-                            columns = if (touchMode) GridCells.Fixed(4)
-                            else GridCells.Fixed(TvLayout.PlatformLiveColumns),
+                            columns = GridCells.Fixed(
+                                columnsOverride.takeIf { it > 0 }
+                                    ?: if (touchMode) 4 else TvLayout.PlatformLiveColumns,
+                            ),
                             contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
                             verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
