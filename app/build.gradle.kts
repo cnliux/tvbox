@@ -196,7 +196,7 @@ val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
     if (platformLiveAar.exists()) {
         outputs.file(platformLiveAar)
     }
-    onlyIf { !project.hasProperty("tvboxSkipPlatformBind") }
+    onlyIf { !project.hasProperty("tvboxSkipPlatformBind") && !platformLiveAar.exists() }
     environment("TVBOX_EMULATOR_ABIS", if (emulatorAbisEnabled) "1" else "0")
     if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
         commandLine(

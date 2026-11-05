@@ -25,6 +25,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Go proxy
+        run: echo "GOPROXY=https://goproxy.cn,direct" >> "$GITHUB_ENV"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
