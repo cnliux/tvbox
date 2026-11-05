@@ -93,7 +93,7 @@ jobs:
 
       - name: Stage release artifacts
         run: |
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
           APK_NAME="tvbox-v${VERSION_NAME}.apk"
           mkdir -p dist
           mv app/build/outputs/apk/release/${APK_NAME} dist/${APK_NAME}
@@ -126,8 +126,8 @@ jobs:
           APK_PATH="dist/${APK_NAME}"
           SHA256=$(sha256sum "$APK_PATH" | cut -d' ' -f1)
           SIZE=$(stat -c%s "$APK_PATH")
-          VERSION_CODE=$(grep -oP 'versionCode\s*=\s*\K\d+' app/build.gradle.kts)
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          VERSION_CODE=$(grep -oP 'TVBOX_VERSION_CODE\s*=\s*\K\d+' app/build.gradle.kts)
+          VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
           cat > update.json <<ENDJSON
           {
             "versionCode": $VERSION_CODE,
