@@ -40,6 +40,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -93,6 +95,8 @@ import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.VideoScaleMode
+import androidx.compose.material3.Icon
 import com.tvbox.app.ui.components.AppHeader
 import com.tvbox.app.ui.components.AppNavigationRail
 import com.tvbox.app.ui.components.CategoryPill
@@ -2381,16 +2385,32 @@ private fun MobileNavScreenContent(
 }
 
 // ── 手机模式设置页（竖向卡片列表）────────────────────────────────────────────────
-
 @Composable
 private fun MobileSettingsScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    var confirmClearHistory by remember { mutableStateOf(false) }
     var confirmClearPlaybackStats by remember { mutableStateOf(false) }
-    // 手机设置页也要渲染远程管理弹窗，否则这里的入口点了没有任何反应。
+
     if (state.remoteManageDialogVisible) {
         RemoteManageDialog(state = state, actions = actions)
+    }
+    if (confirmClearHistory) {
+        AlertDialog(
+            onDismissRequest = { confirmClearHistory = false },
+            title = { Text("清空历史记录") },
+            text = { Text("确定要清空所有观看历史记录吗？此操作不可撤销。") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmClearHistory = false
+                    actions.clearHistory()
+                }) { Text("清空") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClearHistory = false }) { Text("取消") }
+            },
+        )
     }
     if (confirmClearPlaybackStats) {
         AlertDialog(
@@ -2426,111 +2446,315 @@ private fun MobileSettingsScreen(
                     .clickable { actions.goBack() },
                 contentAlignment = Alignment.Center,
             ) {
-                Text("✕", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+                Icon(
+                    imageVector = Icons.Filled.Close,
+                    contentDescription = "返回",
+                    tint = Color.White.copy(alpha = 0.7f),
+                    modifier = Modifier.size(18.dp),
+                )
             }
         }
 
         LazyColumn(
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            // 设备与外观
+            // ── 设备与外观 ───────────────────────────────────────
             item { SettingsSectionTitle("设备与外观") }
-            item { MobileDeviceModeSetting(state.appSettings.deviceMode, actions::updateDeviceMode) }
-            item { MobileThemeSetting(state.appSettings.theme, actions::updateTheme) }
-            item { MobileFontScaleSetting(state.appSettings.fontScale, actions::updateFontScale) }
 
-            // 首页
-            item { SettingsSectionTitle("首页") }
             item {
-                MobileSwitchRow(
-                    label = "继续观看",
-                    desc = if (state.appSettings.homeContinueWatchingEnabled) "首页显示最近观看记录" else "首页不显示继续观看",
-                    checked = state.appSettings.homeContinueWatchingEnabled,
-                    onCheck = actions::updateHomeContinueWatching,
-                )
-            }
-            item {
-                MobileHomeApiLineSetting(
-                    state.apiLines, state.selectedApiLine, state.appSettings.customVideoApiLines.size,
-                    actions::updateHomeApiLine, actions::openVideoSourceManager,
-                )
-            }
-
-            // 源管理
-            item { SettingsSectionTitle("源管理") }
-            item {
-                SettingsButtonRow(items = listOf(
-                    SettingsButtonItem("视频接口", "管理视频数据源", actions::openVideoSourceManager),
-                    SettingsButtonItem("直播源", "管理 IPTV 直播源", actions::openLiveSourceManager),
-                    SettingsButtonItem("全部源", "管理所有数据接口", actions::openSourceManager),
-                ))
-            }
-
-            // AI 配置
-            item { SettingsSectionTitle("AI 配置") }
-            item {
-                MobileAiProviderSetting(
-                    selectedProvider = AiProviders.find(state.appSettings.aiProviderId),
-                    modelName = state.appSettings.aiModelName,
-                    apiKey = state.appSettings.aiApiKey,
-                    onProviderSelect = actions::updateAiProvider,
-                    onOpenConfig = actions::openRemoteManageDialog,
-                )
-            }
-
-            // 播放设置
-            item { SettingsSectionTitle("播放设置") }
-            item {
-                MobileSwitchRow(
-                    label = "自动换线",
-                    desc = if (state.appSettings.playbackAgentAutoSwitchEnabled) "播放失败或缓冲过久时自动切换线路" else "已关闭，播放器仍可手动换线",
-                    checked = state.appSettings.playbackAgentAutoSwitchEnabled,
-                    onCheck = actions::updatePlaybackAgentAutoSwitch,
-                )
-            }
-            item {
-                SettingsPlaybackStatsRow(
-                    summary = state.playbackHealth.qualitySummaryText(),
-                    entryCount = state.playbackHealth.entryCount,
-                    onClear = { confirmClearPlaybackStats = true },
-                )
-            }
-
-            // 关于与更新
-            item { SettingsSectionTitle("关于与更新") }
-            item {
-                SettingsButtonRow(items = listOf(
-                    SettingsButtonItem("检查更新", "当前版本 v${BuildConfig.VERSION_NAME}", null),
-                ))
-            }
-            item {
-                Row(
-                    modifier = Modifier.fillMaxWidth()
-                        .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("启动时检查更新", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                        Text(if (state.appSettings.checkUpdatesOnStartup) "已开启" else "已关闭",
-                            color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.bodySmall)
-                        if (state.updateError != null) {
-                            Text(state.updateError, color = Color(0xFFFF7171), style = MaterialTheme.typography.bodySmall)
+                val ctx = LocalContext.current
+                SettingsCard(
+                    icon = "\uD83D\uDCF1",
+                    title = "设备模式",
+                    subtitle = "当前：${state.appSettings.deviceMode.displayName}",
+                    description = "切换后应用将重启，以生效横竖屏及布局变化。",
+                    trailing = {
+                        val current = state.appSettings.deviceMode
+                        Box(
+                            modifier = Modifier
+                                .background(if (current == DeviceMode.Television) Color(0xFF1ED760) else Color(0xFF2A2A2A), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                        ) {
+                            Text(current.displayName, fontSize = 12.sp,
+                                color = if (current == DeviceMode.Television) Color.Black else Color.White.copy(alpha = 0.7f))
                         }
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    },
+                    onClick = {
+                        val next = if (state.appSettings.deviceMode == DeviceMode.Television) DeviceMode.Mobile else DeviceMode.Television
+                        actions.updateDeviceMode(next)
+                        val activity = (ctx as? android.app.Activity)
+                        activity?.runOnUiThread { activity.recreate() }
+                    },
+                )
+            }
+
+            item {
+                SettingsEnumSelector(
+                    icon = "\uD83C\uDFA8",
+                    title = "界面主题",
+                    description = "当前：${state.appSettings.theme.displayName}，选择后立即生效",
+                    selected = state.appSettings.theme,
+                    entries = TvTheme.entries,
+                    onSelect = actions::updateTheme,
+                )
+            }
+
+            item {
+                SettingsEnumSelector(
+                    icon = "\uD83D\uDD24",
+                    title = "字体大小",
+                    description = "调整应用内文字显示大小",
+                    selected = state.appSettings.fontScale,
+                    entries = TvFontScale.entries,
+                    onSelect = actions::updateFontScale,
+                )
+            }
+
+            // ── 首页 ───────────────────────────────────────────────
+            item { SettingsSectionTitle("首页") }
+
+            item {
+                SettingsSwitchRow(
+                    icon = "\u25B6",
+                    title = "继续观看",
+                    subtitle = "首页显示最近观看记录",
+                    checked = state.appSettings.homeContinueWatchingEnabled,
+                    onChecked = actions::updateHomeContinueWatching,
+                )
+            }
+
+            item {
+                val currentLine = state.apiLines.find { it.id == state.selectedApiLine?.id }
+                SettingsCard(
+                    icon = "\uD83D\uDCFA",
+                    title = "首页数据源",
+                    subtitle = "当前：${currentLine?.name ?: "未选择"}",
+                    description = if (state.appSettings.customVideoApiLines.isNotEmpty())
+                        "已添加 ${state.appSettings.customVideoApiLines.size} 条自定义接口" else "选择默认视频数据源",
+                    trailing = {
+                        Button(
+                            onClick = actions::openVideoSourceManager,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+                        ) { Text("管理", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            // ── 直播 ───────────────────────────────────────────────
+            item { SettingsSectionTitle("直播") }
+
+            item {
+                val liveCount = state.appSettings.liveSourceUrls.count { it.isNotEmpty() }
+                SettingsCard(
+                    icon = "\uD83D\uDCE1",
+                    title = "IPTV 直播源",
+                    subtitle = if (liveCount > 0) "已配置 $liveCount 条源地址" else "未配置直播源",
+                    description = "管理电视直播频道列表和分组",
+                    trailing = {
+                        Button(
+                            onClick = actions::openLiveSourceManager,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+                        ) { Text("管理", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            item {
+                val blockedCount = state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() }
+                SettingsCard(
+                    icon = "\uD83C\uDF10",
+                    title = "平台直播",
+                    subtitle = if (blockedCount > 0) "已屏蔽 $blockedCount 个站点" else "管理虎牙/斗鱼等平台直播",
+                    description = "屏蔽或启用特定平台直播频道",
+                    trailing = {
+                        Button(
+                            onClick = actions::openPlatformLive,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+                        ) { Text("查看", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            // ── 播放 ───────────────────────────────────────────────
+            item { SettingsSectionTitle("播放") }
+
+            item {
+                SettingsSwitchRow(
+                    icon = "\u21BB",
+                    title = "自动换线",
+                    subtitle = "播放失败或缓冲过久时自动切换线路",
+                    checked = state.appSettings.playbackAgentAutoSwitchEnabled,
+                    onChecked = actions::updatePlaybackAgentAutoSwitch,
+                )
+            }
+
+            item {
+                SettingsEnumSelector(
+                    icon = "\uD83D\uDD0D",
+                    title = "视频缩放",
+                    description = "影片与屏幕比例不同时如何显示",
+                    selected = state.appSettings.videoScaleMode,
+                    entries = VideoScaleMode.entries,
+                    onSelect = actions::updateVideoScaleMode,
+                )
+            }
+
+            item {
+                val introSec = state.appSettings.introSkipSeconds
+                SettingsCard(
+                    icon = "\u23E9",
+                    title = "片头跳过",
+                    subtitle = if (introSec > 0) "自动跳过前 ${introSec}s" else "未启用",
+                    description = "自动跳过片头广告（0 = 关闭）",
+                    trailing = {
+                        Button(
+                            onClick = { actions.updateIntroSkipSeconds(if (introSec > 0) 0 else 30) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (introSec > 0) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                                contentColor = if (introSec > 0) Color.Black else Color.White.copy(alpha = 0.7f),
+                            ),
+                        ) { Text(if (introSec > 0) "关闭" else "启用", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            item {
+                val outroSec = state.appSettings.outroSkipSeconds
+                SettingsCard(
+                    icon = "\u23ED",
+                    title = "片尾跳过",
+                    subtitle = if (outroSec > 0) "自动跳过末尾 ${outroSec}s" else "未启用",
+                    description = "自动跳过片尾演职员表（0 = 关闭）",
+                    trailing = {
+                        Button(
+                            onClick = { actions.updateOutroSkipSeconds(if (outroSec > 0) 0 else 30) },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (outroSec > 0) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                                contentColor = if (outroSec > 0) Color.Black else Color.White.copy(alpha = 0.7f),
+                            ),
+                        ) { Text(if (outroSec > 0) "关闭" else "启用", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            // ── AI 推荐 ────────────────────────────────────────────
+            item { SettingsSectionTitle("AI 推荐") }
+
+            item {
+                val aiProvider = AiProviders.find(state.appSettings.aiProviderId)
+                SettingsCard(
+                    icon = "\uD83E\uDD16",
+                    title = "AI 模型",
+                    subtitle = "当前：${aiProvider.name}",
+                    description = if (state.appSettings.aiApiKey.isBlank())
+                        "未配置 API Key，使用内置配置" else "已配置 API Key",
+                    trailing = {
+                        Button(
+                            onClick = actions::openRemoteManageDialog,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+                        ) { Text("配置", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            // ── 数据管理 ───────────────────────────────────────────
+            item { SettingsSectionTitle("数据管理") }
+
+            item {
+                SettingsCard(
+                    icon = "\uD83D\uDCCB",
+                    title = "观看历史",
+                    subtitle = "管理本地播放记录",
+                    description = "清空后无法恢复",
+                    trailing = {
+                        Button(
+                            onClick = { confirmClearHistory = true },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
+                        ) { Text("清空", fontSize = 12.sp) }
+                    },
+                )
+            }
+
+            item {
+                SettingsCard(
+                    icon = "\uD83D\uDCCA",
+                    title = "线路统计",
+                    subtitle = "播放质量学习数据（${state.playbackHealth.entryCount} 条）",
+                    description = "清空后播放管家将重新学习线路表现",
+                    trailing = if (state.playbackHealth.entryCount > 0) {
+                        {
+                            Button(
+                                onClick = { confirmClearPlaybackStats = true },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(34.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF2A2A2A),
+                                    contentColor = Color(0xFFFF7171),
+                                ),
+                            ) { Text("清空", fontSize = 12.sp) }
+                        }
+                    } else null,
+                )
+            }
+
+            // ── 更新 ───────────────────────────────────────────────
+            item { SettingsSectionTitle("更新") }
+
+            item {
+                SettingsSwitchRow(
+                    icon = "\u2B07",
+                    title = "启动时检查更新",
+                    subtitle = "应用启动时自动检测新版本",
+                    checked = state.appSettings.checkUpdatesOnStartup,
+                    onChecked = actions::updateStartupUpdateCheck,
+                )
+            }
+
+            item {
+                SettingsCard(
+                    icon = "\uD83D\uDD04",
+                    title = "检查更新",
+                    subtitle = "当前版本 v${BuildConfig.VERSION_NAME}",
+                    description = if (state.updateChecking) "正在检查..." else "点击检测是否有新版本",
+                    trailing = {
                         Button(
                             onClick = { actions.checkForAppUpdate(showError = true) },
                             enabled = !state.updateChecking,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(36.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-                        ) { Text(if (state.updateChecking) "检查中..." else "检查", fontSize = 12.sp) }
-                        Switch(checked = state.appSettings.checkUpdatesOnStartup, onCheckedChange = actions::updateStartupUpdateCheck)
-                    }
+                            modifier = Modifier.height(34.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1ED760)),
+                        ) {
+                            Text(
+                                if (state.updateChecking) "检查中..." else "检查",
+                                fontSize = 12.sp,
+                                color = Color.Black,
+                            )
+                        }
+                    },
+                )
+                if (state.updateError != null) {
+                    Text(
+                        state.updateError!!,
+                        color = Color(0xFFFF7171),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 4.dp, start = 48.dp),
+                    )
                 }
             }
         }
@@ -2538,19 +2762,13 @@ private fun MobileSettingsScreen(
         // 底部版本信息
         Text(
             text = "TVBox v${BuildConfig.VERSION_NAME}",
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.3f),
+            color = Color.White.copy(alpha = 0.25f),
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
         )
     }
 }
-
-private data class SettingsButtonItem(
-    val label: String,
-    val desc: String,
-    val onClick: (() -> Unit)?,
-)
 
 @Composable
 private fun SettingsSectionTitle(title: String) {
@@ -2558,65 +2776,139 @@ private fun SettingsSectionTitle(title: String) {
         text = title,
         style = MaterialTheme.typography.labelLarge,
         color = Color(0xFF1ED760),
-        modifier = Modifier.padding(vertical = 4.dp, horizontal = 4.dp),
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp, start = 4.dp),
     )
 }
 
+/** 设置项卡片：图标 + 标题行 + 描述 + 右侧操作 */
 @Composable
-private fun SettingsButtonRow(items: List<SettingsButtonItem>) {
+private fun SettingsCard(
+    icon: String,
+    title: String,
+    subtitle: String,
+    description: String,
+    trailing: (@Composable () -> Unit)? = null,
+    onClick: (() -> Unit)? = null,
+) {
+    val modifier = if (onClick != null)
+        Modifier.clickable(onClick = onClick)
+    else Modifier
     Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.fillMaxWidth()
+            .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        items.forEach { item ->
+        // 图标
+        Box(
+            modifier = Modifier.size(36.dp).background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(icon, fontSize = 16.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        // 文本
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.55f))
+            if (description.isNotEmpty()) {
+                Text(description, style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.35f))
+            }
+        }
+        // 右侧操作
+        trailing?.let { it() }
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    icon: String,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChecked: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(36.dp).background(Color(0xFF2A2A2A), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(icon, fontSize = 16.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.55f))
+        }
+        Switch(checked = checked, onCheckedChange = onChecked)
+    }
+}
+
+@Composable
+private fun <T : Enum<T>> SettingsEnumSelector(
+    icon: String,
+    title: String,
+    description: String,
+    selected: T,
+    entries: List<T>,
+    onSelect: (T) -> Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth()
+            .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(72.dp)
-                    .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
-                    .then(if (item.onClick != null) Modifier.clickable(onClick = item.onClick!!) else Modifier),
+                modifier = Modifier.size(28.dp).background(Color(0xFF2A2A2A), RoundedCornerShape(6.dp)),
+                contentAlignment = Alignment.Center,
             ) {
-                Column(
-                    modifier = Modifier.padding(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                Text(icon, fontSize = 13.sp)
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White)
+                Text(description, style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.5f))
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            entries.forEach { entry ->
+                val isSelected = entry == selected
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(36.dp)
+                        .background(
+                            if (isSelected) Color(0xFF1ED760) else Color(0xFF2A2A2A),
+                            RoundedCornerShape(8.dp),
+                        )
+                        .clickable(enabled = !isSelected) { onSelect(entry) },
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Text(item.label, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-                    Text(item.desc, style = MaterialTheme.typography.labelSmall,
-                        color = Color.White.copy(alpha = 0.45f),
-                        maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                    Text(
+                        entry.name.replace("_", " ").replaceFirstChar { it.uppercase() },
+                        fontSize = 12.sp,
+                        color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
+                    )
                 }
             }
         }
     }
 }
 
-@Composable
-private fun SettingsPlaybackStatsRow(summary: String, entryCount: Int, onClear: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1A1A1A), RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("线路质量统计", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-            Text(summary, style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.5f))
-        }
-        if (entryCount > 0) {
-            TextButton(
-                onClick = onClear,
-                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF7171)),
-            ) { Text("清空", fontSize = 12.sp) }
-        }
-    }
-}
-
-/**
- * 手机模式首次启动引导 Banner：展示一次，告知用户当前为手机模式并快速跳转设置。
- * 已展示过时返回 null，不占据空间。
- */
 @Composable
 private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel) {
     if (state.appSettings.deviceMode != DeviceMode.Mobile || state.appSettings.mobileOnboarded) return
@@ -2655,216 +2947,3 @@ private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel)
     }
 }
 
-@Composable
-private fun MobileDeviceModeSetting(selectedMode: DeviceMode, onModeSelect: (DeviceMode) -> Unit) {
-    val context = LocalContext.current
-    val detectedMode = remember(context) { context.detectDeviceMode() }
-    MobileEnumSelector(
-        title = "设备模式",
-        description = "当前：${selectedMode.displayName}\n系统自动识别：${detectedMode.displayName}。切换后需重启应用生效。",
-        entries = DeviceMode.entries,
-        selected = selectedMode,
-        onSelect = { mode ->
-            if (mode != selectedMode) {
-                onModeSelect(mode)
-                val activity = context as? android.app.Activity
-                activity?.runOnUiThread { activity.recreate() }
-            }
-        },
-        displayName = { mode -> if (selectedMode == mode) "✓ ${mode.displayName}" else mode.displayName },
-    )
-}
-
-@Composable
-private fun MobileThemeSetting(selectedTheme: TvTheme, onThemeSelect: (TvTheme) -> Unit) {
-    MobileEnumSelector(
-        title = "界面主题",
-        description = "当前：${selectedTheme.displayName}。选择后立即生效，设置保存到本机。",
-        entries = TvTheme.entries,
-        selected = selectedTheme,
-        onSelect = onThemeSelect,
-        displayName = { it.displayName },
-    )
-}
-
-@Composable
-private fun MobileFontScaleSetting(selected: TvFontScale, onSelect: (TvFontScale) -> Unit) {
-    MobileEnumSelector(
-        title = "字体大小",
-        description = "调整应用内文字显示大小，设置立即生效。",
-        entries = TvFontScale.entries,
-        selected = selected,
-        onSelect = onSelect,
-        displayName = { it.displayName },
-    )
-}
-
-@Composable
-private fun <T : Enum<T>> MobileEnumSelector(
-    title: String,
-    description: String,
-    entries: List<T>,
-    selected: T,
-    onSelect: (T) -> Unit,
-    displayName: (T) -> String = { it.toString() },
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(title, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        Text(description, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            entries.forEach { entry ->
-                Button(
-                    onClick = { onSelect(entry) },
-                    enabled = entry != selected,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(38.dp).weight(1f),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (selected == entry) Color(0xFF1ED760) else Color(0xFF2A2A2A),
-                        contentColor = if (selected == entry) Color.Black else Color.White,
-                    ),
-                ) { Text(displayName(entry), fontSize = 13.sp) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MobileSwitchRow(
-    label: String, desc: String, checked: Boolean, onCheck: (Boolean) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-            Text(desc, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
-        }
-        Switch(checked = checked, onCheckedChange = onCheck)
-    }
-}
-
-@Composable
-private fun MobileSettingButton(text: String, subtitle: String? = null, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier.fillMaxWidth()
-            .heightIn(min = 48.dp)
-            .clickable(onClick = onClick),
-        color = Color(0xFF1E1E1E),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = Color.White)
-            if (subtitle != null) {
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun MobileHomeApiLineSetting(
-    apiLines: List<ApiLine>,
-    selectedApiLine: ApiLine?,
-    customLineCount: Int,
-    onSelect: (String) -> Unit,
-    onOpenConfig: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("首页渲染数据", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        Text("当前：${selectedApiLine?.name ?: "未选择"}", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f))
-        if (customLineCount > 0) {
-            Text("已添加 $customLineCount 条自定义 MacCms 接口", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box(modifier = Modifier.weight(1f)) {
-                Button(
-                    onClick = { expanded = true },
-                    enabled = apiLines.isNotEmpty(),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(40.dp).fillMaxWidth(),
-                ) { Text("${selectedApiLine?.name ?: "选择资源"} ▾", fontSize = 13.sp) }
-                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                    apiLines.forEach { line ->
-                        DropdownMenuItem(
-                            text = { Text(if (line.id == selectedApiLine?.id) "已选 · ${line.name}" else line.name) },
-                            onClick = { expanded = false; onSelect(line.id) },
-                        )
-                    }
-                }
-            }
-            Button(onClick = onOpenConfig, shape = RoundedCornerShape(8.dp), modifier = Modifier.height(40.dp)) {
-                Text("添加接口", fontSize = 13.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MobileAiProviderSetting(
-    selectedProvider: AiProvider,
-    modelName: String,
-    apiKey: String,
-    onProviderSelect: (String) -> Unit,
-    onOpenConfig: () -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    val displayModelName = modelName.ifBlank { selectedProvider.defaultModel }
-    Column(
-        modifier = Modifier.fillMaxWidth()
-            .background(Color(0xFF1E1E1E), RoundedCornerShape(12.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text("大模型选择", style = MaterialTheme.typography.bodyMedium, color = Color.White)
-        Text("未填写 API Key 时使用 APK 内置 AI 配置", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.5f))
-        Box {
-            Button(
-                onClick = { expanded = true },
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(40.dp).fillMaxWidth(),
-            ) { Text("${selectedProvider.name} ▾", fontSize = 13.sp) }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                AiProviders.all.forEach { provider ->
-                    val selected = provider.id == selectedProvider.id
-                    DropdownMenuItem(
-                        text = { Text(if (selected) "已选 · ${provider.name}" else provider.name) },
-                        onClick = { expanded = false; onProviderSelect(provider.id) },
-                    )
-                }
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = onOpenConfig,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(40.dp).weight(1f),
-            ) { Text("模型：$displayModelName", fontSize = 13.sp) }
-            Button(
-                onClick = onOpenConfig,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(40.dp).weight(1f),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2A2A2A)),
-            ) {
-                Text(if (apiKey.isBlank()) "API Key：未配置" else "API Key：已配置", fontSize = 13.sp)
-            }
-        }
-    }
-}
