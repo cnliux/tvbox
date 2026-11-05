@@ -25,8 +25,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Go proxy
-        run: echo "GOPROXY=https://goproxy.cn,direct" >> "$GITHUB_ENV"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: platform_live_go/go.mod
+          cache-dependency-path: platform_live_go/go.sum
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -40,7 +43,7 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库，从上一版本 release 下载；若无则用 -PtvboxSkipPlatformBind=true 跳过绑定
+      # platformlive.aar 不入库：命中缓存则直接复用；否则由 Build 步骤的 gomobile bind 现生成。
       - name: Download platformlive AAR from previous release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,7 +62,7 @@ jobs:
             fi
           fi
           if [ ! -f app/libs/platformlive.aar ]; then
-            echo "::warning::platformlive.aar not found, will skip gomobile bind"
+            echo "::notice::platformlive.aar 未命中缓存，将由 gomobile bind 现场生成"
           fi
 
       - name: Build release APK
@@ -68,13 +71,13 @@ jobs:
           TVBOX_RELEASE_KEY_ALIAS: ${{ secrets.TVBOX_RELEASE_KEY_ALIAS }}
           TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
         run: |
+          # AAR 缺失时由 preBuild 依赖的 bindPlatformLive 现场生成（需要 Go + NDK，见上一步 setup-go）。
           if [ -f app/libs/platformlive.aar ]; then
             echo "Using existing platformlive.aar"
-            ./gradlew --no-daemon assembleRelease
           else
-            echo "No platformlive.aar, skipping gomobile bind"
-            ./gradlew --no-daemon assembleRelease -PtvboxSkipPlatformBind=true
+            echo "platformlive.aar missing, gomobile bind will generate it"
           fi
+          ./gradlew --no-daemon assembleRelease
 
       - name: Stage release artifacts
         run: |
@@ -84,6 +87,8 @@ jobs:
           mv app/build/outputs/apk/release/${APK_NAME} dist/${APK_NAME}
           # 只保留带版本号的 APK，删除任何无版本号的构建产物。
           rm -f app/build/outputs/apk/release/app-release.apk
+          # AAR 随 release 归档，供后续版本下载复用（避免每次都跑 gomobile bind）。
+          cp app/libs/platformlive.aar dist/platformlive.aar || true
           echo "APK_NAME=${APK_NAME}" >> "$GITHUB_ENV"
 
       - name: Verify arm64-v8a only
@@ -124,9 +129,14 @@ jobs:
           ENDJSON
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
+          # tag 触发时是 detached HEAD：先落到最新 main 再提交，push 显式指向 main。
+          cp update.json /tmp/update.json
+          git fetch origin main
+          git checkout -f -B main origin/main
+          cp /tmp/update.json update.json
           git add update.json
           git diff --cached --quiet || git commit -m "chore: auto-update update.json for v${VERSION_NAME}"
-          git push
+          git push origin HEAD:main
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

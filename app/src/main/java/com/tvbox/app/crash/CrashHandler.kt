@@ -71,7 +71,7 @@ object CrashHandler {
                     fw.write("brand        = ${Build.BRAND}\n")
                     fw.write("sdk          = ${Build.VERSION.SDK_INT}\n")
                     fw.write("abi          = ${Build.SUPPORTED_ABIS.joinToString(",")}\n")
-                    fw.write("thread       = ${thread.name} (id=${thread.id})\n")
+                    fw.write("thread       = ${thread.name} (id=${thread.threadId})\n")
                     fw.write("\n--- Stack Trace ---\n")
                     val sw = java.io.StringWriter()
                     throwable.printStackTrace(java.io.PrintWriter(sw))
