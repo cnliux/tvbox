@@ -48,6 +48,10 @@ val hasReleaseSigning = listOf(
     releaseKeyPassword,
 ).all { it.isNotBlank() }
 
+// 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
+val TVBOX_VERSION_NAME = "1.3.41"
+val TVBOX_VERSION_CODE = 10341
+
 android {
     namespace = "com.tvbox.app"
     compileSdk = 36
@@ -56,8 +60,8 @@ android {
         applicationId = "com.tvbox.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10341
-        versionName = "1.3.41"
+        versionCode = TVBOX_VERSION_CODE
+        versionName = TVBOX_VERSION_NAME
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         // 只保留中文资源，剔除 AndroidX/Media3 携带的其他语言字符串。
         resConfigs(listOf("zh"))
@@ -113,17 +117,6 @@ android {
         }
     }
 
-    // Release APK 统一命名为带版本号的 tvbox-v<versionName>.apk，避免无版本号的 app-release.apk。
-    applicationVariants.all {
-        if (buildType.name == "release") {
-            val vName = versionName
-            outputs.all {
-                val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-                output.outputFileName = "tvbox-v${vName}.apk"
-            }
-        }
-    }
-
     buildFeatures {
         buildConfig = true
         compose = true
@@ -166,6 +159,18 @@ android {
                 "/kotlin/**",
                 "/DebugProbesKt.bin",
             )
+        }
+    }
+}
+
+// Release APK 统一命名为带版本号的 tvbox-v<versionName>.apk，避免无版本号的 app-release.apk。
+// 使用 AGP 8+ 的 androidComponents API（applicationVariants 在新版 AGP 的 Kotlin DSL 中已不可用）。
+androidComponents {
+    onVariants { variant ->
+        if (variant.buildType == "release") {
+            variant.outputs.forEach { output ->
+                output.outputFileName.set("tvbox-v${TVBOX_VERSION_NAME}.apk")
+            }
         }
     }
 }
