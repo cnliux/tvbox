@@ -1,4 +1,22 @@
-﻿# Release - 2026-06-25
+# Release - 2026-06-25
+
+## 2026-11-05 - 发布 v1.3.33：直播卡片固定 4 列与 versionCode 校正
+
+### 文件修改、原因与目的
+
+- `app/build.gradle.kts`：版本升级至 `10333 / 1.3.33`。根因：v1.3.32/v1.3.33 两个功能提交只改了 `versionName`，`versionCode` 一直是 `10331`；OTA 以 `versionCode` 比较大小，已装 1.3.31 的用户不会收到更新提示。
+- `ui/LiveScreen.kt`、`ui/PlatformLiveScreen.kt`：手机触摸模式直播卡片统一为 `GridCells.Fixed(4)`（已随 f8ea514 提交）。
+- `CHANGELOG.md`、`README.md`、`update.json`：同步 v1.3.33 与 OTA 清单。
+
+### 构建与发布校验
+
+- 本地 `assembleDebug` / `assembleRelease`（含 R8、gomobile 绑定）通过；`testDebugUnitTest` 因孤儿测试 `DeviceModeTest.kt` 引用已删除的 `DeviceMode.Auto/detect/resolveEffective` 编译失败，未纳入提交（待与设备模式重构一并处理）。
+- CI 首次构建（run 41953776655）在 `Build release APK` 步骤约 70 秒失败，为 runner 拉取 Go 模块网络抖动；本地全链路复现无问题，删除并重推 `v1.3.33` tag 后重跑（run 41956421102）成功，发布 [TVBox v1.3.33](https://github.com/cnliux/tvbox/releases/tag/v1.3.33)。
+- Release 附件 `app-release.apk`：`19510214` 字节（与 1.3.31 同大小系巧合），下载后 `aapt2 dump badging` 确认包内 `versionCode=10333 versionName=1.3.33`、`native-code: 'arm64-v8a'`；本地计算 SHA-256 `7dac1949bd0b8ef2071dc132dc467fa2606f5c8f52e1d5e3c546c4900e0dadff`，已回填 `update.json`。
+
+### 导航
+
+- 主日志：`devLog/README.md`
 
 ## 2026-11-02 - 发布 v1.3.23：手机版源管理页内化、窄屏自适应与播放控件重做
 
