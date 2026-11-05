@@ -97,15 +97,6 @@ jobs:
             echo "::warning::APK 体积超过 25MB（当前 ${SIZE_MB}MB），请检查是否有意外的体积增长"
           fi
 
-      - name: Upload platformlive AAR to this release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ -f app/libs/platformlive.aar ]; then
-            gh release upload "${{ github.ref_name }}" app/libs/platformlive.aar \
-              --repo "${{ github.repository }}" --clobber
-          fi
-
       - name: Compute and commit update.json
         run: |
           APK_PATH="dist/app-release.apk"
