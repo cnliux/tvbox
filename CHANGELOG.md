@@ -1,3 +1,9 @@
+## v1.3.44 - 2026-11-06
+
+- 构建修复：`resConfigs(listOf("zh"))` 在 AGP 9 已弃用，改用 `androidResources.localeFilters`，消除配置阶段弃用告警，语言资源裁剪行为不变。
+- 构建修复：`libgojni.so` 已由 `stripPlatformLiveAar` 用 NDK `llvm-strip` 剥离过调试符号，AGP 再剥一次必然失败并输出「Unable to strip ... packaging them as they are」；改用 `packaging.jniLibs.keepDebugSymbols` 显式跳过二次剥离，消除该类噪音，APK 体积不受影响。
+- CI 说明订正：GitHub Actions 缓存按 ref 隔离，tag 之间不共享，因此每次正常发版都会执行一次 `gomobile bind`（约 1–2 分钟），这是预期行为；同一 ref 内 re-run 仍可命中缓存。
+
 ## v1.3.43 - 2026-11-06
 
 - 电视直播页重构为「全屏播放 + 半透明浮层菜单」：取消常驻分栏，顶栏 52dp / 底栏 56dp 叠加画面并 3 秒无操作淡出；确认键唤出左侧 340dp 频道浮层（分组胶囊 + 44dp 频道行 + 快捷键提示条），右下角 280dp EPG 窄卡常驻。

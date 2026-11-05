@@ -49,8 +49,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.3.43"
-val TVBOX_VERSION_CODE = 10343
+val TVBOX_VERSION_NAME = "1.3.44"
+val TVBOX_VERSION_CODE = 10344
 
 android {
     namespace = "com.tvbox.app"
@@ -63,12 +63,13 @@ android {
         versionCode = TVBOX_VERSION_CODE
         versionName = TVBOX_VERSION_NAME
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
-        // 只保留中文资源，剔除 AndroidX/Media3 携带的其他语言字符串。
-        resConfigs(listOf("zh"))
         // ABI 按构建类型分别配置：Release 只发 arm64-v8a，Debug 可选本机 x86。
     }
 
     androidResources {
+        // 只保留中文资源，剔除 AndroidX/Media3 携带的其他语言字符串。
+        // AGP 9 起 resConfigs 已弃用，语言资源改用 localeFilters。
+        localeFilters += listOf("zh")
         // OkHttp 公共后缀库仅 CookieJar 使用，R8 已删除相关类，这里同步剔除该 assets。
         ignoreAssetsPatterns += "!PublicSuffixDatabase.list"
     }
@@ -144,6 +145,12 @@ android {
     }
 
     packaging {
+        // libgojni.so 已在 stripPlatformLiveAar 中用 NDK llvm-strip 剥离过调试符号，
+        // AGP 再剥一次会失败并输出「Unable to strip ... packaging them as they are」噪音。
+        // 显式声明保留，跳过 AGP 的二次剥离（不影响体积）。
+        jniLibs {
+            keepDebugSymbols += "**/libgojni.so"
+        }
         resources {
             excludes += listOf(
                 "/META-INF/{AL2.0,LGPL2.1}",

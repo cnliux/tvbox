@@ -43,9 +43,11 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库，作为 Go 源码的构建产物在内置到 APK：
-      # ① 按 Go 源码内容哈希走 actions/cache，源码没变直接命中；
-      # ② 未命中才由 Build 的 bindPlatformLive 现场生成（gomobile bind，需 Go+NDK）。
+      # platformlive.aar 不入库，作为 Go 源码的构建产物内置到 APK：
+      # ① 按 Go 源码内容哈希走 actions/cache，同 ref 内重跑（re-run）可直接命中；
+      # ② 未命中则由 Build 的 bindPlatformLive 现场生成（gomobile bind，需 Go+NDK）。
+      # 注意：GitHub 缓存按 ref 隔离，tag 之间不共享，因此正常发版每次都会执行一次 bind
+      # （约 1-2 分钟），这是预期行为，不是缓存故障。
       # AAR 只通过 implementation(files(...)) 打进 APK，不再作为 release 资产分发。
       - name: Restore platformlive AAR cache
         id: cache-aar
