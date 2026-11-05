@@ -1087,7 +1087,7 @@ class TvBoxViewModel(
                     it.copy(homeNotice = lastError?.userMessage() ?: "暂无该视频资源")
                 }
             } else {
-                openDetail(movie!!.id, matchedLineId ?: apiLineId)
+                openDetail(movie.id, matchedLineId ?: apiLineId)
             }
         }
     }

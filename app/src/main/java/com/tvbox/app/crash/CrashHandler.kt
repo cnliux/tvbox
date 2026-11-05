@@ -55,7 +55,6 @@ object CrashHandler {
         writerExecutor.execute {
             try {
                 val dir = File(appContext.externalCacheDir, LOG_DIR_NAME)
-                    ?: File(appContext.cacheDir, LOG_DIR_NAME)
                 if (!dir.exists()) dir.mkdirs()
 
                 val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis())
@@ -90,7 +89,6 @@ object CrashHandler {
     /** 返回未读崩溃日志文件列表（按时间倒序），供 UI 展示"是否发送日志"入口。 */
     fun getPendingCrashLogs(): List<File> {
         val dir = File(appContext.externalCacheDir, LOG_DIR_NAME)
-            ?: return emptyList()
         return dir.listFiles { f -> f.isFile && f.name.startsWith("crash_") }
             ?.filter { System.currentTimeMillis() - it.lastModified() < MAX_LOG_FILE_AGE_MS }
             ?.sortedByDescending { it.lastModified() }
@@ -101,13 +99,11 @@ object CrashHandler {
     /** 清除所有已读崩溃日志。 */
     fun clearCrashLogs() {
         val dir = File(appContext.externalCacheDir, LOG_DIR_NAME)
-            ?: return
         dir.listFiles { f -> f.isFile && f.name.startsWith("crash_") }?.forEach { it.delete() }
     }
 
     private fun purgeStaleLogs() {
         val dir = File(appContext.externalCacheDir, LOG_DIR_NAME)
-            ?: return
         val files = dir.listFiles { file -> file.isFile && file.name.startsWith("crash_") }
             ?.filter { file -> System.currentTimeMillis() - file.lastModified() < MAX_LOG_FILE_AGE_MS }
             ?.sortedBy { file -> file.lastModified() } ?: return

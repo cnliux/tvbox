@@ -5,7 +5,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -14,7 +13,6 @@ import androidx.media3.ui.PlayerView
  * 安全释放 ExoPlayer：先 pause + removeListener，再 release。
  * 防止 release() 后仍有 Listener 回调触发 NPE。
  */
-@OptIn(UnstableApi::class)
 internal fun safeReleasePlayer(player: ExoPlayer) {
     try {
         if (player.isPlaying) player.pause()
@@ -29,7 +27,6 @@ internal fun safeReleasePlayer(player: ExoPlayer) {
  * 安全 prepare：若 player 已被 release 则静默忽略。
  * 返回 false 表示 prepare 失败（已打印日志），调用方应降级到错误页。
  */
-@OptIn(UnstableApi::class)
 internal fun safePrepare(
     player: ExoPlayer,
     mediaItem: MediaItem,

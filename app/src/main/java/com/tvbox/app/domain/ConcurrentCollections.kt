@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap
 object ConcurrentCollections {
 
     /** 线程安全的 MutableSet，适合少量写入、多次读的场景。 */
-    fun <T> safeSet(initial: Set<T> = emptySet()): MutableSet<T> =
+    fun <T : Any> safeSet(initial: Set<T> = emptySet()): MutableSet<T> =
         ConcurrentHashMap.newKeySet<T>().also { initial.forEach { t -> it.add(t) } }
 
     /** 带锁的 MutableList，适合有序迭代场景。 */

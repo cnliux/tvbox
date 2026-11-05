@@ -79,12 +79,12 @@ private fun probeBlocking(url: String, headers: Map<String, String>): String {
     probeClient.newCall(builder.build()).execute().use { response ->
         if (!response.isSuccessful) return LIVE_MIME_UNKNOWN
         val contentType = response.header("Content-Type")
-        val body = response.body ?: return LIVE_MIME_UNKNOWN
+        val bodyRef = response.body
         // 先按响应头判断：CDN 通常会把 m3u8 标成 audio/x-mpegurl 或 application/vnd.apple.mpegurl。
         contentType?.let { fromHeader -> mimeFromContentType(fromHeader)?.let { return it } }
         // 响应头不可信（很多源统一返回 text/plain）时读正文特征。
         val buffer = ByteArray(LIVE_PROBE_READ_BYTES)
-        val stream = body.byteStream()
+        val stream = bodyRef.byteStream()
         var read = 0
         while (read < buffer.size) {
             val n = stream.read(buffer, read, buffer.size - read)

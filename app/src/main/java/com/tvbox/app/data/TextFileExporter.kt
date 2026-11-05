@@ -85,7 +85,7 @@ internal class SourceConfigFetcher {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw IOException("获取订阅失败：HTTP ${response.code}")
-            val body = response.body ?: throw IOException("订阅内容为空")
+            val body = response.body
             val stream = body.byteStream()
             var buffer = ByteArray(16_384)
             var size = 0

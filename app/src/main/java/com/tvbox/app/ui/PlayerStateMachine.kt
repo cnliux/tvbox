@@ -10,7 +10,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import kotlinx.coroutines.delay
 
@@ -25,7 +24,6 @@ import kotlinx.coroutines.delay
  * 状态：IDLE → BUFFERING → READY → (PAUSED/ERROR)
  * 所有外部操作（prepare/seek/release）走串行队列，内部 Listener 回调直接应用状态。
  */
-@OptIn(UnstableApi::class)
 class PlayerStateMachine(
     private val player: ExoPlayer,
     private val onStateChanged: (PlayerState) -> Unit = {},
@@ -171,7 +169,7 @@ internal fun rememberPlayerStateMachine(
                 stateMachine.onError(
                     PlayerStateMachine.PlaybackError(
                         code = error.errorCode,
-                        message = error.errorCodeName ?: error.message ?: "unknown",
+                        message = error.errorCodeName,
                         cause = error.cause,
                     )
                 )

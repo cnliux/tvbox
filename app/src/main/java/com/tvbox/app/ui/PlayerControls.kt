@@ -197,14 +197,12 @@ internal fun PlayerControls(
                 PlayerPanel.Sources -> orderedSources.map { sourceTabLabel(it.value, sourceLatencies) }
                 PlayerPanel.Speeds -> playerSpeeds.map { AnnotatedString("${it}x") }
                 PlayerPanel.Picture -> VideoScaleMode.entries.map { AnnotatedString(it.displayName) }
-                else -> emptyList()
             }
             val selected = when (panel) {
                 PlayerPanel.Episodes -> episodeIndex
                 PlayerPanel.Sources -> orderedSources.indexOfFirst { it.index == sourceIndex }.coerceAtLeast(0)
                 PlayerPanel.Speeds -> playerSpeeds.indexOf(speed).coerceAtLeast(0)
                 PlayerPanel.Picture -> VideoScaleMode.entries.indexOf(videoScaleMode)
-                else -> 0
             }
             val pickerFocus = remember(panel, labels.size) { List(labels.size) { FocusRequester() } }
             val grid = rememberLazyGridState()
@@ -250,7 +248,6 @@ internal fun PlayerControls(
                                     PlayerPanel.Sources -> onSource(realIndex)
                                     PlayerPanel.Speeds -> onSpeed(playerSpeeds[realIndex])
                                     PlayerPanel.Picture -> onVideoScale(VideoScaleMode.entries[realIndex])
-                                    else -> Unit
                                 }
                                 onPanel(PlayerPanel.None)
                             }, Modifier.focusRequester(pickerFocus[index]), enabled)
