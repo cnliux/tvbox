@@ -15,6 +15,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-tags: true
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -22,8 +25,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # ubuntu-latest 自带 Android SDK（ANDROID_HOME 已设置），
-      # 缺失的 platform/build-tools 由 AGP 自动下载，无需 setup-android。
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
@@ -36,24 +37,28 @@ jobs:
             echo "TVBOX_RELEASE_STORE_FILE=$GITHUB_WORKSPACE/tvbox-release.jks" >> "$GITHUB_ENV"
           fi
 
-      # platformlive.aar 不入库，从上一版本 release 下载；若无则用 -PtvboxSkipPlatformBind=true 跳过绑定。
+      # platformlive.aar 不入库，从上一版本 release 下载
       - name: Download platformlive AAR from previous release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-          if [ -n "$TAG" ] && [ "$TAG" != "$(git rev-parse --short HEAD)" ]; then
-            # 尝试从前一个 release 下载 AAR
-            DOWNLOAD_URL=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
+          CURRENT_TAG="${{ github.ref_name }}"
+          # 获取上一个 tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -v "^${CURRENT_TAG}$" | head -n 1)
+          echo "Current: $CURRENT_TAG, Previous: $PREV_TAG"
+          if [ -n "$PREV_TAG" ]; then
+            AAR_URL=$(gh api "repos/${{ github.repository }}/releases/tags/$PREV_TAG" \
               --jq '.assets[] | select(.name=="platformlive.aar") | .browser_download_url' 2>/dev/null)
-            if [ -n "$DOWNLOAD_URL" ]; then
-              curl -L -o app/libs/platformlive.aar "$DOWNLOAD_URL"
-              echo "Downloaded platformlive.aar from $TAG"
+            if [ -n "$AAR_URL" ]; then
+              mkdir -p app/libs
+              curl -L -o app/libs/platformlive.aar "$AAR_URL"
+              echo "Downloaded platformlive.aar from $PREV_TAG"
+            else
+              echo "WARNING: platformlive.aar not found in $PREV_TAG"
             fi
           fi
-          # 如果 AAR 仍不存在，则跳过 gomobile bind 并提示用户手动添加
           if [ ! -f app/libs/platformlive.aar ]; then
-            echo "WARNING: platformlive.aar not found, build with skip flag"
+            echo "::warning::platformlive.aar not found, will skip gomobile bind"
           fi
 
       - name: Build release APK
@@ -63,19 +68,18 @@ jobs:
           TVBOX_RELEASE_KEY_PASSWORD: ${{ secrets.TVBOX_RELEASE_KEY_PASSWORD }}
         run: |
           if [ -f app/libs/platformlive.aar ]; then
+            echo "Using existing platformlive.aar"
             ./gradlew --no-daemon assembleRelease
           else
+            echo "No platformlive.aar, skipping gomobile bind"
             ./gradlew --no-daemon assembleRelease -PtvboxSkipPlatformBind=true
           fi
 
-      # 单一合集版本：同一套代码运行时适配电视/手机；原生库只发布 arm64-v8a。
-      # 只发布 APK，不再产出 AAB。
       - name: Stage release artifacts
         run: |
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk dist/app-release.apk
 
-      # 发布策略硬校验：Release 只允许 arm64-v8a，禁止 armv7/x86 混入。
       - name: Verify arm64-v8a only
         run: |
           ABIS=$(unzip -Z1 dist/app-release.apk 'lib/*' | cut -d/ -f2 | sort -u)
@@ -83,6 +87,15 @@ jobs:
           if [ "$ABIS" != "arm64-v8a" ]; then
             echo "::error::Release 只允许 arm64-v8a，实际为: $ABIS"
             exit 1
+          fi
+
+      - name: Upload platformlive AAR to this release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -f app/libs/platformlive.aar ]; then
+            gh release upload "${{ github.ref_name }}" app/libs/platformlive.aar \
+              --repo "${{ github.repository }}" --clobber
           fi
 
       - name: Publish GitHub Release
