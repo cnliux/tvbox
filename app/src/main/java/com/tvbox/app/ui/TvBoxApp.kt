@@ -114,6 +114,7 @@ import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.tvFocusScale
+import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
@@ -163,7 +164,7 @@ fun TvBoxApp(
                 }
             }
         } else {
-            val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+            val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
             if (isMobile) {
                 MobileNavWrapper(
                     state = state,
@@ -396,7 +397,7 @@ private fun HomeScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     if (isMobile) {
         MobileHomeFeed(state = state, actions = actions)
         return
@@ -665,7 +666,7 @@ private fun HistoryScreen(
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .padding(padding),
         ) {
-            val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+            val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -710,7 +711,7 @@ private fun HistoryScreen(
                     }
                 }
             } else {
-                val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+                val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
                 // 手机模式固定 2 列，避免 Adaptive 在窄屏下算出 1 列或间距过大导致布局异常。
                 val columns = if (isMobile) GridCells.Fixed(2) else GridCells.Adaptive(minSize = TvLayout.HistoryGridMinWidth)
                 LazyVerticalGrid(
@@ -739,20 +740,19 @@ private fun SettingsScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    if (state.appSettings.deviceMode == DeviceMode.Mobile) {
-        MobileSettingsScreen(state = state, actions = actions)
+    if (state.effectiveDeviceMode == DeviceMode.Mobile) {
+        SettingsMobileScreen(state = state, actions = actions)
         return
     }
-    // 新设计：左侧分类菜单 + 右侧详情（借鉴 Apple TV / Netflix 极简沉浸式风格）
     SettingsTvSplitScreen(state = state, actions = actions)
-    // 远程管理弹窗保持原有逻辑
+    // 远程管理弹窗
     if (state.remoteManageDialogVisible) {
         RemoteManageDialog(state = state, actions = actions)
     }
 }
 
 @Composable
-private fun RemoteManageDialog(
+public fun RemoteManageDialog(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
@@ -1568,28 +1568,6 @@ private fun ThemeSetting(
 }
 
 @Composable
-private fun DeviceModeSetting(selectedMode: DeviceMode, onModeSelect: (DeviceMode) -> Unit) {
-    val context = LocalContext.current
-    val detectedMode = remember(context) { context.detectDeviceMode() }
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("当前：${selectedMode.displayName}", style = MaterialTheme.typography.titleMedium)
-        Text(selectedMode.description, color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall)
-        Text("系统自动识别：${detectedMode.displayName}。播放行为以你的选择为准。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(DeviceMode.entries, key = { it.storageKey }) { mode ->
-                SettingsActionButton(
-                    text = if (selectedMode == mode) "✓ ${mode.displayName}" else mode.displayName,
-                    selected = selectedMode == mode,
-                    onClick = { onModeSelect(mode) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun FontScaleSetting(
     selectedFontScale: TvFontScale,
     onFontScaleSelect: (TvFontScale) -> Unit,
@@ -1648,7 +1626,7 @@ private fun SourceManagerSetting(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     var importDialogVisible by remember { mutableStateOf(false) }
     var importDraft by remember { mutableStateOf("") }
     var exportMessage by remember { mutableStateOf<String?>(null) }
@@ -2096,7 +2074,7 @@ private fun ManageScreenHeader(
 
 @Composable
 private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
@@ -2167,7 +2145,7 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
 
 @Composable
 private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
@@ -2229,7 +2207,7 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
 
 @Composable
 private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
             // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
@@ -2389,460 +2367,10 @@ private fun MobileNavScreenContent(
         }
     }
 }
-@Composable
-private fun MobileSettingsScreen(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-) {
-    var confirmClearHistory by remember { mutableStateOf(false) }
-    var confirmClearPlaybackStats by remember { mutableStateOf(false) }
-
-    if (state.remoteManageDialogVisible) {
-        RemoteManageDialog(state = state, actions = actions)
-    }
-    if (confirmClearHistory) {
-        AlertDialog(
-            onDismissRequest = { confirmClearHistory = false },
-            title = { Text("清空历史记录") },
-            text = { Text("确定要清空所有观看历史记录吗？此操作不可撤销。") },
-            confirmButton = {
-                Button(onClick = {
-                    confirmClearHistory = false
-                    actions.clearHistory()
-                }) { Text("清空") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearHistory = false }) { Text("取消") }
-            },
-        )
-    }
-    if (confirmClearPlaybackStats) {
-        AlertDialog(
-            onDismissRequest = { confirmClearPlaybackStats = false },
-            title = { Text("清空线路统计") },
-            text = { Text("确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。") },
-            confirmButton = {
-                Button(onClick = {
-                    confirmClearPlaybackStats = false
-                    actions.clearPlaybackStats()
-                }) { Text("清空") }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmClearPlaybackStats = false }) { Text("取消") }
-            },
-        )
-    }
-
-    Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
-    ) {
-        // 顶部标题栏
-        Row(
-            modifier = Modifier.fillMaxWidth().height(56.dp)
-                .padding(horizontal = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("设置", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onSurface)
-            IconButton(onClick = actions::goBack) {
-                Icon(Icons.Default.ArrowBack, contentDescription = "返回",
-                    tint = MaterialTheme.colorScheme.onSurface)
-            }
-        }
-
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            // ── 设备 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("设备")
-            }
-            item {
-                val ctx = LocalContext.current
-                SettingsRow(
-                    icon = "📱",
-                    title = "设备模式",
-                    subtitle = "当前：${state.appSettings.deviceMode.displayName}",
-                    trailing = {
-                        Switch(
-                            checked = state.appSettings.deviceMode == DeviceMode.Mobile,
-                            onCheckedChange = { isChecked ->
-                                val next = if (isChecked) DeviceMode.Mobile else DeviceMode.Television
-                                actions.updateDeviceMode(next)
-                                val activity = ctx as? android.app.Activity
-                                activity?.runOnUiThread { activity.recreate() }
-                            },
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 外观 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("外观")
-            }
-            item {
-                SettingsEnumRow(
-                    icon = "🎨",
-                    title = "主题",
-                    selected = state.appSettings.theme,
-                    entries = TvTheme.entries,
-                    onSelect = actions::updateTheme,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                SettingsEnumRow(
-                    icon = "🔤",
-                    title = "字体大小",
-                    selected = state.appSettings.fontScale,
-                    entries = TvFontScale.entries,
-                    onSelect = actions::updateFontScale,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 首页 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("首页")
-            }
-            item {
-                SettingsRow(
-                    icon = "▶",
-                    title = "继续观看",
-                    subtitle = if (state.appSettings.homeContinueWatchingEnabled) "显示最近观看记录" else "不显示继续观看",
-                    trailing = {
-                        Switch(
-                            checked = state.appSettings.homeContinueWatchingEnabled,
-                            onCheckedChange = actions::updateHomeContinueWatching,
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                val currentLine = state.apiLines.find { it.id == state.selectedApiLine?.id }
-                SettingsButtonRow(
-                    icon = "📺",
-                    title = "数据源",
-                    subtitle = currentLine?.name ?: "未选择",
-                    onClick = actions::openVideoSourceManager,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 直播 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("直播")
-            }
-            item {
-                val liveCount = state.appSettings.liveSourceUrls.count { it.isNotEmpty() }
-                SettingsButtonRow(
-                    icon = "📡",
-                    title = "IPTV 直播源",
-                    subtitle = if (liveCount > 0) "已配置 $liveCount 条" else "未配置",
-                    onClick = actions::openLiveSourceManager,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                val blockedCount = state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() }
-                SettingsButtonRow(
-                    icon = "🌐",
-                    title = "平台直播",
-                    subtitle = if (blockedCount > 0) "已屏蔽 $blockedCount 个站点" else "管理虎牙/斗鱼",
-                    onClick = actions::openPlatformLive,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 播放 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("播放")
-            }
-            item {
-                SettingsRow(
-                    icon = "↻",
-                    title = "自动换线",
-                    subtitle = "播放失败或缓冲过久时自动切换",
-                    trailing = {
-                        Switch(
-                            checked = state.appSettings.playbackAgentAutoSwitchEnabled,
-                            onCheckedChange = actions::updatePlaybackAgentAutoSwitch,
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                SettingsEnumRow(
-                    icon = "🔍",
-                    title = "视频缩放",
-                    selected = state.appSettings.videoScaleMode,
-                    entries = VideoScaleMode.entries,
-                    onSelect = actions::updateVideoScaleMode,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                val introSec = state.appSettings.introSkipSeconds
-                SettingsButtonRow(
-                    icon = "⏩",
-                    title = "片头跳过",
-                    subtitle = if (introSec > 0) "跳过前 ${introSec}s" else "未启用",
-                    onClick = { actions.updateIntroSkipSeconds(if (introSec > 0) 0 else 30) },
-                    trailing = {
-                        Text(
-                            if (introSec > 0) "关闭" else "启用",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (introSec > 0) Color(0xFF1ED760) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                val outroSec = state.appSettings.outroSkipSeconds
-                SettingsButtonRow(
-                    icon = "⏭",
-                    title = "片尾跳过",
-                    subtitle = if (outroSec > 0) "跳过末尾 ${outroSec}s" else "未启用",
-                    onClick = { actions.updateOutroSkipSeconds(if (outroSec > 0) 0 else 30) },
-                    trailing = {
-                        Text(
-                            if (outroSec > 0) "关闭" else "启用",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (outroSec > 0) Color(0xFF1ED760) else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── AI ────────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("AI 推荐")
-            }
-            item {
-                val aiProvider = AiProviders.find(state.appSettings.aiProviderId)
-                SettingsButtonRow(
-                    icon = "🤖",
-                    title = "AI 模型",
-                    subtitle = "当前：${aiProvider.name}",
-                    description = if (state.appSettings.aiApiKey.isBlank()) "未配置 API Key" else "已配置 API Key",
-                    onClick = actions::openRemoteManageDialog,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 数据 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("数据管理")
-            }
-            item {
-                SettingsButtonRow(
-                    icon = "📋",
-                    title = "观看历史",
-                    subtitle = "管理本地播放记录",
-                    onClick = { confirmClearHistory = true },
-                    trailing = {
-                        Text("清空", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error)
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                SettingsButtonRow(
-                    icon = "📊",
-                    title = "线路统计",
-                    subtitle = "播放质量学习数据（${state.playbackHealth.entryCount} 条）",
-                    onClick = { confirmClearPlaybackStats = true },
-                    trailing = if (state.playbackHealth.entryCount > 0) {
-                        { Text("清空", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.error) }
-                    } else null,
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-
-            // ── 更新 ──────────────────────────────────────────────
-            item {
-                SettingsGroupTitle("更新")
-            }
-            item {
-                SettingsRow(
-                    icon = "⬇",
-                    title = "启动时检查更新",
-                    subtitle = if (state.appSettings.checkUpdatesOnStartup) "已开启" else "已关闭",
-                    trailing = {
-                        Switch(
-                            checked = state.appSettings.checkUpdatesOnStartup,
-                            onCheckedChange = actions::updateStartupUpdateCheck,
-                        )
-                    },
-                )
-            }
-            item { Divider(color = MaterialTheme.colorScheme.outlineVariant) }
-            item {
-                SettingsButtonRow(
-                    icon = "🔄",
-                    title = "检查更新",
-                    subtitle = "当前版本 v${BuildConfig.VERSION_NAME}",
-                    description = if (state.updateChecking) "正在检查..." else "点击检测新版本",
-                    onClick = { actions.checkForAppUpdate(showError = true) },
-                    enabled = !state.updateChecking,
-                )
-                if (state.updateError != null) {
-                    Text(
-                        state.updateError!!,
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(start = 56.dp, top = 4.dp, bottom = 8.dp),
-                    )
-                }
-            }
-            item { Spacer(modifier = Modifier.height(16.dp)) }
-        }
-
-        // 底部版本信息
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(
-                "TVBox v${BuildConfig.VERSION_NAME}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-            )
-        }
-    }
-}
-
-@Composable
-private fun SettingsGroupTitle(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-    )
-}
-
-/** 设置行：图标 + 标题 + 副标题 + 右侧控件 */
-@Composable
-private fun SettingsRow(
-    icon: String,
-    title: String,
-    subtitle: String,
-    trailing: @Composable () -> Unit = {},
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(10.dp)),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(icon, fontSize = 20.sp)
-        }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
-            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        trailing()
-    }
-}
-
-/** 设置按钮行：可点击，带图标 */
-@Composable
-private fun SettingsButtonRow(
-    icon: String,
-    title: String,
-    subtitle: String,
-    description: String? = null,
-    trailing: (@Composable () -> Unit)? = null,
-    onClick: () -> Unit,
-    enabled: Boolean = true,
-) {
-    Surface(
-        modifier = Modifier.fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 2.dp)
-            .then(if (enabled) Modifier.clickable(enabled = enabled, onClick = onClick) else Modifier),
-        color = if (enabled) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        shape = RoundedCornerShape(12.dp),
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f), RoundedCornerShape(8.dp)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(icon, fontSize = 18.sp)
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurface)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (description != null) {
-                    Text(description, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
-                }
-            }
-            trailing?.let { it() }
-        }
-    }
-}
-
-/** 枚举选择行 */
-@Composable
-private fun <T : Enum<T>> SettingsEnumRow(
-    icon: String,
-    title: String,
-    selected: T,
-    entries: List<T>,
-    onSelect: (T) -> Unit,
-) {
-    var expanded by remember { mutableStateOf(false) }
-    Box {
-        val displayText = entries.find { it == selected }?.name?.replace("_", " ")?.replaceFirstChar { it.uppercase() } ?: selected.name.toString()
-        SettingsButtonRow(
-            icon = icon,
-            title = title,
-            subtitle = displayText,
-            onClick = { expanded = true },
-        )
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            entries.forEach { entry ->
-                DropdownMenuItem(
-                    text = {
-                        val name = entry.name.replace("_", " ").replaceFirstChar { it.uppercase() }
-                        Text(
-                            name,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = if (entry == selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        )
-                    },
-                    onClick = { expanded = false; onSelect(entry) },
-                )
-            }
-        }
-    }
-}
 
 @Composable
 private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel) {
-    if (state.appSettings.deviceMode != DeviceMode.Mobile || state.appSettings.mobileOnboarded) return
+    if (state.effectiveDeviceMode != DeviceMode.Mobile || state.appSettings.mobileOnboarded) return
     var dismissed by remember { mutableStateOf(false) }
     if (dismissed) return
     Surface(

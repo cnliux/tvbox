@@ -23,6 +23,7 @@ class AcceptanceActivity : ComponentActivity() {
                 val service = "http://127.0.0.1:8766"
                 val localPlatform = EmbeddedPlatformLiveRepository(this@AcceptanceActivity)
                 return TvBoxViewModel(
+                    appContext = this@AcceptanceActivity.applicationContext,
                     repository = DefaultMovieRepository(),
                     liveRepository = DefaultLiveRepository(),
                     platformLiveRepository = localPlatform,

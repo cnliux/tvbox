@@ -64,7 +64,7 @@ fun MobileNavWrapper(
     onStartAiVoiceInput: () -> Unit,
     content: @Composable (navScreen: MobileNavScreen) -> Unit,
 ) {
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     val tabs = listOf(
         MobileNavScreen.Home to "首页",
         MobileNavScreen.History to "历史",

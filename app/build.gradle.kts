@@ -56,8 +56,8 @@ android {
         applicationId = "com.tvbox.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 10338
-        versionName = "1.3.38"
+        versionCode = 10339
+        versionName = "1.3.39"
         buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         // 只保留中文资源，剔除 AndroidX/Media3 携带的其他语言字符串。
         resConfigs(listOf("zh"))

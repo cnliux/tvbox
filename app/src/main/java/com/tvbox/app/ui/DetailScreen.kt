@@ -91,7 +91,7 @@ fun DetailScreen(
                         .windowInsetsPadding(WindowInsets.safeDrawing)
                         .padding(padding),
                 ) {
-                    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+                    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
                     val compact = isMobile || maxHeight < 560.dp
                     val posterWidth = if (compact) 118.dp else 210.dp
                     val horizontalGap = if (compact) 16.dp else 28.dp

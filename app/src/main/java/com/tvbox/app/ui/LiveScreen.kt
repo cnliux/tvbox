@@ -147,8 +147,8 @@ private fun LivePlayerScreen(
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val activity = remember(context) { context.findActivity() }
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
-    val isTelevision = state.appSettings.deviceMode == DeviceMode.Television
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+    val isTelevision = state.effectiveDeviceMode == DeviceMode.Television
     val isPortrait = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE

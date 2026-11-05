@@ -99,8 +99,8 @@ fun PlayerScreen(
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     FullscreenWhilePlayingPageVisible(activity)
-    val isTelevision = state.appSettings.deviceMode == DeviceMode.Television
-    val isMobile = state.appSettings.deviceMode == DeviceMode.Mobile
+    val isTelevision = state.effectiveDeviceMode == DeviceMode.Television
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }

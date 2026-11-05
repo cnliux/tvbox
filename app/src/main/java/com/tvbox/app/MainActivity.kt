@@ -96,7 +96,8 @@ class MainActivity : ComponentActivity() {
         applyBaseOrientation(readSavedDeviceMode())
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                viewModel.state.map { it.appSettings.deviceMode }.distinctUntilChanged()
+                // 订阅"生效模式"而非保存的偏好：Auto 模式下按系统识别结果切换横竖屏。
+                viewModel.state.map { it.effectiveDeviceMode }.distinctUntilChanged()
                     .collect(::applyBaseOrientation)
             }
         }
@@ -105,6 +106,8 @@ class MainActivity : ComponentActivity() {
             ?.let { InstallPermissionAction.InstallDownloadedApk(it) }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                // 返回前台时重算自动识别：插拔 HDMI / 外接键鼠可能改变系统设备特征。
+                viewModel.refreshEffectiveDeviceMode()
                 // Some TV settings apps return without an ActivityResult callback.
                 permissionSettingsOpen = false
                 viewModel.state.map {
@@ -149,10 +152,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun readSavedDeviceMode(): DeviceMode =
-        DeviceMode.fromStorageKey(
+    private fun readSavedDeviceMode(): DeviceMode {
+        // 未保存过（或保存为 auto）时按系统特征解析，避免手机冷启动先闪横屏。
+        val saved = DeviceMode.fromStorageKey(
             getSharedPreferences("app_settings", MODE_PRIVATE).getString("device_mode", null),
         )
+        return if (saved == DeviceMode.Auto) DeviceMode.detectFromSystem(applicationContext) else saved
+    }
 
     private fun applyBaseOrientation(mode: DeviceMode) {
         requestedOrientation = if (mode == DeviceMode.Mobile) {
@@ -468,6 +474,7 @@ private class TvBoxViewModelFactory(
             cache = SharedDoubanHotCache(activity.applicationContext),
         )
         return TvBoxViewModel(
+            appContext = activity.applicationContext,
             repository = DefaultMovieRepository(),
             doubanHotRepository = doubanHotRepository,
             searchHotWordRepository = DefaultSearchHotWordRepository(
