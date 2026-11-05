@@ -63,9 +63,19 @@ jobs:
           AAR_URL=$(gh api "repos/${{ github.repository }}/releases?per_page=30" \
             --jq '[.[] | .assets[]? | select(.name=="platformlive.aar") | .browser_download_url] | first // empty' 2>/dev/null || true)
           if [ -n "$AAR_URL" ]; then
-            curl -L -o app/libs/platformlive.aar "$AAR_URL" && echo "Downloaded platformlive.aar from releases"
+            curl -fL -o app/libs/platformlive.aar "$AAR_URL" || true
           fi
-          [ -f app/libs/platformlive.aar ] || echo "::notice::platformlive.aar 无缓存/无 release 资产，gomobile bind 现场生成"
+          # 校验下载产物：历史上存在 0 字节的坏资产，坏文件会让 AarTransform 报 "entry" 且不可恢复，
+          # 必须删掉回落到 gomobile bind。要求：≥1MB 且以 PK zip 魔数开头。
+          if [ -f app/libs/platformlive.aar ]; then
+            SZ=$(stat -c%s app/libs/platformlive.aar)
+            MAGIC=$(head -c2 app/libs/platformlive.aar)
+            if [ "$SZ" -lt 1048576 ] || [ "$MAGIC" != "PK" ]; then
+              echo "::warning::下载的 platformlive.aar 无效（size=$SZ magic=$MAGIC），删除并回落到现场生成"
+              rm -f app/libs/platformlive.aar
+            fi
+          fi
+          [ -f app/libs/platformlive.aar ] || echo "::notice::platformlive.aar 无缓存/无有效 release 资产，gomobile bind 现场生成"
 
       - name: Build release APK
         env:
