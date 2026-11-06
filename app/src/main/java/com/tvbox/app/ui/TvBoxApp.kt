@@ -1220,7 +1220,6 @@ private fun MovieGrid(
                         },
                         modifier = focus.modifier("douban:${item.doubanId}", state.doubanHotMovies.indexOf(item) + itemOffset)
                             .onFocusChanged { if (it.hasFocus) onContentFocused() },
-                        posterAspectRatio = 0.78f,
                     )
                 }
             } else {
@@ -1233,7 +1232,6 @@ private fun MovieGrid(
                         },
                         modifier = focus.modifier("${movie.apiLineId}:${movie.id}", state.movies.indexOf(movie) + itemOffset)
                             .onFocusChanged { if (it.hasFocus) onContentFocused() },
-                        posterAspectRatio = 0.78f,
                     )
                 }
             }
@@ -1438,7 +1436,6 @@ private fun MobileHomeFeed(
                                 item = item,
                                 resolving = state.resolvingDoubanHotId == item.doubanId,
                                 onClick = { actions.openDoubanHotDetail(item) },
-                                posterAspectRatio = 0.78f,
                             )
                         }
                     } else {
@@ -1446,7 +1443,6 @@ private fun MobileHomeFeed(
                             MoviePosterCard(
                                 movie = movie,
                                 onClick = { actions.openDetail(movie.id) },
-                                posterAspectRatio = 0.78f,
                             )
                         }
                     }

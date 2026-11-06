@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -372,14 +373,31 @@ fun CategoryPill(
     }
 }
 
+/** 点播海报卡与历史卡统一使用的封面宽高比。 */
+private const val MediaCardAspectRatio = 2f / 3f
+
+/** 角标与封面底部遮罩统一使用的半透明底色。 */
+private val MediaCardScrim = Color(0xCC080B0B)
+
+/**
+ * 点播海报卡与历史卡的共用底座。
+ *
+ * 统一圆角、封面宽高比与裁切、标题/副标题字号与间距、角标样式、焦点缩放与描边。
+ * 各卡片只通过 [cover]、[bottomOverlay]、[badge]、[progress]、[subtitle] 等插槽声明差异项。
+ */
 @Composable
-fun MoviePosterCard(
-    movie: Movie,
+fun MediaCard(
+    title: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    posterAspectRatio: Float = 2f / 3f,
+    subtitle: String? = null,
+    badge: String? = null,
+    progress: Float? = null,
+    bottomOverlay: (@Composable BoxScope.() -> Unit)? = null,
+    coverOverlay: @Composable BoxScope.() -> Unit = {},
+    cover: @Composable BoxScope.() -> Unit,
 ) {
-    val shape = RoundedCornerShape(8.dp)
+    val shape = RoundedCornerShape(TvDimens.CardRadius)
     val touchMode = LocalTouchMode.current
     var focused by remember { mutableStateOf(false) }
     Column(
@@ -405,9 +423,99 @@ fun MoviePosterCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(posterAspectRatio)
+                .aspectRatio(MediaCardAspectRatio)
                 .background(TvColors.SurfaceRaised),
         ) {
+            cover()
+            bottomOverlay?.let { overlay ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, MediaCardScrim),
+                            ),
+                        )
+                        .padding(8.dp),
+                ) {
+                    overlay()
+                }
+            }
+            if (!badge.isNullOrBlank()) {
+                MediaCardBadge(
+                    text = badge,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp),
+                )
+            }
+            coverOverlay()
+        }
+        progress?.let { rawProgress ->
+            val progressValue = rawProgress.coerceIn(0f, 1f)
+            LinearProgressIndicator(
+                progress = { progressValue },
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = TvColors.SurfaceRaised,
+            )
+        }
+        Text(
+            text = title,
+            modifier = Modifier.padding(
+                start = 10.dp,
+                top = 8.dp,
+                end = 10.dp,
+                bottom = if (subtitle.isNullOrBlank()) 10.dp else 2.dp,
+            ),
+            style = MaterialTheme.typography.titleSmall,
+            // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (!subtitle.isNullOrBlank()) {
+            Text(
+                text = subtitle,
+                modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                color = TvColors.TextSecondary,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** 统一角标：顶右对齐、半透明底、白字单行，供豆瓣分、集数、继续观看等复用。 */
+@Composable
+private fun MediaCardBadge(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text,
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(MediaCardScrim)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+        color = Color.White,
+        style = MaterialTheme.typography.labelMedium,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+    )
+}
+
+@Composable
+fun MoviePosterCard(
+    movie: Movie,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    MediaCard(
+        title = movie.name,
+        onClick = onClick,
+        modifier = modifier,
+        badge = movie.remarks.takeIf { it.isNotBlank() },
+        cover = {
             if (movie.posterUrl.isNotBlank()) {
                 AsyncImage(
                     model = movie.posterUrl,
@@ -421,39 +529,11 @@ fun MoviePosterCard(
                     text = "无海报",
                     modifier = Modifier.align(Alignment.Center),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            if (movie.remarks.isNotBlank()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color(0xCC080B0B)),
-                            ),
-                        )
-                        .padding(8.dp),
-                ) {
-                    Text(
-                        text = movie.remarks,
-                        style = MaterialTheme.typography.labelMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        Text(
-            text = movie.name,
-            modifier = Modifier.padding(start = 6.dp, top = 6.dp, end = 6.dp, bottom = 8.dp),
-            style = MaterialTheme.typography.labelSmall,
-            // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+        },
+    )
 }
 
 @Composable
@@ -462,12 +542,8 @@ fun DoubanHotPosterCard(
     resolving: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    posterAspectRatio: Float = 0.78f,
 ) {
-    val shape = RoundedCornerShape(8.dp)
     val context = LocalContext.current
-    val touchMode = LocalTouchMode.current
-    var focused by remember { mutableStateOf(false) }
     var posterFailed by remember(item.doubanId, item.posterUrl) { mutableStateOf(item.posterUrl.isBlank()) }
     val imageRequest = remember(item.posterUrl) {
         ImageRequest.Builder(context)
@@ -482,31 +558,12 @@ fun DoubanHotPosterCard(
             .build()
     }
 
-    Column(
-        modifier = modifier
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-                idleBorder = TvColors.Border,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .background(if (focused) TvColors.SurfaceRaised else TvColors.Surface)
-            .then(
-                if (touchMode) {
-                    Modifier.pointerInput(onClick) { detectTapGestures { onClick() } }
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            )
-            .then(if (touchMode) Modifier else Modifier.focusable()),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(posterAspectRatio)
-                .background(TvColors.SurfaceRaised),
-        ) {
+    MediaCard(
+        title = item.title,
+        onClick = onClick,
+        modifier = modifier,
+        badge = if (item.score > 0.0) "豆瓣 ${"%.1f".format(item.score)}" else null,
+        cover = {
             if (!posterFailed) {
                 AsyncImage(
                     model = imageRequest,
@@ -528,18 +585,8 @@ fun DoubanHotPosterCard(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (item.score > 0.0) {
-                Text(
-                    text = "豆瓣 ${"%.1f".format(item.score)}",
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp)
-                        .background(Color(0xCC080B0B), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    color = Color.White,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
+        },
+        coverOverlay = {
             if (resolving) {
                 Box(
                     modifier = Modifier
@@ -559,17 +606,8 @@ fun DoubanHotPosterCard(
                     }
                 }
             }
-        }
-        Text(
-            text = item.title,
-            modifier = Modifier.padding(start = 6.dp, top = 6.dp, end = 6.dp, bottom = 8.dp),
-            style = MaterialTheme.typography.labelSmall,
-            // 手机版深色卡片上必须显式前景色，否则片名与卡片底色几乎同色、无法辨认。
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+        },
+    )
 }
 
 @Composable
@@ -578,23 +616,27 @@ fun HistoryItemCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(8.dp)
-    var focused by remember { mutableStateOf(false) }
-    Column(
-        modifier = modifier
-            .tvFocusScale(shape = shape)
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
-            .focusable(),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
-                .background(MaterialTheme.colorScheme.surfaceVariant),
-        ) {
+    MediaCard(
+        title = item.movieName,
+        onClick = onClick,
+        modifier = modifier,
+        subtitle = if (item.durationMs > 0) {
+            "${item.sourceName} / ${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
+        } else {
+            "${item.sourceName} / 已看到 ${formatPlayerTime(item.positionMs)}"
+        },
+        badge = "继续观看",
+        progress = item.progressPercent / 100f,
+        bottomOverlay = {
+            Text(
+                text = item.episodeTitle,
+                color = Color.White,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        },
+        cover = {
             if (item.posterUrl.isNotBlank()) {
                 AsyncImage(
                     model = item.posterUrl,
@@ -608,46 +650,11 @@ fun HistoryItemCard(
                     text = "无封面",
                     modifier = Modifier.align(Alignment.Center),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth()
-                    .background(Color(0xB0000000))
-                    .padding(8.dp),
-            ) {
-                Text(
-                    text = item.episodeTitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        LinearProgressIndicator(
-            progress = { item.progressPercent / 100f },
-            modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.primary,
-            trackColor = MaterialTheme.colorScheme.surfaceVariant,
-        )
-        Text(
-            text = item.movieName,
-            modifier = Modifier.padding(start = 10.dp, top = 10.dp, end = 10.dp),
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = if (item.durationMs > 0) "${item.sourceName} / ${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
-                else "${item.sourceName} / 已看到 ${formatPlayerTime(item.positionMs)}",
-            modifier = Modifier.padding(start = 10.dp, top = 3.dp, end = 10.dp, bottom = 12.dp),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
+        },
+    )
 }
 
 @Composable
