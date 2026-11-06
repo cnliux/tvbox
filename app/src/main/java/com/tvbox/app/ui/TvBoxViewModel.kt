@@ -306,6 +306,8 @@ class TvBoxViewModel(
     private var searchJob: Job? = null
     private var searchHotWordsJob: Job? = null
     private var detailJob: Job? = null
+    /** 最近一次详情请求（movieId 到 apiLineId），用于 detailMovie 尚未加载成功时的重试。 */
+    private var lastDetailRequest: Pair<Int, String>? = null
     private var historyResumeJob: Job? = null
     private var liveJob: Job? = null
     private var platformLiveJob: Job? = null
@@ -1279,6 +1281,9 @@ class TvBoxViewModel(
         historyResumeJob?.cancel()
         detailJob?.cancel()
         detailSourceTestJob?.cancel()
+        // 记录本次请求的影片与来源：详情加载失败时 detailMovie 仍为 null，
+        // 「重试」需要靠它复现同一请求，否则只会拿默认源去查另一个源才有的影片。
+        lastDetailRequest = movieId to apiLineId
         val current = _state.value
         val returnScreen = when (current.screen) {
             TvScreen.Search -> TvScreen.Search
@@ -2587,7 +2592,10 @@ class TvBoxViewModel(
             TvScreen.Home -> refreshHome(forceRefresh = true)
             TvScreen.History -> loadHistory()
             TvScreen.Search -> submitSearch()
-            TvScreen.Detail -> _state.value.detailMovie?.let { openDetail(it.id) }
+            // 详情加载失败时 detailMovie 为空，退回最近一次请求的影片与来源重试。
+            TvScreen.Detail -> _state.value.detailMovie
+                ?.let { openDetail(it.id, it.apiLineId) }
+                ?: lastDetailRequest?.let { (movieId, lineId) -> openDetail(movieId, lineId) }
             TvScreen.Player -> Unit
             TvScreen.Live -> refreshLive()
             TvScreen.PlatformLive -> retryPlatformLiveChannel()
