@@ -5,6 +5,11 @@ import android.app.DownloadManager
 import android.net.Uri
 import android.os.Environment
 import com.tvbox.app.BuildConfig
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkException
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.data.network.parseNetworkPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
@@ -16,11 +21,9 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 interface AppUpdateRepository {
     suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate?
@@ -46,9 +49,7 @@ class DefaultAppUpdateRepository(
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+    private val client = HttpClients.default.newBuilder()
         .followRedirects(true)
         .build()
 
@@ -61,14 +62,21 @@ class DefaultAppUpdateRepository(
                 .header("User-Agent", USER_AGENT)
                 .build()
             try {
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) throw IOException("更新检查失败：${response.code}")
-                    return@withContext parseAppUpdateManifest(
-                        raw = response.body.string(),
+                val raw = try {
+                    client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
+                        .use { response -> response.body.string() }
+                } catch (error: NetworkException.Http) {
+                    throw IOException("更新检查失败：${error.statusCode}", error)
+                }
+                return@withContext parseNetworkPayload {
+                    parseAppUpdateManifest(
+                        raw = raw,
                         currentVersionCode = currentVersionCode,
                         json = json,
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 lastError = e
                 android.util.Log.w("TVBoxUpdate", "主备URL[$url]失败，尝试下一个: ${e.message}")

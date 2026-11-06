@@ -1,19 +1,14 @@
 package com.tvbox.app.data
 
-import kotlinx.coroutines.suspendCancellableCoroutine
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.data.network.parseNetworkPayload
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
-import okhttp3.Call
-import okhttp3.Callback
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
-import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
 
 interface MacCmsApi {
     suspend fun getVod(
@@ -33,12 +28,6 @@ object MacCmsNetwork {
         coerceInputValues = true
         explicitNulls = false
     }
-
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .writeTimeout(20, TimeUnit.SECONDS)
-        .build()
 
     private val apis = ConcurrentHashMap<String, MacCmsApi>()
 
@@ -66,43 +55,15 @@ object MacCmsNetwork {
                         ids?.takeIf { it.isNotBlank() }?.let { addQueryParameter("ids", it) }
                     }.build()
                     val request = Request.Builder().url(url).get().build()
-                    return executeCancellable(request)
+                    return HttpClients.default
+                        .executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
+                        .use { response ->
+                            parseNetworkPayload { json.decodeFromString<MacCmsResponse>(response.body.string()) }
+                        }
                 }
             }
         }
     }
-
-    /**
-     * 可取消的 OkHttp 调用：协程取消时立即 cancel Call，避免请求继续阻塞到 readTimeout。
-     * 上层 `withTimeoutOrNull`（搜索/详情分源超时）因此能真正到点生效。
-     */
-    private suspend fun executeCancellable(request: Request): MacCmsResponse =
-        suspendCancellableCoroutine { continuation ->
-            val call = client.newCall(request)
-            continuation.invokeOnCancellation { runCatching { call.cancel() } }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(e)
-                }
-
-                override fun onResponse(call: Call, response: Response) {
-                    val result = runCatching {
-                        response.use { resp ->
-                            if (!resp.isSuccessful) {
-                                throw IOException("视频接口 HTTP ${resp.code}：${request.url}")
-                            }
-                            json.decodeFromString<MacCmsResponse>(resp.body.string())
-                        }
-                    }
-                    if (continuation.isActive) {
-                        result.fold(
-                            onSuccess = { continuation.resume(it) },
-                            onFailure = { continuation.resumeWithException(it) },
-                        )
-                    }
-                }
-            })
-        }
 }
 
 // 项目不再内置任何点播接口：视频源完全由用户在源管理中导入（customVideoApiLines）。

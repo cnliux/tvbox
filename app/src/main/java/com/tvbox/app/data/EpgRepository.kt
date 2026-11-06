@@ -1,14 +1,15 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.parseXmltvEpg
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 interface EpgRepository {
     /** 拉取并解析 XMLTV；失败返回空 Map（不抛异常，EPG 是增强项不阻塞主流程）。 */
@@ -22,12 +23,6 @@ interface EpgRepository {
  * 第二个进入临界区的调用直接命中缓存。
  */
 class RemoteEpgRepository : EpgRepository {
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(15L, TimeUnit.SECONDS)
-        .readTimeout(30L, TimeUnit.SECONDS)
-        // readTimeout 只约束单次读；整次调用再加硬上限，防止慢速滴流无限拖住 Mutex。
-        .callTimeout(60L, TimeUnit.SECONDS)
-        .build()
     private val mutex = Mutex()
     private val cache = mutableMapOf<String, CachedEpg>()
 
@@ -54,14 +49,13 @@ class RemoteEpgRepository : EpgRepository {
         }
     }
 
-    private fun download(url: String): String {
+    private suspend fun download(url: String): String {
         // 与 SourceConfigFetcher 同口径的 UA 标识。
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3")
             .build()
-        return client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return ""
+        return HttpClients.default.executeCancellable(request, NetworkRetryPolicy.IdempotentGet).use { response ->
             val body = response.body
             // 上限保护：XMLTV 全量接口通常几 MB～几十 MB，40MB 以上视为异常源。
             val stream = body.byteStream()

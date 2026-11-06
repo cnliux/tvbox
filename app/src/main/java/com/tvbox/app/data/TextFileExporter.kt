@@ -9,6 +9,10 @@ import android.provider.MediaStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkException
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
 import java.io.IOException
 
 /** Saves plain-text config exports to the public Downloads folder. */
@@ -66,9 +70,10 @@ internal class TextFileExporter(context: Context) {
 
 /** Fetches a remote configuration text over plain HTTP(S), used by the paste/URL import dialog. */
 internal class SourceConfigFetcher {
-    private val client = okhttp3.OkHttpClient.Builder()
-        .connectTimeout(15L, java.util.concurrent.TimeUnit.SECONDS)
+    private val client = HttpClients.default.newBuilder()
+        // 订阅文本可能较大且允许慢速，沿用既有读超时并给整次调用更长上限。
         .readTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)
+        .callTimeout(120L, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
     suspend fun fetch(url: String): String = withContext(Dispatchers.IO) {
@@ -83,32 +88,35 @@ internal class SourceConfigFetcher {
             .url(normalized)
             .header("User-Agent", "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3")
             .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("获取订阅失败：HTTP ${response.code}")
-            val body = response.body
-            val stream = body.byteStream()
-            var buffer = ByteArray(16_384)
-            var size = 0
-            var bufferOut = java.io.ByteArrayOutputStream()
-            if (body.contentLength() > 0) bufferOut = java.io.ByteArrayOutputStream(body.contentLength().toInt())
-            while (true) {
-                val read = stream.read(buffer)
-                if (read <= 0) break
-                size += read
-                if (size > MAX_PAYLOAD_BYTES) {
-                    throw IOException("订阅内容超过 20MB，请检查订阅地址")
+        try {
+            client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet).use { response ->
+                val body = response.body
+                val stream = body.byteStream()
+                var buffer = ByteArray(16_384)
+                var size = 0
+                var bufferOut = java.io.ByteArrayOutputStream()
+                if (body.contentLength() > 0) bufferOut = java.io.ByteArrayOutputStream(body.contentLength().toInt())
+                while (true) {
+                    val read = stream.read(buffer)
+                    if (read <= 0) break
+                    size += read
+                    if (size > MAX_PAYLOAD_BYTES) {
+                        throw IOException("订阅内容超过 20MB，请检查订阅地址")
+                    }
+                    bufferOut.write(buffer, 0, read)
                 }
-                bufferOut.write(buffer, 0, read)
+                var data = bufferOut.toByteArray()
+                if (data.size >= 3 &&
+                    data[0].toInt() == 0xEF && data[1].toInt() == 0xBB && data[2].toInt() == 0xBF
+                ) {
+                    val stripped = ByteArray(data.size - 3)
+                    System.arraycopy(data, 3, stripped, 0, stripped.size)
+                    data = stripped
+                }
+                String(data, Charsets.UTF_8)
             }
-            var data = bufferOut.toByteArray()
-            if (data.size >= 3 &&
-                data[0].toInt() == 0xEF && data[1].toInt() == 0xBB && data[2].toInt() == 0xBF
-            ) {
-                val stripped = ByteArray(data.size - 3)
-                System.arraycopy(data, 3, stripped, 0, stripped.size)
-                data = stripped
-            }
-            String(data, Charsets.UTF_8)
+        } catch (error: NetworkException.Http) {
+            throw IOException("获取订阅失败：HTTP ${error.statusCode}", error)
         }
     }
 

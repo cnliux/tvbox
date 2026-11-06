@@ -1,6 +1,11 @@
 package com.tvbox.app.data
 
 import android.content.Context
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkException
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.data.network.parseNetworkPayload
 import com.tvbox.app.domain.isBlockedContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -15,7 +20,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * 热门搜索词来源：只使用聚合榜单（360 影视热榜的电影/电视剧/综艺 + 豆瓣热播），
@@ -27,7 +31,7 @@ interface SearchHotWordRepository {
 
 class DefaultSearchHotWordRepository(
     private val cache: SearchHotWordCache = InMemorySearchHotWordCache(),
-    private val client: OkHttpClient = defaultSearchHotWordClient,
+    private val client: OkHttpClient = HttpClients.default,
     private val doubanTitles: suspend () -> List<String> = { emptyList() },
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : SearchHotWordRepository {
@@ -59,7 +63,7 @@ class DefaultSearchHotWordRepository(
         composeHotWords((rankRequests + doubanRequest).awaitAll())
     }
 
-    private fun fetchRankTitles(category: Int): List<String> {
+    private suspend fun fetchRankTitles(category: Int): List<String> {
         val url = HOT_RANK_ENDPOINT.toHttpUrl().newBuilder()
             .addQueryParameter("cat", category.toString())
             .build()
@@ -69,10 +73,13 @@ class DefaultSearchHotWordRepository(
             .header("Referer", HOT_RANK_REFERER)
             .header("Accept", "application/json, text/plain, */*")
             .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) throw IOException("聚合热搜暂时不可用（${response.code}）")
-            return parseRankTitles(response.body.string())
+        val raw = try {
+            client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
+                .use { response -> response.body.string() }
+        } catch (error: NetworkException.Http) {
+            throw IOException("聚合热搜暂时不可用（${error.statusCode}）", error)
         }
+        return parseNetworkPayload { parseRankTitles(raw) }
     }
 }
 
@@ -181,8 +188,3 @@ private val searchHotWordJson = Json {
     explicitNulls = false
 }
 
-private val defaultSearchHotWordClient = OkHttpClient.Builder()
-    .connectTimeout(10, TimeUnit.SECONDS)
-    .readTimeout(10, TimeUnit.SECONDS)
-    .writeTimeout(10, TimeUnit.SECONDS)
-    .build()

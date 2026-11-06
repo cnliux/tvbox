@@ -3,12 +3,15 @@ package com.tvbox.app.data
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkException
+import com.tvbox.app.data.network.executeCancellable
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.w3c.dom.Element
@@ -37,10 +40,12 @@ data class DlnaDevice(
  */
 class DlnaCaster(context: Context) {
     private val appContext = context.applicationContext
-    private val client = OkHttpClient.Builder()
+    // 局域网 SOAP/描述请求：沿用统一客户端，但使用更短的 SOCKET 超时避免投屏卡住。
+    private val client = HttpClients.default.newBuilder()
         .connectTimeout(3, TimeUnit.SECONDS)
         .readTimeout(5, TimeUnit.SECONDS)
         .writeTimeout(5, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
         .build()
 
     suspend fun discover(timeoutMs: Long = 3_500L): List<DlnaDevice> = withContext(Dispatchers.IO) {
@@ -127,10 +132,14 @@ class DlnaCaster(context: Context) {
             ?.takeIf { it.isNotBlank() }
     }
 
-    private fun loadDevice(location: String): DlnaDevice? {
-        val xml = client.newCall(Request.Builder().url(location).build()).execute().use { response ->
-            if (!response.isSuccessful) return null
-            response.body.string()
+    private suspend fun loadDevice(location: String): DlnaDevice? {
+        val xml = try {
+            client.executeCancellable(Request.Builder().url(location).build()).use { response ->
+                response.body.string()
+            }
+        } catch (_: NetworkException.Http) {
+            // 非 AVTransport 设备或不可达地址：与原来一样静默跳过。
+            return null
         }
         val root = parseXml(xml) ?: return null
         val name = root.getElementsByTagName("friendlyName")
@@ -152,7 +161,7 @@ class DlnaCaster(context: Context) {
         return null
     }
 
-    private fun sendSoap(device: DlnaDevice, action: String, arguments: String): Result<Unit> {
+    private suspend fun sendSoap(device: DlnaDevice, action: String, arguments: String): Result<Unit> {
         val envelope = buildString {
             append("""<?xml version="1.0" encoding="utf-8"?>""")
             append("""<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" """)
@@ -169,13 +178,15 @@ class DlnaCaster(context: Context) {
             .header("SOAPAction", "\"$AV_TRANSPORT_SERVICE#$action\"")
             .post(envelope.toRequestBody(XML_MEDIA_TYPE))
             .build()
-        return runCatching {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    val detail = response.body.string().take(160)
-                    throw IOException("投屏控制失败（${response.code}）：$detail")
-                }
-            }
+        return try {
+            client.executeCancellable(request).use { }
+            Result.success(Unit)
+        } catch (error: NetworkException.Http) {
+            Result.failure(IOException("投屏控制失败（${error.statusCode}）", error))
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Result.failure(error)
         }
     }
 

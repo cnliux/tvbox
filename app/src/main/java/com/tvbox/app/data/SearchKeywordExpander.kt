@@ -1,12 +1,13 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.executeCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 interface SearchKeywordExpander {
     /**
@@ -17,7 +18,7 @@ interface SearchKeywordExpander {
 }
 
 class DefaultSearchKeywordExpander(
-    private val client: OkHttpClient = defaultSuggestionClient,
+    private val client: OkHttpClient = HttpClients.probe,
     private val endpoint: String = SUGGEST_ENDPOINT,
 ) : SearchKeywordExpander {
     override suspend fun expandInitials(query: String): List<String> = withContext(Dispatchers.IO) {
@@ -30,10 +31,7 @@ class DefaultSearchKeywordExpander(
                 .url("$endpoint?word=$normalized&encodein=utf-8&encodeout=utf-8")
                 .header("User-Agent", MOBILE_USER_AGENT)
                 .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) {
-                    return@withContext emptyList()
-                }
+            client.executeCancellable(request).use { response ->
                 val body = response.body.string().orEmpty()
                 extractTitleCandidates(parseSuggestionWords(body))
             }
@@ -47,13 +45,6 @@ class DefaultSearchKeywordExpander(
     }
 }
 
-private val defaultSuggestionClient: OkHttpClient by lazy {
-    OkHttpClient.Builder()
-        .connectTimeout(8, TimeUnit.SECONDS)
-        .readTimeout(8, TimeUnit.SECONDS)
-        .callTimeout(10, TimeUnit.SECONDS)
-        .build()
-}
 
 private val suggestionJson = Json {
     ignoreUnknownKeys = true

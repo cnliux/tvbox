@@ -1,6 +1,11 @@
 package com.tvbox.app.data
 
 import android.content.Context
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.NetworkException
+import com.tvbox.app.data.network.NetworkRetryPolicy
+import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.data.network.parseNetworkPayload
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.PagedDoubanHotMovies
 import com.tvbox.app.domain.isBlockedContent
@@ -15,7 +20,6 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 import kotlin.math.ceil
 
 interface DoubanHotRepository {
@@ -35,7 +39,7 @@ enum class DoubanHotCategory(
 
 class DefaultDoubanHotRepository(
     private val cache: DoubanHotCache = InMemoryDoubanHotCache(),
-    private val client: OkHttpClient = defaultDoubanClient,
+    private val client: OkHttpClient = HttpClients.default,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : DoubanHotRepository {
     override suspend fun getRecentHot(
@@ -49,16 +53,17 @@ class DefaultDoubanHotRepository(
         if (!forceRefresh) {
             cache.get(cacheKey, now)?.let { cached ->
                 if (cached.isFailure) throw IOException(cached.payload)
-                return@withContext parseDoubanHotPage(cached.payload, request)
+                return@withContext parseNetworkPayload { parseDoubanHotPage(cached.payload, request) }
             }
         }
 
         runCatching {
-            val rawResponse = client.newCall(request.toOkHttpRequest()).execute().use { response ->
-                if (!response.isSuccessful) {
-                    throw IOException("豆瓣热播暂时不可用（${response.code}）")
-                }
-                response.body.string()
+            val rawResponse = try {
+                client.executeCancellable(request.toOkHttpRequest(), NetworkRetryPolicy.IdempotentGet)
+                    .use { response -> response.body.string() }
+            } catch (error: NetworkException.Http) {
+                // 保留原有用户可见文案，底层仍按 HTTP 错误分类。
+                throw IOException("豆瓣热播暂时不可用（${error.statusCode}）", error)
             }
             cache.put(
                 key = cacheKey,
@@ -67,7 +72,7 @@ class DefaultDoubanHotRepository(
                     expiresAtEpochMs = now + successCacheTtlMs(cacheKey),
                 ),
             )
-            parseDoubanHotPage(rawResponse, request)
+            parseNetworkPayload { parseDoubanHotPage(rawResponse, request) }
         }.getOrElse { error ->
             val message = error.message?.takeIf { it.isNotBlank() } ?: "豆瓣热播暂时不可用，请稍后重试"
             cache.put(
@@ -239,8 +244,3 @@ private val doubanJson = Json {
     explicitNulls = false
 }
 
-private val defaultDoubanClient = OkHttpClient.Builder()
-    .connectTimeout(10, TimeUnit.SECONDS)
-    .readTimeout(10, TimeUnit.SECONDS)
-    .writeTimeout(10, TimeUnit.SECONDS)
-    .build()

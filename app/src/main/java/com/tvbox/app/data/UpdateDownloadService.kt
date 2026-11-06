@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tvbox.app.MainActivity
+import com.tvbox.app.data.network.HttpClients
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,7 +22,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
@@ -42,8 +42,12 @@ class UpdateDownloadService : Service() {
     private var job: Job? = null
     private var activePath: String? = null
     private var activeStartId = 0
-    private val client = OkHttpClient.Builder().connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS).callTimeout(10, TimeUnit.MINUTES).build()
+    // APK 下载是流式长请求，沿用统一客户端但放宽整次调用上限，避免大包被默认 60s 截断。
+    private val client = HttpClients.default.newBuilder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.MINUTES)
+        .build()
 
     override fun onBind(intent: Intent?): IBinder? = null
 

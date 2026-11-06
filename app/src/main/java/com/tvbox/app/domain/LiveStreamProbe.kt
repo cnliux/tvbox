@@ -1,11 +1,11 @@
 package com.tvbox.app.domain
 
+import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.data.network.executeCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 
 /**
  * 无扩展名直播地址的内容类型探测。
@@ -28,15 +28,6 @@ const val LIVE_MIME_UNKNOWN = ""
 const val LIVE_MIME_M3U8 = "application/x-mpegURL"
 const val LIVE_MIME_FLV = "video/x-flv"
 const val LIVE_MIME_MP2T = "video/mp2t"
-
-private val probeClient by lazy {
-    OkHttpClient.Builder()
-        .connectTimeout(6, TimeUnit.SECONDS)
-        .readTimeout(6, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .build()
-}
 
 // URL → MIME（仅缓存探测成功的判定结果），避免重连/切回时重复探测。
 private val probeCache = ConcurrentHashMap<String, String>()
@@ -68,7 +59,7 @@ suspend fun probeLiveLineMimeType(
     return probed
 }
 
-private fun probeBlocking(url: String, headers: Map<String, String>): String {
+private suspend fun probeBlocking(url: String, headers: Map<String, String>): String {
     val builder = Request.Builder()
         .url(url)
         .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
@@ -77,7 +68,7 @@ private fun probeBlocking(url: String, headers: Map<String, String>): String {
             builder.header(key, value)
         }
     }
-    probeClient.newCall(builder.build()).execute().use { response ->
+    HttpClients.probe.executeCancellable(builder.build()).use { response ->
         if (!response.isSuccessful) return LIVE_MIME_UNKNOWN
         val contentType = response.header("Content-Type")
         val bodyRef = response.body
@@ -130,7 +121,7 @@ private val LIVE_PROBE_KNOWN_EXTENSIONS = listOf(
 /**
  * 测量一条直播线路的首包延迟（毫秒）。
  *
- * 复用 [probeClient] 的短超时与 Range 头策略：只读首个分片，避免为了测速把整路
+ * 复用 [HttpClients.probe] 的短超时与 Range 头策略：只读首个分片，避免为了测速把整路
  * 直播流拉起来。返回 null 表示不可达/超时，调用方应展示"超时"而不是 0ms。
  */
 suspend fun measureLiveLineLatencyMs(
@@ -149,7 +140,7 @@ suspend fun measureLiveLineLatencyMs(
                 if (clean) builder.header(key, value)
             }
             val startedAt = System.currentTimeMillis()
-            probeClient.newCall(builder.build()).execute().use { response ->
+            HttpClients.probe.executeCancellable(builder.build()).use { response ->
                 if (!response.isSuccessful) return@use null
                 // 读到首字节即可结束：这才是播放器真正开始出画的时间点。
                 response.body.byteStream().use { stream ->
