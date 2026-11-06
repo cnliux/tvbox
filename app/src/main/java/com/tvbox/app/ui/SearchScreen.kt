@@ -805,7 +805,10 @@ internal fun MobileSearchScreen(
         // 清空搜索状态，确保返回时不残留
     }
     
-    Column(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // 结果按行分组交给 LazyColumn 逐行复用，避免一次性组合全部搜索结果卡。
+        val columns = if (maxWidth >= 560.dp) 3 else 2
+        val resultRows = state.searchResults.chunked(columns)
         // 内容区（搜索框可随列表一起滑动）
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             item {
@@ -915,38 +918,28 @@ internal fun MobileSearchScreen(
                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                     }
-                    // 卡片网格
-                    item {
-                        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                            val columns = if (maxWidth >= 560.dp) 3 else 2
-                            // 使用 Grid 布局
-                            val itemsCount = state.searchResults.size
-                            Column {
-                                for (row in 0 until (itemsCount + columns - 1) / columns) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        for (col in 0 until columns) {
-                                            val index = row * columns + col
-                                            if (index < itemsCount) {
-                                                val movie = state.searchResults[index]
-                                                Box(modifier = Modifier.weight(1f)) {
-                                                    SearchResultCardMobile(movie = movie, onClick = {
-                                                        actions.openDetail(movie.id, movie.apiLineId)
-                                                    })
-                                                }
-                                            } else {
-                                                Spacer(modifier = Modifier.weight(1f))
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(12.dp))
+                    // 卡片网格：按行懒加载
+                    items(count = resultRows.size, key = { "search-row-$it" }) { rowIndex ->
+                        val rowMovies = resultRows[rowIndex]
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            rowMovies.forEach { movie ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    SearchResultCardMobile(movie = movie, onClick = {
+                                        actions.openDetail(movie.id, movie.apiLineId)
+                                    })
                                 }
-                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                            repeat(columns - rowMovies.size) {
+                                Spacer(modifier = Modifier.weight(1f))
                             }
                         }
                     }
+                    item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
         }
