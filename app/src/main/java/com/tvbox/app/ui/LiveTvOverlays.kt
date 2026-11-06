@@ -118,6 +118,12 @@ internal const val CHANNEL_LIST_HIDE_DELAY_MS = 6_000L
 internal const val CHANNEL_NUMBER_COMMIT_DELAY_MS = 2_000L
 internal const val MAX_CHANNEL_NUMBER_DIGITS = 4
 
+/** 数字直选浮层最多展示的候选频道行数（超出滚动查看）。 */
+internal const val LIVE_NUMBER_MATCH_ROWS = 6
+
+/** 数字直选输入期间，下方候选列表的淡入淡出时长。 */
+internal const val LIVE_NUMBER_MATCH_ANIM_MS = 120
+
 internal const val PROMPT_HIDE_DELAY_MS = 1_500L
 
 /** 顶栏时钟与 EPG 卡当前节目高亮的刷新节拍。 */
@@ -164,18 +170,27 @@ private fun Modifier.liveTap(onClick: () -> Unit): Modifier =
 /**
  * 频道台标：底层先画首字占位，logo 非空时叠 Coil 图片；
  * 加载中/失败时 AsyncImage 不绘制，占位自然透出。
+ *
+ * 台标为长方形（宽 > 高），与频道 logo 常见比例一致。
+ *
+ * @param width 台标宽度
+ * @param height 台标高度
+ * @param stretch true=拉伸铺满（FillBounds），false=裁切填充（Crop，默认）。
  */
 @Composable
 internal fun LiveChannelLogo(
     logo: String?,
     name: String,
-    size: Dp,
+    width: Dp,
+    height: Dp,
     initialFontSize: TextUnit,
+    stretch: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val contentScale = if (stretch) ContentScale.FillBounds else ContentScale.Crop
     Box(
         modifier = modifier
-            .size(size)
+            .size(width = width, height = height)
             .clip(RoundedCornerShape(6.dp))
             .background(LiveTvLogoPlaceholderBg),
         contentAlignment = Alignment.Center,
@@ -191,7 +206,7 @@ internal fun LiveChannelLogo(
             AsyncImage(
                 model = logo,
                 contentDescription = name,
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
                 modifier = Modifier.fillMaxSize(),
             )
         }

@@ -33,6 +33,7 @@ import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
 import com.tvbox.app.data.DefaultMovieRepository
 import com.tvbox.app.data.DefaultSearchHotWordRepository
+import com.tvbox.app.data.LiveDomainScoreStore
 import com.tvbox.app.data.LiveLinePreference
 import com.tvbox.app.data.SharedAppSettingsRepository
 import com.tvbox.app.data.SharedDoubanHotCache
@@ -350,6 +351,7 @@ private class TvBoxViewModelFactory(
             historyRepository = SharedHistoryRepository(activity.applicationContext),
             platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(activity.applicationContext),
             liveLinePrefs = LiveLinePreference(activity.applicationContext),
+            liveDomainScores = LiveDomainScoreStore(activity.applicationContext),
             liveFavoritesRepository = SharedLiveFavoritesRepository(activity.applicationContext),
         ) as T
     }

@@ -155,18 +155,28 @@ data class ResolvedPlatformLiveStream(
     val candidates: List<PlatformLiveStreamCandidate>,
     val activeCandidateIndex: Int = 0,
 ) {
+    val hasCandidates: Boolean
+        get() = candidates.isNotEmpty()
+
+    val safeActiveCandidateIndex: Int
+        get() = if (candidates.isEmpty()) 0 else activeCandidateIndex.coerceIn(0, candidates.lastIndex)
+
+    val activeCandidateOrNull: PlatformLiveStreamCandidate?
+        get() = candidates.getOrNull(safeActiveCandidateIndex)
+
     val activeCandidate: PlatformLiveStreamCandidate
-        get() = candidates[activeCandidateIndex.coerceIn(0, candidates.lastIndex)]
+        get() = activeCandidateOrNull ?: PlatformLiveStreamCandidate(cdn = "默认", protocol = "", url = "")
 
     val protocol: String
-        get() = activeCandidate.protocol
+        get() = activeCandidateOrNull?.protocol.orEmpty()
 
     val url: String
-        get() = activeCandidate.url
+        get() = activeCandidateOrNull?.url.orEmpty()
 
-    fun withActiveCandidate(index: Int): ResolvedPlatformLiveStream = copy(
-        activeCandidateIndex = index.coerceIn(0, candidates.lastIndex),
-    )
+    fun withActiveCandidate(index: Int): ResolvedPlatformLiveStream {
+        if (candidates.isEmpty()) return copy(activeCandidateIndex = 0)
+        return copy(activeCandidateIndex = index.coerceIn(0, candidates.lastIndex))
+    }
 }
 
 data class AppUpdate(

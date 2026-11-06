@@ -79,17 +79,18 @@ internal fun LiveEpgCard(
 ) {
     Column(
         modifier = modifier
-            .width(280.dp)
+            .width(485.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xE6141418))
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // 台标加大：32dp -> 40dp，卡片仍为 280dp 宽，右侧文字区自适应。
+            // 台标长方形：90×64dp（由 web/preview_live_tv_ui_drag.html 调参生成）
             LiveChannelLogo(
                 logo = channel.logo,
                 name = channel.name,
-                size = 40.dp,
+                width = 90.dp,
+                height = 64.dp,
                 initialFontSize = 13.sp,
             )
             Spacer(Modifier.width(8.dp))
@@ -97,7 +98,7 @@ internal fun LiveEpgCard(
                 Text(
                     text = channel.name,
                     color = Color.White,
-                    fontSize = 13.sp,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -162,10 +163,10 @@ internal fun LiveEpgCard(
                             modifier = Modifier.weight(1f),
                         )
                         Spacer(Modifier.width(6.dp))
-                        // 28dp 进度条：仅当前节目按实际播出进度填充。
+                        // 48dp 进度条：仅当前节目按实际播出进度填充（web 调参）。
                         Box(
                             modifier = Modifier
-                                .width(28.dp)
+                                .width(48.dp)
                                 .height(2.dp)
                                 .clip(CircleShape)
                                 .background(LiveTvTrackBg),

@@ -137,9 +137,17 @@ fun PlayerScreen(
     var uiPlaying by remember { mutableStateOf(true) }
     // 手机播放页“更多”面板展开时暂停自动隐藏，方便选集/切线路。
     var mobileMoreOpen by remember { mutableStateOf(false) }
+    var mobileLocked by remember(movie.id, movie.apiLineId) { mutableStateOf(false) }
     var lastBackPressTime by remember { mutableStateOf(0L) }
     BackHandler {
         when {
+            mobileLocked && controlsVisible -> {
+                android.widget.Toast.makeText(
+                    context,
+                    "播放已锁定，点“解锁”恢复",
+                    android.widget.Toast.LENGTH_SHORT,
+                ).show()
+            }
             controlsPanel != PlayerPanel.None -> controlsPanel = PlayerPanel.None
             controlsVisible -> { controlsVisible = false; playerFocusRequester.requestFocus() }
             else -> {
@@ -174,8 +182,8 @@ fun PlayerScreen(
             delay(250)
         }
     }
-    LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing, mobileMoreOpen) {
-        if (controlsVisible && controlsPanel == PlayerPanel.None && uiPlaying && !scrubbing && !mobileMoreOpen) {
+    LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing, mobileMoreOpen, mobileLocked) {
+        if (controlsVisible && controlsPanel == PlayerPanel.None && uiPlaying && !scrubbing && !mobileMoreOpen && !mobileLocked) {
             delay(5_000)
             controlsVisible = false
             playerFocusRequester.requestFocus()
@@ -587,19 +595,21 @@ fun PlayerScreen(
         }
     }
     val scheduleLongPressSpeed = {
-        touchGesture.originalSpeed = player.playbackParameters.speed
-        touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
-        touchGesture.longPressActive = false
-        val runnable = Runnable {
-            touchGesture.longPressActive = true
-            player.setPlaybackSpeed(LONG_PRESS_PLAYBACK_SPEED)
-            showLongPressSpeedPrompt()
+        if (!mobileLocked) {
+            touchGesture.originalSpeed = player.playbackParameters.speed
+            touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
+            touchGesture.longPressActive = false
+            val runnable = Runnable {
+                touchGesture.longPressActive = true
+                player.setPlaybackSpeed(LONG_PRESS_PLAYBACK_SPEED)
+                showLongPressSpeedPrompt()
+            }
+            touchGesture.longPressRunnable = runnable
+            touchHandler.postDelayed(
+                runnable,
+                ViewConfiguration.getLongPressTimeout().toLong(),
+            )
         }
-        touchGesture.longPressRunnable = runnable
-        touchHandler.postDelayed(
-            runnable,
-            ViewConfiguration.getLongPressTimeout().toLong(),
-        )
     }
     val showPlaybackStatusByTap = {
         controlsVisible = !controlsVisible
@@ -608,7 +618,11 @@ fun PlayerScreen(
     val togglePlaybackByGesture = {
         cancelLongPressSpeed()
         cancelPendingSingleTap()
-        if (player.playWhenReady) {
+        if (mobileLocked) {
+            controlsVisible = true
+            controlsInteraction++
+            seekGesturePrompt = "已锁定，先解锁"
+        } else if (player.playWhenReady) {
             bufferMonitor.onPaused()
             session.pause(player)
             seekGesturePrompt = "暂停"
@@ -621,14 +635,21 @@ fun PlayerScreen(
     val seekByGesture = { deltaMs: Long, label: String ->
         cancelLongPressSpeed()
         cancelPendingSingleTap()
-        bufferMonitor.onSeekStarted(System.currentTimeMillis())
-        val targetPosition = player.seekByOffset(deltaMs)
-        seekGesturePrompt = "$label  ${formatPlayerTime(targetPosition)}"
-        seekGesturePromptNonce++
-        saveCurrentProgress(
-            positionMs = targetPosition,
-            durationMs = player.duration.takeIf { it > 0L } ?: 0L,
-        )
+        if (mobileLocked) {
+            controlsVisible = true
+            controlsInteraction++
+            seekGesturePrompt = "已锁定，先解锁"
+            seekGesturePromptNonce++
+        } else {
+            bufferMonitor.onSeekStarted(System.currentTimeMillis())
+            val targetPosition = player.seekByOffset(deltaMs)
+            seekGesturePrompt = "$label  ${formatPlayerTime(targetPosition)}"
+            seekGesturePromptNonce++
+            saveCurrentProgress(
+                positionMs = targetPosition,
+                durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+            )
+        }
     }
     val seekByRemote = { deltaMs: Long ->
         bufferMonitor.onSeekStarted(System.currentTimeMillis())
@@ -814,7 +835,7 @@ fun PlayerScreen(
                                 touchGesture.maxVolume = audioManager
                                     ?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                     ?: 0
-                                scheduleLongPressSpeed()
+                                if (!mobileLocked) scheduleLongPressSpeed()
                             }
                             MotionEvent.ACTION_MOVE -> {
                                 val totalDx = event.x - touchGesture.downX
@@ -822,7 +843,7 @@ fun PlayerScreen(
                                 val durationMs = player.duration.takeIf { it > 0L }
                                 if (touchGesture.longPressActive) return@OnTouchListener true
 
-                                if (touchGesture.swipeMode == PlayerSwipeMode.None) {
+                                if (!mobileLocked && touchGesture.swipeMode == PlayerSwipeMode.None) {
                                     when {
                                         abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) && durationMs != null -> {
                                             touchGesture.swipeMode = PlayerSwipeMode.Seek
@@ -837,7 +858,9 @@ fun PlayerScreen(
                                     }
                                 }
 
-                                if (touchGesture.swipeMode == PlayerSwipeMode.Seek && durationMs != null) {
+                                if (mobileLocked) {
+                                    cancelLongPressSpeed()
+                                } else if (touchGesture.swipeMode == PlayerSwipeMode.Seek && durationMs != null) {
                                     cancelLongPressSpeed()
                                     cancelPendingSingleTap()
                                     if (!touchGesture.seeking) {
@@ -860,7 +883,7 @@ fun PlayerScreen(
                                     activity?.window?.setScreenBrightness(brightness)
                                     seekGesturePrompt = "亮度 ${(brightness * 100).roundToInt()}%"
                                     seekGesturePromptNonce++
-                                } else if (touchGesture.swipeMode == PlayerSwipeMode.Volume && touchGesture.maxVolume > 0) {
+                                } else if (!mobileLocked && touchGesture.swipeMode == PlayerSwipeMode.Volume && touchGesture.maxVolume > 0) {
                                     cancelLongPressSpeed()
                                     cancelPendingSingleTap()
                                     val volume = (
@@ -883,6 +906,18 @@ fun PlayerScreen(
                                 if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
                                     touchGesture.seeking = false
                                     cancelPendingSingleTap()
+                                    return@OnTouchListener true
+                                }
+                                if (mobileLocked) {
+                                    touchGesture.seeking = false
+                                    cancelPendingSingleTap()
+                                    // 锁定态下轻点唤出解锁层（控件可见时已显示解锁按钮）
+                                    if (swipeMode == PlayerSwipeMode.None && !wasLongPressActive) {
+                                        controlsVisible = true
+                                        controlsInteraction++
+                                        seekGesturePrompt = "已锁定，点“解锁”恢复"
+                                        seekGesturePromptNonce++
+                                    }
                                     return@OnTouchListener true
                                 }
                                 if (touchGesture.seeking) {
@@ -989,6 +1024,23 @@ fun PlayerScreen(
                     onMorePanelChange = { mobileMoreOpen = it },
                     episodeSortReverse = state.appSettings.episodeSortReverse,
                     onSortReverse = { actions.toggleEpisodeSortReverse() },
+                    introSkipSeconds = state.appSettings.introSkipSeconds,
+                    outroSkipSeconds = state.appSettings.outroSkipSeconds,
+                    onIntroSkip = { actions.updateIntroSkipSeconds(it) },
+                    onOutroSkip = { actions.updateOutroSkipSeconds(it) },
+                    locked = mobileLocked,
+                    onLockChange = { locked ->
+                        mobileLocked = locked
+                        controlsInteraction++
+                        if (locked) {
+                            cancelLongPressSpeed()
+                            cancelPendingSingleTap()
+                        }
+                        seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
+                        seekGesturePromptNonce++
+                    },
+                    onSeekBy = { delta -> seekByGesture(delta, if (delta < 0) "快退 ${-delta / 1000} 秒" else "快进 ${delta / 1000} 秒") },
+                    buffering = player.playbackState == Player.STATE_BUFFERING,
                 )
             } else {
                 PlayerControls(

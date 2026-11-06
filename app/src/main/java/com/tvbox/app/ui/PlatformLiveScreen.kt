@@ -78,6 +78,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.data.FlvContinuityProxy
+import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
@@ -433,7 +434,7 @@ private fun PlatformLiveBrowseSurface(
                             state = resolvedGridState,
                             columns = GridCells.Fixed(
                                 columnsOverride.takeIf { it > 0 }
-                                    ?: if (touchMode) 4 else TvLayout.PlatformLiveColumns,
+                                    ?: if (touchMode) touchColumns else TvLayout.PlatformLiveColumns,
                             ),
                             contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
@@ -742,24 +743,43 @@ private fun PlatformLivePlayerScreen(
         return
     }
     KeepScreenOnWhileVisible()
-    val stream = state.platformLiveStream?.takeIf { it.channelId == room.id }
+    val stream = state.platformLiveStream?.takeIf {
+        it.channelId == room.id && it.activeCandidateOrNull?.url?.isNotBlank() == true
+    }
     // 虎牙单次 FLV 拉流约 2 分钟被 CDN 关闭：改由 Go 侧本机连续代理续流，
     // 播放器只连本地一条永不结束的 FLV，避免每 2 分钟一次 ENDED 断流。
-    val continuityProxy = remember(room.id, stream?.url) {
-        stream?.takeIf { FlvContinuityProxy.shouldWrap(room.site, it.protocol) }?.let { resolved ->
+    // Go 桥接可能耗时或阻塞，必须在 IO 线程启动，避免 Compose 主线程卡死/ANR。
+    val continuityProxyState = androidx.compose.runtime.produceState<FlvProxyHandle?>(
+        initialValue = null,
+        key1 = room.id,
+        key2 = stream?.url,
+        key3 = stream?.safeActiveCandidateIndex,
+    ) {
+        val resolved = stream
+        if (resolved == null || !FlvContinuityProxy.shouldWrap(room.site, resolved.protocol)) {
+            value = null
+            return@produceState
+        }
+        val candidate = resolved.activeCandidateOrNull
+        val candidateUrl = candidate?.url.orEmpty()
+        if (candidateUrl.isBlank()) {
+            value = null
+            return@produceState
+        }
+        val handle = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             FlvContinuityProxy.start(
                 site = room.site,
                 roomId = room.id,
-                candidateIndex = resolved.activeCandidateIndex,
-                url = resolved.url,
+                candidateIndex = resolved.safeActiveCandidateIndex,
+                url = candidateUrl,
                 headers = resolved.headers,
             )
         }
+        value = handle
+        awaitDispose { handle?.close() }
     }
-    DisposableEffect(continuityProxy) {
-        onDispose { continuityProxy?.close() }
-    }
-    val playbackUrl = continuityProxy?.localUrl() ?: stream?.url
+    val continuityProxy = continuityProxyState.value
+    val playbackUrl = continuityProxy?.localUrl() ?: stream?.activeCandidateOrNull?.url
     val context = androidx.compose.ui.platform.LocalContext.current
     val isMobile = state.effectiveDeviceMode == com.tvbox.app.domain.DeviceMode.Mobile
     val activity = remember(context) { context.findActivity() }
@@ -776,7 +796,11 @@ private fun PlatformLivePlayerScreen(
         }
     }
     val player = remember(playbackUrl, stream?.headers) {
-        stream?.let { resolved ->
+        val targetUrl = playbackUrl
+        if (stream == null || targetUrl.isNullOrBlank()) {
+            null
+        } else {
+            val resolved = stream
             val dataSourceFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
@@ -791,7 +815,7 @@ private fun PlatformLivePlayerScreen(
             }
             android.util.Log.d(
                 PLATFORM_LIVE_LOG_TAG,
-                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.url}, localUrl=$playbackUrl, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidate.cdn}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
+                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.activeCandidateOrNull?.url.orEmpty()}, localUrl=$targetUrl, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidateOrNull?.cdn.orEmpty()}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
             )
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
@@ -802,11 +826,11 @@ private fun PlatformLivePlayerScreen(
     val playerFocusRequester = remember { FocusRequester() }
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, player)
-    var playbackError by remember(stream?.url) { mutableStateOf<String?>(null) }
-    var playerState by remember(stream?.url) { mutableIntStateOf(Player.STATE_IDLE) }
+    var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
+    var playerState by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableIntStateOf(Player.STATE_IDLE) }
     var badgeVisible by remember { mutableStateOf(true) }
     // 首帧是否已经出来过：用于区分"起播慢"和"播放中断流"，避免首帧前 5 秒误判卡死。
-    var hasReportedReady by remember(stream?.url) { mutableStateOf(false) }
+    var hasReportedReady by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf(false) }
     // 手机"全屏"：裁剪铺满屏幕，消除横屏直播流的上下黑边。
     var fullscreenZoom by remember { mutableStateOf(false) }
 
@@ -858,14 +882,15 @@ private fun PlatformLivePlayerScreen(
     }
 
     LaunchedEffect(player, playbackUrl) {
-        if (player == null || stream == null) return@LaunchedEffect
+        val targetUrl = playbackUrl
+        if (player == null || stream == null || targetUrl.isNullOrBlank()) return@LaunchedEffect
         android.util.Log.d(
             PLATFORM_LIVE_LOG_TAG,
-            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=$playbackUrl, sourceUrl=${stream.url}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidate.cdn}, candidateIndex=${stream.activeCandidateIndex}/${stream.candidates.size}"
+            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=$targetUrl, sourceUrl=${stream.activeCandidateOrNull?.url.orEmpty()}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}"
         )
         playbackError = null
         badgeVisible = true
-        player.setMediaItem(MediaItem.fromUri(playbackUrl ?: stream.url))
+        player.setMediaItem(MediaItem.fromUri(targetUrl))
         player.prepare()
         session.preparePlayback(player)
     }
@@ -938,14 +963,15 @@ private fun PlatformLivePlayerScreen(
     val lineListState = rememberLazyListState()
     val lineFocusRequester = remember { FocusRequester() }
     var focusedCandidateIndex by remember { mutableStateOf(-1) }
-    LaunchedEffect(showLineControl, stream?.activeCandidateIndex) {
+    LaunchedEffect(showLineControl, stream?.safeActiveCandidateIndex, stream?.candidates?.size) {
         if (!showLineControl) {
             // 关闭浮层后焦点回到播放器根节点，避免焦点遗留在已移除的候选行上。
             runCatching { playerFocusRequester.requestFocus() }
             return@LaunchedEffect
         }
-        val target = stream?.activeCandidateIndex ?: 0
-        lineListState.scrollToItem(target.coerceAtLeast(0))
+        val target = stream?.safeActiveCandidateIndex ?: 0
+        val bounded = target.coerceIn(0, (stream?.candidates?.lastIndex ?: 0).coerceAtLeast(0))
+        lineListState.scrollToItem(bounded)
         runCatching { lineFocusRequester.requestFocus() }
     }
 
@@ -1127,7 +1153,8 @@ private fun PlatformLivePlayerScreen(
             }
         }
 
-        if (showLineControl && stream != null) {
+        if (showLineControl && stream?.hasCandidates == true) {
+            val lineStream = stream
             BackHandler { showLineControl = false }
             Box(
                 modifier = Modifier
@@ -1150,8 +1177,8 @@ private fun PlatformLivePlayerScreen(
                             state = lineListState,
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            lazyItemsIndexed(stream.candidates) { index, candidate ->
-                                val selected = index == stream.activeCandidateIndex
+                            lazyItemsIndexed(lineStream.candidates) { index, candidate ->
+                                val selected = index == lineStream.safeActiveCandidateIndex
                                 val focused = focusedCandidateIndex == index
                                 Row(
                                     modifier = Modifier
@@ -1174,7 +1201,7 @@ private fun PlatformLivePlayerScreen(
                                         )
                                         .onFocusChanged { if (it.isFocused) focusedCandidateIndex = index }
                                         .clickable {
-                                            android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${stream.activeCandidateIndex}, to=$index, cdn=${candidate.cdn}")
+                                            android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${lineStream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}")
                                             actions.switchPlatformLiveCandidate(index)
                                             showLineControl = false
                                             badgeVisible = true
@@ -1191,8 +1218,11 @@ private fun PlatformLivePlayerScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = {
-                                val clip = android.content.ClipData.newPlainText("live_url", stream.url)
-                                (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                                val url = lineStream.activeCandidateOrNull?.url.orEmpty()
+                                if (url.isNotBlank()) {
+                                    val clip = android.content.ClipData.newPlainText("live_url", url)
+                                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                                }
                             }) { Text("复制 URL") }
                             TextButton(onClick = { showUrlOverlay = true; showLineControl = false }) { Text("查看完整 URL") }
                             TextButton(onClick = { showLineControl = false }) { Text("关闭") }
@@ -1226,8 +1256,9 @@ private fun PlatformLivePlayerBadge(
             overflow = TextOverflow.Ellipsis,
         )
         Text(
-            text = stream?.let {
-                "${it.quality} / ${it.protocol.uppercase()} / ${it.activeCandidate.cdn} ${it.activeCandidateIndex + 1}/${it.candidates.size}"
+            text = stream?.takeIf { it.hasCandidates }?.let {
+                val candidate = it.activeCandidateOrNull
+                "${it.quality} / ${it.protocol.uppercase()} / ${candidate?.cdn.orEmpty()} ${it.safeActiveCandidateIndex + 1}/${it.candidates.size}"
             } ?: room.anchor,
             color = Color.LightGray,
             style = MaterialTheme.typography.bodySmall,

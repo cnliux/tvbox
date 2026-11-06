@@ -23,8 +23,17 @@ app/libs/
 .box-agent/
 .box-agent-scratch/
 
-# 本地调试文档（不提交）
+# 本地调试/文档/工具/UI 调参页（不推送到 GitHub，保留本地）
+# 例外：tools/bind-platform-live.* 是 CI 构建 platformlive.aar 的必需脚本（build.gradle.kts/release.yml 引用），保持入库。
 LOCAL_DEV.md
+STABILITY_REPORT.md
+devLog/
+docs/
+tools/*
+!tools/bind-platform-live.sh
+!tools/bind-platform-live.ps1
+web/
+*.stackdump
 
 # 本地验收测试工具（Debug-only，不入 Release 包，不入库）
 app/src/debug/
@@ -35,6 +44,5 @@ platform_live_go/zz_debug_test.go
 # 本地临时文件和工具脚本
 .tmp_*.ps1
 .tmp_*.py
-tools/_fix_*.py
 .trae/
 *.png

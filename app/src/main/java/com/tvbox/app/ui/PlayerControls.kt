@@ -394,7 +394,7 @@ private fun AnnotatedString.withSuffix(suffix: String): AnnotatedString = buildA
 // ── 手机模式播放器控件 ─────────────────────────────────────────────────────────
 
 /** 手机播放页一次只展开一个面板，避免多个面板同时出现把画面挤没。 */
-private enum class MobilePlayerSection { Episodes, Sources, Speeds, Picture }
+private enum class MobilePlayerSection { Episodes, Sources, Speeds, Picture, Skip }
 
 /**
  * 手机模式播放控件。
@@ -431,14 +431,56 @@ internal fun PlayerControlsMobile(
     // 剧集排序
     episodeSortReverse: Boolean = false,
     onSortReverse: () -> Unit = {},
+    // 跳过片头/片尾（复用 AppSettings）
+    introSkipSeconds: Int = 0,
+    outroSkipSeconds: Int = 0,
+    onIntroSkip: (Int) -> Unit = {},
+    onOutroSkip: (Int) -> Unit = {},
+    // 播放锁：锁定后隐藏/禁用主要控制，仅保留解锁入口，防误触。
+    locked: Boolean = false,
+    onLockChange: (Boolean) -> Unit = {},
+    // 相对 seek（用于手机快捷快退/快进按钮）
+    onSeekBy: (Long) -> Unit = {},
+    buffering: Boolean = false,
 ) {
     val source = sources[sourceIndex]
     val wide = LocalConfiguration.current.screenWidthDp >= 600
     var openSection by remember { mutableStateOf<MobilePlayerSection?>(null) }
-    LaunchedEffect(openSection) { onMorePanelChange(openSection != null) }
     val episodeTitle = source.episodes.getOrNull(episodeIndex)?.title.orEmpty()
 
+    LaunchedEffect(locked) {
+        if (locked) openSection = null
+    }
+    LaunchedEffect(openSection, locked) { onMorePanelChange(!locked && openSection != null) }
+
     Box(modifier = Modifier.fillMaxSize()) {
+        if (locked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(16.dp),
+            ) {
+                MobileChip(
+                    text = "解锁",
+                    modifier = Modifier.align(Alignment.CenterEnd).width(92.dp),
+                    selected = true,
+                    onClick = { onLockChange(false) },
+                )
+                Text(
+                    text = "播放已锁定，点击“解锁”恢复控制",
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(Color.Black.copy(alpha = 0.45f))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    color = Color.White.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.labelMedium,
+                )
+            }
+            return@Box
+        }
+
         // 顶部栏（手机没有遥控器，必须给出可见的返回入口）
         Surface(
             modifier = Modifier
@@ -453,7 +495,7 @@ internal fun PlayerControlsMobile(
             color = Color.Transparent,
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 16.dp, top = 2.dp, bottom = 14.dp),
+                modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 2.dp, bottom = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 TextButton(
@@ -470,15 +512,31 @@ internal fun PlayerControlsMobile(
                         overflow = TextOverflow.Ellipsis,
                         style = MaterialTheme.typography.titleSmall,
                     )
-                    if (episodeTitle.isNotBlank()) {
-                        Text(
-                            text = episodeTitle,
-                            color = Color.White.copy(alpha = 0.65f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.labelSmall,
-                        )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (episodeTitle.isNotBlank()) {
+                            Text(
+                                text = episodeTitle,
+                                color = Color.White.copy(alpha = 0.65f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        if (buffering) {
+                            Text(
+                                text = "缓冲中",
+                                color = Color(0xFF7AE2BA),
+                                style = MaterialTheme.typography.labelSmall,
+                            )
+                        }
                     }
+                }
+                TextButton(onClick = { onLockChange(true) }) {
+                    Text("锁定", color = Color.White.copy(alpha = 0.85f), style = MaterialTheme.typography.labelMedium)
                 }
             }
         }
@@ -512,14 +570,24 @@ internal fun PlayerControlsMobile(
                         onClose = { openSection = null },
                         episodeSortReverse = episodeSortReverse,
                         onSortReverse = onSortReverse,
+                        introSkipSeconds = introSkipSeconds,
+                        outroSkipSeconds = outroSkipSeconds,
+                        onIntroSkip = onIntroSkip,
+                        onOutroSkip = onOutroSkip,
                     )
                 }
                 MobileProgressRow(positionMs = positionMs, durationMs = durationMs, onSeek = onSeek)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    MobileChip(
+                        text = "-10s",
+                        modifier = Modifier.weight(0.8f),
+                        enabled = durationMs > 0,
+                        onClick = { onSeekBy(-10_000L) },
+                    )
                     MobileChip(
                         text = "上一集",
                         modifier = Modifier.weight(1f),
@@ -532,6 +600,12 @@ internal fun PlayerControlsMobile(
                         modifier = Modifier.weight(1f),
                         enabled = episodeIndex < source.episodes.lastIndex,
                         onClick = { onEpisode(episodeIndex + 1) },
+                    )
+                    MobileChip(
+                        text = "+10s",
+                        modifier = Modifier.weight(0.8f),
+                        enabled = durationMs > 0,
+                        onClick = { onSeekBy(10_000L) },
                     )
                 }
                 val features: @Composable RowScope.() -> Unit = {
@@ -560,6 +634,12 @@ internal fun PlayerControlsMobile(
                         selected = openSection == MobilePlayerSection.Picture,
                         onClick = { openSection = openSection.toggle(MobilePlayerSection.Picture) },
                     )
+                    MobileChip(
+                        text = "跳过",
+                        modifier = itemModifier,
+                        selected = openSection == MobilePlayerSection.Skip,
+                        onClick = { openSection = openSection.toggle(MobilePlayerSection.Skip) },
+                    )
                     if (castLabel != null) {
                         MobileChip(text = castLabel, modifier = itemModifier, onClick = onCast)
                     }
@@ -570,10 +650,28 @@ internal fun PlayerControlsMobile(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) { features() }
                 } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) { features() }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MobileChip(text = "选集", modifier = Modifier.weight(1f), selected = openSection == MobilePlayerSection.Episodes, onClick = { openSection = openSection.toggle(MobilePlayerSection.Episodes) })
+                            MobileChip(text = "线路", modifier = Modifier.weight(1f), selected = openSection == MobilePlayerSection.Sources, onClick = { openSection = openSection.toggle(MobilePlayerSection.Sources) })
+                            MobileChip(text = "${formatSpeedLabel(speed)}x", modifier = Modifier.weight(1f), selected = openSection == MobilePlayerSection.Speeds, onClick = { openSection = openSection.toggle(MobilePlayerSection.Speeds) })
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MobileChip(text = "画面", modifier = Modifier.weight(1f), selected = openSection == MobilePlayerSection.Picture, onClick = { openSection = openSection.toggle(MobilePlayerSection.Picture) })
+                            MobileChip(text = "跳过", modifier = Modifier.weight(1f), selected = openSection == MobilePlayerSection.Skip, onClick = { openSection = openSection.toggle(MobilePlayerSection.Skip) })
+                            if (castLabel != null) {
+                                MobileChip(text = castLabel, modifier = Modifier.weight(1f), onClick = onCast)
+                            } else {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -582,6 +680,27 @@ internal fun PlayerControlsMobile(
 
 private fun MobilePlayerSection?.toggle(section: MobilePlayerSection): MobilePlayerSection? =
     if (this == section) null else section
+
+@Composable
+private fun MobileSkipOptionRow(
+    options: List<Int>,
+    current: Int,
+    onSelect: (Int) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { seconds ->
+            val label = if (seconds == 0) "关闭" else "${seconds}秒"
+            MobileChip(
+                text = if (current == seconds) "$label ✓" else label,
+                selected = current == seconds,
+                onClick = { onSelect(seconds) },
+            )
+        }
+    }
+}
 
 private fun formatSpeedLabel(speed: Float): String = speed.toString().trimEnd('0').trimEnd('.')
 
@@ -740,6 +859,10 @@ private fun MobileSectionPanel(
     onClose: () -> Unit,
     episodeSortReverse: Boolean = false,
     onSortReverse: () -> Unit = {},
+    introSkipSeconds: Int = 0,
+    outroSkipSeconds: Int = 0,
+    onIntroSkip: (Int) -> Unit = {},
+    onOutroSkip: (Int) -> Unit = {},
 ) {
     val episodes = sources[sourceIndex].episodes
     Surface(
@@ -758,6 +881,7 @@ private fun MobileSectionPanel(
                         MobilePlayerSection.Sources -> "线路（共 ${sources.size} 条）"
                         MobilePlayerSection.Speeds -> "播放倍速"
                         MobilePlayerSection.Picture -> "画面比例 · ${videoScaleMode.displayName}"
+                        MobilePlayerSection.Skip -> "跳过片头/片尾"
                     },
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleSmall,
@@ -818,6 +942,25 @@ private fun MobileSectionPanel(
                             onClick = { onVideoScale(mode); onClose() },
                         )
                     }
+                }
+                MobilePlayerSection.Skip -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "开始跳过：每次开播自动跳过片头",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.72f),
+                    )
+                    MobileSkipOptionRow(introSkipOptions, introSkipSeconds, onIntroSkip)
+                    Text(
+                        "结束跳过：距离片尾还剩指定秒数时自动下一集",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.72f),
+                    )
+                    MobileSkipOptionRow(outroSkipOptions, outroSkipSeconds, onOutroSkip)
+                    Text(
+                        "设置立即保存，对之后播放生效。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.5f),
+                    )
                 }
             }
         }

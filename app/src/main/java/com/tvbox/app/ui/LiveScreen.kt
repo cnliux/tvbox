@@ -86,11 +86,14 @@ import com.tvbox.app.data.liveFavoriteKey
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.LiveChannelNumberMatch
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.LivePlaybackWatchdog
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
+import com.tvbox.app.domain.findLiveChannelsByNumberPrefix
 import com.tvbox.app.domain.probeLiveLineMimeType
+import com.tvbox.app.domain.resolveLiveChannelNumberTarget
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
@@ -227,6 +230,32 @@ private fun LivePlayerScreen(
         bumpBars()
         channelNumberNonce++
         return true
+    }
+
+    // 数字输入期间的即时匹配：输入 "0" 就列出所有 0 开头的频道，确认键直接进台。
+    val numberMatches: List<LiveChannelNumberMatch> = remember(channels, channelNumberInput) {
+        findLiveChannelsByNumberPrefix(channels, channelNumberInput)
+    }
+    var numberMatchFocus by remember { mutableIntStateOf(0) }
+    LaunchedEffect(channelNumberInput) { numberMatchFocus = 0 }
+
+    fun commitNumberInput(useFocusedMatch: Boolean) {
+        val input = channelNumberInput
+        if (input.isEmpty()) return
+        channelNumberInput = ""
+        numberMatchFocus = 0
+        val target: Int? = if (useFocusedMatch) {
+            numberMatches.getOrNull(numberMatchFocus)?.index
+        } else {
+            resolveLiveChannelNumberTarget(channels, input).takeIf { it >= 0 }
+        }
+        if (target == null) {
+            showPrompt("无频道内容")
+            return
+        }
+        actions.selectLiveChannel(target)
+        bumpBars()
+        channels.getOrNull(target)?.let { showPrompt(it.name) }
     }
 
     fun switchLiveLineAfterIssue(reason: LiveLineFallbackReason) {
@@ -479,13 +508,10 @@ private fun LivePlayerScreen(
     LaunchedEffect(channelNumberNonce) {
         if (channelNumberNonce == 0) return@LaunchedEffect
         delay(CHANNEL_NUMBER_COMMIT_DELAY_MS)
-        val requestedChannel = channelNumberInput.toIntOrNull()
-        channelNumberInput = ""
-        if (requestedChannel == null || !actions.selectLiveChannelNumber(requestedChannel)) {
-            showPrompt("无频道内容")
-        } else {
-            promptVisible = false
-        }
+        // 已被确认键提前提交时输入为空，此时不应再提示一次"无频道内容"。
+        if (channelNumberInput.isEmpty()) return@LaunchedEffect
+        promptVisible = false
+        commitNumberInput(useFocusedMatch = false)
     }
 
     PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
@@ -560,6 +586,37 @@ private fun LivePlayerScreen(
                         -> {
                             showLineControl = false
                             if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                            true
+                        }
+                        else -> false
+                    }
+                } else if (channelNumberInput.isNotEmpty()) {
+                    // 数字输入中：方向键在候选里移动，确认键直接进台，退格删一位。
+                    when (event.nativeKeyEvent.keyCode) {
+                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                            if (numberMatches.isNotEmpty()) {
+                                numberMatchFocus = (numberMatchFocus - 1).coerceAtLeast(0)
+                            }
+                            bumpBars()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                            if (numberMatches.isNotEmpty()) {
+                                numberMatchFocus = (numberMatchFocus + 1).coerceAtMost(numberMatches.lastIndex)
+                            }
+                            bumpBars()
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                        AndroidKeyEvent.KEYCODE_ENTER,
+                        -> {
+                            commitNumberInput(useFocusedMatch = numberMatches.isNotEmpty())
+                            true
+                        }
+                        AndroidKeyEvent.KEYCODE_DEL -> {
+                            channelNumberInput = channelNumberInput.dropLast(1)
+                            channelNumberNonce++
+                            bumpBars()
                             true
                         }
                         else -> false
@@ -683,7 +740,7 @@ private fun LivePlayerScreen(
                     .align(Alignment.BottomStart)
                     .graphicsLayer { alpha = barsAlpha }
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(start = 20.dp, bottom = 68.dp),
+                    .padding(start = 20.dp, bottom = 8.dp),
             ) {
                 LiveChannelBadge(
                     channel = currentChannel,
@@ -800,9 +857,9 @@ private fun LivePlayerScreen(
                 )
             }
         }
-        // ── 右下 EPG 窄卡（280dp）────────────────────────────────────────────
+        // ── 右下 EPG 卡（485dp，web 调参）──────────────────────────────────────
         // 规格：电视端节目单只在按确认键唤出浮层后才显示，全屏态不常驻，
-        // 保证画面主体干净。浮层打开时卡片贴浮层右缘（340dp + 16dp）。
+        // 保证画面主体干净。浮层打开时卡片贴浮层右缘（267dp + 间距）。
         if (channelListVisible) {
             // 浮层浏览期间 EPG 卡跟随遥控焦点（预览），未移动焦点时显示正在播放的频道。
             val epgChannel = previewChannel ?: currentChannel
@@ -816,7 +873,7 @@ private fun LivePlayerScreen(
                 nowMs = remember(clockTick) { System.currentTimeMillis() },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
-                    .padding(end = 356.dp, bottom = 72.dp),
+                    .padding(end = 248.dp, bottom = 75.dp),
             )
         }
         if (channelListVisible) {
@@ -842,13 +899,15 @@ private fun LivePlayerScreen(
             )
         }
         // ── 数字直选：中央大浮层，输入中常驻，2 秒后自动跳转 ───────────────────
+        // 输入期间实时列出前缀匹配的频道（输入 "0" → 所有 0 开头频道），
+        // 确认键跳到当前高亮项，继续输入可缩小范围。
         if (channelNumberInput.isNotEmpty()) {
             Column(
                 modifier = Modifier
                     .align(Alignment.Center)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xB8000000))
-                    .padding(horizontal = 48.dp, vertical = 24.dp),
+                    .padding(horizontal = 28.dp, vertical = 22.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -859,10 +918,42 @@ private fun LivePlayerScreen(
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
-                    text = "频道号",
+                    text = if (numberMatches.isEmpty()) "无匹配频道" else "频道号",
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 12.sp,
                 )
+                if (numberMatches.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    numberMatches.take(LIVE_NUMBER_MATCH_ROWS).forEachIndexed { rowIndex, match ->
+                        val highlighted = rowIndex == numberMatchFocus.coerceIn(0, numberMatches.lastIndex)
+                        Row(
+                            modifier = Modifier
+                                .width(260.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (highlighted) Color.White.copy(alpha = 0.18f) else Color.Transparent,
+                                )
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = match.number.toString(),
+                                color = if (highlighted) Color.White else Color.White.copy(alpha = 0.55f),
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace,
+                                modifier = Modifier.width(40.dp),
+                            )
+                            Text(
+                                text = match.channel.name,
+                                color = if (highlighted) Color.White else Color.White.copy(alpha = 0.75f),
+                                fontSize = 13.sp,
+                                fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
             }
         }
         if (promptVisible && promptMessage.isNotBlank()) {

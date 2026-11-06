@@ -486,7 +486,7 @@ private fun MobileLiveChannelRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Spacer(modifier = Modifier.width(4.dp))
-        MobileLiveChannelLogo(logo = channel.logo, name = channel.name, size = 44.dp, initialFontSize = 11.sp)
+        MobileLiveChannelLogo(logo = channel.logo, name = channel.name, width = 62.dp, height = 44.dp, initialFontSize = 11.sp)
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -546,21 +546,25 @@ private fun MobileLiveChannelRow(
 }
 
 /**
- * C. 频道 Logo：底层先画圆形首字占位，logo 非空时叠 Coil AsyncImage；
+ * C. 频道 Logo：底层先画首字占位，logo 非空时叠 Coil AsyncImage；
  * 加载中/失败时 AsyncImage 不绘制内容，占位自然透出（无需 SubcomposeAsyncImage）。
+ * 台标为长方形（宽 > 高）。
  */
 @Composable
 private fun MobileLiveChannelLogo(
     logo: String?,
     name: String,
-    size: Dp,
+    width: Dp,
+    height: Dp,
     modifier: Modifier = Modifier,
     initialFontSize: TextUnit = 11.sp,
+    stretch: Boolean = false,
 ) {
+    val contentScale = if (stretch) ContentScale.FillBounds else ContentScale.Crop
     Box(
         modifier = modifier
-            .size(size)
-            .clip(CircleShape)
+            .size(width = width, height = height)
+            .clip(RoundedCornerShape(6.dp))
             .background(LiveLogoPlaceholderBg),
         contentAlignment = Alignment.Center,
     ) {
@@ -573,7 +577,7 @@ private fun MobileLiveChannelLogo(
             AsyncImage(
                 model = logo,
                 contentDescription = name,
-                contentScale = ContentScale.Crop,
+                contentScale = contentScale,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -987,7 +991,7 @@ private fun MobileLivePlayerScreen(
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    MobileLiveChannelLogo(logo = related.logo, name = related.name, size = 28.dp, initialFontSize = 9.sp)
+                    MobileLiveChannelLogo(logo = related.logo, name = related.name, width = 40.dp, height = 28.dp, initialFontSize = 9.sp)
                     Spacer(modifier = Modifier.height(5.dp))
                     Text(
                         text = related.name,

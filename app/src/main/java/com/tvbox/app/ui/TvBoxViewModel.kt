@@ -25,6 +25,7 @@ import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
 import com.tvbox.app.data.LiveLinePreference
+import com.tvbox.app.data.LiveDomainScoreStore
 import com.tvbox.app.data.key
 import com.tvbox.app.data.RemoteManageRequest
 import com.tvbox.app.data.RemoteManageServer
@@ -38,8 +39,12 @@ import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.AppUpdate
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.CustomVideoApiLine
+import com.tvbox.app.domain.dryRunLiveSource
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.liveLineDomain
+import com.tvbox.app.domain.rankLiveLineIndicesByDomain
+import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.data.EpgRepository
@@ -285,6 +290,8 @@ class TvBoxViewModel(
     private val epgRepository: EpgRepository = RemoteEpgRepository(),
     /** 电视直播频道收藏仓库；null 时收藏退化为仅内存 Set（如未注入的单测环境）。 */
     private val liveFavoritesRepository: LiveFavoritesRepository? = null,
+    /** 直播线路按域名的成功/失败评分；用于同类源较多时优先选"最近确实能播"的域名。 */
+    private val liveDomainScores: LiveDomainScoreStore? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvBoxUiState())
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
@@ -317,6 +324,8 @@ class TvBoxViewModel(
     private var liveStallRetries = 0
     // 电视直播：记录最近一次"所有线路均失败"的频道号，避免重复提示。
     private var lastExhaustedChannelNumber: Int? = null
+    // 电视直播：最近一次已记入成功评分的域名（同一域名连续就绪不重复累加）。
+    private var lastScoredDomain: String? = null
     // 切换订阅后要恢复的分类名（新订阅没有该分类时回"全部"）。
     private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
@@ -1699,6 +1708,8 @@ class TvBoxViewModel(
             }
         }
         liveStallRetries = 0
+        // 域名评分：本次失败先记到当前线路的域名上，下次进台排序时会被压低。
+        recordLiveLineFailure(state)
         val nextIndex = state.liveLineIndex + 1
         android.util.Log.w(
             VM_LIVE_LOG_TAG,
@@ -1747,7 +1758,7 @@ class TvBoxViewModel(
     }
 
     /**
-     * 电视直播画面就绪（STATE_READY）后调用：清零卡顿重试计数。
+     * 电视直播画面就绪（STATE_READY）后调用：清零卡顿重试计数，并把一次成功记到域名评分表。
      *
      * 此前该计数只在真正切换线路时清零，会跨频道累计：
      * 连续几个频道各卡顿一次后，新频道第一次卡顿就直接换线，表现为"没坏也自动切线路"。
@@ -1756,6 +1767,15 @@ class TvBoxViewModel(
         if (liveStallRetries != 0) {
             android.util.Log.d(VM_LIVE_LOG_TAG, "【直播就绪】画面就绪，清零卡顿重试计数（原 $liveStallRetries）")
             liveStallRetries = 0
+        }
+        // 域名评分：同一 CDN 域名下所有频道的成败累计，供下次选线时优先排序。
+        val state = _state.value
+        val url = state.liveChannels.getOrNull(state.liveChannelIndex)
+            ?.lines?.getOrNull(state.liveLineIndex)?.url
+        val domain = url?.let { liveLineDomain(it) }
+        if (domain != null && domain != lastScoredDomain) {
+            lastScoredDomain = domain
+            liveDomainScores?.record(domain, success = true)
         }
     }
 
@@ -1885,6 +1905,7 @@ class TvBoxViewModel(
                 platformLivePlayerReturnDestination = it.platformLiveDestination,
                 platformLiveRoomIndex = index,
                 platformLiveError = null,
+                platformLiveNotice = null,
                 platformLiveStream = null,
             )
         }
@@ -2145,12 +2166,15 @@ class TvBoxViewModel(
 
     fun switchPlatformLiveCandidate(index: Int) {
         val stream = _state.value.platformLiveStream ?: return
-        if (index !in stream.candidates.indices) return
+        val candidate = stream.candidates.getOrNull(index) ?: return
         if (platformLiveRecoveryInProgress) {
             // 用户明确的手动选择优先于自动恢复，不再静默丢弃。
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台手动切换候选】自动恢复进行中，仍以用户选择为准切换 to=$index")
         }
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台手动切换候选】from=${stream.activeCandidateIndex}, to=$index, cdn=${stream.candidates[index].cdn}")
+        android.util.Log.i(
+            VM_LIVE_LOG_TAG,
+            "【平台手动切换候选】from=${stream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}",
+        )
         // 用户手动指定线路后，重置自动恢复计数，避免刚切完就被熔断拦下。
         platformLiveRecoveryInProgress = false
         platformLiveSameLineRetries = 0
@@ -2159,7 +2183,7 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 platformLiveError = null,
-                platformLiveNotice = "已切换到线路 ${index + 1}/${stream.candidates.size}（${stream.candidates[index].cdn}）",
+                platformLiveNotice = "已切换到线路 ${index + 1}/${stream.candidates.size}（${candidate.cdn}）",
                 platformLiveStream = stream.withActiveCandidate(index),
             )
         }
@@ -2248,7 +2272,7 @@ class TvBoxViewModel(
         platformLiveRecoveryInProgress = true
         android.util.Log.w(
             VM_LIVE_LOG_TAG,
-            "【平台恢复】reason=$reason, attempt=$platformLiveRecoveryWindowAttempts/$PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS, active=${stream.activeCandidateIndex}, total=${stream.candidates.size}, cdn=${stream.activeCandidate.cdn}, protocol=${stream.activeCandidate.protocol}",
+            "【平台恢复】reason=$reason, attempt=$platformLiveRecoveryWindowAttempts/$PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS, active=${stream.safeActiveCandidateIndex}, total=${stream.candidates.size}, cdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, protocol=${stream.activeCandidateOrNull?.protocol.orEmpty()}",
         )
         when (reason) {
             LiveLineFallbackReason.Ended, LiveLineFallbackReason.Stall -> {
@@ -2277,8 +2301,10 @@ class TvBoxViewModel(
             reconnectPlatformLiveChannel()
             return
         }
-        val nextIdx = (stream.activeCandidateIndex + 1) % stream.candidates.size
-        if (nextIdx == 0) {
+        val currentIdx = stream.safeActiveCandidateIndex
+        val nextIdx = (currentIdx + 1) % stream.candidates.size
+        val nextCandidate = stream.candidates.getOrNull(nextIdx)
+        if (nextIdx == 0 || nextCandidate == null) {
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈，强制重新解析")
             platformLiveRecoveryInProgress = false
             reconnectPlatformLiveChannel()
@@ -2287,18 +2313,19 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 platformLiveError = null,
-                platformLiveNotice = "已切换到线路 ${nextIdx + 1}/${stream.candidates.size}（${stream.candidates[nextIdx].cdn}）",
+                platformLiveNotice = "已切换到线路 ${nextIdx + 1}/${stream.candidates.size}（${nextCandidate.cdn}）",
                 platformLiveStream = stream.withActiveCandidate(nextIdx),
             )
         }
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】切换到候选线路 $nextIdx, cdn=${stream.candidates[nextIdx].cdn}")
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】切换到候选线路 $nextIdx, cdn=${nextCandidate.cdn}")
         platformLiveRecoveryInProgress = false
     }
 
     /** 退避后重新解析当前房间，保持当前候选下标。 */
     private fun schedulePlatformLiveReResolve(delayMs: Long) {
-        val keepCandidate = _state.value.platformLiveStream?.activeCandidateIndex ?: 0
-        viewModelScope.launch {
+        val keepCandidate = _state.value.platformLiveStream?.safeActiveCandidateIndex ?: 0
+        platformLiveResolveJob?.cancel()
+        platformLiveResolveJob = viewModelScope.launch {
             kotlinx.coroutines.delay(delayMs)
             platformLiveRecoveryInProgress = false
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】退避 ${delayMs}ms 后重新解析（候选 $keepCandidate）")
@@ -2421,13 +2448,21 @@ class TvBoxViewModel(
             }
             TvScreen.PlatformLive -> {
                 when (current.platformLiveDestination) {
-                    PlatformLiveDestination.Player -> _state.update {
-                        it.copy(
-                            platformLiveDestination = it.platformLivePlayerReturnDestination,
-                            platformLiveResolving = false,
-                            platformLiveError = null,
-                            platformLiveStream = null,
-                        )
+                    PlatformLiveDestination.Player -> {
+                        platformLiveResolveJob?.cancel()
+                        platformLiveRecoveryInProgress = false
+                        platformLiveSameLineRetries = 0
+                        platformLiveRecoveryWindowAttempts = 0
+                        platformLiveRecoveryWindowStartMs = 0L
+                        _state.update {
+                            it.copy(
+                                platformLiveDestination = it.platformLivePlayerReturnDestination,
+                                platformLiveResolving = false,
+                                platformLiveError = null,
+                                platformLiveStream = null,
+                                platformLiveNotice = null,
+                            )
+                        }
                     }
                     PlatformLiveDestination.Rooms -> _state.update {
                         it.copy(
@@ -2939,6 +2974,18 @@ class TvBoxViewModel(
             val newLiveUrls = imported.liveUrls.filter { url ->
                 url !in current.appSettings.liveSourceUrls
             }
+            // 导入前 dry-run：本地再解析一次直播源，把"能导入多少频道、哪些字段缺失"直接说出来，
+            // 避免格式错的源要等进到播放页才发现。只做本地结构校验，源不可达时静默跳过（不影响导入）。
+            val liveDryRuns: List<Pair<String, LiveSourceDryRun>> = newLiveUrls.mapNotNull { url ->
+                val body = try {
+                    configFetcher.fetch(url)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                } ?: return@mapNotNull null
+                url to dryRunLiveSource(body)
+            }
             val settings = current.appSettings.copy(
                 customVideoApiLines = mergedCustom,
                 liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
@@ -2958,6 +3005,17 @@ class TvBoxViewModel(
                     append(addedParts.joinToString("，"))
                 }
                 if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
+                // 直播源校验摘要：每个源一行，失败的源给出具体原因。
+                liveDryRuns.forEach { (url, dryRun) ->
+                    append("\n· ")
+                    append(dryRun.headline())
+                    val warnings = dryRun.warnings()
+                    if (warnings.isNotEmpty()) {
+                        append("；")
+                        append(warnings.joinToString("，"))
+                    }
+                    if (!dryRun.ok) append("（${url.takeLast(32)}）")
+                }
             }
             _state.update {
                 it.copy(
@@ -3390,10 +3448,32 @@ class TvBoxViewModel(
         }
     }
 
-    /** 该频道上次成功播放的线路下标；无记忆或线路数变化时回第 1 条。 */
+    /**
+     * 该频道进台时优先使用的线路下标，按三级记忆依次判定：
+     * 1. 该频道上次成功播放的线路（最贴近"这台就是这条线好用"）；
+     * 2. 否则按域名评分挑选：同一 CDN 域名下其它频道的成败会传导过来
+     *    （[rankLiveLineIndicesByDomain]），源里通道多时能直接跳过近期塌掉的域名；
+     * 3. 都没有记录时回第 1 条，保持源内原顺序。
+     */
     private fun TvBoxUiState.rememberedLineIndexOf(channel: com.tvbox.app.domain.LiveChannel): Int {
         val saved = liveLinePrefs?.getSavedLineIndex(channel.key()) ?: -1
-        return if (saved in channel.lines.indices) saved else 0
+        if (saved in channel.lines.indices) return saved
+        val scores = liveDomainScores?.snapshot().orEmpty()
+        if (scores.isEmpty()) return 0
+        val ranked = rankLiveLineIndicesByDomain(channel.lines, scores, System.currentTimeMillis())
+        // 只在"确有可用依据"时改顺序：最优线路评分为 0（全无记录）时保持源内顺序。
+        val best = ranked.firstOrNull() ?: return 0
+        val bestDomain = liveLineDomain(channel.lines[best].url) ?: return 0
+        val bestScore = scores[bestDomain]?.score(System.currentTimeMillis()) ?: 0.0
+        return if (bestScore > 0.0) best else 0
+    }
+
+    /** 记录当前线路的一次播放失败到域名评分表（错误/卡死/结束都会走到这里）。 */
+    private fun recordLiveLineFailure(state: TvBoxUiState) {
+        val url = state.liveChannels.getOrNull(state.liveChannelIndex)
+            ?.lines?.getOrNull(state.liveLineIndex)?.url ?: return
+        val domain = liveLineDomain(url) ?: return
+        liveDomainScores?.record(domain, success = false)
     }
 
     private fun loadLiveChannels() {
