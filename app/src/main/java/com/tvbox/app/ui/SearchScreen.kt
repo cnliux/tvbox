@@ -65,12 +65,9 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import coil.compose.rememberAsyncImagePainter
-import coil.request.ImageRequest
+import coil.compose.AsyncImage
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
@@ -998,24 +995,23 @@ private fun SearchResultCardMobile(
             .clickable(onClick = onClick),
     ) {
         // 大尺寸海报
+        val imageLoader = rememberTvImageLoader()
+        // 封面可能因防盗链/过期加载失败，失败后与「无海报」同一兜底，避免留白。
+        var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(0.72f)
                 .background(Color(0xFF2A2A2A)),
         ) {
-            if (movie.posterUrl.isNotBlank()) {
-                val imageLoader = rememberTvImageLoader()
-                Image(
-                    painter = rememberAsyncImagePainter(
-                        model = ImageRequest.Builder(LocalContext.current)
-                            .data(movie.posterUrl)
-                            .build(),
-                        imageLoader = imageLoader,
-                    ),
+            if (movie.posterUrl.isNotBlank() && !posterFailed) {
+                AsyncImage(
+                    model = movie.posterUrl,
                     contentDescription = movie.name,
                     contentScale = ContentScale.Crop,
+                    onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
+                    imageLoader = imageLoader,
                 )
             } else {
                 Text(
