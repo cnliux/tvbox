@@ -615,9 +615,7 @@ private fun MobileLivePlayerScreen(
     }
 
     val session = rememberPlaybackSession()
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply { playWhenReady = true }
-    }
+    val player = rememberManagedExoPlayer()
     BindPlaybackSession(session, player)
 
     val channels = state.liveChannels
@@ -686,7 +684,6 @@ private fun MobileLivePlayerScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            player.release()
         }
     }
 

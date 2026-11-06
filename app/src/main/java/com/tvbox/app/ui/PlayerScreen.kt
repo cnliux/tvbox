@@ -110,11 +110,7 @@ fun PlayerScreen(
     val initialScreenBrightness = remember(activity) {
         activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     }
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            playWhenReady = true
-        }
-    }
+    val player = rememberManagedExoPlayer()
     val session = rememberPlaybackSession()
     var loadedState by remember { mutableStateOf(state) }
     val resumeAnchor = remember { PlaybackResumeAnchor() }
@@ -493,7 +489,6 @@ fun PlayerScreen(
                 durationMs = player.duration.takeIf { it > 0L } ?: 0L,
             )
             player.removeListener(listener)
-            player.release()
         }
     }
 

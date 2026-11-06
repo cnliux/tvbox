@@ -409,17 +409,6 @@
     </issue>
 
     <issue
-        id="SwitchIntDef"
-        message="Switch statement on an `int` with known associated constant missing case `Player.STATE_ENDED`"
-        errorLine1="                when (playbackState) {"
-        errorLine2="                ~~~~">
-        <location
-            file="src/main/java/com/tvbox/app/ui/PlayerStateMachine.kt"
-            line="156"
-            column="17"/>
-    </issue>
-
-    <issue
         id="Aligned16KB"
         message="The native library `arm64-v8a/libgojni.so` (from `__local_aars__:G:\git\tvbox\app\libs\platformlive.aar:unspecified`) is not 16 KB aligned">
         <location

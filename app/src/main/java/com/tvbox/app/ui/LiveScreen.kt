@@ -76,7 +76,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -166,11 +165,7 @@ private fun LivePlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            playWhenReady = true
-        }
-    }
+    val player = rememberManagedExoPlayer()
     val playerFocusRequester = remember { FocusRequester() }
     BindPlaybackSession(session, player)
     val bufferMonitor = remember {
@@ -387,7 +382,6 @@ private fun LivePlayerScreen(
         player.addListener(listener)
         onDispose {
             player.removeListener(listener)
-            player.release()
         }
     }
 

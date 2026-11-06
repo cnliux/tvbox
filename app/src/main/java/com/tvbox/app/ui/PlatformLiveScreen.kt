@@ -827,7 +827,7 @@ private fun PlatformLivePlayerScreen(
                 initialRequestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
-    val player = remember(playbackUrl, stream?.headers) {
+    val player = rememberManagedExoPlayerOrNull(playbackUrl, stream?.headers) { context ->
         val targetUrl = playbackUrl
         if (stream == null || targetUrl.isNullOrBlank()) {
             null
@@ -908,7 +908,6 @@ private fun PlatformLivePlayerScreen(
             player.addListener(listener)
             onDispose {
                 player.removeListener(listener)
-                player.release()
             }
         }
     }
