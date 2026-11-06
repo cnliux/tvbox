@@ -10,9 +10,15 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
+/** 观看历史默认保留条数；可由 AppSettings.historyMaxItems 覆盖。 */
+const val MAX_HISTORY_ITEMS = 100
+
 interface HistoryRepository {
     suspend fun getHistory(): List<WatchHistoryItem>
-    suspend fun saveProgress(item: WatchHistoryItem): List<WatchHistoryItem>
+    suspend fun saveProgress(
+        item: WatchHistoryItem,
+        maxItems: Int = MAX_HISTORY_ITEMS,
+    ): List<WatchHistoryItem>
     suspend fun clearHistory(): List<WatchHistoryItem>
 }
 
@@ -29,7 +35,10 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         mutex.withLock { readHistory() }
     }
 
-    override suspend fun saveProgress(item: WatchHistoryItem): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
+    override suspend fun saveProgress(
+        item: WatchHistoryItem,
+        maxItems: Int,
+    ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
             val updatedItem = item.copy(updatedAtEpochMs = System.currentTimeMillis())
             val updated = buildList {
@@ -37,7 +46,7 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
                 readHistory()
                     .filterNot { it.apiLineId == item.apiLineId && it.movieId == item.movieId }
                     .forEach(::add)
-            }.take(MAX_HISTORY_ITEMS)
+            }.take(maxItems.coerceAtLeast(1))
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
                 "Unable to save watch history"
             }
@@ -70,6 +79,5 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
 
     private companion object {
         const val KEY_ITEMS = "items"
-        const val MAX_HISTORY_ITEMS = 100
     }
 }

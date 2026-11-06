@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.data.network.executeCancellable
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,14 +15,17 @@ interface SearchKeywordExpander {
      * 将拼音首字母（如 xclf）扩展为候选中文片名。
      * 非拼音首字母输入返回空列表，调用方回退为原始关键词搜索。
      */
-    suspend fun expandInitials(query: String): List<String>
+    suspend fun expandInitials(
+        query: String,
+        limit: Int = QuantitySettings.SearchSuggestionCount.default,
+    ): List<String>
 }
 
 class DefaultSearchKeywordExpander(
     private val client: OkHttpClient = HttpClients.probe,
     private val endpoint: String = SUGGEST_ENDPOINT,
 ) : SearchKeywordExpander {
-    override suspend fun expandInitials(query: String): List<String> = withContext(Dispatchers.IO) {
+    override suspend fun expandInitials(query: String, limit: Int): List<String> = withContext(Dispatchers.IO) {
         val normalized = query.trim()
         if (!isPinyinInitialQuery(normalized)) {
             return@withContext emptyList()
@@ -33,7 +37,7 @@ class DefaultSearchKeywordExpander(
                 .build()
             client.executeCancellable(request).use { response ->
                 val body = response.body.string().orEmpty()
-                extractTitleCandidates(parseSuggestionWords(body))
+                extractTitleCandidates(parseSuggestionWords(body), limit = limit)
             }
         }.getOrDefault(emptyList())
     }

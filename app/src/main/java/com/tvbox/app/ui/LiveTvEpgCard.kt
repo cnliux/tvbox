@@ -39,20 +39,22 @@ internal data class LiveEpgRow(
 )
 
 /**
- * 取 EPG 卡要展示的 4 条节目：从正在播出的那条起向后取 4 条；
- * 当前时刻不在任何节目区间时，取第一条尚未结束的节目向后 4 条；
- * 全部已播完则退回最后 4 条，避免卡片空白。
+ * 取 EPG 卡要展示的节目：从正在播出的那条起向后取 [rows] 条；
+ * 当前时刻不在任何节目区间时，取第一条尚未结束的节目向后 [rows] 条；
+ * 全部已播完则退回最后 [rows] 条，避免卡片空白。
  */
 internal fun buildLiveEpgDisplay(
     programs: List<EpgProgram>,
     nowMs: Long = System.currentTimeMillis(),
+    rows: Int = LIVE_EPG_CARD_ROWS,
 ): List<LiveEpgRow> {
     if (programs.isEmpty()) return emptyList()
+    val rowCount = rows.coerceAtLeast(1)
     val startIndex = programs.indexOfFirst { nowMs < it.stopMs }
         .takeIf { it >= 0 }
-        ?: (programs.size - LIVE_EPG_CARD_ROWS).coerceAtLeast(0)
+        ?: (programs.size - rowCount).coerceAtLeast(0)
     return programs.drop(startIndex)
-        .take(LIVE_EPG_CARD_ROWS)
+        .take(rowCount)
         .map { LiveEpgRow(title = it.title, startMs = it.startMs, stopMs = it.stopMs) }
 }
 

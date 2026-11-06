@@ -42,7 +42,63 @@ data class AppSettings(
     val liveSourceCardCount: Int = 0,
     /** 直播平台卡片显示数量；0 表示跟随设备默认。 */
     val platformLiveCardCount: Int = 0,
+    /** 首页「继续观看」卡片数量。 */
+    val continueWatchingCount: Int = QuantitySettings.ContinueWatchingCount.default,
+    /** 电视直播 EPG 窄卡展示的节目条数。 */
+    val epgCardRows: Int = QuantitySettings.EpgCardRows.default,
+    /** 数字选台浮层展示的候选行数。 */
+    val liveNumberMatchRows: Int = QuantitySettings.LiveNumberMatchRows.default,
+    /** 数字选台前缀匹配的频道上限。 */
+    val liveNumberSearchLimit: Int = QuantitySettings.LiveNumberSearchLimit.default,
+    /** 手机直播页「相关频道」数量。 */
+    val relatedChannelCount: Int = QuantitySettings.RelatedChannelCount.default,
+    /** 搜索热词条数。 */
+    val hotWordCount: Int = QuantitySettings.HotWordCount.default,
+    /** 拼音首字母扩展出的候选片名数量。 */
+    val searchSuggestionCount: Int = QuantitySettings.SearchSuggestionCount.default,
+    /** 豆瓣热播每页条数。 */
+    val doubanHotPageSize: Int = QuantitySettings.DoubanHotPageSize.default,
+    /** 打开豆瓣热播时依次尝试的视频源数量。 */
+    val doubanHotFallbackLines: Int = QuantitySettings.DoubanHotFallbackLines.default,
+    /** 本地观看历史保留条数。 */
+    val historyMaxItems: Int = QuantitySettings.HistoryMaxItems.default,
+    /** 多源搜索/详情同时请求的源数量。 */
+    val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
 )
+
+/** 一个数量类设置项：默认值、合法区间与可选档位。 */
+data class QuantitySetting(
+    val default: Int,
+    val min: Int,
+    val max: Int,
+    val choices: List<Int>,
+) {
+    /** 越界值收敛到合法区间。 */
+    fun clamp(value: Int): Int = value.coerceIn(min, max)
+}
+
+/**
+ * 数量类设置项的默认值与可选档位。
+ * 默认值必须等于原写死值，保证升级后行为不变。
+ */
+object QuantitySettings {
+    val ContinueWatchingCount = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    val EpgCardRows = QuantitySetting(4, 2, 8, listOf(2, 3, 4, 5, 6, 8))
+    val LiveNumberMatchRows = QuantitySetting(6, 2, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    val LiveNumberSearchLimit = QuantitySetting(
+        LIVE_NUMBER_SEARCH_LIMIT,
+        10,
+        200,
+        listOf(20, 30, LIVE_NUMBER_SEARCH_LIMIT, 100, 200),
+    )
+    val RelatedChannelCount = QuantitySetting(12, 4, 24, listOf(6, 8, 10, 12, 16, 20, 24))
+    val HotWordCount = QuantitySetting(18, 6, 30, listOf(12, 15, 18, 21, 24, 30))
+    val SearchSuggestionCount = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 5, 6, 8))
+    val DoubanHotPageSize = QuantitySetting(20, 5, 40, listOf(10, 15, 20, 25, 30, 40))
+    val DoubanHotFallbackLines = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    val HistoryMaxItems = QuantitySetting(100, 20, 500, listOf(50, 100, 200, 300, 500))
+    val MaxParallelSourceRequests = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 6, 8))
+}
 
 /** 卡片区最多展示的行数，超出部分折叠为「更多」入口。 */
 const val CARD_AREA_MAX_ROWS = 3

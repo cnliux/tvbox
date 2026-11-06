@@ -1121,7 +1121,7 @@ private fun MovieGrid(
         loadMoreFocused = false
     }
     val recent = if (state.appSettings.homeContinueWatchingEnabled) {
-        state.historyItems.continueWatching()
+        state.historyItems.continueWatching(state.appSettings.continueWatchingCount)
     } else {
         emptyList()
     }
@@ -1357,7 +1357,7 @@ private fun MobileHomeFeed(
         }
         // 继续观看
         val recent = if (state.appSettings.homeContinueWatchingEnabled) {
-            state.historyItems.continueWatching()
+            state.historyItems.continueWatching(state.appSettings.continueWatchingCount)
         } else emptyList()
         if (recent.isNotEmpty()) {
             Column(modifier = Modifier.fillMaxWidth()) {

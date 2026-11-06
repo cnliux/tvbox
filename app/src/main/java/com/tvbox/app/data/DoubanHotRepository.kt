@@ -27,6 +27,7 @@ interface DoubanHotRepository {
         page: Int,
         forceRefresh: Boolean = false,
         category: DoubanHotCategory = DoubanHotCategory.Tv,
+        pageSize: Int = DOUBAN_PAGE_SIZE,
     ): PagedDoubanHotMovies
 }
 
@@ -46,8 +47,13 @@ class DefaultDoubanHotRepository(
         page: Int,
         forceRefresh: Boolean,
         category: DoubanHotCategory,
+        pageSize: Int,
     ): PagedDoubanHotMovies = withContext(Dispatchers.IO) {
-        val request = DoubanHotRequest(page = page, category = category)
+        val request = DoubanHotRequest(
+            page = page,
+            category = category,
+            limit = pageSize.coerceAtLeast(1),
+        )
         val cacheKey = request.cacheKey
         val now = nowMs()
         if (!forceRefresh) {

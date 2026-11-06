@@ -807,12 +807,12 @@ private fun MobileLivePlayerScreen(
     }
 
     // 相关频道：同组优先，不足补全局邻近。
-    val relatedChannels = remember(channel, channels) {
+    val relatedChannels = remember(channel, channels, state.appSettings.relatedChannelCount) {
         val selfIndex = channels.indexOfFirst { it.number == channel.number }
         val indexed = channels.withIndex().filter { it.index != selfIndex }
         val sameGroup = indexed.filter { it.value.groupName == channel.groupName }
         val others = indexed.filter { it.value.groupName != channel.groupName }
-        (sameGroup + others).take(12)
+        (sameGroup + others).take(state.appSettings.relatedChannelCount)
     }
 
     Column(

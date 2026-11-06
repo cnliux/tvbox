@@ -36,6 +36,7 @@ class PlaybackExperienceTest {
         assertEquals(listOf(13, 10, 9, 8, 7, 6), selected.map { it.movieId })
         assertFalse(selected.any { it.movieId == 11 || it.movieId == 12 })
         assertTrue(records.continueWatching(0).isEmpty())
+        assertEquals(listOf(13, 10), records.continueWatching(2).map { it.movieId })
     }
     @Test fun latestHistoryWinsBeforeCompletionFilter() {
         val old = history(1, 20, 100).copy(updatedAtEpochMs = 1)

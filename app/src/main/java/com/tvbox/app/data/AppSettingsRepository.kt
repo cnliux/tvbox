@@ -6,6 +6,8 @@ import java.io.IOException
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.CustomVideoApiLine
+import com.tvbox.app.domain.QuantitySetting
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
@@ -62,6 +64,20 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             platformLiveGridColumns = prefs.getInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, 0),
             liveSourceCardCount = prefs.getInt(KEY_LIVE_SOURCE_CARD_COUNT, 0),
             platformLiveCardCount = prefs.getInt(KEY_PLATFORM_LIVE_CARD_COUNT, 0),
+            continueWatchingCount = readQuantity(KEY_CONTINUE_WATCHING_COUNT, QuantitySettings.ContinueWatchingCount),
+            epgCardRows = readQuantity(KEY_EPG_CARD_ROWS, QuantitySettings.EpgCardRows),
+            liveNumberMatchRows = readQuantity(KEY_LIVE_NUMBER_MATCH_ROWS, QuantitySettings.LiveNumberMatchRows),
+            liveNumberSearchLimit = readQuantity(KEY_LIVE_NUMBER_SEARCH_LIMIT, QuantitySettings.LiveNumberSearchLimit),
+            relatedChannelCount = readQuantity(KEY_RELATED_CHANNEL_COUNT, QuantitySettings.RelatedChannelCount),
+            hotWordCount = readQuantity(KEY_HOT_WORD_COUNT, QuantitySettings.HotWordCount),
+            searchSuggestionCount = readQuantity(KEY_SEARCH_SUGGESTION_COUNT, QuantitySettings.SearchSuggestionCount),
+            doubanHotPageSize = readQuantity(KEY_DOUBAN_HOT_PAGE_SIZE, QuantitySettings.DoubanHotPageSize),
+            doubanHotFallbackLines = readQuantity(KEY_DOUBAN_HOT_FALLBACK_LINES, QuantitySettings.DoubanHotFallbackLines),
+            historyMaxItems = readQuantity(KEY_HISTORY_MAX_ITEMS, QuantitySettings.HistoryMaxItems),
+            maxParallelSourceRequests = readQuantity(
+                KEY_MAX_PARALLEL_SOURCE_REQUESTS,
+                QuantitySettings.MaxParallelSourceRequests,
+            ),
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
         if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
@@ -98,6 +114,17 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
             .putInt(KEY_LIVE_SOURCE_CARD_COUNT, settings.liveSourceCardCount)
             .putInt(KEY_PLATFORM_LIVE_CARD_COUNT, settings.platformLiveCardCount)
+            .putInt(KEY_CONTINUE_WATCHING_COUNT, settings.continueWatchingCount)
+            .putInt(KEY_EPG_CARD_ROWS, settings.epgCardRows)
+            .putInt(KEY_LIVE_NUMBER_MATCH_ROWS, settings.liveNumberMatchRows)
+            .putInt(KEY_LIVE_NUMBER_SEARCH_LIMIT, settings.liveNumberSearchLimit)
+            .putInt(KEY_RELATED_CHANNEL_COUNT, settings.relatedChannelCount)
+            .putInt(KEY_HOT_WORD_COUNT, settings.hotWordCount)
+            .putInt(KEY_SEARCH_SUGGESTION_COUNT, settings.searchSuggestionCount)
+            .putInt(KEY_DOUBAN_HOT_PAGE_SIZE, settings.doubanHotPageSize)
+            .putInt(KEY_DOUBAN_HOT_FALLBACK_LINES, settings.doubanHotFallbackLines)
+            .putInt(KEY_HISTORY_MAX_ITEMS, settings.historyMaxItems)
+            .putInt(KEY_MAX_PARALLEL_SOURCE_REQUESTS, settings.maxParallelSourceRequests)
             .commit()
         if (!committed) {
             throw IOException("设置写入失败")
@@ -112,6 +139,9 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .onFailure { error -> Log.w(TAG, "自定义视频源配置解码失败，已回退为空列表", error) }
             .getOrDefault(emptyList())
     }
+
+    private fun readQuantity(key: String, setting: QuantitySetting): Int =
+        setting.clamp(prefs.getInt(key, setting.default))
 
     private fun readStringList(key: String): List<String> {
         val raw = prefs.getString(key, null).orEmpty()
@@ -173,5 +203,16 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_PLATFORM_LIVE_GRID_COLUMNS = "platform_live_grid_columns"
         const val KEY_LIVE_SOURCE_CARD_COUNT = "live_source_card_count"
         const val KEY_PLATFORM_LIVE_CARD_COUNT = "platform_live_card_count"
+        const val KEY_CONTINUE_WATCHING_COUNT = "continue_watching_count"
+        const val KEY_EPG_CARD_ROWS = "epg_card_rows"
+        const val KEY_LIVE_NUMBER_MATCH_ROWS = "live_number_match_rows"
+        const val KEY_LIVE_NUMBER_SEARCH_LIMIT = "live_number_search_limit"
+        const val KEY_RELATED_CHANNEL_COUNT = "related_channel_count"
+        const val KEY_HOT_WORD_COUNT = "hot_word_count"
+        const val KEY_SEARCH_SUGGESTION_COUNT = "search_suggestion_count"
+        const val KEY_DOUBAN_HOT_PAGE_SIZE = "douban_hot_page_size"
+        const val KEY_DOUBAN_HOT_FALLBACK_LINES = "douban_hot_fallback_lines"
+        const val KEY_HISTORY_MAX_ITEMS = "history_max_items"
+        const val KEY_MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
     }
 }

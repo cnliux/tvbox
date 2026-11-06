@@ -118,9 +118,6 @@ internal const val CHANNEL_LIST_HIDE_DELAY_MS = 6_000L
 internal const val CHANNEL_NUMBER_COMMIT_DELAY_MS = 2_000L
 internal const val MAX_CHANNEL_NUMBER_DIGITS = 4
 
-/** 数字直选浮层最多展示的候选频道行数（超出滚动查看）。 */
-internal const val LIVE_NUMBER_MATCH_ROWS = 6
-
 /** 数字直选输入期间，下方候选列表的淡入淡出时长。 */
 internal const val LIVE_NUMBER_MATCH_ANIM_MS = 120
 
@@ -128,9 +125,6 @@ internal const val PROMPT_HIDE_DELAY_MS = 1_500L
 
 /** 顶栏时钟与 EPG 卡当前节目高亮的刷新节拍。 */
 internal const val CLOCK_REFRESH_INTERVAL_MS = 20_000L
-
-/** EPG 窄卡固定展示 4 条节目。 */
-private const val LIVE_EPG_CARD_ROWS = 4
 
 private val LIVE_CLOCK_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 

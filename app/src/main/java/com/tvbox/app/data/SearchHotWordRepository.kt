@@ -6,6 +6,7 @@ import com.tvbox.app.data.network.NetworkException
 import com.tvbox.app.data.network.NetworkRetryPolicy
 import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.data.network.parseNetworkPayload
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.isBlockedContent
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -26,7 +27,7 @@ import java.io.IOException
  * 不读取任何单个视频源站点自己的热搜，避免切换视频源后热词随源变化。
  */
 interface SearchHotWordRepository {
-    suspend fun getHotWords(forceRefresh: Boolean = false): List<String>
+    suspend fun getHotWords(forceRefresh: Boolean = false, limit: Int = HOT_WORD_LIMIT): List<String>
 }
 
 class DefaultSearchHotWordRepository(
@@ -35,10 +36,11 @@ class DefaultSearchHotWordRepository(
     private val doubanTitles: suspend () -> List<String> = { emptyList() },
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : SearchHotWordRepository {
-    override suspend fun getHotWords(forceRefresh: Boolean): List<String> = withContext(Dispatchers.IO) {
+    override suspend fun getHotWords(forceRefresh: Boolean, limit: Int): List<String> = withContext(Dispatchers.IO) {
+        val safeLimit = limit.coerceIn(1, QuantitySettings.HotWordCount.max)
         val now = nowMs()
         if (!forceRefresh) {
-            cache.get(now)?.words?.takeIf { it.isNotEmpty() }?.let { return@withContext it }
+            cache.get(now)?.words?.takeIf { it.isNotEmpty() }?.let { return@withContext it.take(safeLimit) }
         }
 
         val fetched = runCatching { fetchAggregatedTitles() }.getOrDefault(emptyList())
@@ -49,10 +51,10 @@ class DefaultSearchHotWordRepository(
                     expiresAtEpochMs = now + SUCCESS_CACHE_TTL_MS,
                 ),
             )
-            return@withContext fetched
+            return@withContext fetched.take(safeLimit)
         }
         // 网络全部失败时退回上一次的聚合结果，避免热门搜索空白。
-        cache.getAny()?.words.orEmpty()
+        cache.getAny()?.words.orEmpty().take(safeLimit)
     }
 
     private suspend fun fetchAggregatedTitles(): List<String> = coroutineScope {
@@ -60,7 +62,8 @@ class DefaultSearchHotWordRepository(
             async { runCatching { fetchRankTitles(category) }.getOrDefault(emptyList()) }
         }
         val doubanRequest = async { runCatching { doubanTitles() }.getOrDefault(emptyList()) }
-        composeHotWords((rankRequests + doubanRequest).awaitAll())
+        // 缓存完整档位（最大可选值），实际展示数量由调用方按设置裁剪。
+        composeHotWords((rankRequests + doubanRequest).awaitAll(), limit = QuantitySettings.HotWordCount.max)
     }
 
     private suspend fun fetchRankTitles(category: Int): List<String> {

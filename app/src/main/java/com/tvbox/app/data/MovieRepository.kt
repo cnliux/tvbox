@@ -6,6 +6,7 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PagedMovies
 import com.tvbox.app.domain.PlaySource
+import com.tvbox.app.domain.QuantitySettings
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -40,6 +41,8 @@ interface MovieRepository {
     val allApiLines: List<ApiLine>
     fun updateCustomApiLines(customApiLines: List<ApiLine>)
     fun setDisabledLineIds(disabledIds: Set<String>)
+    /** 设置多源搜索/详情同时请求的源数量。 */
+    fun setMaxParallelSourceRequests(value: Int) {}
     suspend fun testSpeed(apiLineId: String): Long?
     suspend fun getCategories(apiLineId: String): List<Category>
     suspend fun getMovies(apiLineId: String, page: Int, typeId: Int? = null, keyword: String? = null): PagedMovies
@@ -63,6 +66,12 @@ class DefaultMovieRepository(
     private val apiFactory: (String) -> MacCmsApi = MacCmsNetwork::api,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : MovieRepository {
+    @Volatile
+    private var maxParallelSourceRequests = MAX_PARALLEL_SOURCE_REQUESTS
+
+    override fun setMaxParallelSourceRequests(value: Int) {
+        maxParallelSourceRequests = QuantitySettings.MaxParallelSourceRequests.clamp(value)
+    }
     @Volatile
     private var customApiLines: List<ApiLine> = emptyList()
 
@@ -202,7 +211,7 @@ class DefaultMovieRepository(
             return@channelFlow
         }
 
-        val semaphore = Semaphore(MAX_PARALLEL_SOURCE_REQUESTS)
+        val semaphore = Semaphore(maxParallelSourceRequests)
         val updatesMutex = Mutex()
         val completedMovies = mutableMapOf<String, List<Movie>>()
         var completedSources = 0
@@ -268,7 +277,7 @@ class DefaultMovieRepository(
             ),
         )
 
-        val semaphore = Semaphore(MAX_PARALLEL_SOURCE_REQUESTS)
+        val semaphore = Semaphore(maxParallelSourceRequests)
         coroutineScope {
             lines
                 .filterNot { it.id == primary.apiLineId }

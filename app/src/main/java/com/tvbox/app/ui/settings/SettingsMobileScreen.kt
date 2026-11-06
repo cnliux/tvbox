@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
@@ -569,6 +570,100 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
+            title = "继续观看数量",
+            subtitle = quantitySummary(
+                state.appSettings.continueWatchingCount,
+                QuantitySettings.ContinueWatchingCount,
+                unit = " 个",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.ContinueWatchingCount.choices,
+                    selected = state.appSettings.continueWatchingCount,
+                    label = {
+                        if (it == QuantitySettings.ContinueWatchingCount.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateContinueWatchingCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "EPG 节目条数",
+            subtitle = quantitySummary(
+                state.appSettings.epgCardRows,
+                QuantitySettings.EpgCardRows,
+                unit = " 条",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.EpgCardRows.choices,
+                    selected = state.appSettings.epgCardRows,
+                    label = { if (it == QuantitySettings.EpgCardRows.default) "默认" else "$it" },
+                    onSelect = actions::updateEpgCardRows,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "数字选台候选行数",
+            subtitle = quantitySummary(
+                state.appSettings.liveNumberMatchRows,
+                QuantitySettings.LiveNumberMatchRows,
+                unit = " 行",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.LiveNumberMatchRows.choices,
+                    selected = state.appSettings.liveNumberMatchRows,
+                    label = { if (it == QuantitySettings.LiveNumberMatchRows.default) "默认" else "$it" },
+                    onSelect = actions::updateLiveNumberMatchRows,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "数字选台匹配上限",
+            subtitle = quantitySummary(
+                state.appSettings.liveNumberSearchLimit,
+                QuantitySettings.LiveNumberSearchLimit,
+                unit = " 个",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.LiveNumberSearchLimit.choices,
+                    selected = state.appSettings.liveNumberSearchLimit,
+                    label = {
+                        if (it == QuantitySettings.LiveNumberSearchLimit.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateLiveNumberSearchLimit,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "相关频道数量",
+            subtitle = quantitySummary(
+                state.appSettings.relatedChannelCount,
+                QuantitySettings.RelatedChannelCount,
+                unit = " 个",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.RelatedChannelCount.choices,
+                    selected = state.appSettings.relatedChannelCount,
+                    label = { if (it == QuantitySettings.RelatedChannelCount.default) "默认" else "$it" },
+                    onSelect = actions::updateRelatedChannelCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
             title = "剧集排序",
             subtitle = if (state.appSettings.episodeSortReverse) "倒序（…,3,2,1）" else "正序（1,2,3,…）",
             trailing = {
@@ -649,6 +744,120 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 if (state.historyItems.isNotEmpty()) {
                     TextButton(onClick = onClearHistory) { Text("清空", color = TvColors.Danger) }
                 }
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "历史保留条数",
+            subtitle = quantitySummary(
+                state.appSettings.historyMaxItems,
+                QuantitySettings.HistoryMaxItems,
+                unit = " 条",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.HistoryMaxItems.choices,
+                    selected = state.appSettings.historyMaxItems,
+                    label = { if (it == QuantitySettings.HistoryMaxItems.default) "默认" else "$it" },
+                    onSelect = actions::updateHistoryMaxItems,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "搜索热词数量",
+            subtitle = quantitySummary(
+                state.appSettings.hotWordCount,
+                QuantitySettings.HotWordCount,
+                unit = " 条",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.HotWordCount.choices,
+                    selected = state.appSettings.hotWordCount,
+                    label = { if (it == QuantitySettings.HotWordCount.default) "默认" else "$it" },
+                    onSelect = actions::updateHotWordCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "拼音候选数量",
+            subtitle = quantitySummary(
+                state.appSettings.searchSuggestionCount,
+                QuantitySettings.SearchSuggestionCount,
+                unit = " 个",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.SearchSuggestionCount.choices,
+                    selected = state.appSettings.searchSuggestionCount,
+                    label = {
+                        if (it == QuantitySettings.SearchSuggestionCount.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateSearchSuggestionCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "豆瓣热播每页条数",
+            subtitle = quantitySummary(
+                state.appSettings.doubanHotPageSize,
+                QuantitySettings.DoubanHotPageSize,
+                unit = " 条",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.DoubanHotPageSize.choices,
+                    selected = state.appSettings.doubanHotPageSize,
+                    label = { if (it == QuantitySettings.DoubanHotPageSize.default) "默认" else "$it" },
+                    onSelect = actions::updateDoubanHotPageSize,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "热播回退源数",
+            subtitle = quantitySummary(
+                state.appSettings.doubanHotFallbackLines,
+                QuantitySettings.DoubanHotFallbackLines,
+                unit = " 路",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.DoubanHotFallbackLines.choices,
+                    selected = state.appSettings.doubanHotFallbackLines,
+                    label = {
+                        if (it == QuantitySettings.DoubanHotFallbackLines.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateDoubanHotFallbackLines,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "多源搜索并发数",
+            subtitle = quantitySummary(
+                state.appSettings.maxParallelSourceRequests,
+                QuantitySettings.MaxParallelSourceRequests,
+                unit = " 个",
+            ),
+            trailing = {
+                ChoiceChips(
+                    options = QuantitySettings.MaxParallelSourceRequests.choices,
+                    selected = state.appSettings.maxParallelSourceRequests,
+                    label = {
+                        if (it == QuantitySettings.MaxParallelSourceRequests.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateMaxParallelSourceRequests,
+                )
             },
         )
     }
@@ -840,6 +1049,6 @@ private enum class MobileSettingCategory(
     General("通用", "设备·外观·启动", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
     Playback("播放", "播放管家·缩放·跳过", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
     Sources("数据源", "视频源·直播源", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
-    Data("数据管理", "观看历史·统计", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
+    Data("数据管理", "历史·搜索·分页", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
     About("关于", "版本·协议", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
 }

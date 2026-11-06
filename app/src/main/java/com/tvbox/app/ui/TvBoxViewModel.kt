@@ -34,6 +34,7 @@ import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CARD_AREA_MAX_ROWS
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.SOURCE_CARD_MAX_COUNT
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
@@ -371,6 +372,7 @@ class TvBoxViewModel(
                 .getOrDefault(AppSettings())
             repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
             repository.setDisabledLineIds(settings.blockedSourceIds.toSet())
+            repository.setMaxParallelSourceRequests(settings.maxParallelSourceRequests)
             applyLiveSourceConfig(settings)
             val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
             val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
@@ -549,8 +551,12 @@ class TvBoxViewModel(
         if (searchHotWordsJob?.isActive == true) return
         searchHotWordsJob = viewModelScope.launch {
             _state.update { it.copy(searchHotWordsLoading = true) }
-            val words = runCatching { searchHotWordRepository.getHotWords(forceRefresh) }
-                .getOrDefault(emptyList())
+            val words = runCatching {
+                searchHotWordRepository.getHotWords(
+                    forceRefresh = forceRefresh,
+                    limit = _state.value.appSettings.hotWordCount,
+                )
+            }.getOrDefault(emptyList())
             _state.update {
                 it.copy(
                     searchHotWords = words.ifEmpty { it.searchHotWords },
@@ -1159,7 +1165,7 @@ class TvBoxViewModel(
             var movie: Movie? = null
             var matchedLineId: String? = null
             var lastError: Throwable? = null
-            for (lineId in candidateLineIds.take(MAX_DOUBAN_HOT_FALLBACK_LINES)) {
+            for (lineId in candidateLineIds.take(current.appSettings.doubanHotFallbackLines)) {
                 runCatching { findPlayableDoubanMovie(item.title, lineId) }
                     .onSuccess { found ->
                         if (found != null) {
@@ -1203,10 +1209,12 @@ class TvBoxViewModel(
             }
             try {
                 // 拼音首字母（如 xclf）无法在 MacCMS 服务端命中，先扩展为候选中文片名再搜索。
-                val keywords = searchKeywordExpander.expandInitials(query)
+                val keywords = searchKeywordExpander.expandInitials(
+                    query,
+                    limit = _state.value.appSettings.searchSuggestionCount,
+                )
                     .ifEmpty { listOf(query) }
                     .distinct()
-                    .take(3)
                 var completedBase = 0
                 var totalSources = 0
                 var mergedResults: List<Movie> = emptyList()
@@ -1603,6 +1611,110 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             platformLiveCardCount = count.coerceIn(0, CARD_AREA_MAX_ROWS * 10),
         )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新首页「继续观看」卡片数量。 */
+    fun updateContinueWatchingCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            continueWatchingCount = QuantitySettings.ContinueWatchingCount.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新电视直播 EPG 窄卡节目条数。 */
+    fun updateEpgCardRows(rows: Int) {
+        val settings = _state.value.appSettings.copy(
+            epgCardRows = QuantitySettings.EpgCardRows.clamp(rows),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新数字选台浮层候选行数。 */
+    fun updateLiveNumberMatchRows(rows: Int) {
+        val settings = _state.value.appSettings.copy(
+            liveNumberMatchRows = QuantitySettings.LiveNumberMatchRows.clamp(rows),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新数字选台前缀匹配上限。 */
+    fun updateLiveNumberSearchLimit(limit: Int) {
+        val settings = _state.value.appSettings.copy(
+            liveNumberSearchLimit = QuantitySettings.LiveNumberSearchLimit.clamp(limit),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新手机直播页「相关频道」数量。 */
+    fun updateRelatedChannelCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            relatedChannelCount = QuantitySettings.RelatedChannelCount.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新搜索热词条数；下次刷新热词生效。 */
+    fun updateHotWordCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            hotWordCount = QuantitySettings.HotWordCount.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新拼音首字母扩展候选数。 */
+    fun updateSearchSuggestionCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            searchSuggestionCount = QuantitySettings.SearchSuggestionCount.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新豆瓣热播每页条数；下次翻页生效。 */
+    fun updateDoubanHotPageSize(size: Int) {
+        val settings = _state.value.appSettings.copy(
+            doubanHotPageSize = QuantitySettings.DoubanHotPageSize.clamp(size),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新热播点击时尝试的视频源数量。 */
+    fun updateDoubanHotFallbackLines(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            doubanHotFallbackLines = QuantitySettings.DoubanHotFallbackLines.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新本地观看历史保留条数，并立即收敛已加载列表。 */
+    fun updateHistoryMaxItems(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            historyMaxItems = QuantitySettings.HistoryMaxItems.clamp(count),
+        )
+        saveSettings(settings)
+        _state.update {
+            it.copy(
+                appSettings = settings,
+                historyItems = it.historyItems.take(settings.historyMaxItems),
+            )
+        }
+    }
+
+    /** 更新多源搜索/详情并发数。 */
+    fun updateMaxParallelSourceRequests(count: Int) {
+        val value = QuantitySettings.MaxParallelSourceRequests.clamp(count)
+        repository.setMaxParallelSourceRequests(value)
+        val settings = _state.value.appSettings.copy(maxParallelSourceRequests = value)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
     }
@@ -2459,9 +2571,10 @@ class TvBoxViewModel(
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtEpochMs = System.currentTimeMillis(),
         )
+        val maxItems = _state.value.appSettings.historyMaxItems
         viewModelScope.launch {
             historyWriteMutex.withLock {
-                runCatching { historyRepository.saveProgress(item) }
+                runCatching { historyRepository.saveProgress(item, maxItems = maxItems) }
                     .onSuccess { history ->
                         _state.update { it.copy(historyItems = history) }
                     }
@@ -3332,7 +3445,11 @@ class TvBoxViewModel(
                 )
             }
             runCatching {
-                doubanHotRepository.getRecentHot(page = nextPage, forceRefresh = forceRefresh)
+                doubanHotRepository.getRecentHot(
+                    page = nextPage,
+                    forceRefresh = forceRefresh,
+                    pageSize = current.appSettings.doubanHotPageSize,
+                )
             }.onSuccess { result ->
                 _state.update {
                     it.copy(
@@ -3499,7 +3616,8 @@ class TvBoxViewModel(
         viewModelScope.launch {
             runCatching { historyRepository.getHistory() }
                 .onSuccess { history ->
-                    _state.update { it.copy(historyItems = history) }
+                    val maxItems = _state.value.appSettings.historyMaxItems
+                    _state.update { it.copy(historyItems = history.take(maxItems)) }
                 }
         }
     }
@@ -4028,8 +4146,6 @@ private const val PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS = 6
 private const val PLATFORM_LIVE_SAME_LINE_RETRY_MAX = 2
 // 平台直播重连退避基数，按重连次数线性递增，避免瞬时高频请求。
 private const val PLATFORM_LIVE_RECOVERY_BACKOFF_MS = 1_500L
-// 热播点击回退查找时最多尝试的视频源数量，避免逐个源串行搜索过慢。
-private const val MAX_DOUBAN_HOT_FALLBACK_LINES = 6
 private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {

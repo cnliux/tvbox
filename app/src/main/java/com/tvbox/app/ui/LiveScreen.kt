@@ -230,11 +230,20 @@ private fun LivePlayerScreen(
     }
 
     // 数字输入期间的即时匹配：输入 "0" 就列出所有 0 开头的频道，确认键直接进台。
-    val numberMatches: List<LiveChannelNumberMatch> = remember(channels, channelNumberInput) {
-        findLiveChannelsByNumberPrefix(channels, channelNumberInput)
+    val numberMatches: List<LiveChannelNumberMatch> = remember(
+        channels,
+        channelNumberInput,
+        state.appSettings.liveNumberSearchLimit,
+    ) {
+        findLiveChannelsByNumberPrefix(
+            channels,
+            channelNumberInput,
+            limit = state.appSettings.liveNumberSearchLimit,
+        )
     }
+    val visibleNumberMatches = numberMatches.take(state.appSettings.liveNumberMatchRows)
     var numberMatchFocus by remember { mutableIntStateOf(0) }
-    LaunchedEffect(channelNumberInput) { numberMatchFocus = 0 }
+    LaunchedEffect(channelNumberInput, visibleNumberMatches.size) { numberMatchFocus = 0 }
 
     fun commitNumberInput(useFocusedMatch: Boolean) {
         val input = channelNumberInput
@@ -242,7 +251,7 @@ private fun LivePlayerScreen(
         channelNumberInput = ""
         numberMatchFocus = 0
         val target: Int? = if (useFocusedMatch) {
-            numberMatches.getOrNull(numberMatchFocus)?.index
+            visibleNumberMatches.getOrNull(numberMatchFocus)?.index
         } else {
             resolveLiveChannelNumberTarget(channels, input).takeIf { it >= 0 }
         }
@@ -591,15 +600,15 @@ private fun LivePlayerScreen(
                     // 数字输入中：方向键在候选里移动，确认键直接进台，退格删一位。
                     when (event.nativeKeyEvent.keyCode) {
                         AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                            if (numberMatches.isNotEmpty()) {
+                            if (visibleNumberMatches.isNotEmpty()) {
                                 numberMatchFocus = (numberMatchFocus - 1).coerceAtLeast(0)
                             }
                             bumpBars()
                             true
                         }
                         AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (numberMatches.isNotEmpty()) {
-                                numberMatchFocus = (numberMatchFocus + 1).coerceAtMost(numberMatches.lastIndex)
+                            if (visibleNumberMatches.isNotEmpty()) {
+                                numberMatchFocus = (numberMatchFocus + 1).coerceAtMost(visibleNumberMatches.lastIndex)
                             }
                             bumpBars()
                             true
@@ -607,7 +616,7 @@ private fun LivePlayerScreen(
                         AndroidKeyEvent.KEYCODE_DPAD_CENTER,
                         AndroidKeyEvent.KEYCODE_ENTER,
                         -> {
-                            commitNumberInput(useFocusedMatch = numberMatches.isNotEmpty())
+                            commitNumberInput(useFocusedMatch = visibleNumberMatches.isNotEmpty())
                             true
                         }
                         AndroidKeyEvent.KEYCODE_DEL -> {
@@ -864,8 +873,16 @@ private fun LivePlayerScreen(
                 channel = epgChannel,
                 lineIndex = if (previewChannel == null) state.liveLineIndex else 0,
                 nowProgram = actions.liveEpgNow(epgChannel),
-                programs = remember(epgChannel, clockTick, state.liveEpgByChannel) {
-                    buildLiveEpgDisplay(actions.liveEpgPrograms(epgChannel))
+                programs = remember(
+                    epgChannel,
+                    clockTick,
+                    state.liveEpgByChannel,
+                    state.appSettings.epgCardRows,
+                ) {
+                    buildLiveEpgDisplay(
+                        actions.liveEpgPrograms(epgChannel),
+                        rows = state.appSettings.epgCardRows,
+                    )
                 },
                 nowMs = remember(clockTick) { System.currentTimeMillis() },
                 modifier = Modifier
@@ -919,10 +936,10 @@ private fun LivePlayerScreen(
                     color = Color.White.copy(alpha = 0.6f),
                     fontSize = 12.sp,
                 )
-                if (numberMatches.isNotEmpty()) {
+                if (visibleNumberMatches.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
-                    numberMatches.take(LIVE_NUMBER_MATCH_ROWS).forEachIndexed { rowIndex, match ->
-                        val highlighted = rowIndex == numberMatchFocus.coerceIn(0, numberMatches.lastIndex)
+                    visibleNumberMatches.forEachIndexed { rowIndex, match ->
+                        val highlighted = rowIndex == numberMatchFocus.coerceIn(0, visibleNumberMatches.lastIndex)
                         Row(
                             modifier = Modifier
                                 .width(260.dp)

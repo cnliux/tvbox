@@ -17,6 +17,15 @@ class DoubanHotRepositoryTest {
     }
 
     @Test
+    fun hotRequestHonorsCustomPageSize() {
+        val request = DoubanHotRequest(page = 2, limit = 30)
+
+        assertEquals(30, request.limit)
+        assertEquals(30, request.start)
+        assertEquals("douban-hot:tv:tv:start:30:limit:30", request.cacheKey)
+    }
+
+    @Test
     fun parsesHotItemsAndFiltersBlockedContent() {
         val page = parseDoubanHotPage(
             rawResponse = """
