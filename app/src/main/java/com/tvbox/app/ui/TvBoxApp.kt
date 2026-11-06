@@ -228,31 +228,35 @@ private fun UpdateDownloadCard(
                     color = Color(0xFF7AE2BA), trackColor = Color.White.copy(alpha = 0.15f))
                 Text("可继续使用，完成后打开安装界面", style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.65f))
-            } else if (state.updateDownloadedApkPath != null) {
-                Text(if (state.updateAwaitingInstallPermission) "下载完成，等待安装授权" else "下载完成",
-                    style = MaterialTheme.typography.bodySmall)
-                state.updateError?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
-                }
-                state.updateExportMessage?.let {
-                    Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
-                }
-                TextButton(onClick = { onInstall(state.updateDownloadedApkPath) }, enabled = !state.updateExporting) {
-                    Text(when {
-                        state.updateAwaitingInstallPermission -> "授权并安装"
-                        state.updateError != null -> "重试安装"
-                        else -> "安装更新"
-                    }, color = Color.White)
-                }
-                TextButton(onClick = { onSaveApk(state.updateDownloadedApkPath) }, enabled = !state.updateExporting) {
-                    Text(if (state.updateExporting) "正在保存…" else "保存安装包", color = Color.White)
-                }
-                if (state.updateAwaitingInstallPermission) {
-                    TextButton(onClick = onOpenSettings) { Text("系统设置", color = Color.White) }
-                }
             } else {
-                Text(state.updateError.orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                TextButton(onClick = onRetry) { Text("重新下载", color = Color.White) }
+                val downloadedApkPath = state.updateDownloadedApkPath
+                if (downloadedApkPath != null) {
+                    val updateError = state.updateError
+                    Text(if (state.updateAwaitingInstallPermission) "下载完成，等待安装授权" else "下载完成",
+                        style = MaterialTheme.typography.bodySmall)
+                    updateError?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
+                    }
+                    state.updateExportMessage?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f))
+                    }
+                    TextButton(onClick = { onInstall(downloadedApkPath) }, enabled = !state.updateExporting) {
+                        Text(when {
+                            state.updateAwaitingInstallPermission -> "授权并安装"
+                            updateError != null -> "重试安装"
+                            else -> "安装更新"
+                        }, color = Color.White)
+                    }
+                    TextButton(onClick = { onSaveApk(downloadedApkPath) }, enabled = !state.updateExporting) {
+                        Text(if (state.updateExporting) "正在保存…" else "保存安装包", color = Color.White)
+                    }
+                    if (state.updateAwaitingInstallPermission) {
+                        TextButton(onClick = onOpenSettings) { Text("系统设置", color = Color.White) }
+                    }
+                } else {
+                    Text(state.updateError.orEmpty(), style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                    TextButton(onClick = onRetry) { Text("重新下载", color = Color.White) }
+                }
             }
         }
     }
@@ -332,9 +336,9 @@ private fun AppUpdateDialog(
                     }
                     state.updateExportMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
-                if (state.updateError != null) {
+                state.updateError?.let { updateError ->
                     Text(
-                        text = state.updateError,
+                        text = updateError,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }

@@ -639,9 +639,9 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
-        if (state.updateError != null) {
+        state.updateError?.let { updateError ->
             Text(
-                text = state.updateError,
+                text = updateError,
                 color = TvColors.Danger,
                 style = MaterialTheme.typography.bodySmall,
                 modifier = Modifier.padding(start = 64.dp, top = 4.dp, end = 14.dp, bottom = 12.dp),

@@ -232,17 +232,7 @@ data class TvBoxUiState(
     /** 平台直播轻提示（自动切换线路结果等）；由 UI 消费后清空。 */
     val platformLiveNotice: String? = null,
     val platformLiveStream: ResolvedPlatformLiveStream? = null,
-    val availableUpdate: AppUpdate? = null,
-    val updateDialogVisible: Boolean = false,
-    val updateChecking: Boolean = false,
-    val updateDownloading: Boolean = false,
-    val updateDownloadProgress: Int? = null,
-    val updateDownloadedApkPath: String? = null,
-    val updateAutoInstallPath: String? = null,
-    val updateAwaitingInstallPermission: Boolean = false,
-    val updateExporting: Boolean = false,
-    val updateExportMessage: String? = null,
-    val updateError: String? = null,
+    val update: UpdateUiState = UpdateUiState(),
     val appSettings: AppSettings = AppSettings(),
     val playbackHealth: PlaybackHealthSnapshot = PlaybackHealthSnapshot(),
     val remoteManageDialogVisible: Boolean = false,
@@ -261,6 +251,19 @@ data class TvBoxUiState(
     val sourceImporting: Boolean = false,
     val sourceImportMessage: String? = null,
 ) {
+    // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写 `update = update.copy(...)`。
+    val availableUpdate: AppUpdate? get() = update.availableUpdate
+    val updateDialogVisible: Boolean get() = update.dialogVisible
+    val updateChecking: Boolean get() = update.checking
+    val updateDownloading: Boolean get() = update.downloading
+    val updateDownloadProgress: Int? get() = update.downloadProgress
+    val updateDownloadedApkPath: String? get() = update.downloadedApkPath
+    val updateAutoInstallPath: String? get() = update.autoInstallPath
+    val updateAwaitingInstallPermission: Boolean get() = update.awaitingInstallPermission
+    val updateExporting: Boolean get() = update.exporting
+    val updateExportMessage: String? get() = update.exportMessage
+    val updateError: String? get() = update.error
+
     val canLoadMore: Boolean
         get() = page < pageCount && !homeLoading && !loadingMore
 
@@ -576,7 +579,7 @@ class TvBoxViewModel(
     }
 
     fun openSettings() {
-        _state.update { it.copy(screen = TvScreen.Settings, updateError = null) }
+        _state.update { it.copy(screen = TvScreen.Settings, update = it.update.copy(error = null)) }
         refreshPlaybackHealth()
     }
 
@@ -619,23 +622,25 @@ class TvBoxViewModel(
     fun checkForAppUpdate(showError: Boolean = false) {
         updateJob?.cancel()
         updateJob = viewModelScope.launch {
-            _state.update { it.copy(updateChecking = true, updateError = null) }
+            _state.update { it.copy(update = it.update.copy(checking = true, error = null)) }
             runCatching { appUpdateRepository.checkForUpdate(BuildConfig.VERSION_CODE.toLong()) }
                 .onSuccess { update ->
                     _state.update {
                         if (update == null) {
-                            it.copy(updateChecking = false)
-                        } else if (it.updateDownloading || it.updateDownloadedApkPath != null) {
-                            it.copy(updateChecking = false)
+                            it.copy(update = it.update.copy(checking = false))
+                        } else if (it.update.downloading || it.update.downloadedApkPath != null) {
+                            it.copy(update = it.update.copy(checking = false))
                         } else {
                             it.copy(
-                                availableUpdate = update,
-                                updateDialogVisible = true,
-                                updateChecking = false,
-                                updateDownloading = false,
-                                updateDownloadProgress = null,
-                                updateDownloadedApkPath = null,
-                                updateError = null,
+                                update = it.update.copy(
+                                    availableUpdate = update,
+                                    dialogVisible = true,
+                                    checking = false,
+                                    downloading = false,
+                                    downloadProgress = null,
+                                    downloadedApkPath = null,
+                                    error = null,
+                                ),
                             )
                         }
                     }
@@ -643,9 +648,11 @@ class TvBoxViewModel(
                 .onFailure { error ->
                     _state.update {
                         it.copy(
-                            updateChecking = false,
-                            updateDialogVisible = showError && it.availableUpdate != null,
-                            updateError = if (showError) error.userMessage() else null,
+                            update = it.update.copy(
+                                checking = false,
+                                dialogVisible = showError && it.update.availableUpdate != null,
+                                error = if (showError) error.userMessage() else null,
+                            ),
                         )
                     }
                 }
@@ -653,41 +660,47 @@ class TvBoxViewModel(
     }
 
     fun dismissUpdateDialog() {
-        if (_state.value.availableUpdate?.force == true) return
-        _state.update { it.copy(updateDialogVisible = false, updateError = null) }
+        if (_state.value.update.availableUpdate?.force == true) return
+        _state.update { it.copy(update = it.update.copy(dialogVisible = false, error = null)) }
     }
 
     fun startUpdateDownload() {
-        val update = _state.value.availableUpdate ?: return
-        if (_state.value.updateDownloading) return
+        val update = _state.value.update.availableUpdate ?: return
+        if (_state.value.update.downloading) return
         updateDownloadJob?.cancel()
         _state.update {
-            it.copy(updateDialogVisible = false, updateDownloading = true,
-                updateDownloadProgress = 0, updateDownloadedApkPath = null,
-                updateAutoInstallPath = null, updateAwaitingInstallPermission = false, updateError = null,
-                updateExporting = false, updateExportMessage = null)
+            it.copy(update = it.update.copy(
+                dialogVisible = false, downloading = true,
+                downloadProgress = 0, downloadedApkPath = null,
+                autoInstallPath = null, awaitingInstallPermission = false, error = null,
+                exporting = false, exportMessage = null,
+            ))
         }
         updateDownloadJob = viewModelScope.launch {
             try {
                 updateInstallStateJob?.join()
                 val apkFile = appUpdateRepository.downloadUpdate(update) { progress ->
-                    _state.update { it.copy(updateDownloadProgress = progress.takeIf { value -> value >= 0 }) }
+                    _state.update { s -> s.copy(update = s.update.copy(downloadProgress = progress.takeIf { value -> value >= 0 })) }
                 }
                 val autoInstall = appUpdateRepository.shouldAutoInstall(apkFile.absolutePath)
                 val awaitingPermission = appUpdateRepository.isAwaitingInstallPermission(apkFile.absolutePath)
                 _state.update {
-                    it.copy(updateDownloading = false, updateDownloadProgress = 100,
-                        updateDownloadedApkPath = apkFile.absolutePath,
-                        updateAwaitingInstallPermission = awaitingPermission,
-                        updateAutoInstallPath = apkFile.absolutePath.takeIf { autoInstall }, updateError = null)
+                    it.copy(update = it.update.copy(
+                        downloading = false, downloadProgress = 100,
+                        downloadedApkPath = apkFile.absolutePath,
+                        awaitingInstallPermission = awaitingPermission,
+                        autoInstallPath = apkFile.absolutePath.takeIf { autoInstall }, error = null,
+                    ))
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Throwable) {
                 _state.update {
-                    it.copy(updateDownloading = false, updateDownloadProgress = null,
-                        updateDownloadedApkPath = null, updateAutoInstallPath = null,
-                        updateAwaitingInstallPermission = false, updateError = error.userMessage())
+                    it.copy(update = it.update.copy(
+                        downloading = false, downloadProgress = null,
+                        downloadedApkPath = null, autoInstallPath = null,
+                        awaitingInstallPermission = false, error = error.userMessage(),
+                    ))
                 }
             }
         }
@@ -696,43 +709,44 @@ class TvBoxViewModel(
     private fun restorePendingUpdateDownload() {
         viewModelScope.launch {
             val pending = runCatching { appUpdateRepository.pendingDownload() }.getOrNull() ?: return@launch
-            if (_state.value.updateDownloading) return@launch
-            _state.update { it.copy(availableUpdate = pending, updateDialogVisible = false) }
+            if (_state.value.update.downloading) return@launch
+            _state.update { it.copy(update = it.update.copy(availableUpdate = pending, dialogVisible = false)) }
             startUpdateDownload()
         }
     }
 
     fun markUpdateInstallPrompted(apkPath: String) {
-        _state.update { it.copy(updateAutoInstallPath = null, updateDialogVisible = false,
-            updateAwaitingInstallPermission = false, updateError = null) }
+        _state.update { it.copy(update = it.update.copy(autoInstallPath = null, dialogVisible = false, awaitingInstallPermission = false, error = null)) }
         persistUpdateInstallState { appUpdateRepository.markInstallPrompted(apkPath) }
     }
 
     fun beginUpdateInstallAttempt(apkPath: String): Boolean {
-        if (_state.value.updateDownloadedApkPath != apkPath || _state.value.updateExporting) return false
+        if (_state.value.update.downloadedApkPath != apkPath || _state.value.update.exporting) return false
         // Consume only the UI event, not the persistent successful-launch marker.
-        _state.update { it.copy(updateAutoInstallPath = null, updateDialogVisible = false,
-            updateAwaitingInstallPermission = false, updateError = null) }
+        _state.update { it.copy(update = it.update.copy(autoInstallPath = null, dialogVisible = false, awaitingInstallPermission = false, error = null)) }
         return true
     }
 
     fun awaitUpdateInstallPermission(apkPath: String, message: String? = null) {
-        if (_state.value.updateDownloadedApkPath != apkPath) return
-        _state.update { it.copy(updateAutoInstallPath = null, updateAwaitingInstallPermission = true,
-            updateError = message) }
+        if (_state.value.update.downloadedApkPath != apkPath) return
+        _state.update { it.copy(update = it.update.copy(autoInstallPath = null, awaitingInstallPermission = true, error = message)) }
         persistUpdateInstallState { appUpdateRepository.setAwaitingInstallPermission(apkPath, true) }
     }
 
     fun resumeUpdateInstallAfterPermission(apkPath: String) {
         _state.update {
-            if (it.updateDownloadedApkPath == apkPath && it.updateAwaitingInstallPermission)
-                it.copy(updateAutoInstallPath = apkPath, updateError = null) else it
+            if (it.update.downloadedApkPath == apkPath && it.update.awaitingInstallPermission)
+                it.copy(update = it.update.copy(autoInstallPath = apkPath, error = null)) else it
         }
     }
 
     fun reportUpdateInstallFailure(apkPath: String, message: String, fileMissing: Boolean = false) {
-        _state.update { it.copy(updateAutoInstallPath = null, updateAwaitingInstallPermission = false,
-            updateDownloadedApkPath = if (fileMissing) null else it.updateDownloadedApkPath, updateError = message) }
+        _state.update {
+            it.copy(update = it.update.copy(
+                autoInstallPath = null, awaitingInstallPermission = false,
+                downloadedApkPath = if (fileMissing) null else it.update.downloadedApkPath, error = message,
+            ))
+        }
         persistUpdateInstallState {
             if (fileMissing) appUpdateRepository.forgetDownload(apkPath)
             else appUpdateRepository.setAwaitingInstallPermission(apkPath, false)
@@ -740,30 +754,28 @@ class TvBoxViewModel(
     }
 
     fun beginUpdateApkExport(apkPath: String): Boolean {
-        if (_state.value.updateDownloadedApkPath != apkPath || _state.value.updateExporting) return false
-        _state.update { it.copy(updateAutoInstallPath = null, updateAwaitingInstallPermission = false,
-            updateExporting = true, updateExportMessage = null, updateError = null) }
+        if (_state.value.update.downloadedApkPath != apkPath || _state.value.update.exporting) return false
+        _state.update { it.copy(update = it.update.copy(autoInstallPath = null, awaitingInstallPermission = false, exporting = true, exportMessage = null, error = null)) }
         persistUpdateInstallState { appUpdateRepository.chooseManualInstall(apkPath) }
         return true
     }
 
     fun cancelUpdateApkExport(message: String = "已取消保存，安装包仍保留") {
-        _state.update { it.copy(updateExporting = false, updateExportMessage = message) }
+        _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = message)) }
     }
 
     fun saveUpdateApk(apkPath: String, destination: android.net.Uri?) {
-        _state.update { it.copy(updateExporting = true, updateExportMessage = null) }
+        _state.update { it.copy(update = it.update.copy(exporting = true, exportMessage = null)) }
         viewModelScope.launch {
             try {
                 updateInstallStateJob?.join()
                 val location = appUpdateRepository.exportUpdateApk(apkPath, destination)
-                _state.update { it.copy(updateExporting = false,
-                    updateExportMessage = "已保存：$location。请通过文件管理器打开安装") }
+                _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = "已保存：$location。请通过文件管理器打开安装")) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 android.util.Log.w("TVBoxUpdate", "Unable to export update APK", error)
-                _state.update { it.copy(updateExporting = false, updateExportMessage = "保存失败：${error.userMessage()}") }
+                _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = "保存失败：${error.userMessage()}")) }
             }
         }
     }
