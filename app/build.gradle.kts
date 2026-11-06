@@ -49,8 +49,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.3.44"
-val TVBOX_VERSION_CODE = 10344
+val TVBOX_VERSION_NAME = "1.3.45"
+val TVBOX_VERSION_CODE = 10345
 
 android {
     namespace = "com.tvbox.app"

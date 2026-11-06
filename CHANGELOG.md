@@ -1,3 +1,10 @@
+## v1.3.45 - 2026-11-06
+
+- 新增「短剧」栏：手机端底部导航新增入口，支持分类浏览、滚动加载、详情页与选集。
+- 短剧数据源接入红果短剧网页（参考 minireel-tv 实现思路，Kotlin 侧重写）：解析页面内联 `_ROUTER_DATA`，取 `category_page.recommendList` 与 `detail_page.seriesDetail`（分集按 `vid_list` 顺序）。
+- 短剧取流：优先探测站点公开直链 `/video/public/{vid}/{quality}.mp4`，失败回退代理接口；均不可用时给出可读降级提示，不阻塞列表与详情浏览。
+- 已知限制：受源侧试看/付费策略约束（`accessible_episode_cnt` 通常为 3），实测每部剧仅首集有可用直链，第 2 集起无媒体地址、第 4 集起播放页 404；全集播放需登录态或付费解锁，本版本未接入。
+
 ## v1.3.44 - 2026-11-06
 
 - 构建修复：`resConfigs(listOf("zh"))` 在 AGP 9 已弃用，改用 `androidResources.localeFilters`，消除配置阶段弃用告警，语言资源裁剪行为不变。
