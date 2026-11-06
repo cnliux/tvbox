@@ -54,7 +54,7 @@ fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
 
 /**
  * 按优先级为频道查找节目单：
- * 频道名精确（忽略大小写与全/半角空格）→ 频道名去空格 → logoId → 分组名+频道名组合键。
+ * 频道名精确（忽略大小写与全/半角空格）→ 频道名去空格 → 频道 id（`tvg-id`）→ 分组名+频道名组合键。
  * 命中返回该列表，否则 emptyList。
  */
 fun findEpgPrograms(

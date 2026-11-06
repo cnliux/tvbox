@@ -147,8 +147,9 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
                         headers = pendingHeaders,
                     )
                 }
-                // 同一频道多行时取第一个非空 tvg-logo。
+                // 同一频道多行时取第一个非空 tvg-logo / tvg-id。
                 if (aggregated.logo.isBlank()) aggregated.logo = metadata.logo
+                if (aggregated.tvgId.isBlank()) aggregated.tvgId = metadata.tvgId
                 pendingChannel = null
                 pendingHeaders = emptyMap()
             }
@@ -166,6 +167,7 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
             name = entry.key.channelName,
             lines = entry.value.lines.toList(),
             logo = entry.value.logo,
+            tvgId = entry.value.tvgId,
         )
     }
 }
@@ -188,6 +190,7 @@ private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
         logo = extractM3uAttribute("tvg-logo")
             .ifBlank { extractM3uAttribute("tvg-icon") }
             .ifBlank { extractM3uAttribute("logo") },
+        tvgId = extractM3uAttribute("tvg-id"),
     )
 }
 
@@ -238,10 +241,11 @@ private data class LiveChannelKey(
     val channelName: String,
 )
 
-/** 解析期聚合体：同一频道的多线路 + 第一个非空台标。 */
+/** 解析期聚合体：同一频道的多线路 + 第一个非空台标 / tvg-id。 */
 private class AggregatedChannel(
     val lines: MutableList<LiveChannelLine> = mutableListOf(),
     var logo: String = "",
+    var tvgId: String = "",
 )
 
 private data class M3uChannelMetadata(
@@ -250,6 +254,8 @@ private data class M3uChannelMetadata(
     val lineName: String = "",
     /** `tvg-logo`（兼容 `tvg-icon` / `logo`）台标 URL；空表示源未提供。 */
     val logo: String = "",
+    /** `tvg-id`：节目单匹配用的 XMLTV 频道 id；空表示源未提供。 */
+    val tvgId: String = "",
 )
 
 private data class ParsedLiveChannelLine(

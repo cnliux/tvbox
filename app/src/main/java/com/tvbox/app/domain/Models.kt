@@ -75,6 +75,11 @@ data class LiveChannel(
     val lines: List<LiveChannelLine>,
     /** 频道台标 URL，来自 M3U `tvg-logo` 等源扩展字段；空表示无台标，UI 需降级为首字占位。 */
     val logo: String = "",
+    /**
+     * XMLTV 频道 id，来自 M3U `tvg-id`。节目单是按 XMLTV id/显示名建键的，
+     * 用它匹配比拿台标 URL 去查可靠；空表示源未提供。
+     */
+    val tvgId: String = "",
 )
 
 data class LiveChannelLine(

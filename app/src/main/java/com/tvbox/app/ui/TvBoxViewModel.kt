@@ -2266,7 +2266,8 @@ class TvBoxViewModel(
             map = _state.value.live.epgByChannel,
             groupName = channel.groupName,
             channelName = channel.name,
-            logoId = channel.logo,
+            // 台标 URL 不可能是 XMLTV 频道 id，改传源里声明的 tvg-id。
+            logoId = channel.tvgId,
         )
 
     /** 某频道当前正在播出的节目；无节目单或不在播出时段返回 null。 */
