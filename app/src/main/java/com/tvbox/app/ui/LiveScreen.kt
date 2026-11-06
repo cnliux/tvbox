@@ -116,6 +116,8 @@ fun LiveScreen(
 ) {
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, null)
+    // 兼容委托 getter 不支持智能转换，先取局部快照再判空。
+    val liveError = state.liveError
     PageSurface { padding ->
         when {
             // 加载态用红色进度环（与直播页强调色一致），文案按"正在加载 <频道/直播源>"。
@@ -123,8 +125,8 @@ fun LiveScreen(
                 text = "正在加载直播源...",
                 modifier = Modifier.padding(padding),
             )
-            state.liveError != null -> ErrorState(
-                message = state.liveError,
+            liveError != null -> ErrorState(
+                message = liveError,
                 onRetry = actions::refreshLive,
                 modifier = Modifier.padding(padding),
             )

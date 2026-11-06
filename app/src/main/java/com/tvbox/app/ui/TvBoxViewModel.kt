@@ -176,34 +176,7 @@ data class TvBoxUiState(
     val playerStartPositionMs: Long = 0L,
     val playerSpeed: Float = 1f,
     val playerPlayWhenReady: Boolean = true,
-    val liveChannels: List<LiveChannel> = emptyList(),
-    val liveChannelIndex: Int = 0,
-    val liveLineIndex: Int = 0,
-    /** 直播分类在当前频道列表中的下标；0 表示“全部”，其余按下标过滤分组。 */
-    val liveGroupIndex: Int = 0,
-    /** 当前选中的订阅地址下标（-1 表示使用全部订阅地址合并加载）。 */
-    val liveSelectedSourceIndex: Int = -1,
-    val liveLoading: Boolean = false,
-    val liveError: String? = null,
-    /** 直播页轻提示（自动切线路结果、订阅切换结果等）；由 UI 消费后清空。 */
-    val liveNotice: String? = null,
-    /** 原地重连当前线路的触发计数（不改变 URL，仅让播放页重新 prepare）。 */
-    val liveReconnectNonce: Int = 0,
-    /** 直播面板两级层级：分类列表 / 频道列表。 */
-    val liveGroupPanelStage: LiveGroupStage = LiveGroupStage.Groups,
-    val liveFavoriteChannelNumbers: Set<Int> = emptySet(),
-    /** 电视直播收藏键集合（`分组#频道名`），持久化于 LiveFavoritesRepository；旧频道号集合保留兼容。 */
-    val liveFavoriteKeys: Set<String> = emptySet(),
-    /** XMLTV 节目单：key 为频道 id / display-name，value 按开始时间升序。 */
-    val liveEpgByChannel: Map<String, List<EpgProgram>> = emptyMap(),
-    /** 节目单是否已完成一次拉取（无论成败），避免反复重试慢源。 */
-    val liveEpgLoaded: Boolean = false,
-    /** 当前生效的「源自带 EPG 地址」，用于换源时判断是否需要重新采用。 */
-    val liveEpgBundledUrl: String = "",
-    /** 当前频道各线路的首包延迟（url → 毫秒）；null 值表示测速超时/不可达。 */
-    val liveLineLatencies: Map<String, Long?> = emptyMap(),
-    /** 线路测速是否进行中，供线路浮层展示"测速中"。 */
-    val liveLineTesting: Boolean = false,
+    val live: LiveUiState = LiveUiState(),
     val platformLive: PlatformLiveUiState = PlatformLiveUiState(),
     val update: UpdateUiState = UpdateUiState(),
     val appSettings: AppSettings = AppSettings(),
@@ -238,6 +211,24 @@ data class TvBoxUiState(
     val detailSourceMessage: String? get() = source.detailMessage
     val sourceImporting: Boolean get() = source.importing
     val sourceImportMessage: String? get() = source.importMessage
+
+    val liveChannels: List<LiveChannel> get() = live.channels
+    val liveChannelIndex: Int get() = live.channelIndex
+    val liveLineIndex: Int get() = live.lineIndex
+    val liveGroupIndex: Int get() = live.groupIndex
+    val liveSelectedSourceIndex: Int get() = live.selectedSourceIndex
+    val liveLoading: Boolean get() = live.loading
+    val liveError: String? get() = live.error
+    val liveNotice: String? get() = live.notice
+    val liveReconnectNonce: Int get() = live.reconnectNonce
+    val liveGroupPanelStage: LiveGroupStage get() = live.groupPanelStage
+    val liveFavoriteChannelNumbers: Set<Int> get() = live.favoriteChannelNumbers
+    val liveFavoriteKeys: Set<String> get() = live.favoriteKeys
+    val liveEpgByChannel: Map<String, List<EpgProgram>> get() = live.epgByChannel
+    val liveEpgLoaded: Boolean get() = live.epgLoaded
+    val liveEpgBundledUrl: String get() = live.epgBundledUrl
+    val liveLineLatencies: Map<String, Long?> get() = live.lineLatencies
+    val liveLineTesting: Boolean get() = live.lineTesting
 
     val platformLiveDestination: PlatformLiveDestination get() = platformLive.destination
     val platformLiveSites: List<PlatformLiveSite> get() = platformLive.sites
@@ -559,8 +550,8 @@ class TvBoxViewModel(
     }
 
     fun openLive() {
-        _state.update { it.copy(screen = TvScreen.Live, liveError = null) }
-        if (_state.value.liveChannels.isEmpty()) {
+        _state.update { it.copy(screen = TvScreen.Live, live = it.live.copy(error = null)) }
+        if (_state.value.live.channels.isEmpty()) {
             loadLiveChannels()
         }
     }
@@ -590,7 +581,12 @@ class TvBoxViewModel(
     }
 
     fun openLiveSourceManager() {
-        _state.update { it.copy(screen = TvScreen.LiveSourceManager, liveChannels = emptyList(), liveError = null) }
+        _state.update {
+            it.copy(
+                screen = TvScreen.LiveSourceManager,
+                live = it.live.copy(channels = emptyList(), error = null),
+            )
+        }
         viewModelScope.launch {
             runCatching { platformLiveRepository.getSites() }
                 .onSuccess { sites ->
@@ -1532,15 +1528,17 @@ class TvBoxViewModel(
     fun playNextLiveChannel() {
         lastExhaustedChannelNumber = null
         _state.update { state ->
-            val channels = state.liveChannels
+            val channels = state.live.channels
             if (channels.isEmpty()) return@update state
-            val nextIndex = (state.liveChannelIndex + 1) % channels.size
+            val nextIndex = (state.live.channelIndex + 1) % channels.size
             val channel = channels[nextIndex]
             val targetLineIndex = state.rememberedLineIndexOf(channel)
             android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】next channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
             state.copy(
-                liveChannelIndex = nextIndex,
-                liveLineIndex = targetLineIndex,
+                live = state.live.copy(
+                    channelIndex = nextIndex,
+                    lineIndex = targetLineIndex,
+                ),
             )
         }
     }
@@ -1548,15 +1546,17 @@ class TvBoxViewModel(
     fun playPreviousLiveChannel() {
         lastExhaustedChannelNumber = null
         _state.update { state ->
-            val channels = state.liveChannels
+            val channels = state.live.channels
             if (channels.isEmpty()) return@update state
-            val previousIndex = if (state.liveChannelIndex <= 0) channels.lastIndex else state.liveChannelIndex - 1
+            val previousIndex = if (state.live.channelIndex <= 0) channels.lastIndex else state.live.channelIndex - 1
             val channel = channels[previousIndex]
             val targetLineIndex = state.rememberedLineIndexOf(channel)
             android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】previous channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
             state.copy(
-                liveChannelIndex = previousIndex,
-                liveLineIndex = targetLineIndex,
+                live = state.live.copy(
+                    channelIndex = previousIndex,
+                    lineIndex = targetLineIndex,
+                ),
             )
         }
     }
@@ -1627,14 +1627,14 @@ class TvBoxViewModel(
     /** 手动切换线路后清零卡顿计数，避免旧线路的失败次数影响新线路。 */
     fun playNextLiveLine(): Boolean {
         val state = _state.value
-        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return false
         val lines = channel.lines
         if (lines.size <= 1) return false
         liveStallRetries = 0
-        val newIndex = (state.liveLineIndex + 1) % lines.size
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.liveLineIndex}, to=$newIndex, url=${lines[newIndex].url}")
+        val newIndex = (state.live.lineIndex + 1) % lines.size
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${lines[newIndex].url}")
         _state.update {
-            it.copy(liveLineIndex = newIndex)
+            it.copy(live = it.live.copy(lineIndex = newIndex))
         }
         liveLinePrefs?.saveLineIndex(channel.key(), newIndex)
         return true
@@ -1643,33 +1643,33 @@ class TvBoxViewModel(
     /** 手动切换线路后清零卡顿计数，避免旧线路的失败次数影响新线路。 */
     fun playPreviousLiveLine(): Boolean {
         val state = _state.value
-        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return false
         val lines = channel.lines
         if (lines.size <= 1) return false
         liveStallRetries = 0
-        val previousIndex = if (state.liveLineIndex <= 0) lines.lastIndex else state.liveLineIndex - 1
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.liveLineIndex}, to=$previousIndex, url=${lines[previousIndex].url}")
+        val previousIndex = if (state.live.lineIndex <= 0) lines.lastIndex else state.live.lineIndex - 1
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${lines[previousIndex].url}")
         _state.update {
-            it.copy(liveLineIndex = previousIndex)
+            it.copy(live = it.live.copy(lineIndex = previousIndex))
         }
         liveLinePrefs?.saveLineIndex(channel.key(), previousIndex)
         return true
     }
 
     /**
-     * 对当前频道的所有线路发起首包测速，结果写入 [TvBoxUiState.liveLineLatencies]。
+     * 对当前频道的所有线路发起首包测速，结果写入 [LiveUiState.lineLatencies]。
      *
      * 在线路浮层展开时调用：让用户按实际延迟挑线路，而不是逐条点播试错。
      * 并发执行但每条独立失败（超时记 null），不阻塞播放，也不改变当前线路。
      */
     fun testLiveChannelLines() {
         val state = _state.value
-        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return
         val lines = channel.lines
         if (lines.isEmpty()) return
-        if (state.liveLineTesting) return
+        if (state.live.lineTesting) return
         // 新频道/新测速：清掉上一轮结果，避免旧延迟误导用户。
-        _state.update { it.copy(liveLineTesting = true, liveLineLatencies = emptyMap()) }
+        _state.update { it.copy(live = it.live.copy(lineTesting = true, lineLatencies = emptyMap())) }
         liveLineTestJob?.cancel()
         liveLineTestJob = viewModelScope.launch {
             android.util.Log.i(VM_LIVE_LOG_TAG, "【线路测速】开始 channel=${channel.name}, lines=${lines.size}")
@@ -1686,18 +1686,18 @@ class TvBoxViewModel(
                 "【线路测速】完成 channel=${channel.name}, " +
                     results.entries.joinToString { (url, ms) -> "${url.takeLast(18)}=${ms?.let { "${it}ms" } ?: "超时"}" },
             )
-            _state.update { it.copy(liveLineLatencies = results, liveLineTesting = false) }
+            _state.update { it.copy(live = it.live.copy(lineLatencies = results, lineTesting = false)) }
         }
     }
 
     fun selectLiveLine(lineIndex: Int) {
         val state = _state.value
-        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return
         if (lineIndex !in channel.lines.indices) return
-        if (lineIndex == state.liveLineIndex) return
+        if (lineIndex == state.live.lineIndex) return
         liveStallRetries = 0
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.liveLineIndex}, to=$lineIndex, url=${channel.lines[lineIndex].url}")
-        _state.update { it.copy(liveLineIndex = lineIndex) }
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${channel.lines[lineIndex].url}")
+        _state.update { it.copy(live = it.live.copy(lineIndex = lineIndex)) }
         liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
     }
 
@@ -1712,26 +1712,26 @@ class TvBoxViewModel(
      */
     fun advanceLiveLineAfterFailure(reason: LiveLineFallbackReason): Boolean {
         val state = _state.value
-        val channel = state.liveChannels.getOrNull(state.liveChannelIndex) ?: return false
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return false
         val lines = channel.lines
         if (reason != LiveLineFallbackReason.Error) {
             liveStallRetries += 1
             if (liveStallRetries < LIVE_STALL_RETRY_BEFORE_SWITCH) {
                 android.util.Log.w(
                     VM_LIVE_LOG_TAG,
-                    "【自动容错】reason=$reason 第 $liveStallRetries/$LIVE_STALL_RETRY_BEFORE_SWITCH 次原地重连当前线路 ${state.liveLineIndex + 1}",
+                    "【自动容错】reason=$reason 第 $liveStallRetries/$LIVE_STALL_RETRY_BEFORE_SWITCH 次原地重连当前线路 ${state.live.lineIndex + 1}",
                 )
-                _state.update { it.copy(liveReconnectNonce = it.liveReconnectNonce + 1) }
+                _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
                 return true
             }
         }
         liveStallRetries = 0
         // 域名评分：本次失败先记到当前线路的域名上，下次进台排序时会被压低。
         recordLiveLineFailure(state)
-        val nextIndex = state.liveLineIndex + 1
+        val nextIndex = state.live.lineIndex + 1
         android.util.Log.w(
             VM_LIVE_LOG_TAG,
-            "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.liveLineIndex}, nextLine=$nextIndex, totalLines=${lines.size}",
+            "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.live.lineIndex}, nextLine=$nextIndex, totalLines=${lines.size}",
         )
         if (nextIndex !in lines.indices) {
             // 所有线路均已尝试过，停止循环并提示用户。
@@ -1739,13 +1739,13 @@ class TvBoxViewModel(
             if (lastExhaustedChannelNumber != channelNumber) {
                 lastExhaustedChannelNumber = channelNumber
                 _state.update {
-                    it.copy(liveNotice = "频道 ${channelNumber} 所有线路均不可用，请换台或检查直播源")
+                    it.copy(live = it.live.copy(notice = "频道 ${channelNumber} 所有线路均不可用，请换台或检查直播源"))
                 }
             }
             android.util.Log.w(VM_LIVE_LOG_TAG, "【自动容错】频道 ${channel.name} 所有线路已用尽，停止切换")
             return false
         }
-        _state.update { it.copy(liveLineIndex = nextIndex) }
+        _state.update { it.copy(live = it.live.copy(lineIndex = nextIndex)) }
         if (reason == LiveLineFallbackReason.Error) {
             liveLinePrefs?.saveLineIndex(channel.key(), nextIndex)
         }
@@ -1755,17 +1755,17 @@ class TvBoxViewModel(
 
     /** 播放中断后的原地重连（不换线路）：bump nonce 让播放页对当前 URL 重新 prepare。 */
     fun reconnectLiveLine() {
-        _state.update { it.copy(liveReconnectNonce = it.liveReconnectNonce + 1) }
+        _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
     }
 
     /** 消费一次性轻提示（自动切线路/订阅切换结果）。 */
     fun consumeLiveNotice() {
-        if (_state.value.liveNotice == null) return
-        _state.update { it.copy(liveNotice = null) }
+        if (_state.value.live.notice == null) return
+        _state.update { it.copy(live = it.live.copy(notice = null)) }
     }
 
     fun reportLiveNotice(message: String) {
-        _state.update { it.copy(liveNotice = message) }
+        _state.update { it.copy(live = it.live.copy(notice = message)) }
     }
 
     /**
@@ -1788,8 +1788,8 @@ class TvBoxViewModel(
         }
         // 域名评分：同一 CDN 域名下所有频道的成败累计，供下次选线时优先排序。
         val state = _state.value
-        val url = state.liveChannels.getOrNull(state.liveChannelIndex)
-            ?.lines?.getOrNull(state.liveLineIndex)?.url
+        val url = state.live.channels.getOrNull(state.live.channelIndex)
+            ?.lines?.getOrNull(state.live.lineIndex)?.url
         val domain = url?.let { liveLineDomain(it) }
         if (domain != null && domain != lastScoredDomain) {
             lastScoredDomain = domain
@@ -1970,19 +1970,21 @@ class TvBoxViewModel(
         liveStallRetries = 0
         lastExhaustedChannelNumber = null
         _state.update { state ->
-            val channels = state.liveChannels
+            val channels = state.live.channels
             if (channels.isEmpty()) return@update state
             val safeIndex = index.coerceIn(0, channels.lastIndex)
             val channel = channels[safeIndex]
             state.copy(
-                liveChannelIndex = safeIndex,
-                liveLineIndex = state.rememberedLineIndexOf(channel),
+                live = state.live.copy(
+                    channelIndex = safeIndex,
+                    lineIndex = state.rememberedLineIndexOf(channel),
+                ),
             )
         }
     }
 
     /** 当前频道列表的分组名（按出现顺序去重），供两级面板展示。 */
-    fun liveGroupNames(): List<String> = _state.value.liveChannels
+    fun liveGroupNames(): List<String> = _state.value.live.channels
         .map { it.groupName }
         .distinct()
 
@@ -1994,21 +1996,23 @@ class TvBoxViewModel(
      */
     fun selectLiveGroup(index: Int) {
         _state.update { state ->
-            val channels = state.liveChannels
+            val channels = state.live.channels
             val groups = channels.map { it.groupName }.distinct()
             if (groups.isEmpty()) return@update state
             val safeIndex = index.coerceIn(0, groups.size)
             val targetChannel = if (safeIndex == 0) {
-                state.liveChannelIndex.coerceIn(0, channels.lastIndex)
+                state.live.channelIndex.coerceIn(0, channels.lastIndex)
             } else {
                 val groupName = groups[safeIndex - 1]
                 channels.indexOfFirst { it.groupName == groupName }.coerceAtLeast(0)
             }
             val channel = channels.getOrNull(targetChannel)
             state.copy(
-                liveGroupIndex = safeIndex,
-                liveChannelIndex = targetChannel,
-                liveLineIndex = channel?.let { state.rememberedLineIndexOf(it) } ?: 0,
+                live = state.live.copy(
+                    groupIndex = safeIndex,
+                    channelIndex = targetChannel,
+                    lineIndex = channel?.let { state.rememberedLineIndexOf(it) } ?: 0,
+                ),
             )
         }
     }
@@ -2017,7 +2021,7 @@ class TvBoxViewModel(
     fun cycleLiveGroup(delta: Int) {
         val groups = liveGroupNames()
         if (groups.isEmpty()) return
-        val current = _state.value.liveGroupIndex
+        val current = _state.value.live.groupIndex
         val total = groups.size + 1
         val next = (((current + delta) % total) + total) % total
         selectLiveGroup(next)
@@ -2031,49 +2035,51 @@ class TvBoxViewModel(
         val groups = liveGroupNames()
         val safeIndex = index.coerceIn(0, groups.size)
         android.util.Log.d(VM_LIVE_LOG_TAG, "【两级交互】进入分类 index=$safeIndex, name=${groups.getOrNull(safeIndex - 1) ?: "全部"}")
-        if (_state.value.liveGroupPanelStage == LiveGroupStage.Channels &&
-            _state.value.liveGroupIndex == safeIndex
+        if (_state.value.live.groupPanelStage == LiveGroupStage.Channels &&
+            _state.value.live.groupIndex == safeIndex
         ) {
             return
         }
         _state.update {
             it.copy(
-                liveGroupIndex = safeIndex,
-                liveGroupPanelStage = LiveGroupStage.Channels,
+                live = it.live.copy(
+                    groupIndex = safeIndex,
+                    groupPanelStage = LiveGroupStage.Channels,
+                ),
             )
         }
     }
 
     /** 两级交互：从频道列表返回分类列表。 */
     fun backToLiveGroups() {
-        _state.update { it.copy(liveGroupPanelStage = LiveGroupStage.Groups) }
+        _state.update { it.copy(live = it.live.copy(groupPanelStage = LiveGroupStage.Groups)) }
     }
 
     /** 两级交互：每次打开直播面板都从分类层级开始，避免直接落在频道长列表上。 */
     fun showLivePanelGroups() {
-        if (_state.value.liveGroupPanelStage != LiveGroupStage.Groups) {
-            _state.update { it.copy(liveGroupPanelStage = LiveGroupStage.Groups) }
+        if (_state.value.live.groupPanelStage != LiveGroupStage.Groups) {
+            _state.update { it.copy(live = it.live.copy(groupPanelStage = LiveGroupStage.Groups)) }
         }
     }
 
     /** 收藏/取消收藏当前播放的直播频道（通过频道号）。 */
     fun toggleLiveFavorite(channelNumber: Int) {
         val current = _state.value
-        val favorites = current.liveFavoriteChannelNumbers.toMutableSet()
+        val favorites = current.live.favoriteChannelNumbers.toMutableSet()
         if (favorites.contains(channelNumber)) {
             favorites.remove(channelNumber)
         } else {
             favorites.add(channelNumber)
         }
         _state.update {
-            it.copy(liveFavoriteChannelNumbers = favorites)
+            it.copy(live = it.live.copy(favoriteChannelNumbers = favorites))
         }
     }
 
     /**
      * 收藏/取消收藏直播频道（按 `分组#频道名` 键，跨源刷新不丢失）。
      *
-     * 有持久化仓库时异步落盘并以仓库返回值刷新 [TvBoxUiState.liveFavoriteKeys]；
+     * 有持久化仓库时异步落盘并以仓库返回值刷新 [LiveUiState.favoriteKeys]；
      * 仓库缺失时退回旧的仅内存 Set 语义（按键增删）。
      */
     fun toggleLiveFavorite(channel: LiveChannel) {
@@ -2081,28 +2087,28 @@ class TvBoxViewModel(
         val repository = liveFavoritesRepository
         if (repository == null) {
             _state.update { state ->
-                val favorites = state.liveFavoriteKeys.toMutableSet()
+                val favorites = state.live.favoriteKeys.toMutableSet()
                 if (!favorites.remove(key)) favorites += key
-                state.copy(liveFavoriteKeys = favorites)
+                state.copy(live = state.live.copy(favoriteKeys = favorites))
             }
             return
         }
         viewModelScope.launch {
             liveFavoritesMutex.withLock {
                 runCatching { repository.toggleFavorite(channel.groupName, channel.name) }
-                    .onSuccess { keys -> _state.update { it.copy(liveFavoriteKeys = keys) } }
+                    .onSuccess { keys -> _state.update { it.copy(live = it.live.copy(favoriteKeys = keys)) } }
             }
         }
     }
 
     /** 某频道是否已收藏（按 `分组#频道名` 键）。 */
     fun isLiveFavorite(channel: LiveChannel): Boolean =
-        _state.value.liveFavoriteKeys.contains(liveFavoriteKey(channel.groupName, channel.name))
+        _state.value.live.favoriteKeys.contains(liveFavoriteKey(channel.groupName, channel.name))
 
     /** 某频道的完整节目单（已按开始时间升序）；未配置/未命中返回空列表。 */
     fun liveEpgPrograms(channel: LiveChannel): List<EpgProgram> =
         findEpgPrograms(
-            map = _state.value.liveEpgByChannel,
+            map = _state.value.live.epgByChannel,
             groupName = channel.groupName,
             channelName = channel.name,
             logoId = channel.logo,
@@ -2126,7 +2132,10 @@ class TvBoxViewModel(
         if (_state.value.appSettings.epgUrl == trimmed) return
         val settings = _state.value.appSettings.copy(epgUrl = trimmed)
         _state.update {
-            it.copy(appSettings = settings, liveEpgByChannel = emptyMap(), liveEpgLoaded = false)
+            it.copy(
+                appSettings = settings,
+                live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false),
+            )
         }
         saveSettings(settings)
         viewModelScope.launch { appSettingsRepository.commitEpgUrl(trimmed) }
@@ -2150,13 +2159,20 @@ class TvBoxViewModel(
     fun selectLiveSource(index: Int) {
         val labels = liveSourceLabels()
         if (index !in labels.indices) return
-        if (index == _state.value.liveSelectedSourceIndex) return
+        if (index == _state.value.live.selectedSourceIndex) return
         val previousGroup = _state.value.let { state ->
-            val groups = state.liveChannels.map { it.groupName }.distinct()
-            groups.getOrNull(state.liveGroupIndex - 1)
+            val groups = state.live.channels.map { it.groupName }.distinct()
+            groups.getOrNull(state.live.groupIndex - 1)
         }
         pendingLiveGroupRestore = previousGroup
-        _state.update { it.copy(liveSelectedSourceIndex = index, liveNotice = "正在切换订阅：${labels[index]}") }
+        _state.update {
+            it.copy(
+                live = it.live.copy(
+                    selectedSourceIndex = index,
+                    notice = "正在切换订阅：${labels[index]}",
+                ),
+            )
+        }
         liveRepository.setSourceSelection(index - 1)
         refreshLive()
     }
@@ -2165,14 +2181,14 @@ class TvBoxViewModel(
     fun cycleLiveSource(delta: Int) {
         val labels = liveSourceLabels()
         if (labels.size <= 1) return
-        val current = _state.value.liveSelectedSourceIndex.coerceAtLeast(0)
+        val current = _state.value.live.selectedSourceIndex.coerceAtLeast(0)
         val next = ((current + delta) % labels.size + labels.size) % labels.size
         selectLiveSource(next)
     }
 
     fun selectLiveChannelNumber(number: Int): Boolean {
         val index = number - 1
-        val channels = _state.value.liveChannels
+        val channels = _state.value.live.channels
         if (index !in channels.indices) return false
         selectLiveChannel(index)
         return true
@@ -3504,8 +3520,8 @@ class TvBoxViewModel(
 
     /** 记录当前线路的一次播放失败到域名评分表（错误/卡死/结束都会走到这里）。 */
     private fun recordLiveLineFailure(state: TvBoxUiState) {
-        val url = state.liveChannels.getOrNull(state.liveChannelIndex)
-            ?.lines?.getOrNull(state.liveLineIndex)?.url ?: return
+        val url = state.live.channels.getOrNull(state.live.channelIndex)
+            ?.lines?.getOrNull(state.live.lineIndex)?.url ?: return
         val domain = liveLineDomain(url) ?: return
         liveDomainScores?.record(domain, success = false)
     }
@@ -3516,8 +3532,7 @@ class TvBoxViewModel(
             _state.update {
                 it.copy(
                     screen = TvScreen.Live,
-                    liveLoading = true,
-                    liveError = null,
+                    live = it.live.copy(loading = true, error = null),
                 )
             }
             runCatching { liveRepository.getChannels() }
@@ -3525,11 +3540,11 @@ class TvBoxViewModel(
                     _state.update {
                         // 重新加载后按频道恢复上次成功播放的线路；线路数变少时回退到第 1 条。
                         val rememberedLine = channels.getOrNull(
-                            it.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0)),
+                            it.live.channelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0)),
                         )?.let { channel ->
                             liveLinePrefs?.getSavedLineIndex(channel.key()) ?: -1
                         } ?: -1
-                        val lineCount = channels.getOrNull(it.liveChannelIndex)?.lines?.size ?: 0
+                        val lineCount = channels.getOrNull(it.live.channelIndex)?.lines?.size ?: 0
                         // 订阅切换：尽量保持原分类名；新订阅没有该分类时回"全部"。
                         val groups = channels.map { channel -> channel.groupName }.distinct()
                         val restoreGroup = pendingLiveGroupRestore
@@ -3538,10 +3553,10 @@ class TvBoxViewModel(
                             val idx = groups.indexOf(restoreGroup)
                             if (idx >= 0) idx + 1 else 0
                         } else {
-                            it.liveGroupIndex.coerceAtMost(groups.size)
+                            it.live.groupIndex.coerceAtMost(groups.size)
                         }
                         val targetChannel = if (groupIndex == 0) {
-                            it.liveChannelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0))
+                            it.live.channelIndex.coerceIn(0, (channels.lastIndex).coerceAtLeast(0))
                         } else {
                             channels.indexOfFirst { channel -> channel.groupName == groups[groupIndex - 1] }
                                 .coerceAtLeast(0)
@@ -3549,13 +3564,15 @@ class TvBoxViewModel(
                         val targetLine = channels.getOrNull(targetChannel)
                             ?.let { channel -> it.rememberedLineIndexOf(channel) } ?: 0
                         it.copy(
-                            liveChannels = channels,
-                            liveChannelIndex = targetChannel,
-                            liveLineIndex = if (rememberedLine in 0 until lineCount && targetChannel == it.liveChannelIndex) rememberedLine else targetLine,
-                            liveGroupIndex = groupIndex,
-                            liveLoading = false,
-                            liveNotice = restoreGroup?.let { _ -> "已切换订阅" } ?: it.liveNotice,
-                            liveError = if (channels.isEmpty()) "没有可用直播频道" else null,
+                            live = it.live.copy(
+                                channels = channels,
+                                channelIndex = targetChannel,
+                                lineIndex = if (rememberedLine in 0 until lineCount && targetChannel == it.live.channelIndex) rememberedLine else targetLine,
+                                groupIndex = groupIndex,
+                                loading = false,
+                                notice = restoreGroup?.let { _ -> "已切换订阅" } ?: it.live.notice,
+                                error = if (channels.isEmpty()) "没有可用直播频道" else null,
+                            ),
                         )
                     }
                     // 源自带 EPG（M3U 头部 url-tvg 等）：用户未显式配置时自动采用，
@@ -3567,8 +3584,7 @@ class TvBoxViewModel(
                 .onFailure { error ->
                     _state.update {
                         it.copy(
-                            liveLoading = false,
-                            liveError = error.userMessage(),
+                            live = it.live.copy(loading = false, error = error.userMessage()),
                         )
                     }
                 }
@@ -3693,7 +3709,7 @@ class TvBoxViewModel(
         viewModelScope.launch {
             liveFavoritesMutex.withLock {
                 runCatching { repository.getFavoriteKeys() }
-                    .onSuccess { keys -> _state.update { it.copy(liveFavoriteKeys = keys) } }
+                    .onSuccess { keys -> _state.update { it.copy(live = it.live.copy(favoriteKeys = keys)) } }
             }
         }
     }
@@ -3708,12 +3724,14 @@ class TvBoxViewModel(
         val bundled = liveRepository.bundledEpgUrl?.trim().orEmpty()
         val current = _state.value
         // 换源后旧源的自带地址必须失效：新源没有 url-tvg 时回退到"未配置"。
-        if (bundled == current.liveEpgBundledUrl) return
+        if (bundled == current.live.epgBundledUrl) return
         _state.update {
             it.copy(
-                liveEpgBundledUrl = bundled,
-                liveEpgByChannel = emptyMap(),
-                liveEpgLoaded = false,
+                live = it.live.copy(
+                    epgBundledUrl = bundled,
+                    epgByChannel = emptyMap(),
+                    epgLoaded = false,
+                ),
             )
         }
         // 只作为"用户未配置时的回退值"，绝不写入 appSettings，避免被其它保存动作落盘，
@@ -3723,23 +3741,23 @@ class TvBoxViewModel(
 
     /** 当前实际使用的 EPG 地址：用户配置优先，其次源自带（M3U 头部 url-tvg）。 */
     private fun effectiveEpgUrl(state: TvBoxUiState): String =
-        resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.liveEpgBundledUrl)
+        resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl)
 
     /**
      * 拉取 XMLTV 节目单全量 Map 存入状态；EPG 是增强项：
      * 未配置地址直接返回，失败静默并标记已加载，避免反复重试慢源。
-     * [force] 为 true 时忽略 [TvBoxUiState.liveEpgLoaded] 重新拉取（保存新地址时用）。
+     * [force] 为 true 时忽略 [LiveUiState.epgLoaded] 重新拉取（保存新地址时用）。
      */
     private fun loadLiveEpg(force: Boolean = false) {
         val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
-        if (!force && _state.value.liveEpgLoaded) return
+        if (!force && _state.value.live.epgLoaded) return
         epgJob = relaunch(epgJob) {
             val programs = runCatching { epgRepository.fetch(url) }.getOrDefault(emptyMap())
             _state.update { state ->
                 // 地址在拉取期间被改掉时丢弃本次结果。
                 if (effectiveEpgUrl(state) != url) state
-                else state.copy(liveEpgByChannel = programs, liveEpgLoaded = true)
+                else state.copy(live = state.live.copy(epgByChannel = programs, epgLoaded = true))
             }
         }
     }
