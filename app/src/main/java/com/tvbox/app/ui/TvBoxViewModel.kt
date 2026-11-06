@@ -776,7 +776,14 @@ class TvBoxViewModel(
     }
 
     fun cancelUpdateApkExport(message: String = "已取消保存，安装包仍保留") {
+        val update = _state.value.update
         _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = message)) }
+        val apkPath = update.downloadedApkPath
+        // 仅撤销本次导出写入的“仅手动安装”标记：用户只是放弃保存，不改变后续自动安装行为。
+        // 已成功保存时 exporting 为 false，迟到的取消回调不会误清标记。
+        if (update.exporting && apkPath != null) {
+            persistUpdateInstallState { appUpdateRepository.clearManualInstall(apkPath) }
+        }
     }
 
     fun saveUpdateApk(apkPath: String, destination: android.net.Uri?) {

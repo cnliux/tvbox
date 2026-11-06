@@ -35,6 +35,8 @@ interface AppUpdateRepository {
     suspend fun forgetDownload(apkPath: String) {}
     suspend fun markInstallPrompted(apkPath: String) {}
     suspend fun chooseManualInstall(apkPath: String) {}
+    /** 用户放弃保存安装包时撤销“仅手动安装”标记，恢复后续自动安装行为。 */
+    suspend fun clearManualInstall(apkPath: String) {}
     suspend fun exportUpdateApk(apkPath: String, destination: Uri?): String = throw IOException("暂不支持保存安装包")
 }
 
@@ -241,6 +243,15 @@ class DefaultAppUpdateRepository(
         downloadMutex.withLock {
             readTask()?.takeIf { it.filePath == apkPath }?.let {
                 saveTask(it.copy(manualInstallOnly = true, awaitingInstallPermission = false))
+            }
+        }
+        Unit
+    }
+
+    override suspend fun clearManualInstall(apkPath: String) = withContext(Dispatchers.IO) {
+        downloadMutex.withLock {
+            readTask()?.takeIf { it.filePath == apkPath && it.manualInstallOnly }?.let {
+                saveTask(it.copy(manualInstallOnly = false))
             }
         }
         Unit
