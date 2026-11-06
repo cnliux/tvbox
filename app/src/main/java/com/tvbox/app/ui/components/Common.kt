@@ -670,13 +670,15 @@ fun HistoryItemCard(
 @Composable
 fun PosterImage(movie: Movie, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(8.dp)
+    // 海报可能因防盗链/过期加载失败：失败后与"无海报"同一兜底，避免详情页留下空白方块。
+    var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
     Box(
         modifier = modifier
             .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant),
         contentAlignment = Alignment.Center,
     ) {
-        if (movie.posterUrl.isNotBlank()) {
+        if (movie.posterUrl.isNotBlank() && !posterFailed) {
             val imageLoader = rememberTvImageLoader()
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
@@ -686,6 +688,7 @@ fun PosterImage(movie: Movie, modifier: Modifier = Modifier) {
                     .build(),
                 contentDescription = movie.name,
                 contentScale = ContentScale.Crop,
+                onError = { posterFailed = true },
                 modifier = Modifier.fillMaxSize(),
                 imageLoader = imageLoader,
             )
