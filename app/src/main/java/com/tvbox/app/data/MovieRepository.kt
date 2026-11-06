@@ -1,5 +1,6 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
+import android.util.Log
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.Movie
@@ -62,17 +63,27 @@ class DefaultMovieRepository(
     private val apiFactory: (String) -> MacCmsApi = MacCmsNetwork::api,
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : MovieRepository {
+    @Volatile
     private var customApiLines: List<ApiLine> = emptyList()
+
+    @Volatile
     private var disabledLineIds: Set<String> = emptySet()
     private val categoriesCache = TimedLruCache<List<Category>>(maxEntries = 24)
     private val moviesCache = TimedLruCache<PagedMovies>(maxEntries = 80)
     private val detailsCache = TimedLruCache<Movie?>(maxEntries = 60)
     private val sourceHealth = SourceHealthTracker(nowMs)
 
+    private val TAG = "MovieRepository"
+
     override val allApiLines: List<ApiLine>
         get() = customApiLines
+
     override val apiLines: List<ApiLine>
-        get() = allApiLines.filter { it.id !in disabledLineIds }
+        get() {
+            val lines = customApiLines
+            val disabled = disabledLineIds
+            return lines.filter { it.id !in disabled }
+        }
 
     override fun updateCustomApiLines(customApiLines: List<ApiLine>) {
         this.customApiLines = customApiLines
@@ -213,9 +224,10 @@ class DefaultMovieRepository(
                         }
                     } catch (error: CancellationException) {
                         throw error
-                    } catch (_: Throwable) {
+                    } catch (error: Throwable) {
                         completedNormally = false
                         sourceHealth.recordFailure(line.id)
+                        Log.d(TAG, "search source failed: lineId=${line.id}, type=${error::class.simpleName}")
                         emptyList()
                     }
                     if (completedNormally) {
@@ -277,11 +289,12 @@ class DefaultMovieRepository(
                             }
                     } catch (error: CancellationException) {
                         throw error
-                    } catch (_: Throwable) {
-                            completedNormally = false
-                            sourceHealth.recordFailure(line.id)
-                            null
-                        }
+                    } catch (error: Throwable) {
+                        completedNormally = false
+                        sourceHealth.recordFailure(line.id)
+                        Log.d(TAG, "detail source failed: lineId=${line.id}, type=${error::class.simpleName}")
+                        null
+                    }
                         if (completedNormally) {
                             sourceHealth.recordSuccess(line.id, nowMs() - startedAtMs)
                         }

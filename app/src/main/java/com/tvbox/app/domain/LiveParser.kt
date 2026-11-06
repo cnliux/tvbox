@@ -120,7 +120,8 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
             }
             line.startsWith("#EXTGRP", ignoreCase = true) -> {
                 val grp = line.substringAfter(':', "").substringAfter('=').trim().trim('"')
-                pendingChannel = pendingChannel?.copy(groupName = grp.ifBlank { pendingChannel!!.groupName })
+                val current = pendingChannel ?: return@forEach
+                pendingChannel = current.copy(groupName = grp.ifBlank { current.groupName })
             }
             line.startsWith("#EXTVLCOPT", ignoreCase = true) -> {
                 // 例：#EXTVLCOPT:http-user-agent=Mozilla/5.0

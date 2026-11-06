@@ -153,4 +153,52 @@ class LiveMultiLineParserTest {
         assertEquals("rtmp", channels[0].lines.single().protocolHint)
         assertEquals("flv", channels[1].lines.single().protocolHint)
     }
+
+    @Test
+    fun extGrpAfterExtInfUpdatesGroup() {
+        val channels = parseLiveChannels(
+            """
+            #EXTM3U
+            #EXTINF:-1 group-title="原始分组" tvg-name="测试台",测试台
+            #EXTGRP:覆盖分组
+            https://live.test/a.m3u8
+            """.trimIndent(),
+        )
+
+        val channel = channels.single()
+        assertEquals("测试台", channel.name)
+        assertEquals("覆盖分组", channel.groupName)
+    }
+
+    @Test
+    fun extGrpBlankFallsBackToCurrentGroup() {
+        val channels = parseLiveChannels(
+            """
+            #EXTM3U
+            #EXTINF:-1 group-title="保留分组" tvg-name="测试台",测试台
+            #EXTGRP:
+            https://live.test/a.m3u8
+            """.trimIndent(),
+        )
+
+        val channel = channels.single()
+        assertEquals("保留分组", channel.groupName)
+    }
+
+    @Test
+    fun extGrpWithoutPendingChannelDoesNotBreakParsing() {
+        val channels = parseLiveChannels(
+            """
+            #EXTM3U
+            #EXTGRP:孤立分组
+            #EXTINF:-1 group-title="正常分组" tvg-name="测试台",测试台
+            https://live.test/a.m3u8
+            """.trimIndent(),
+        )
+
+        val channel = channels.single()
+        assertEquals("测试台", channel.name)
+        assertEquals("正常分组", channel.groupName)
+        assertEquals("https://live.test/a.m3u8", channel.lines.single().url)
+    }
 }

@@ -47,6 +47,9 @@ import com.tvbox.app.domain.rankLiveLineIndicesByDomain
 import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.mergeMoviesBySourceAndId
+import com.tvbox.app.domain.nextRotatedPlatformLiveCandidate
+import com.tvbox.app.domain.resolveEffectiveEpgUrl
 import com.tvbox.app.data.EpgRepository
 import com.tvbox.app.data.RemoteEpgRepository
 import com.tvbox.app.data.LiveFavoritesRepository
@@ -337,6 +340,12 @@ class TvBoxViewModel(
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
     private var settingsWriteJob: Job? = null
+
+    /** 取消旧 Job 并启动新协程（ViewModel 侧常用的“最新请求覆盖”模式）。 */
+    private fun relaunch(current: Job?, block: suspend kotlinx.coroutines.CoroutineScope.() -> Unit): Job {
+        current?.cancel()
+        return viewModelScope.launch(block = block)
+    }
     private var sourceTestJob: Job? = null
     private var detailSourceTestJob: Job? = null
     private var detailAutoTestedKey: String? = null
@@ -1222,17 +1231,8 @@ class TvBoxViewModel(
         }
     }
 
-    private fun mergeSearchResults(existing: List<Movie>, incoming: List<Movie>): List<Movie> {
-        if (incoming.isEmpty()) return existing
-        val seen = existing.mapTo(mutableSetOf()) { "${it.apiLineId}:${it.id}" }
-        val merged = existing.toMutableList()
-        incoming.forEach { movie ->
-            if (seen.add("${movie.apiLineId}:${movie.id}")) {
-                merged += movie
-            }
-        }
-        return merged
-    }
+    private fun mergeSearchResults(existing: List<Movie>, incoming: List<Movie>): List<Movie> =
+        mergeMoviesBySourceAndId(existing, incoming)
 
     fun openDetail(movieId: Int, apiLineId: String = _state.value.selectedApiLineId) {
         historyResumeJob?.cancel()
@@ -2294,18 +2294,12 @@ class TvBoxViewModel(
         }
     }
 
-    /** 切换到下一条候选 CDN；已是最后一条则回到第一条并强制重新解析。 */
+    /** 切换到下一条候选 CDN；已是最后一条则强制重新解析。 */
     private fun rotatePlatformLiveCandidate(stream: ResolvedPlatformLiveStream) {
-        if (stream.candidates.isEmpty()) {
-            platformLiveRecoveryInProgress = false
-            reconnectPlatformLiveChannel()
-            return
-        }
-        val currentIdx = stream.safeActiveCandidateIndex
-        val nextIdx = (currentIdx + 1) % stream.candidates.size
-        val nextCandidate = stream.candidates.getOrNull(nextIdx)
-        if (nextIdx == 0 || nextCandidate == null) {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈，强制重新解析")
+        val nextIdx = nextRotatedPlatformLiveCandidate(stream)
+        val nextCandidate = nextIdx?.let { stream.candidates.getOrNull(it) }
+        if (nextIdx == null || nextCandidate == null) {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈或无可用候选，强制重新解析")
             platformLiveRecoveryInProgress = false
             reconnectPlatformLiveChannel()
             return
@@ -2324,8 +2318,7 @@ class TvBoxViewModel(
     /** 退避后重新解析当前房间，保持当前候选下标。 */
     private fun schedulePlatformLiveReResolve(delayMs: Long) {
         val keepCandidate = _state.value.platformLiveStream?.safeActiveCandidateIndex ?: 0
-        platformLiveResolveJob?.cancel()
-        platformLiveResolveJob = viewModelScope.launch {
+        platformLiveResolveJob = relaunch(platformLiveResolveJob) {
             kotlinx.coroutines.delay(delayMs)
             platformLiveRecoveryInProgress = false
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】退避 ${delayMs}ms 后重新解析（候选 $keepCandidate）")
@@ -3687,7 +3680,7 @@ class TvBoxViewModel(
 
     /** 当前实际使用的 EPG 地址：用户配置优先，其次源自带（M3U 头部 url-tvg）。 */
     private fun effectiveEpgUrl(state: TvBoxUiState): String =
-        state.appSettings.epgUrl.trim().ifBlank { state.liveEpgBundledUrl.trim() }
+        resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.liveEpgBundledUrl)
 
     /**
      * 拉取 XMLTV 节目单全量 Map 存入状态；EPG 是增强项：
@@ -3698,8 +3691,7 @@ class TvBoxViewModel(
         val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
         if (!force && _state.value.liveEpgLoaded) return
-        epgJob?.cancel()
-        epgJob = viewModelScope.launch {
+        epgJob = relaunch(epgJob) {
             val programs = runCatching { epgRepository.fetch(url) }.getOrDefault(emptyMap())
             _state.update { state ->
                 // 地址在拉取期间被改掉时丢弃本次结果。
@@ -3852,26 +3844,8 @@ class TvBoxViewModel(
         }
     }
 
-    private fun resolveHistoryPosition(movie: Movie, item: WatchHistoryItem): Pair<Int, Int> {
-        val sourceIndexByUrl = movie.playSources.indexOfFirst { source ->
-            source.episodes.any { episode -> episode.url == item.episodeUrl }
-        }
-        val sourceIndex = when {
-            sourceIndexByUrl >= 0 -> sourceIndexByUrl
-            item.sourceIndex in movie.playSources.indices -> item.sourceIndex
-            else -> movie.preferredSourceIndex()
-        }.coerceAtLeast(0)
-
-        val episodes = movie.playSources.getOrNull(sourceIndex)?.episodes.orEmpty()
-        val episodeIndexByUrl = episodes.indexOfFirst { it.url == item.episodeUrl }
-        val episodeIndex = when {
-            episodeIndexByUrl >= 0 -> episodeIndexByUrl
-            item.episodeIndex in episodes.indices -> item.episodeIndex
-            else -> 0
-        }.coerceAtLeast(0)
-
-        return sourceIndex to episodeIndex
-    }
+    private fun resolveHistoryPosition(movie: Movie, item: WatchHistoryItem): Pair<Int, Int> =
+        com.tvbox.app.domain.resolveHistoryPosition(movie, item)
 
     private fun resolveBestPlaybackSourceIndex(
         state: TvBoxUiState,

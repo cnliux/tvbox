@@ -138,6 +138,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests {
+            // JVM 单测中 android.util.Log 等框架方法返回默认值而非抛 "not mocked"，
+            // 允许数据层在降级 catch 里保留 debug 日志而不破坏测试。
+            isReturnDefaultValues = true
+        }
+    }
+
     kotlin {
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
