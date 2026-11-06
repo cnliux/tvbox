@@ -2106,7 +2106,7 @@ class TvBoxViewModel(
             it.copy(appSettings = settings, liveEpgByChannel = emptyMap(), liveEpgLoaded = false)
         }
         saveSettings(settings)
-        appSettingsRepository.commitEpgUrl(trimmed)
+        viewModelScope.launch { appSettingsRepository.commitEpgUrl(trimmed) }
         loadLiveEpg(force = true)
     }
 
@@ -2505,17 +2505,11 @@ class TvBoxViewModel(
         }
     }
 
-    private fun orderApiLines(allLines: List<ApiLine>, preferredOrder: List<String>): List<ApiLine> {
-        val indexMap = preferredOrder.mapIndexed { i, id -> id to i }.toMap()
-        return allLines.sortedBy { line -> indexMap[line.id] ?: Int.MAX_VALUE }
-    }
+    private fun orderApiLines(allLines: List<ApiLine>, preferredOrder: List<String>): List<ApiLine> =
+        com.tvbox.app.domain.orderApiLines(allLines, preferredOrder)
 
-    private fun orderLinesByLatency(lines: List<ApiLine>, latencies: Map<String, Long?>): List<ApiLine> {
-        return lines.sortedWith(compareBy(
-            { latencies[it.id] == null },
-            { latencies[it.id] ?: 0L },
-        ))
-    }
+    private fun orderLinesByLatency(lines: List<ApiLine>, latencies: Map<String, Long?>): List<ApiLine> =
+        com.tvbox.app.domain.orderLinesByLatency(lines, latencies)
 
     private fun switchHomeApiLine(apiLineId: String) {
         _state.update { it.copy(selectedApiLineId = apiLineId) }
@@ -3061,8 +3055,8 @@ class TvBoxViewModel(
         if (index !in current.appSettings.liveSourceUrls.indices) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = index)
         _state.update { it.copy(appSettings = settings) }
-        // 立即同步提交，避免 apply() 异步延迟导致设置丢失。
-        appSettingsRepository.commitLiveSourceDefaultIndex(index)
+        // 立即同步提交，避免 apply() 异步延迟导致设置丢失（IO 线程执行 commit）。
+        viewModelScope.launch { appSettingsRepository.commitLiveSourceDefaultIndex(index) }
         saveSettings(settings)
         applyLiveSourceConfig(settings)
         // 默认源立即生效：当前频道列表可能来自旧源，不重载会让用户以为"设置没成功"。
@@ -3075,7 +3069,7 @@ class TvBoxViewModel(
         if (current.appSettings.liveSourceDefaultIndex == -1) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = -1)
         _state.update { it.copy(appSettings = settings) }
-        appSettingsRepository.commitLiveSourceDefaultIndex(-1)
+        viewModelScope.launch { appSettingsRepository.commitLiveSourceDefaultIndex(-1) }
         saveSettings(settings)
         applyLiveSourceConfig(settings)
         if (_state.value.screen == TvScreen.Live) refreshLive()
@@ -3919,21 +3913,11 @@ private fun TvBoxUiState.playbackHealthKeyOrNull(): String? {
     )
 }
 
-private fun normalizeMacCmsApiUrl(rawUrl: String): String? {
-    val trimmed = rawUrl.trim()
-    if (!trimmed.startsWith("http://", ignoreCase = true) &&
-        !trimmed.startsWith("https://", ignoreCase = true)
-    ) {
-        return null
-    }
-    val withoutQuery = trimmed.substringBefore('?').substringBefore('#').trimEnd('/')
-    if (withoutQuery.length <= "http://".length) return null
-    return "$withoutQuery/"
-}
+private fun normalizeMacCmsApiUrl(rawUrl: String): String? =
+    com.tvbox.app.domain.normalizeMacCmsApiUrl(rawUrl)
 
-private fun customVideoApiLineId(baseUrl: String): String {
-    return "custom_" + Integer.toUnsignedString(baseUrl.lowercase().hashCode(), 36)
-}
+private fun customVideoApiLineId(baseUrl: String): String =
+    com.tvbox.app.domain.customVideoApiLineId(baseUrl)
 
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
 // 直播断流后切换到下一条候选线路前的最长等待时间（移动端 5s，避免在慢网络上误判）。

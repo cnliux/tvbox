@@ -22,10 +22,10 @@ interface AppSettingsRepository {
     suspend fun saveSpeedLatencies(latencies: Map<String, Long?>) {}
 
     /** 立即同步提交直播默认源下标（commit 而非 apply），确保设置后立即生效。 */
-    fun commitLiveSourceDefaultIndex(index: Int) {}
+    suspend fun commitLiveSourceDefaultIndex(index: Int) {}
 
     /** 立即同步提交节目单接口地址（commit 而非 apply），确保设置后立即生效。 */
-    fun commitEpgUrl(url: String) {}
+    suspend fun commitEpgUrl(url: String) {}
 }
 
 class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
@@ -103,13 +103,16 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
     }
 
     /** 立即同步提交指定键到 SharedPreferences，用于关键设置（如默认直播源）的即时持久化。 */
-    override fun commitLiveSourceDefaultIndex(index: Int) {
-        prefs.edit().putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, index).commit()
+    override suspend fun commitLiveSourceDefaultIndex(index: Int) = withContext(Dispatchers.IO) {
+        // best-effort: UI 状态已先行更新；commit 失败（极少见，如磁盘满）不崩溃主流程。
+        runCatching { prefs.edit().putInt(KEY_LIVE_SOURCE_DEFAULT_INDEX, index).commit() }
+        Unit
     }
 
     /** 立即同步提交节目单接口地址，与 [commitLiveSourceDefaultIndex] 同模式。 */
-    override fun commitEpgUrl(url: String) {
-        prefs.edit().putString(KEY_EPG_URL, url).commit()
+    override suspend fun commitEpgUrl(url: String) = withContext(Dispatchers.IO) {
+        runCatching { prefs.edit().putString(KEY_EPG_URL, url).commit() }
+        Unit
     }
 
     private fun readCustomVideoApiLines(): List<CustomVideoApiLine> {
