@@ -514,10 +514,15 @@ private fun LivePlayerScreen(
         barsVisible = false
     }
 
-    LaunchedEffect(currentChannel, clockTick) {
-        while (true) {
-            delay(CLOCK_REFRESH_INTERVAL_MS)
+    LaunchedEffect(liveLifecycleOwner) {
+        // 退到后台后不再每 20 秒唤醒刷新时钟与节目单；恢复时先补一次 tick，
+        // 否则会拿后台前的旧时间戳显示时间、可能高亮已结束的节目。
+        liveLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             clockTick++
+            while (true) {
+                delay(CLOCK_REFRESH_INTERVAL_MS)
+                clockTick++
+            }
         }
     }
 

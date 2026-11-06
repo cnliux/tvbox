@@ -80,6 +80,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -801,10 +804,16 @@ private fun MobileLivePlayerScreen(
     val epgPrograms = remember(channel, state.liveEpgByChannel) { actions.liveEpgPrograms(channel) }
     // 每 30s 刷新一次“当前时刻”，驱动当前节目高亮随时间移动。
     var epgNowMs by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(MOBILE_LIVE_EPG_TICK_MS)
+    val epgLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(epgLifecycleOwner) {
+        // 退到后台后不再每 30 秒唤醒刷新节目单；恢复时立即刷新一次，
+        // 否则“当前节目”会用后台前的旧时刻，可能指到已播完的节目。
+        epgLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             epgNowMs = System.currentTimeMillis()
+            while (true) {
+                delay(MOBILE_LIVE_EPG_TICK_MS)
+                epgNowMs = System.currentTimeMillis()
+            }
         }
     }
     val currentEpgIndex = epgPrograms.indexOfFirst { epgNowMs in it.startMs until it.stopMs }
