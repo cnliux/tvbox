@@ -762,7 +762,9 @@ private fun MobileLivePlayerScreen(
                 controlsInteraction++
             },
             onTogglePause = {
-                if (player.isPlaying) player.pause() else session.play(player)
+                // 走 session 记录播放意图：只用 player.pause() 会让策略仍认为用户想播，
+                // 切线路/重连后 preparePlayback 会把用户已暂停的直播重新拉起。
+                if (player.playWhenReady) session.pause(player) else session.play(player)
                 controlsInteraction++
             },
             onToggleMute = {

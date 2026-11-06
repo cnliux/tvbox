@@ -40,10 +40,21 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         maxItems: Int,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val updatedItem = item.copy(updatedAtEpochMs = System.currentTimeMillis())
+            val history = readHistory()
+            // 播放器尚未 READY 时保存会带 duration=0；若直接覆盖，历史进度条会归零且
+            // 提前退出时永久丢失总时长。此时沿用同一集已有记录的时长。
+            val previous = history.firstOrNull {
+                it.apiLineId == item.apiLineId && it.movieId == item.movieId &&
+                    (it.episodeIndex == item.episodeIndex || it.episodeUrl == item.episodeUrl)
+            }
+            val durationMs = if (item.durationMs > 0L) item.durationMs else previous?.durationMs ?: 0L
+            val updatedItem = item.copy(
+                durationMs = durationMs,
+                updatedAtEpochMs = System.currentTimeMillis(),
+            )
             val updated = buildList {
                 add(updatedItem)
-                readHistory()
+                history
                     .filterNot { it.apiLineId == item.apiLineId && it.movieId == item.movieId }
                     .forEach(::add)
             }.take(maxItems.coerceAtLeast(1))
