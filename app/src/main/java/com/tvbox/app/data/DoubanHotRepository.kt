@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import android.content.Context
 import com.tvbox.app.domain.DoubanHotItem
@@ -120,18 +120,19 @@ class SharedDoubanHotCache(context: Context) : DoubanHotCache {
 }
 
 class InMemoryDoubanHotCache : DoubanHotCache {
+    private val lock = Any()
     private val entries = mutableMapOf<String, DoubanHotCacheRecord>()
 
-    override fun get(key: String, nowMs: Long): DoubanHotCacheRecord? {
-        val record = entries[key] ?: return null
-        return record.takeIf { it.expiresAtEpochMs > nowMs } ?: run {
+    override fun get(key: String, nowMs: Long): DoubanHotCacheRecord? = synchronized(lock) {
+        val record = entries[key] ?: return@synchronized null
+        record.takeIf { it.expiresAtEpochMs > nowMs } ?: run {
             entries.remove(key)
             null
         }
     }
 
     override fun put(key: String, record: DoubanHotCacheRecord) {
-        entries[key] = record
+        synchronized(lock) { entries[key] = record }
     }
 }
 

@@ -6,6 +6,8 @@ import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
 import com.tvbox.app.domain.prunePlaybackHealthEntries
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -24,12 +26,15 @@ class SharedPlaybackHealthRepository(context: Context) : PlaybackHealthRepositor
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
+    private val mutex = Mutex()
 
     override suspend fun getSnapshot(): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
-        val nowMs = System.currentTimeMillis()
-        val entries = readPrunedEntries(nowMs)
-        writeEntries(entries)
-        entries.toSnapshot()
+        mutex.withLock {
+            val nowMs = System.currentTimeMillis()
+            val entries = readPrunedEntries(nowMs)
+            writeEntries(entries)
+            entries.toSnapshot()
+        }
     }
 
     override suspend fun recordIssue(
@@ -37,44 +42,50 @@ class SharedPlaybackHealthRepository(context: Context) : PlaybackHealthRepositor
         issueType: PlaybackIssueType,
         nowMs: Long,
     ): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
-        val current = readPrunedEntries(nowMs)
-            .associateBy { it.key }
-            .toMutableMap()
-        val entry = current[key] ?: PlaybackHealthEntry(key = key)
-        current[key] = when (issueType) {
-            PlaybackIssueType.Error -> entry.copy(
-                lastFailureAtMs = nowMs,
-                failureCount = entry.failureCount + 1,
-            )
-            PlaybackIssueType.SlowBuffer -> entry.copy(
-                lastSlowBufferAtMs = nowMs,
-                slowBufferCount = entry.slowBufferCount + 1,
-            )
+        mutex.withLock {
+            val current = readPrunedEntries(nowMs)
+                .associateBy { it.key }
+                .toMutableMap()
+            val entry = current[key] ?: PlaybackHealthEntry(key = key)
+            current[key] = when (issueType) {
+                PlaybackIssueType.Error -> entry.copy(
+                    lastFailureAtMs = nowMs,
+                    failureCount = entry.failureCount + 1,
+                )
+                PlaybackIssueType.SlowBuffer -> entry.copy(
+                    lastSlowBufferAtMs = nowMs,
+                    slowBufferCount = entry.slowBufferCount + 1,
+                )
+            }
+            val entries = prunePlaybackHealthEntries(current.values, nowMs)
+            writeEntries(entries)
+            entries.toSnapshot()
         }
-        val entries = prunePlaybackHealthEntries(current.values, nowMs)
-        writeEntries(entries)
-        entries.toSnapshot()
     }
 
     override suspend fun recordSuccess(key: String, nowMs: Long): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
-        val current = readPrunedEntries(nowMs)
-            .associateBy { it.key }
-            .toMutableMap()
-        val entry = current[key] ?: PlaybackHealthEntry(key = key)
-        current[key] = entry.copy(
-            lastSuccessAtMs = nowMs,
-            successCount = entry.successCount + 1,
-        )
-        val entries = prunePlaybackHealthEntries(current.values, nowMs)
-        writeEntries(entries)
-        entries.toSnapshot()
+        mutex.withLock {
+            val current = readPrunedEntries(nowMs)
+                .associateBy { it.key }
+                .toMutableMap()
+            val entry = current[key] ?: PlaybackHealthEntry(key = key)
+            current[key] = entry.copy(
+                lastSuccessAtMs = nowMs,
+                successCount = entry.successCount + 1,
+            )
+            val entries = prunePlaybackHealthEntries(current.values, nowMs)
+            writeEntries(entries)
+            entries.toSnapshot()
+        }
     }
 
     override suspend fun clear(): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
-        prefs.edit()
-            .remove(KEY_ENTRIES)
-            .apply()
-        PlaybackHealthSnapshot()
+        mutex.withLock {
+            prefs.edit()
+                .remove(KEY_ENTRIES)
+                .apply()
+            PlaybackHealthSnapshot()
+        }
     }
 
     private fun readEntries(): Map<String, StoredPlaybackHealthEntry> {

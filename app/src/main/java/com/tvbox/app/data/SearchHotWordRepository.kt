@@ -116,6 +116,7 @@ class SharedSearchHotWordCache(context: Context) : SearchHotWordCache {
 }
 
 class InMemorySearchHotWordCache : SearchHotWordCache {
+    @Volatile
     private var record: SearchHotWordCacheRecord? = null
 
     override fun get(nowMs: Long): SearchHotWordCacheRecord? {
