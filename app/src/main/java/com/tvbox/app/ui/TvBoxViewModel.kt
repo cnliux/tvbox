@@ -204,34 +204,7 @@ data class TvBoxUiState(
     val liveLineLatencies: Map<String, Long?> = emptyMap(),
     /** 线路测速是否进行中，供线路浮层展示"测速中"。 */
     val liveLineTesting: Boolean = false,
-    val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
-    val platformLiveSites: List<PlatformLiveSite> = emptyList(),
-    /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
-    val platformLiveAllSites: List<PlatformLiveSite> = emptyList(),
-    val platformLiveQuickCategories: List<PlatformLiveQuickCategory> = emptyList(),
-    val platformLiveFavorites: List<PlatformLiveRoom> = emptyList(),
-    val platformLiveFavoriteError: String? = null,
-    val platformLivePlayerReturnDestination: PlatformLiveDestination = PlatformLiveDestination.Rooms,
-    val platformLiveSelectedSite: PlatformLiveSite? = null,
-    val platformLiveParentCategories: List<PlatformLiveParentCategory> = emptyList(),
-    val platformLiveSelectedParentCategory: PlatformLiveParentCategory? = null,
-    /** 一级分类上次选中的下标：返回一级分类页时用于恢复滚动位置与焦点。 */
-    val platformLiveParentIndex: Int = 0,
-    val platformLiveCategories: List<PlatformLiveCategory> = emptyList(),
-    val platformLiveSelectedCategory: PlatformLiveCategory? = null,
-    /** 二级分类上次选中的下标：返回二级分类页时用于恢复滚动位置与焦点。 */
-    val platformLiveCategoryIndex: Int = 0,
-    val platformLiveRooms: List<PlatformLiveRoom> = emptyList(),
-    val platformLiveRoomIndex: Int = 0,
-    val platformLiveRoomPage: Int = 1,
-    val platformLiveRoomPageCount: Int = 1,
-    val platformLiveLoading: Boolean = false,
-    val platformLiveLoadingMore: Boolean = false,
-    val platformLiveResolving: Boolean = false,
-    val platformLiveError: String? = null,
-    /** 平台直播轻提示（自动切换线路结果等）；由 UI 消费后清空。 */
-    val platformLiveNotice: String? = null,
-    val platformLiveStream: ResolvedPlatformLiveStream? = null,
+    val platformLive: PlatformLiveUiState = PlatformLiveUiState(),
     val update: UpdateUiState = UpdateUiState(),
     val appSettings: AppSettings = AppSettings(),
     val playbackHealth: PlaybackHealthSnapshot = PlaybackHealthSnapshot(),
@@ -265,6 +238,31 @@ data class TvBoxUiState(
     val detailSourceMessage: String? get() = source.detailMessage
     val sourceImporting: Boolean get() = source.importing
     val sourceImportMessage: String? get() = source.importMessage
+
+    val platformLiveDestination: PlatformLiveDestination get() = platformLive.destination
+    val platformLiveSites: List<PlatformLiveSite> get() = platformLive.sites
+    val platformLiveAllSites: List<PlatformLiveSite> get() = platformLive.allSites
+    val platformLiveQuickCategories: List<PlatformLiveQuickCategory> get() = platformLive.quickCategories
+    val platformLiveFavorites: List<PlatformLiveRoom> get() = platformLive.favorites
+    val platformLiveFavoriteError: String? get() = platformLive.favoriteError
+    val platformLivePlayerReturnDestination: PlatformLiveDestination get() = platformLive.playerReturnDestination
+    val platformLiveSelectedSite: PlatformLiveSite? get() = platformLive.selectedSite
+    val platformLiveParentCategories: List<PlatformLiveParentCategory> get() = platformLive.parentCategories
+    val platformLiveSelectedParentCategory: PlatformLiveParentCategory? get() = platformLive.selectedParentCategory
+    val platformLiveParentIndex: Int get() = platformLive.parentIndex
+    val platformLiveCategories: List<PlatformLiveCategory> get() = platformLive.categories
+    val platformLiveSelectedCategory: PlatformLiveCategory? get() = platformLive.selectedCategory
+    val platformLiveCategoryIndex: Int get() = platformLive.categoryIndex
+    val platformLiveRooms: List<PlatformLiveRoom> get() = platformLive.rooms
+    val platformLiveRoomIndex: Int get() = platformLive.roomIndex
+    val platformLiveRoomPageCount: Int get() = platformLive.roomPageCount
+    val platformLiveRoomPage: Int get() = platformLive.roomPage
+    val platformLiveLoadingMore: Boolean get() = platformLive.loadingMore
+    val platformLiveLoading: Boolean get() = platformLive.loading
+    val platformLiveResolving: Boolean get() = platformLive.resolving
+    val platformLiveError: String? get() = platformLive.error
+    val platformLiveNotice: String? get() = platformLive.notice
+    val platformLiveStream: ResolvedPlatformLiveStream? get() = platformLive.stream
 
     val canLoadMore: Boolean
         get() = page < pageCount && !homeLoading && !loadingMore
@@ -529,8 +527,9 @@ class TvBoxViewModel(
             it.copy(
                 screen = TvScreen.Home,
                 detailReturnScreen = TvScreen.Home,
-                platformLiveDestination = PlatformLiveDestination.Sites,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Sites,
+                stream = null),
             )
         }
     }
@@ -570,12 +569,13 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Sites,
-                platformLiveError = null,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Sites,
+                error = null,
+                stream = null),
             )
         }
-        if (_state.value.platformLiveSites.isEmpty()) {
+        if (_state.value.platformLive.sites.isEmpty()) {
             loadPlatformLiveSites()
         }
     }
@@ -595,7 +595,7 @@ class TvBoxViewModel(
             runCatching { platformLiveRepository.getSites() }
                 .onSuccess { sites ->
                     allPlatformLiveSites = sites
-                    _state.update { it.copy(platformLiveAllSites = sites) }
+                    _state.update { it.copy(platformLive = it.platformLive.copy(allSites = sites)) }
                 }
         }
     }
@@ -609,12 +609,12 @@ class TvBoxViewModel(
     }
 
     fun refreshPlatformLive() {
-        when (_state.value.platformLiveDestination) {
+        when (_state.value.platformLive.destination) {
             PlatformLiveDestination.Sites -> loadPlatformLiveSites()
             PlatformLiveDestination.Favorites -> loadPlatformLiveFavorites()
-            PlatformLiveDestination.ParentCategories -> _state.value.platformLiveSelectedSite?.let(::loadPlatformLiveCategories)
-            PlatformLiveDestination.Categories -> _state.value.platformLiveSelectedSite?.let(::loadPlatformLiveCategories)
-            PlatformLiveDestination.Rooms -> _state.value.platformLiveSelectedCategory?.let {
+            PlatformLiveDestination.ParentCategories -> _state.value.platformLive.selectedSite?.let(::loadPlatformLiveCategories)
+            PlatformLiveDestination.Categories -> _state.value.platformLive.selectedSite?.let(::loadPlatformLiveCategories)
+            PlatformLiveDestination.Rooms -> _state.value.platformLive.selectedCategory?.let {
                 loadPlatformLiveRooms(it, reset = true)
             }
             PlatformLiveDestination.Player -> resolvePlatformLiveRoom(forceRefresh = true)
@@ -888,7 +888,7 @@ class TvBoxViewModel(
     private fun buildRemoteManageSnapshot(): RemoteManageSnapshot {
         val current = _state.value
         val settings = current.appSettings
-        val sites = allPlatformLiveSites.ifEmpty { current.platformLiveAllSites }.map { site ->
+        val sites = allPlatformLiveSites.ifEmpty { current.platformLive.allSites }.map { site ->
             RemoteManageSite(
                 id = site.id,
                 name = site.name,
@@ -1801,18 +1801,19 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.ParentCategories,
-                platformLiveSelectedSite = site,
-                platformLiveParentCategories = emptyList(),
-                platformLiveSelectedParentCategory = null,
-                platformLiveParentIndex = 0,
-                platformLiveSelectedCategory = null,
-                platformLiveCategoryIndex = 0,
-                platformLiveCategories = emptyList(),
-                platformLiveRooms = emptyList(),
-                platformLiveRoomIndex = 0,
-                platformLiveError = null,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.ParentCategories,
+                selectedSite = site,
+                parentCategories = emptyList(),
+                selectedParentCategory = null,
+                parentIndex = 0,
+                selectedCategory = null,
+                categoryIndex = 0,
+                categories = emptyList(),
+                rooms = emptyList(),
+                roomIndex = 0,
+                error = null,
+                stream = null),
             )
         }
         loadPlatformLiveCategories(site)
@@ -1823,12 +1824,13 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Favorites,
-                platformLiveRooms = it.platformLiveFavorites,
-                platformLiveRoomIndex = 0,
-                platformLiveLoading = false,
-                platformLiveError = null,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Favorites,
+                rooms = it.platformLive.favorites,
+                roomIndex = 0,
+                loading = false,
+                error = null,
+                stream = null),
             )
         }
     }
@@ -1839,21 +1841,21 @@ class TvBoxViewModel(
                 runCatching { platformLiveFavoritesRepository.toggleFavorite(room) }
                     .onSuccess { favorites ->
                         _state.update { current ->
-                            if (current.platformLiveDestination == PlatformLiveDestination.Favorites) {
-                                current.copy(
-                                    platformLiveFavorites = favorites,
-                                    platformLiveRooms = favorites,
-                                    platformLiveRoomIndex = current.platformLiveRoomIndex.coerceAtMost(favorites.lastIndex.coerceAtLeast(0)),
-                                    platformLiveFavoriteError = null,
+                            if (current.platformLive.destination == PlatformLiveDestination.Favorites) {
+                                current.copy(platformLive = current.platformLive.copy(
+                                    favorites = favorites,
+                                    rooms = favorites,
+                                    roomIndex = current.platformLive.roomIndex.coerceAtMost(favorites.lastIndex.coerceAtLeast(0)),
+                                    favoriteError = null),
                                 )
                             } else {
-                                current.copy(platformLiveFavorites = favorites, platformLiveFavoriteError = null)
+                                current.copy(platformLive = current.platformLive.copy(favorites = favorites, favoriteError = null))
                             }
                         }
                     }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
-                        _state.update { it.copy(platformLiveFavoriteError = error.userMessage()) }
+                        _state.update { it.copy(platformLive = it.platformLive.copy(favoriteError = error.userMessage())) }
                     }
             }
         }
@@ -1861,42 +1863,44 @@ class TvBoxViewModel(
 
     fun selectPlatformLiveParentCategory(parentCategory: PlatformLiveParentCategory) {
         val state = _state.value
-        val parentIndex = state.platformLiveParentCategories
+        val parentIndex = state.platformLive.parentCategories
             .indexOfFirst { it.id == parentCategory.id }
             .coerceAtLeast(0)
-        val hasCategories = state.platformLiveCategories.any { it.parentId == parentCategory.id }
+        val hasCategories = state.platformLive.categories.any { it.parentId == parentCategory.id }
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Categories,
-                platformLiveSelectedParentCategory = parentCategory,
-                platformLiveParentIndex = parentIndex,
-                platformLiveSelectedCategory = null,
-                platformLiveCategoryIndex = 0,
-                platformLiveRooms = emptyList(),
-                platformLiveRoomIndex = 0,
-                platformLiveError = if (hasCategories) null else "这个大分类暂时没有可用的二级分类",
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Categories,
+                selectedParentCategory = parentCategory,
+                parentIndex = parentIndex,
+                selectedCategory = null,
+                categoryIndex = 0,
+                rooms = emptyList(),
+                roomIndex = 0,
+                error = if (hasCategories) null else "这个大分类暂时没有可用的二级分类",
+                stream = null),
             )
         }
     }
 
     fun selectPlatformLiveCategory(category: PlatformLiveCategory) {
-        val categoryIndex = _state.value.platformLiveCategories
+        val categoryIndex = _state.value.platformLive.categories
             .indexOfFirst { it.id == category.id }
             .coerceAtLeast(0)
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Rooms,
-                platformLiveSelectedCategory = category,
-                platformLiveCategoryIndex = categoryIndex,
-                platformLiveRooms = emptyList(),
-                platformLiveRoomIndex = 0,
-                platformLiveRoomPage = 1,
-                platformLiveRoomPageCount = 1,
-                platformLiveError = null,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Rooms,
+                selectedCategory = category,
+                categoryIndex = categoryIndex,
+                rooms = emptyList(),
+                roomIndex = 0,
+                roomPage = 1,
+                roomPageCount = 1,
+                error = null,
+                stream = null),
             )
         }
         loadPlatformLiveRooms(category, reset = true)
@@ -1904,9 +1908,9 @@ class TvBoxViewModel(
 
     fun loadMorePlatformLiveRooms() {
         val state = _state.value
-        val category = state.platformLiveSelectedCategory ?: return
-        if (state.platformLiveLoading || state.platformLiveLoadingMore ||
-            state.platformLiveRoomPage >= state.platformLiveRoomPageCount
+        val category = state.platformLive.selectedCategory ?: return
+        if (state.platformLive.loading || state.platformLive.loadingMore ||
+            state.platformLive.roomPage >= state.platformLive.roomPageCount
         ) {
             return
         }
@@ -1914,17 +1918,18 @@ class TvBoxViewModel(
     }
 
     fun openPlatformLiveRoom(room: PlatformLiveRoom) {
-        val index = _state.value.platformLiveRooms.indexOfFirst { it.id == room.id }
+        val index = _state.value.platformLive.rooms.indexOfFirst { it.id == room.id }
         if (index < 0) return
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Player,
-                platformLivePlayerReturnDestination = it.platformLiveDestination,
-                platformLiveRoomIndex = index,
-                platformLiveError = null,
-                platformLiveNotice = null,
-                platformLiveStream = null,
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Player,
+                playerReturnDestination = it.platformLive.destination,
+                roomIndex = index,
+                error = null,
+                notice = null,
+                stream = null),
             )
         }
         resolvePlatformLiveRoom()
@@ -1932,13 +1937,13 @@ class TvBoxViewModel(
 
     fun playNextPlatformLiveRoom() {
         val state = _state.value
-        val rooms = state.platformLiveRooms
+        val rooms = state.platformLive.rooms
         if (rooms.isEmpty()) return
         _state.update {
-            it.copy(
-                platformLiveRoomIndex = (state.platformLiveRoomIndex + 1) % rooms.size,
-                platformLiveError = null,
-                platformLiveStream = null,
+            it.copy(platformLive = it.platformLive.copy(
+                roomIndex = (state.platformLive.roomIndex + 1) % rooms.size,
+                error = null,
+                stream = null),
             )
         }
         resolvePlatformLiveRoom()
@@ -1946,16 +1951,16 @@ class TvBoxViewModel(
 
     fun playPreviousPlatformLiveRoom() {
         val state = _state.value
-        val rooms = state.platformLiveRooms
+        val rooms = state.platformLive.rooms
         if (rooms.isEmpty()) return
-        val previousIndex = if (state.platformLiveRoomIndex <= 0) rooms.lastIndex else {
-            state.platformLiveRoomIndex - 1
+        val previousIndex = if (state.platformLive.roomIndex <= 0) rooms.lastIndex else {
+            state.platformLive.roomIndex - 1
         }
         _state.update {
-            it.copy(
-                platformLiveRoomIndex = previousIndex,
-                platformLiveError = null,
-                platformLiveStream = null,
+            it.copy(platformLive = it.platformLive.copy(
+                roomIndex = previousIndex,
+                error = null,
+                stream = null),
             )
         }
         resolvePlatformLiveRoom()
@@ -2183,7 +2188,7 @@ class TvBoxViewModel(
     }
 
     fun switchPlatformLiveCandidate(index: Int) {
-        val stream = _state.value.platformLiveStream ?: return
+        val stream = _state.value.platformLive.stream ?: return
         val candidate = stream.candidates.getOrNull(index) ?: return
         if (platformLiveRecoveryInProgress) {
             // 用户明确的手动选择优先于自动恢复，不再静默丢弃。
@@ -2199,10 +2204,10 @@ class TvBoxViewModel(
         platformLiveRecoveryWindowAttempts = 0
         platformLiveRecoveryWindowStartMs = 0L
         _state.update {
-            it.copy(
-                platformLiveError = null,
-                platformLiveNotice = "已切换到线路 ${index + 1}/${stream.candidates.size}（${candidate.cdn}）",
-                platformLiveStream = stream.withActiveCandidate(index),
+            it.copy(platformLive = it.platformLive.copy(
+                error = null,
+                notice = "已切换到线路 ${index + 1}/${stream.candidates.size}（${candidate.cdn}）",
+                stream = stream.withActiveCandidate(index)),
             )
         }
     }
@@ -2218,9 +2223,9 @@ class TvBoxViewModel(
     }
 
     private fun stepPlatformLiveCandidate(delta: Int) {
-        val stream = _state.value.platformLiveStream ?: return
+        val stream = _state.value.platformLive.stream ?: return
         if (stream.candidates.size <= 1) {
-            _state.update { it.copy(platformLiveNotice = "当前直播间只有一条线路") }
+            _state.update { it.copy(platformLive = it.platformLive.copy(notice = "当前直播间只有一条线路")) }
             return
         }
         val next = (stream.activeCandidateIndex + delta + stream.candidates.size) % stream.candidates.size
@@ -2229,8 +2234,8 @@ class TvBoxViewModel(
 
     /** 消费平台直播轻提示。 */
     fun consumePlatformLiveNotice() {
-        if (_state.value.platformLiveNotice != null) {
-            _state.update { it.copy(platformLiveNotice = null) }
+        if (_state.value.platformLive.notice != null) {
+            _state.update { it.copy(platformLive = it.platformLive.copy(notice = null)) }
         }
     }
 
@@ -2262,12 +2267,12 @@ class TvBoxViewModel(
      */
     fun recoverPlatformLiveChannel(reason: LiveLineFallbackReason = LiveLineFallbackReason.Error) {
         val state = _state.value
-        val stream = state.platformLiveStream ?: run {
+        val stream = state.platformLive.stream ?: run {
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】无当前流，改为重新解析")
             reconnectPlatformLiveChannel()
             return
         }
-        if (platformLiveRecoveryInProgress || state.platformLiveResolving) {
+        if (platformLiveRecoveryInProgress || state.platformLive.resolving) {
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复跳过】恢复进行中或正在解析中")
             return
         }
@@ -2282,7 +2287,7 @@ class TvBoxViewModel(
                 "【平台恢复熔断】${PLATFORM_LIVE_RECOVERY_WINDOW_MS / 1000}s 内已尝试 $platformLiveRecoveryWindowAttempts 次仍未恢复，停止自动恢复, room=${roomTag()}",
             )
             _state.update {
-                it.copy(platformLiveError = "该房间线路连续失败，已停止自动重连。可手动切换线路或稍后重试。")
+                it.copy(platformLive = it.platformLive.copy(error = "该房间线路连续失败，已停止自动重连。可手动切换线路或稍后重试。"))
             }
             return
         }
@@ -2323,10 +2328,10 @@ class TvBoxViewModel(
             return
         }
         _state.update {
-            it.copy(
-                platformLiveError = null,
-                platformLiveNotice = "已切换到线路 ${nextIdx + 1}/${stream.candidates.size}（${nextCandidate.cdn}）",
-                platformLiveStream = stream.withActiveCandidate(nextIdx),
+            it.copy(platformLive = it.platformLive.copy(
+                error = null,
+                notice = "已切换到线路 ${nextIdx + 1}/${stream.candidates.size}（${nextCandidate.cdn}）",
+                stream = stream.withActiveCandidate(nextIdx)),
             )
         }
         android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】切换到候选线路 $nextIdx, cdn=${nextCandidate.cdn}")
@@ -2335,7 +2340,7 @@ class TvBoxViewModel(
 
     /** 退避后重新解析当前房间，保持当前候选下标。 */
     private fun schedulePlatformLiveReResolve(delayMs: Long) {
-        val keepCandidate = _state.value.platformLiveStream?.safeActiveCandidateIndex ?: 0
+        val keepCandidate = _state.value.platformLive.stream?.safeActiveCandidateIndex ?: 0
         platformLiveResolveJob = relaunch(platformLiveResolveJob) {
             kotlinx.coroutines.delay(delayMs)
             platformLiveRecoveryInProgress = false
@@ -2346,7 +2351,7 @@ class TvBoxViewModel(
 
     private fun roomTag(): String {
         val state = _state.value
-        return state.platformLiveRooms.getOrNull(state.platformLiveRoomIndex)?.let { "${it.site}/${it.id}" } ?: "none"
+        return state.platformLive.rooms.getOrNull(state.platformLive.roomIndex)?.let { "${it.site}/${it.id}" } ?: "none"
     }
 
     fun switchPlayerSource(index: Int, positionMs: Long, playWhenReady: Boolean): Boolean {
@@ -2458,7 +2463,7 @@ class TvBoxViewModel(
                 true
             }
             TvScreen.PlatformLive -> {
-                when (current.platformLiveDestination) {
+                when (current.platformLive.destination) {
                     PlatformLiveDestination.Player -> {
                         platformLiveResolveJob?.cancel()
                         platformLiveRecoveryInProgress = false
@@ -2466,41 +2471,41 @@ class TvBoxViewModel(
                         platformLiveRecoveryWindowAttempts = 0
                         platformLiveRecoveryWindowStartMs = 0L
                         _state.update {
-                            it.copy(
-                                platformLiveDestination = it.platformLivePlayerReturnDestination,
-                                platformLiveResolving = false,
-                                platformLiveError = null,
-                                platformLiveStream = null,
-                                platformLiveNotice = null,
+                            it.copy(platformLive = it.platformLive.copy(
+                                destination = it.platformLive.playerReturnDestination,
+                                resolving = false,
+                                error = null,
+                                stream = null,
+                                notice = null),
                             )
                         }
                     }
                     PlatformLiveDestination.Rooms -> _state.update {
-                        it.copy(
-                            platformLiveDestination = PlatformLiveDestination.Categories,
-                            platformLiveSelectedCategory = null,
-                            platformLiveError = null,
+                        it.copy(platformLive = it.platformLive.copy(
+                            destination = PlatformLiveDestination.Categories,
+                            selectedCategory = null,
+                            error = null),
                         )
                     }
                     PlatformLiveDestination.Favorites -> _state.update {
-                        it.copy(
-                            platformLiveDestination = PlatformLiveDestination.Sites,
-                            platformLiveRooms = emptyList(),
-                            platformLiveError = null,
+                        it.copy(platformLive = it.platformLive.copy(
+                            destination = PlatformLiveDestination.Sites,
+                            rooms = emptyList(),
+                            error = null),
                         )
                     }
                     PlatformLiveDestination.Categories -> _state.update {
-                        it.copy(
-                            platformLiveDestination = PlatformLiveDestination.ParentCategories,
-                            platformLiveSelectedCategory = null,
-                            platformLiveError = null,
+                        it.copy(platformLive = it.platformLive.copy(
+                            destination = PlatformLiveDestination.ParentCategories,
+                            selectedCategory = null,
+                            error = null),
                         )
                     }
                     PlatformLiveDestination.ParentCategories -> _state.update {
-                        it.copy(
-                            platformLiveDestination = PlatformLiveDestination.Sites,
-                            platformLiveSelectedParentCategory = null,
-                            platformLiveError = null,
+                        it.copy(platformLive = it.platformLive.copy(
+                            destination = PlatformLiveDestination.Sites,
+                            selectedParentCategory = null,
+                            error = null),
                         )
                     }
                     PlatformLiveDestination.Sites -> _state.update { it.copy(screen = TvScreen.Home) }
@@ -3200,20 +3205,21 @@ class TvBoxViewModel(
         val visibleSites = allPlatformLiveSites.filter { it.id !in settings.blockedPlatformSiteIds }
         saveSettings(settings)
         _state.update { state ->
-            val staysOnBlockedSite = state.platformLiveDestination == PlatformLiveDestination.Rooms &&
-                state.platformLiveSelectedSite?.id == siteId
+            val staysOnBlockedSite = state.platformLive.destination == PlatformLiveDestination.Rooms &&
+                state.platformLive.selectedSite?.id == siteId
             state.copy(
                 appSettings = settings,
-                platformLiveSites = visibleSites,
-                platformLiveAllSites = allPlatformLiveSites,
-                platformLiveQuickCategories = state.platformLiveQuickCategories
+                platformLive = state.platformLive.copy(
+                sites = visibleSites,
+                allSites = allPlatformLiveSites,
+                quickCategories = state.platformLive.quickCategories
                     .filter { it.site.id !in settings.blockedPlatformSiteIds },
-                platformLiveSelectedSite = if (staysOnBlockedSite) null else state.platformLiveSelectedSite,
-                platformLiveDestination = if (staysOnBlockedSite) {
+                selectedSite = if (staysOnBlockedSite) null else state.platformLive.selectedSite,
+                destination = if (staysOnBlockedSite) {
                     PlatformLiveDestination.Sites
                 } else {
-                    state.platformLiveDestination
-                },
+                    state.platformLive.destination
+                }),
             )
         }
     }
@@ -3576,12 +3582,13 @@ class TvBoxViewModel(
             _state.update {
                 it.copy(
                     screen = TvScreen.PlatformLive,
-                    platformLiveDestination = PlatformLiveDestination.Sites,
-                    platformLiveLoading = true,
-                    platformLiveLoadingMore = false,
-                    platformLiveResolving = false,
-                    platformLiveError = null,
-                    platformLiveStream = null,
+                    platformLive = it.platformLive.copy(
+                    destination = PlatformLiveDestination.Sites,
+                    loading = true,
+                    loadingMore = false,
+                    resolving = false,
+                    error = null,
+                    stream = null),
                 )
             }
             runCatching { platformLiveRepository.getSites() }
@@ -3590,15 +3597,15 @@ class TvBoxViewModel(
                     val blockedSiteIds = _state.value.appSettings.blockedPlatformSiteIds
                     val visibleSites = sites.filter { it.id !in blockedSiteIds }
                     _state.update {
-                        if (it.platformLiveDestination != PlatformLiveDestination.Sites) it else it.copy(
-                            platformLiveSites = visibleSites,
-                            platformLiveAllSites = sites,
-                            platformLiveLoading = false,
-                            platformLiveError = if (visibleSites.isEmpty()) {
+                        if (it.platformLive.destination != PlatformLiveDestination.Sites) it else it.copy(platformLive = it.platformLive.copy(
+                            sites = visibleSites,
+                            allSites = sites,
+                            loading = false,
+                            error = if (visibleSites.isEmpty()) {
                                 "所有平台直播站点均已删除，可在源管理页恢复"
                             } else {
                                 null
-                            },
+                            }),
                         )
                     }
                     loadPlatformLiveQuickCategories(visibleSites)
@@ -3606,9 +3613,9 @@ class TvBoxViewModel(
                 .onFailure { error ->
                     if (error is CancellationException) return@onFailure
                     _state.update {
-                        if (it.platformLiveDestination != PlatformLiveDestination.Sites) it else it.copy(
-                            platformLiveLoading = false,
-                            platformLiveError = error.userMessage(),
+                        if (it.platformLive.destination != PlatformLiveDestination.Sites) it else it.copy(platformLive = it.platformLive.copy(
+                            loading = false,
+                            error = error.userMessage()),
                         )
                     }
                 }
@@ -3630,7 +3637,7 @@ class TvBoxViewModel(
                 PlatformLiveQuickCategory(site = site, category = category)
             }
             if (quick.isNotEmpty()) {
-                _state.update { it.copy(platformLiveQuickCategories = quick) }
+                _state.update { it.copy(platformLive = it.platformLive.copy(quickCategories = quick)) }
             }
         }
     }
@@ -3640,19 +3647,20 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
-                platformLiveDestination = PlatformLiveDestination.Rooms,
-                platformLiveSelectedSite = quick.site,
-                platformLiveParentCategories = tree?.parentCategories ?: emptyList(),
-                platformLiveSelectedParentCategory = tree?.parentCategories
+                platformLive = it.platformLive.copy(
+                destination = PlatformLiveDestination.Rooms,
+                selectedSite = quick.site,
+                parentCategories = tree?.parentCategories ?: emptyList(),
+                selectedParentCategory = tree?.parentCategories
                     ?.firstOrNull { parent -> parent.id == quick.category.parentId },
-                platformLiveCategories = tree?.categories ?: emptyList(),
-                platformLiveSelectedCategory = quick.category,
-                platformLiveRooms = emptyList(),
-                platformLiveRoomIndex = 0,
-                platformLiveRoomPage = 1,
-                platformLiveRoomPageCount = 1,
-                platformLiveError = null,
-                platformLiveStream = null,
+                categories = tree?.categories ?: emptyList(),
+                selectedCategory = quick.category,
+                rooms = emptyList(),
+                roomIndex = 0,
+                roomPage = 1,
+                roomPageCount = 1,
+                error = null,
+                stream = null),
             )
         }
         loadPlatformLiveRooms(quick.category, reset = true)
@@ -3664,16 +3672,16 @@ class TvBoxViewModel(
                 runCatching { platformLiveFavoritesRepository.getFavorites() }
                     .onSuccess { favorites ->
                         _state.update { current ->
-                            if (current.platformLiveDestination == PlatformLiveDestination.Favorites) {
-                                current.copy(platformLiveFavorites = favorites, platformLiveRooms = favorites, platformLiveFavoriteError = null)
+                            if (current.platformLive.destination == PlatformLiveDestination.Favorites) {
+                                current.copy(platformLive = current.platformLive.copy(favorites = favorites, rooms = favorites, favoriteError = null))
                             } else {
-                                current.copy(platformLiveFavorites = favorites, platformLiveFavoriteError = null)
+                                current.copy(platformLive = current.platformLive.copy(favorites = favorites, favoriteError = null))
                             }
                         }
                     }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
-                        _state.update { it.copy(platformLiveFavoriteError = error.userMessage()) }
+                        _state.update { it.copy(platformLive = it.platformLive.copy(favoriteError = error.userMessage())) }
                     }
             }
         }
@@ -3740,29 +3748,29 @@ class TvBoxViewModel(
         platformLiveJob?.cancel()
         platformLiveJob = viewModelScope.launch {
             _state.update {
-                if (it.platformLiveSelectedSite?.id != site.id) it else {
-                    it.copy(platformLiveLoading = true, platformLiveError = null)
+                if (it.platformLive.selectedSite?.id != site.id) it else {
+                    it.copy(platformLive = it.platformLive.copy(loading = true, error = null))
                 }
             }
             runCatching { platformLiveRepository.getCategoryTree(site.id) }
                 .onSuccess { tree ->
                     _state.update {
-                        if (it.platformLiveSelectedSite?.id != site.id) it else {
-                            it.copy(
-                                platformLiveDestination = PlatformLiveDestination.ParentCategories,
-                                platformLiveParentCategories = tree.parentCategories,
-                                platformLiveSelectedParentCategory = null,
-                                platformLiveCategories = tree.categories,
-                                platformLiveLoading = false,
-                                platformLiveError = if (tree.parentCategories.isEmpty()) "没有可用直播大分类" else null,
+                        if (it.platformLive.selectedSite?.id != site.id) it else {
+                            it.copy(platformLive = it.platformLive.copy(
+                                destination = PlatformLiveDestination.ParentCategories,
+                                parentCategories = tree.parentCategories,
+                                selectedParentCategory = null,
+                                categories = tree.categories,
+                                loading = false,
+                                error = if (tree.parentCategories.isEmpty()) "没有可用直播大分类" else null),
                             )
                         }
                     }
                 }
                 .onFailure { error ->
                     _state.update {
-                        if (it.platformLiveSelectedSite?.id != site.id) it else {
-                            it.copy(platformLiveLoading = false, platformLiveError = error.userMessage())
+                        if (it.platformLive.selectedSite?.id != site.id) it else {
+                            it.copy(platformLive = it.platformLive.copy(loading = false, error = error.userMessage()))
                         }
                     }
                 }
@@ -3771,46 +3779,46 @@ class TvBoxViewModel(
 
     private fun loadPlatformLiveRooms(category: PlatformLiveCategory, reset: Boolean) {
         val state = _state.value
-        val site = state.platformLiveSelectedSite ?: return
-        val page = if (reset) 1 else state.platformLiveRoomPage + 1
+        val site = state.platformLive.selectedSite ?: return
+        val page = if (reset) 1 else state.platformLive.roomPage + 1
         platformLiveJob?.cancel()
         platformLiveJob = viewModelScope.launch {
             _state.update {
-                if (it.platformLiveSelectedCategory?.id != category.id) it else {
+                if (it.platformLive.selectedCategory?.id != category.id) it else {
                     if (reset) {
-                        it.copy(platformLiveLoading = true, platformLiveLoadingMore = false, platformLiveError = null)
+                        it.copy(platformLive = it.platformLive.copy(loading = true, loadingMore = false, error = null))
                     } else {
-                        it.copy(platformLiveLoadingMore = true, platformLiveError = null)
+                        it.copy(platformLive = it.platformLive.copy(loadingMore = true, error = null))
                     }
                 }
             }
             runCatching { platformLiveRepository.getRooms(site.id, category.id, page) }
                 .onSuccess { result ->
                     _state.update {
-                        if (it.platformLiveSelectedCategory?.id != category.id) it else {
+                        if (it.platformLive.selectedCategory?.id != category.id) it else {
                             val rooms = if (reset) {
                                 result.rooms
                             } else {
-                                (it.platformLiveRooms + result.rooms).distinctBy { room -> room.id }
+                                (it.platformLive.rooms + result.rooms).distinctBy { room -> room.id }
                             }
-                            it.copy(
-                                platformLiveRooms = rooms,
-                                platformLiveRoomPage = result.page,
-                                platformLiveRoomPageCount = result.pageCount,
-                                platformLiveLoading = false,
-                                platformLiveLoadingMore = false,
-                                platformLiveError = if (rooms.isEmpty()) "这个分类暂时没有正在直播的房间" else null,
+                            it.copy(platformLive = it.platformLive.copy(
+                                rooms = rooms,
+                                roomPage = result.page,
+                                roomPageCount = result.pageCount,
+                                loading = false,
+                                loadingMore = false,
+                                error = if (rooms.isEmpty()) "这个分类暂时没有正在直播的房间" else null),
                             )
                         }
                     }
                 }
                 .onFailure { error ->
                     _state.update {
-                        if (it.platformLiveSelectedCategory?.id != category.id) it else {
-                            it.copy(
-                                platformLiveLoading = false,
-                                platformLiveLoadingMore = false,
-                                platformLiveError = error.userMessage(),
+                        if (it.platformLive.selectedCategory?.id != category.id) it else {
+                            it.copy(platformLive = it.platformLive.copy(
+                                loading = false,
+                                loadingMore = false,
+                                error = error.userMessage()),
                             )
                         }
                     }
@@ -3824,7 +3832,7 @@ class TvBoxViewModel(
         isRecovery: Boolean = false,
     ) {
         val state = _state.value
-        val room = state.platformLiveRooms.getOrNull(state.platformLiveRoomIndex) ?: return
+        val room = state.platformLive.rooms.getOrNull(state.platformLive.roomIndex) ?: return
         if (!isRecovery) {
             // 用户主动换房间/手动重连：清空恢复熔断窗口与重连计数。
             platformLiveRecoveryInProgress = false
@@ -3835,26 +3843,26 @@ class TvBoxViewModel(
         platformLiveResolveJob?.cancel()
         platformLiveResolveJob = viewModelScope.launch {
             _state.update {
-                if (it.platformLiveDestination != PlatformLiveDestination.Player ||
-                    it.platformLiveRooms.getOrNull(it.platformLiveRoomIndex)?.id != room.id
+                if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                    it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                 ) {
                     it
                 } else {
-                    it.copy(platformLiveResolving = true, platformLiveError = null, platformLiveStream = null)
+                    it.copy(platformLive = it.platformLive.copy(resolving = true, error = null, stream = null))
                 }
             }
             runCatching { platformLiveRepository.resolve(room, forceRefresh) }
                 .onSuccess { stream ->
                     _state.update {
-                        if (it.platformLiveDestination != PlatformLiveDestination.Player ||
-                            it.platformLiveRooms.getOrNull(it.platformLiveRoomIndex)?.id != room.id
+                        if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                            it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                         ) {
                             it
                         } else {
-                            it.copy(
-                                platformLiveResolving = false,
-                                platformLiveError = null,
-                                platformLiveStream = stream.withActiveCandidate(candidateIndex),
+                            it.copy(platformLive = it.platformLive.copy(
+                                resolving = false,
+                                error = null,
+                                stream = stream.withActiveCandidate(candidateIndex)),
                             )
                         }
                     }
@@ -3862,15 +3870,15 @@ class TvBoxViewModel(
                 }
                 .onFailure { error ->
                     _state.update {
-                        if (it.platformLiveDestination != PlatformLiveDestination.Player ||
-                            it.platformLiveRooms.getOrNull(it.platformLiveRoomIndex)?.id != room.id
+                        if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                            it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                         ) {
                             it
                         } else {
-                            it.copy(
-                                platformLiveResolving = false,
-                                platformLiveStream = null,
-                                platformLiveError = error.userMessage(),
+                            it.copy(platformLive = it.platformLive.copy(
+                                resolving = false,
+                                stream = null,
+                                error = error.userMessage()),
                             )
                         }
                     }
