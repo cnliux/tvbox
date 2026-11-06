@@ -40,9 +40,13 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.ShortDrama
+import com.tvbox.app.domain.ShortDramaDetail
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.data.EpgRepository
+import com.tvbox.app.data.HongguoShortDramaRepository
+import com.tvbox.app.data.ShortDramaRepository
 import com.tvbox.app.data.RemoteEpgRepository
 import com.tvbox.app.data.LiveFavoritesRepository
 import com.tvbox.app.data.liveFavoriteKey
@@ -83,6 +87,8 @@ import kotlinx.coroutines.sync.withPermit
 enum class TvScreen {
     Home,
     History,
+    /** 短剧栏（红果短剧网页数据源，独立于视频源/直播源）。 */
+    ShortDrama,
     Search,
     Detail,
     Player,
@@ -196,6 +202,23 @@ data class TvBoxUiState(
     val liveLineLatencies: Map<String, Long?> = emptyMap(),
     /** 线路测速是否进行中，供线路浮层展示"测速中"。 */
     val liveLineTesting: Boolean = false,
+    /** 短剧栏：当前页条目（红果短剧网页数据）。 */
+    val shortDramaItems: List<ShortDrama> = emptyList(),
+    val shortDramaPage: Int = 1,
+    val shortDramaTotalPages: Int = 1,
+    val shortDramaLoading: Boolean = false,
+    val shortDramaLoadingMore: Boolean = false,
+    val shortDramaError: String? = null,
+    /** 当前打开的短剧详情；null 表示停在列表。 */
+    val shortDramaDetail: ShortDramaDetail? = null,
+    val shortDramaDetailLoading: Boolean = false,
+    val shortDramaDetailError: String? = null,
+    /** 正在播放的分集下标（0 基）；-1 表示未选择。 */
+    val shortDramaEpisodeIndex: Int = -1,
+    /** 该集播放地址；空表示解析失败（播放接口不可用时降级提示）。 */
+    val shortDramaPlayUrl: String? = null,
+    val shortDramaPlayUrlLoading: Boolean = false,
+    val shortDramaPlayUrlError: String? = null,
     val platformLiveDestination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val platformLiveSites: List<PlatformLiveSite> = emptyList(),
     /** 平台直播站点全量列表（含已删除的），供源管理页恢复使用。 */
@@ -274,6 +297,8 @@ class TvBoxViewModel(
     private val searchHotWordRepository: SearchHotWordRepository = DefaultSearchHotWordRepository(),
     private val searchKeywordExpander: SearchKeywordExpander = DefaultSearchKeywordExpander(),
     private val liveRepository: LiveRepository = DefaultLiveRepository(),
+    /** 短剧数据源（红果短剧网页）；默认实现可直接取列表/详情，播放地址依赖外部代理接口。 */
+    private val shortDramaRepository: ShortDramaRepository = HongguoShortDramaRepository(),
     private val platformLiveRepository: PlatformLiveRepository = EmbeddedPlatformLiveRepository(),
     private val appUpdateRepository: AppUpdateRepository = DefaultAppUpdateRepositoryPlaceholder(),
     private val appSettingsRepository: AppSettingsRepository = DefaultAppSettingsRepositoryPlaceholder(),
@@ -324,6 +349,9 @@ class TvBoxViewModel(
     private val liveFavoritesMutex = Mutex()
     private var epgJob: Job? = null
     private var liveLineTestJob: Job? = null
+    private var shortDramaJob: Job? = null
+    private var shortDramaDetailJob: Job? = null
+    private var shortDramaPlayJob: Job? = null
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
@@ -763,6 +791,159 @@ class TvBoxViewModel(
     fun openHistory() {
         loadHistory()
         _state.update { it.copy(screen = TvScreen.History) }
+    }
+
+    /**
+     * 打开短剧栏并加载第一页；已加载过且无错误时直接复用，避免每次进入都重新请求。
+     * 短剧是独立内容源（红果短剧网页），不参与视频源/直播源的解析链路。
+     */
+    fun openShortDrama(forceRefresh: Boolean = false) {
+        _state.update {
+            it.copy(
+                screen = TvScreen.ShortDrama,
+                shortDramaDetail = null,
+                shortDramaDetailError = null,
+                shortDramaEpisodeIndex = -1,
+                shortDramaPlayUrl = null,
+                shortDramaPlayUrlError = null,
+            )
+        }
+        if (!forceRefresh && _state.value.shortDramaItems.isNotEmpty() && _state.value.shortDramaError == null) {
+            return
+        }
+        loadShortDrama(reset = true)
+    }
+
+    /** 加载短剧列表；[reset] 为 true 时回到第一页并清空现有条目。 */
+    fun loadShortDrama(reset: Boolean = false) {
+        val current = _state.value
+        if (current.shortDramaLoading || current.shortDramaLoadingMore) return
+        val nextPage = if (reset) 1 else current.shortDramaPage + 1
+        if (!reset && nextPage > current.shortDramaTotalPages) return
+        _state.update {
+            it.copy(
+                shortDramaLoading = reset,
+                shortDramaLoadingMore = !reset,
+                shortDramaError = null,
+            )
+        }
+        shortDramaJob?.cancel()
+        shortDramaJob = viewModelScope.launch {
+            runCatching { shortDramaRepository.getCatalog(nextPage) }
+                .onSuccess { page ->
+                    _state.update { state ->
+                        state.copy(
+                            shortDramaItems = if (reset) page.items else (state.shortDramaItems + page.items).distinctBy { d -> d.id },
+                            shortDramaPage = page.page,
+                            shortDramaTotalPages = page.totalPages.coerceAtLeast(1),
+                            shortDramaLoading = false,
+                            shortDramaLoadingMore = false,
+                            shortDramaError = if (page.items.isEmpty()) "短剧暂无内容" else null,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            shortDramaLoading = false,
+                            shortDramaLoadingMore = false,
+                            shortDramaError = "短剧加载失败：${error.userMessage()}",
+                        )
+                    }
+                }
+        }
+    }
+
+    /** 打开短剧详情并读取分集列表。 */
+    fun openShortDramaDetail(drama: ShortDrama) {
+        _state.update {
+            it.copy(
+                shortDramaDetail = null,
+                shortDramaDetailLoading = true,
+                shortDramaDetailError = null,
+                shortDramaEpisodeIndex = -1,
+                shortDramaPlayUrl = null,
+                shortDramaPlayUrlError = null,
+            )
+        }
+        shortDramaDetailJob?.cancel()
+        shortDramaDetailJob = viewModelScope.launch {
+            runCatching { shortDramaRepository.getDetail(drama.id) }
+                .onSuccess { detail ->
+                    _state.update { state ->
+                        state.copy(
+                            shortDramaDetail = detail,
+                            shortDramaDetailLoading = false,
+                            shortDramaDetailError = if (detail == null) "短剧详情暂不可用" else null,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            shortDramaDetailLoading = false,
+                            shortDramaDetailError = "短剧详情加载失败：${error.userMessage()}",
+                        )
+                    }
+                }
+        }
+    }
+
+    /** 关闭详情回到列表。 */
+    fun closeShortDramaDetail() {
+        shortDramaDetailJob?.cancel()
+        shortDramaPlayJob?.cancel()
+        _state.update {
+            it.copy(
+                shortDramaDetail = null,
+                shortDramaDetailError = null,
+                shortDramaDetailLoading = false,
+                shortDramaEpisodeIndex = -1,
+                shortDramaPlayUrl = null,
+                shortDramaPlayUrlError = null,
+            )
+        }
+    }
+
+    /**
+     * 选择某一集并解析播放地址（[episodeIndex] 0 基）。
+     *
+     * 播放地址来自红果的代理接口，可能因网络/接口变动不可用：此时只记录错误并保留详情页，
+     * 让用户能看到分集与简介，而不是整页失败。
+     */
+    fun playShortDramaEpisode(episodeIndex: Int) {
+        val detail = _state.value.shortDramaDetail ?: return
+        if (episodeIndex !in detail.episodeIds.indices) return
+        val episodeId = detail.episodeIds[episodeIndex]
+        _state.update {
+            it.copy(
+                shortDramaEpisodeIndex = episodeIndex,
+                shortDramaPlayUrl = null,
+                shortDramaPlayUrlLoading = true,
+                shortDramaPlayUrlError = null,
+            )
+        }
+        shortDramaPlayJob?.cancel()
+        shortDramaPlayJob = viewModelScope.launch {
+            runCatching { shortDramaRepository.resolvePlayUrl(detail.drama.id, episodeId) }
+                .onSuccess { url ->
+                    _state.update {
+                        it.copy(
+                            shortDramaPlayUrl = url,
+                            shortDramaPlayUrlLoading = false,
+                            shortDramaPlayUrlError = if (url.isNullOrBlank()) "该集暂未提供可播放地址" else null,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    _state.update {
+                        it.copy(
+                            shortDramaPlayUrlLoading = false,
+                            shortDramaPlayUrlError = "播放地址解析失败：${error.userMessage()}",
+                        )
+                    }
+                }
+        }
     }
 
     fun clearHistory() {
@@ -2377,6 +2558,7 @@ class TvBoxViewModel(
         when (_state.value.screen) {
             TvScreen.Home -> refreshHome(forceRefresh = true)
             TvScreen.History -> loadHistory()
+            TvScreen.ShortDrama -> loadShortDrama(reset = true)
             TvScreen.Search -> submitSearch()
             TvScreen.Detail -> _state.value.detailMovie?.let { openDetail(it.id) }
             TvScreen.Player -> Unit
@@ -2413,6 +2595,15 @@ class TvBoxViewModel(
             }
             TvScreen.History, TvScreen.Settings -> {
                 _state.update { it.copy(screen = TvScreen.Home) }
+                true
+            }
+            TvScreen.ShortDrama -> {
+                // 短剧：详情态先回列表，列表态回首页。
+                if (current.shortDramaDetail != null || current.shortDramaDetailError != null) {
+                    closeShortDramaDetail()
+                } else {
+                    _state.update { it.copy(screen = TvScreen.Home) }
+                }
                 true
             }
             TvScreen.Live -> {
