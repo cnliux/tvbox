@@ -629,7 +629,9 @@ private fun MobileLivePlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var channelBadgeVisible by remember { mutableStateOf(true) }
-    var isPlaying by remember { mutableStateOf(true) }
+    // 按钮文案要看"播放意图"而不是 isPlaying：缓冲/起播阶段 isPlaying 仍为 false，
+    // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。
+    var playRequested by remember(player) { mutableStateOf(player.playWhenReady) }
 
     val isFavorite = actions.isLiveFavorite(channel)
 
@@ -669,8 +671,8 @@ private fun MobileLivePlayerScreen(
                 switchLineAfterIssue(LiveLineFallbackReason.Error)
             }
 
-            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
-                isPlaying = isPlayingNow
+            override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
+                playRequested = playWhenReadyNow
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -739,7 +741,7 @@ private fun MobileLivePlayerScreen(
             controlsVisible = if (isPortrait) true else controlsVisible,
             channelBadgeVisible = channelBadgeVisible,
             isFavorite = isFavorite,
-            isPlaying = isPlaying,
+            isPlaying = playRequested,
             isPortrait = isPortrait,
             onToggleControls = {
                 if (!isPortrait) {
