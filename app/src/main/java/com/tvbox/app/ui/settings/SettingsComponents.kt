@@ -15,6 +15,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.resolveCardSlotCount
 
 /**
  * 扫码/远程配置三态徽标（B3）：设置页所有"是否已配置"类状态共用。
@@ -117,4 +118,11 @@ fun SettingsStatusSummary(
             }
         }
     }
+}
+
+/** 卡片数量设置项的可读摘要，例如“显示 4 个（2 行）”或“默认（4 个，2 行）”。 */
+fun cardCountSummary(value: Int, columns: Int, defaultSlots: Int): String {
+    val effective = resolveCardSlotCount(value, columns, defaultSlots)
+    val rows = effective / columns.coerceAtLeast(1)
+    return if (value > 0) "显示 $effective 个（$rows 行）" else "默认（$effective 个，$rows 行）"
 }

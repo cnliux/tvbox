@@ -38,7 +38,61 @@ data class AppSettings(
     val epgUrl: String = "",
     /** 平台直播卡片每行数量；0 表示跟随布局默认（触屏 4 / 遥控 6）。 */
     val platformLiveGridColumns: Int = 0,
+    /** 直播源（常用分类直达）卡片显示数量；0 表示跟随设备默认。 */
+    val liveSourceCardCount: Int = 0,
+    /** 直播平台卡片显示数量；0 表示跟随设备默认。 */
+    val platformLiveCardCount: Int = 0,
 )
+
+/** 卡片区最多展示的行数，超出部分折叠为「更多」入口。 */
+const val CARD_AREA_MAX_ROWS = 3
+
+/**
+ * 把卡片数量收敛到当前布局可容纳的整行槽位数：
+ * - [requested] <= 0 时使用 [defaultSlots]（设备默认值）；
+ * - 结果按 [columns] 取整，避免出现半行或空位；
+ * - 下限一行，上限 [maxRows] 行。
+ */
+fun resolveCardSlotCount(
+    requested: Int,
+    columns: Int,
+    defaultSlots: Int,
+    maxRows: Int = CARD_AREA_MAX_ROWS,
+): Int {
+    val cols = columns.coerceAtLeast(1)
+    val maxSlots = cols * maxRows.coerceAtLeast(1)
+    val target = (if (requested > 0) requested else defaultSlots).coerceIn(cols, maxSlots)
+    return (target / cols) * cols
+}
+
+/** 卡片区的折叠结果：可见内容数量与末尾是否用「更多」补满最后一个槽位。 */
+data class CardAreaLayout(
+    /** 直接渲染的内容卡片数量（不含「更多」入口）。 */
+    val visibleCount: Int,
+    /** 内容超出槽位时，用最后一个槽位显示「更多」。 */
+    val showMore: Boolean,
+) {
+    /** 内容卡片 + 「更多」入口共占用的槽位数。 */
+    val slotCount: Int get() = visibleCount + if (showMore) 1 else 0
+}
+
+/** 按布局槽位计算卡片区渲染方式；内容不超出时全部展示。 */
+fun resolveCardAreaLayout(
+    total: Int,
+    requested: Int,
+    columns: Int,
+    defaultSlots: Int,
+    maxRows: Int = CARD_AREA_MAX_ROWS,
+): CardAreaLayout {
+    val slots = resolveCardSlotCount(requested, columns, defaultSlots, maxRows)
+    val safeTotal = total.coerceAtLeast(0)
+    return if (safeTotal <= slots) {
+        CardAreaLayout(visibleCount = safeTotal, showMore = false)
+    } else {
+        // 「更多」占用最后一个整行槽位，因此内容少显示一张，保证末行仍然铺满。
+        CardAreaLayout(visibleCount = (slots - 1).coerceAtLeast(0), showMore = true)
+    }
+}
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {
     /** 自动识别：按系统特征（Leanback/屏幕尺寸/触摸）判定，可被手动覆盖。 */

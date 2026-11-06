@@ -727,3 +727,51 @@ fun SmallMeta(text: String, modifier: Modifier = Modifier) {
         Text(text = text, style = MaterialTheme.typography.labelMedium)
     }
 }
+
+/**
+ * 卡片区「更多」入口：占据最后一个整行槽位，尺寸与普通卡片一致；
+ * 焦点样式复用 [tvFocusScale]，触摸与遥控都可操作。
+ */
+@Composable
+fun ShowMoreCard(
+    subtitle: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val shape = MaterialTheme.shapes.medium
+    val touchMode = LocalTouchMode.current
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .tvFocusScale(shape = shape)
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
+            .clickable(onClick = onClick)
+            .focusable()
+            .padding(if (touchMode) 14.dp else 22.dp),
+        verticalArrangement = Arrangement.spacedBy(if (touchMode) 4.dp else 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(
+            text = "更多",
+            color = MaterialTheme.colorScheme.primary,
+            style = if (touchMode) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
+        )
+        Text(
+            text = "查看全部",
+            style = if (touchMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = subtitle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = if (touchMode) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}

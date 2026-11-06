@@ -33,6 +33,7 @@ import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
+import com.tvbox.app.domain.CARD_AREA_MAX_ROWS
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.ApiLine
@@ -1583,6 +1584,24 @@ class TvBoxViewModel(
     /** 更新平台直播卡片每行数量；0 表示跟随布局默认。 */
     fun updatePlatformLiveGridColumns(columns: Int) {
         val settings = _state.value.appSettings.copy(platformLiveGridColumns = columns.coerceIn(0, 10))
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新直播源卡片显示数量；0 表示恢复设备默认。 */
+    fun updateLiveSourceCardCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            liveSourceCardCount = count.coerceIn(0, CARD_AREA_MAX_ROWS * 10),
+        )
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 更新直播平台卡片显示数量；0 表示恢复设备默认。 */
+    fun updatePlatformLiveCardCount(count: Int) {
+        val settings = _state.value.appSettings.copy(
+            platformLiveCardCount = count.coerceIn(0, CARD_AREA_MAX_ROWS * 10),
+        )
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
     }

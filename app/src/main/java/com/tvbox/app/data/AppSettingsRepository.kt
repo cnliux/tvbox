@@ -60,6 +60,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             videoGridColumns = prefs.getInt(KEY_VIDEO_GRID_COLUMNS, 0),
             epgUrl = prefs.getString(KEY_EPG_URL, "") ?: "",
             platformLiveGridColumns = prefs.getInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, 0),
+            liveSourceCardCount = prefs.getInt(KEY_LIVE_SOURCE_CARD_COUNT, 0),
+            platformLiveCardCount = prefs.getInt(KEY_PLATFORM_LIVE_CARD_COUNT, 0),
         )
         // 首次升级时把旧偏好里的屏蔽分类迁移到常驻 JSON 文件。
         if (blockedFromFile == null && settings.blockedVideoCategories.isNotEmpty()) {
@@ -94,6 +96,8 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_VIDEO_GRID_COLUMNS, settings.videoGridColumns)
             .putString(KEY_EPG_URL, settings.epgUrl)
             .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
+            .putInt(KEY_LIVE_SOURCE_CARD_COUNT, settings.liveSourceCardCount)
+            .putInt(KEY_PLATFORM_LIVE_CARD_COUNT, settings.platformLiveCardCount)
             .commit()
         if (!committed) {
             throw IOException("设置写入失败")
@@ -167,5 +171,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_VIDEO_GRID_COLUMNS = "video_grid_columns"
         const val KEY_EPG_URL = "epg_url"
         const val KEY_PLATFORM_LIVE_GRID_COLUMNS = "platform_live_grid_columns"
+        const val KEY_LIVE_SOURCE_CARD_COUNT = "live_source_card_count"
+        const val KEY_PLATFORM_LIVE_CARD_COUNT = "platform_live_card_count"
     }
 }
