@@ -55,25 +55,22 @@ class UpdateDownloadService : Service() {
         val path = intent?.getStringExtra("path")
         val url = intent?.getStringExtra("url")
         if (path == null || url == null) { stopSelf(startId); return START_NOT_STICKY }
-        if (activePath == path && job?.isActive == true) return START_REDELIVER_INTENT
+        val size = intent.getLongExtra("size", 0)
+        val sha = intent.getStringExtra("sha").orEmpty()
+        if (activePath == path && job?.isActive == true) {
+            // 重复启动同一 path：沿用进行中的任务，但新的 startId 仍要重新声明前台，
+            // 否则系统会按前台服务超时处理；进度沿用 states 中的实时值。
+            if (states[path]?.total?.let { it > 0 } != true) {
+                states[path] = AppDownloadStatus(total = size)
+            }
+            if (!startForegroundSafely(path, startId)) return START_NOT_STICKY
+            return START_REDELIVER_INTENT
+        }
         job?.cancel()
         activePath = path
         activeStartId = startId
-        val size = intent.getLongExtra("size", 0)
-        val sha = intent.getStringExtra("sha").orEmpty()
         states[path] = AppDownloadStatus(total = size)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                getSystemService(NotificationManager::class.java).createNotificationChannel(
-                    NotificationChannel(CHANNEL, "应用更新下载", NotificationManager.IMPORTANCE_LOW))
-            }
-            startForeground(NOTIFICATION_ID, notification(0, size))
-        } catch (error: Exception) {
-            Log.e("TVBoxUpdate", "Unable to start foreground download", error)
-            states[path] = AppDownloadStatus(error = "无法启动后台下载，请回到应用后重试")
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
+        if (!startForegroundSafely(path, startId)) return START_NOT_STICKY
         job = scope.launch {
             try {
                 val target = File(path)
@@ -143,6 +140,24 @@ class UpdateDownloadService : Service() {
 
     override fun onDestroy() { scope.cancel(); super.onDestroy() }
 
+    /** 创建通知渠道并声明前台服务；失败时写入错误状态并停止自身。 */
+    private fun startForegroundSafely(path: String, startId: Int): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                getSystemService(NotificationManager::class.java).createNotificationChannel(
+                    NotificationChannel(CHANNEL, "应用更新下载", NotificationManager.IMPORTANCE_LOW))
+            }
+            val status = states[path] ?: AppDownloadStatus()
+            startForeground(NOTIFICATION_ID, notification(status.received, status.total))
+            true
+        } catch (error: Exception) {
+            Log.e("TVBoxUpdate", "Unable to start foreground download", error)
+            states[path] = AppDownloadStatus(error = "无法启动后台下载，请回到应用后重试")
+            stopSelf(startId)
+            false
+        }
+    }
+
     private fun notification(received: Long, total: Long): Notification {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -160,7 +175,13 @@ class UpdateDownloadService : Service() {
         private val states = ConcurrentHashMap<String, AppDownloadStatus>()
         internal fun status(path: String): AppDownloadStatus? = states[path]
         internal fun start(context: Context, url: String, path: String, size: Long, sha: String) {
-            states.remove(path)
+            // 只保留本次下载的状态，避免 states 随历史版本无界增长。
+            states.keys.removeAll { it != path }
+            // 同一 path 仍在下载时保留实时进度；已完成/失败的旧状态用新任务覆盖。
+            val current = states[path]
+            if (current == null || current.complete || current.error != null) {
+                states[path] = AppDownloadStatus(total = size)
+            }
             ContextCompat.startForegroundService(context, Intent(context, UpdateDownloadService::class.java)
                 .putExtra("url", url).putExtra("path", path).putExtra("size", size).putExtra("sha", sha))
         }
