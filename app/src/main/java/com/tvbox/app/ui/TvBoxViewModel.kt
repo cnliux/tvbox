@@ -239,19 +239,9 @@ data class TvBoxUiState(
     val remoteManageServerUrl: String? = null,
     val remoteManageServerError: String? = null,
     val remoteManageMessage: String? = null,
-    val sourceLatencies: Map<String, Long?> = emptyMap(),
-    val sourceTesting: Boolean = false,
-    val sourceTestCompleted: Int = 0,
-    val sourceTestTotal: Int = 0,
-    val sourceManagerMessage: String? = null,
-    val detailSourceTesting: Boolean = false,
-    val detailSourceTestCompleted: Int = 0,
-    val detailSourceTestTotal: Int = 0,
-    val detailSourceMessage: String? = null,
-    val sourceImporting: Boolean = false,
-    val sourceImportMessage: String? = null,
+    val source: SourceManagerUiState = SourceManagerUiState(),
 ) {
-    // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写 `update = update.copy(...)`。
+    // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写子 state.copy(...)。
     val availableUpdate: AppUpdate? get() = update.availableUpdate
     val updateDialogVisible: Boolean get() = update.dialogVisible
     val updateChecking: Boolean get() = update.checking
@@ -263,6 +253,18 @@ data class TvBoxUiState(
     val updateExporting: Boolean get() = update.exporting
     val updateExportMessage: String? get() = update.exportMessage
     val updateError: String? get() = update.error
+
+    val sourceLatencies: Map<String, Long?> get() = source.latencies
+    val sourceTesting: Boolean get() = source.testing
+    val sourceTestCompleted: Int get() = source.testCompleted
+    val sourceTestTotal: Int get() = source.testTotal
+    val sourceManagerMessage: String? get() = source.managerMessage
+    val detailSourceTesting: Boolean get() = source.detailTesting
+    val detailSourceTestCompleted: Int get() = source.detailTestCompleted
+    val detailSourceTestTotal: Int get() = source.detailTestTotal
+    val detailSourceMessage: String? get() = source.detailMessage
+    val sourceImporting: Boolean get() = source.importing
+    val sourceImportMessage: String? get() = source.importMessage
 
     val canLoadMore: Boolean
         get() = page < pageCount && !homeLoading && !loadingMore
@@ -394,7 +396,7 @@ class TvBoxViewModel(
                     appSettings = normalizedSettings,
                     effectiveDeviceMode = normalizedSettings.effectiveMode(appContext),
                     playbackHealth = playbackHealth,
-                    sourceLatencies = speedLatencies,
+                    source = SourceManagerUiState(latencies = speedLatencies),
                 )
             }
             loadHistory()
@@ -900,7 +902,7 @@ class TvBoxViewModel(
                 url = line.baseUrls.firstOrNull().orEmpty(),
                 blocked = line.id in settings.blockedSourceIds,
                 isHome = line.id == current.selectedApiLineId,
-                latencyMs = current.sourceLatencies[line.id],
+                latencyMs = current.source.latencies[line.id],
             )
         }
         return RemoteManageSnapshot(
@@ -1266,10 +1268,12 @@ class TvBoxViewModel(
                 detailError = null,
                 detailCompletedSources = 0,
                 detailTotalSources = 0,
-                detailSourceTesting = false,
-                detailSourceTestCompleted = 0,
-                detailSourceTestTotal = 0,
-                detailSourceMessage = null,
+                source = it.source.copy(
+                    detailTesting = false,
+                    detailTestCompleted = 0,
+                    detailTestTotal = 0,
+                    detailMessage = null,
+                ),
                 selectedSourceIndex = 0,
                 selectedEpisodeIndex = 0,
                 playerSourceIndex = 0,
@@ -1397,10 +1401,12 @@ class TvBoxViewModel(
                 detailMovie = null,
                 detailLoading = true,
                 detailError = null,
-                detailSourceTesting = false,
-                detailSourceTestCompleted = 0,
-                detailSourceTestTotal = 0,
-                detailSourceMessage = null,
+                source = it.source.copy(
+                    detailTesting = false,
+                    detailTestCompleted = 0,
+                    detailTestTotal = 0,
+                    detailMessage = null,
+                ),
                 selectedSourceIndex = item.sourceIndex,
                 selectedEpisodeIndex = item.episodeIndex,
             )
@@ -2532,13 +2538,13 @@ class TvBoxViewModel(
     // ========== Source Management Methods ==========
 
     fun testSourceSpeed(apiLineId: String) {
-        if (_state.value.sourceTesting) return
+        if (_state.value.source.testing) return
         viewModelScope.launch {
             val latency = runCatching { repository.testSpeed(apiLineId) }
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()
             _state.update { state ->
-                state.copy(sourceLatencies = state.sourceLatencies + (apiLineId to latency))
+                state.copy(source = state.source.copy(latencies = state.source.latencies + (apiLineId to latency)))
             }
             persistSourceLatencies()
         }
@@ -2555,18 +2561,20 @@ class TvBoxViewModel(
 
     private fun runSourceSpeedTest(autoSort: Boolean) {
         val current = _state.value
-        if (current.sourceTesting) return
+        if (current.source.testing) return
         val srcLines = current.apiLines
         if (srcLines.isEmpty()) return
         sourceTestJob?.cancel()
         sourceTestJob = viewModelScope.launch {
             _state.update {
                 it.copy(
-                    sourceTesting = true,
-                    sourceTestCompleted = 0,
-                    sourceTestTotal = srcLines.size,
-                    sourceManagerMessage = null,
-                    sourceImportMessage = null,
+                    source = it.source.copy(
+                        testing = true,
+                        testCompleted = 0,
+                        testTotal = srcLines.size,
+                        managerMessage = null,
+                        importMessage = null,
+                    ),
                 )
             }
             val semaphore = kotlinx.coroutines.sync.Semaphore(3)
@@ -2583,8 +2591,10 @@ class TvBoxViewModel(
                                 completed++
                                 _state.update {
                                     it.copy(
-                                        sourceLatencies = it.sourceLatencies + (line.id to latency),
-                                        sourceTestCompleted = completed,
+                                        source = it.source.copy(
+                                            latencies = it.source.latencies + (line.id to latency),
+                                            testCompleted = completed,
+                                        ),
                                     )
                                 }
                             }
@@ -2592,7 +2602,7 @@ class TvBoxViewModel(
                     }
                 }
             }
-            val latencies = _state.value.sourceLatencies
+            val latencies = _state.value.source.latencies
             val okCount = srcLines.count { latencies[it.id] != null }
             if (autoSort) {
                 val sorted = orderLinesByLatency(srcLines, latencies)
@@ -2600,18 +2610,22 @@ class TvBoxViewModel(
                 saveSettings(settings)
                 _state.update {
                     it.copy(
-                        sourceTesting = false,
                         apiLines = sorted,
                         allSourceLines = orderApiLines(repository.allApiLines, settings.sourceOrder),
                         appSettings = settings,
-                        sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个；已按延迟排列（最快在前）。",
+                        source = it.source.copy(
+                            testing = false,
+                            managerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个；已按延迟排列（最快在前）。",
+                        ),
                     )
                 }
             } else {
                 _state.update {
                     it.copy(
-                        sourceTesting = false,
-                        sourceManagerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个。可点击“按测速排序”重新排列。",
+                        source = it.source.copy(
+                            testing = false,
+                            managerMessage = "测速完成：成功 $okCount 个，失败 ${srcLines.size - okCount} 个。可点击“按测速排序”重新排列。",
+                        ),
                     )
                 }
             }
@@ -2622,7 +2636,7 @@ class TvBoxViewModel(
     /** 对当前详情页的所有播放线路测速，结果会持久化并用于按延迟排列线路。 */
     fun testDetailSourceSpeeds() {
         val current = _state.value
-        if (current.detailSourceTesting) return
+        if (current.source.detailTesting) return
         val movie = current.detailMovie ?: return
         val lineIds = movie.playSources
             .map { it.lineId }
@@ -2633,10 +2647,12 @@ class TvBoxViewModel(
         detailSourceTestJob = viewModelScope.launch {
             _state.update {
                 it.copy(
-                    detailSourceTesting = true,
-                    detailSourceTestCompleted = 0,
-                    detailSourceTestTotal = lineIds.size,
-                    detailSourceMessage = null,
+                    source = it.source.copy(
+                        detailTesting = true,
+                        detailTestCompleted = 0,
+                        detailTestTotal = lineIds.size,
+                        detailMessage = null,
+                    ),
                 )
             }
             val semaphore = kotlinx.coroutines.sync.Semaphore(3)
@@ -2653,8 +2669,10 @@ class TvBoxViewModel(
                                 completed++
                                 _state.update {
                                     it.copy(
-                                        sourceLatencies = it.sourceLatencies + (lineId to latency),
-                                        detailSourceTestCompleted = completed,
+                                        source = it.source.copy(
+                                            latencies = it.source.latencies + (lineId to latency),
+                                            detailTestCompleted = completed,
+                                        ),
                                     )
                                 }
                             }
@@ -2663,12 +2681,14 @@ class TvBoxViewModel(
                 }
             }
             persistSourceLatencies()
-            val latencies = _state.value.sourceLatencies
+            val latencies = _state.value.source.latencies
             val okCount = lineIds.count { latencies[it] != null }
             _state.update {
                 it.copy(
-                    detailSourceTesting = false,
-                    detailSourceMessage = "线路测速完成：成功 $okCount/${lineIds.size}，已按延迟排序。",
+                    source = it.source.copy(
+                        detailTesting = false,
+                        detailMessage = "线路测速完成：成功 $okCount/${lineIds.size}，已按延迟排序。",
+                    ),
                 )
             }
         }
@@ -2676,10 +2696,10 @@ class TvBoxViewModel(
 
     fun sortSourcesBySpeed() {
         val current = _state.value
-        if (current.sourceTesting || current.sourceImporting) return
-        val sorted = orderLinesByLatency(current.apiLines, current.sourceLatencies)
+        if (current.source.testing || current.source.importing) return
+        val sorted = orderLinesByLatency(current.apiLines, current.source.latencies)
         if (sorted == current.apiLines) {
-            _state.update { it.copy(sourceManagerMessage = "尚未测速或顺序未变化，请先执行“全部测速”。") }
+            _state.update { it.copy(source = it.source.copy(managerMessage = "尚未测速或顺序未变化，请先执行“全部测速”。")) }
             return
         }
         val settings = current.appSettings.copy(sourceOrder = sorted.map { it.id })
@@ -2689,7 +2709,7 @@ class TvBoxViewModel(
                 apiLines = sorted,
                 allSourceLines = orderApiLines(repository.allApiLines, settings.sourceOrder),
                 appSettings = settings,
-                sourceManagerMessage = "已按测速排序（最快在前）",
+                source = it.source.copy(managerMessage = "已按测速排序（最快在前）"),
             )
         }
     }
@@ -2738,8 +2758,10 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceLatencies = it.sourceLatencies - line.id,
-                sourceManagerMessage = "已删除源“${line.name}”",
+                source = it.source.copy(
+                    latencies = it.source.latencies - line.id,
+                    managerMessage = "已删除源“${line.name}”",
+                ),
             )
         }
         persistSourceLatencies()
@@ -2750,10 +2772,10 @@ class TvBoxViewModel(
 
     fun deleteAllSources() {
         val current = _state.value
-        if (current.sourceTesting || current.sourceImporting) return
+        if (current.source.testing || current.source.importing) return
         val allCustomIds = current.appSettings.customVideoApiLines.map { it.id }.toSet()
         if (allCustomIds.isEmpty()) {
-            _state.update { it.copy(sourceManagerMessage = "暂无自定义视频源可删除") }
+            _state.update { it.copy(source = it.source.copy(managerMessage = "暂无自定义视频源可删除")) }
             return
         }
         val settings = current.appSettings.copy(
@@ -2771,8 +2793,10 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceLatencies = it.sourceLatencies.filterKeys { it !in allCustomIds },
-                sourceManagerMessage = "已一键删除全部自定义视频源（${allCustomIds.size} 个）",
+                source = it.source.copy(
+                    latencies = it.source.latencies.filterKeys { k -> k !in allCustomIds },
+                    managerMessage = "已一键删除全部自定义视频源（${allCustomIds.size} 个）",
+                ),
             )
         }
         persistSourceLatencies()
@@ -2783,10 +2807,10 @@ class TvBoxViewModel(
 
     fun deduplicateSourcesByDomain() {
         val current = _state.value
-        if (current.sourceTesting || current.sourceImporting) return
+        if (current.source.testing || current.source.importing) return
         val custom = current.appSettings.customVideoApiLines
         if (custom.isEmpty()) {
-            _state.update { it.copy(sourceManagerMessage = "暂无自定义视频源") }
+            _state.update { it.copy(source = it.source.copy(managerMessage = "暂无自定义视频源")) }
             return
         }
         val seen = mutableSetOf<String>()
@@ -2806,7 +2830,7 @@ class TvBoxViewModel(
             }
         }
         if (removed.isEmpty()) {
-            _state.update { it.copy(sourceManagerMessage = "未发现重复域名的视频源") }
+            _state.update { it.copy(source = it.source.copy(managerMessage = "未发现重复域名的视频源")) }
             return
         }
         val removedIds = removed.map { it.id }.toSet()
@@ -2825,8 +2849,10 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceLatencies = it.sourceLatencies.filterKeys { it !in removedIds },
-                sourceManagerMessage = "已按域名去重：保留 ${kept.size} 个，删除 ${removed.size} 个重复项",
+                source = it.source.copy(
+                    latencies = it.source.latencies.filterKeys { k -> k !in removedIds },
+                    managerMessage = "已按域名去重：保留 ${kept.size} 个，删除 ${removed.size} 个重复项",
+                ),
             )
         }
         persistSourceLatencies()
@@ -2853,7 +2879,7 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceManagerMessage = "已屏蔽“${line.name}”，可随时取消屏蔽。",
+                source = it.source.copy(managerMessage = "已屏蔽“${line.name}”，可随时取消屏蔽。"),
             )
         }
         if (selectionMissing) {
@@ -2879,7 +2905,7 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceManagerMessage = "已取消屏蔽${line?.let { "“${it.name}”" }.orEmpty()}",
+                source = it.source.copy(managerMessage = "已取消屏蔽${line?.let { "“${it.name}”" }.orEmpty()}"),
             )
         }
         if (selectionMissing) {
@@ -2889,17 +2915,19 @@ class TvBoxViewModel(
 
     fun deleteInvalidSources() {
         val current = _state.value
-        if (current.sourceTesting || current.sourceImporting) return
-        val tested = current.sourceLatencies
+        if (current.source.testing || current.source.importing) return
+        val tested = current.source.latencies
         val invalid = current.apiLines.filter { id -> tested.containsKey(id.id) && tested[id.id] == null }
         if (invalid.isEmpty()) {
             _state.update {
                 it.copy(
-                    sourceManagerMessage = if (tested.isEmpty()) {
-                        "尚未测速，请先点击“全部测速”，再删除无效源。"
-                    } else {
-                        "没有检测到无效源。"
-                    },
+                    source = it.source.copy(
+                        managerMessage = if (tested.isEmpty()) {
+                            "尚未测速，请先点击“全部测速”，再删除无效源。"
+                        } else {
+                            "没有检测到无效源。"
+                        },
+                    ),
                 )
             }
             return
@@ -2920,8 +2948,10 @@ class TvBoxViewModel(
                 allSourceLines = allLines,
                 selectedApiLineId = finalSettings.homeApiLineId,
                 appSettings = finalSettings,
-                sourceLatencies = it.sourceLatencies - invalidIds,
-                sourceManagerMessage = "已删除 ${invalid.size} 个无效源（测速失败或超时）。",
+                source = it.source.copy(
+                    latencies = it.source.latencies - invalidIds,
+                    managerMessage = "已删除 ${invalid.size} 个无效源（测速失败或超时）。",
+                ),
             )
         }
         persistSourceLatencies()
@@ -2939,11 +2969,11 @@ class TvBoxViewModel(
         val text = input.trim()
         if (text.isBlank()) {
             val message = "请粘贴配置内容或输入订阅地址"
-            _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+            _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
             return message
         }
-        if (_state.value.sourceImporting) return "正在导入上一份配置，请稍候再试。"
-        _state.update { it.copy(sourceImporting = true, sourceImportMessage = null) }
+        if (_state.value.source.importing) return "正在导入上一份配置，请稍候再试。"
+        _state.update { it.copy(source = it.source.copy(importing = true, importMessage = null)) }
         return try {
             val configFetcher = SourceConfigFetcher()
             val isUrl = text.startsWith("http://", ignoreCase = true) ||
@@ -2953,14 +2983,14 @@ class TvBoxViewModel(
                 SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
             } catch (error: IllegalArgumentException) {
                 val message = "订阅解码失败：${error.message ?: "格式不合法"}"
-                _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+                _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
                 return message
             }
             val result = SourceConfigCodec.parseImport(decoded)
             val imported = result.imported
             if (result.error != null || imported == null) {
                 val message = result.error ?: "配置解析失败"
-                _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+                _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
                 return message
             }
             val current = _state.value
@@ -3018,11 +3048,10 @@ class TvBoxViewModel(
             }
             _state.update {
                 it.copy(
-                    sourceImporting = false,
                     apiLines = ordered,
                     allSourceLines = allLines,
                     appSettings = settings,
-                    sourceManagerMessage = message,
+                    source = it.source.copy(importing = false, managerMessage = message),
                 )
             }
             message
@@ -3030,13 +3059,13 @@ class TvBoxViewModel(
             throw cancelled
         } catch (error: Exception) {
             val message = "导入失败：${error.message}"
-            _state.update { it.copy(sourceImporting = false, sourceImportMessage = message) }
+            _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
             message
         }
     }
 
     fun dismissSourceImportMessage() {
-        _state.update { it.copy(sourceImportMessage = null) }
+        _state.update { it.copy(source = it.source.copy(importMessage = null)) }
     }
 
     fun updateLiveSourceUrls(urls: List<String>, defaultGroup: String = "", defaultIndex: Int = -1) {
@@ -3204,7 +3233,7 @@ class TvBoxViewModel(
 
     private fun persistSourceLatencies() {
         viewModelScope.launch {
-            appSettingsRepository.saveSpeedLatencies(_state.value.sourceLatencies)
+            appSettingsRepository.saveSpeedLatencies(_state.value.source.latencies)
         }
     }
 
