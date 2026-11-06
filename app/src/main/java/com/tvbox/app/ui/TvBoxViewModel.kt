@@ -296,6 +296,7 @@ class TvBoxViewModel(
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
 
     private var homeJob: Job? = null
+    private var categoriesJob: Job? = null
     private var doubanHotResolveJob: Job? = null
     private var searchJob: Job? = null
     private var searchHotWordsJob: Job? = null
@@ -1164,7 +1165,10 @@ class TvBoxViewModel(
                             matchedLineId = lineId
                         }
                     }
-                    .onFailure { lastError = it }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        lastError = error
+                    }
                 if (movie != null) break
             }
             _state.update { it.copy(resolvingDoubanHotId = null) }
@@ -2152,7 +2156,6 @@ class TvBoxViewModel(
             )
         }
         saveSettings(settings)
-        viewModelScope.launch { appSettingsRepository.commitEpgUrl(trimmed) }
         loadLiveEpg(force = true)
     }
 
@@ -3131,8 +3134,7 @@ class TvBoxViewModel(
         if (index !in current.appSettings.liveSourceUrls.indices) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = index)
         _state.update { it.copy(appSettings = settings) }
-        // 立即同步提交，避免 apply() 异步延迟导致设置丢失（IO 线程执行 commit）。
-        viewModelScope.launch { appSettingsRepository.commitLiveSourceDefaultIndex(index) }
+        // 统一走 settingsWriteJob 串行提交（saveSettings 内部为 commit），避免与专项写入乱序回退。
         saveSettings(settings)
         applyLiveSourceConfig(settings)
         // 默认源立即生效：当前频道列表可能来自旧源，不重载会让用户以为"设置没成功"。
@@ -3145,7 +3147,6 @@ class TvBoxViewModel(
         if (current.appSettings.liveSourceDefaultIndex == -1) return
         val settings = current.appSettings.copy(liveSourceDefaultIndex = -1)
         _state.update { it.copy(appSettings = settings) }
-        viewModelScope.launch { appSettingsRepository.commitLiveSourceDefaultIndex(-1) }
         saveSettings(settings)
         applyLiveSourceConfig(settings)
         if (_state.value.screen == TvScreen.Live) refreshLive()
@@ -3461,11 +3462,19 @@ class TvBoxViewModel(
     }
 
     private fun loadCategoriesOnly() {
-        viewModelScope.launch {
-            runCatching { repository.getCategories(apiLineId = _state.value.selectedApiLineId) }
+        val apiLineId = _state.value.selectedApiLineId
+        // 快速切源/连续改屏蔽分类时，旧请求可能后到；取消旧 job 并校验源，避免过期分类覆盖新源。
+        categoriesJob = relaunch(categoriesJob) {
+            runCatching { repository.getCategories(apiLineId = apiLineId) }
                 .onSuccess { categories ->
-                    val blocked = _state.value.appSettings.blockedVideoCategories
-                    _state.update { it.copy(categories = filterBlockedCategories(categories, blocked)) }
+                    _state.update { state ->
+                        if (state.selectedApiLineId != apiLineId) {
+                            state
+                        } else {
+                            val blocked = state.appSettings.blockedVideoCategories
+                            state.copy(categories = filterBlockedCategories(categories, blocked))
+                        }
+                    }
                 }
         }
     }
@@ -3781,7 +3790,14 @@ class TvBoxViewModel(
         if (url.isBlank()) return
         if (!force && _state.value.live.epgLoaded) return
         epgJob = relaunch(epgJob) {
-            val programs = runCatching { epgRepository.fetch(url) }.getOrDefault(emptyMap())
+            // 取消必须透传：否则被取消的旧请求会以空节目单写回 epgLoaded=true。
+            val programs = try {
+                epgRepository.fetch(url)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                emptyMap()
+            }
             _state.update { state ->
                 // 地址在拉取期间被改掉时丢弃本次结果。
                 if (effectiveEpgUrl(state) != url) state

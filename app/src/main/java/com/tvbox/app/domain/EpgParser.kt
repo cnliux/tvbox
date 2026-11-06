@@ -112,7 +112,10 @@ private fun parseXmltvProgrammes(text: String, into: MutableMap<String, MutableL
         val channel = extractXmltvAttribute(attrs, "channel") ?: continue
         if (channel.isBlank()) continue
         val startMs = parseXmltvTime(extractXmltvAttribute(attrs, "start")) ?: continue
-        val stopMs = parseXmltvTime(extractXmltvAttribute(attrs, "stop")) ?: (startMs + EPG_FALLBACK_PROGRAM_MS)
+        // 异常 XMLTV 里 stop 可能早于 start；非法区间按兜底时长处理，避免节目永远不命中“正在播出”。
+        val stopMs = parseXmltvTime(extractXmltvAttribute(attrs, "stop"))
+            ?.takeIf { it > startMs }
+            ?: (startMs + EPG_FALLBACK_PROGRAM_MS)
         // <sub-title> / <desc> 忽略，只取第一个 <title>。
         val inner = match.groups[3]?.value.orEmpty()
         val title = titleRegex.find(inner)?.groupValues?.getOrNull(1)?.trim().orEmpty()

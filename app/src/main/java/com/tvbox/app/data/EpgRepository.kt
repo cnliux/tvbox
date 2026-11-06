@@ -25,6 +25,8 @@ class RemoteEpgRepository : EpgRepository {
     private val client = OkHttpClient.Builder()
         .connectTimeout(15L, TimeUnit.SECONDS)
         .readTimeout(30L, TimeUnit.SECONDS)
+        // readTimeout 只约束单次读；整次调用再加硬上限，防止慢速滴流无限拖住 Mutex。
+        .callTimeout(60L, TimeUnit.SECONDS)
         .build()
     private val mutex = Mutex()
     private val cache = mutableMapOf<String, CachedEpg>()

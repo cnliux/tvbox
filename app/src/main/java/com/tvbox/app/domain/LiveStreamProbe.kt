@@ -38,7 +38,7 @@ private val probeClient by lazy {
         .build()
 }
 
-// URL → MIME（含"确认无法识别"的空串结果），避免重连/切回时重复探测。
+// URL → MIME（仅缓存探测成功的判定结果），避免重连/切回时重复探测。
 private val probeCache = ConcurrentHashMap<String, String>()
 
 /**
@@ -59,7 +59,8 @@ suspend fun probeLiveLineMimeType(
     }
     probeCache[url]?.let { return it }
     val probed = withContext(Dispatchers.IO) { runCatching { probeBlocking(url, headers) }.getOrDefault(LIVE_MIME_UNKNOWN) }
-    probeCache[url] = probed
+    // 失败/无法判定不入缓存：避免一次网络抖动让该地址永久失去探测与黑屏修复机会。
+    if (probed != LIVE_MIME_UNKNOWN) probeCache[url] = probed
     android.util.Log.i(
         LIVE_PROBE_LOG_TAG,
         "【类型探测】url=$url mime=${probed.ifBlank { "未知（沿用播放器判断）" }}",
