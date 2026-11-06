@@ -54,6 +54,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -171,15 +174,19 @@ fun PlayerScreen(
             }
         }
     }
-    LaunchedEffect(player) {
-        while (true) {
-            if (isCurrentPlayback() && player.playbackState == Player.STATE_READY) {
-                resumeAnchor.update(player.currentPosition)
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(player, lifecycleOwner) {
+        // 退到后台后组合仍存活：不停止轮询会持续 4 次/秒唤醒主线程。
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                if (isCurrentPlayback() && player.playbackState == Player.STATE_READY) {
+                    resumeAnchor.update(player.currentPosition)
+                }
+                uiPosition = player.currentPosition.coerceAtLeast(0)
+                uiDuration = player.duration.takeIf { it > 0 } ?: 0
+                uiPlaying = player.playWhenReady
+                delay(250)
             }
-            uiPosition = player.currentPosition.coerceAtLeast(0)
-            uiDuration = player.duration.takeIf { it > 0 } ?: 0
-            uiPlaying = player.playWhenReady
-            delay(250)
         }
     }
     LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing, mobileMoreOpen, mobileLocked) {
@@ -564,14 +571,18 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(player) {
-        while (true) {
-            delay(5_000L)
-            if (!isCurrentPlayback()) continue
-            saveCurrentProgress(
-                positionMs = player.currentPosition,
-                durationMs = player.duration.takeIf { it > 0L } ?: 0L,
-            )
+    LaunchedEffect(player, lifecycleOwner) {
+        // 仅在可见且确实在推进播放时周期保存：暂停/后台时位置不变，反复写历史
+        // 会每 5 秒触发一次全量状态更新并产生无意义的磁盘写入。
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(5_000L)
+                if (!isCurrentPlayback() || !player.playWhenReady) continue
+                saveCurrentProgress(
+                    positionMs = player.currentPosition,
+                    durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+                )
+            }
         }
     }
 
