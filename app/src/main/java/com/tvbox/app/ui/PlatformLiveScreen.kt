@@ -67,6 +67,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.withFrameNanos
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -779,6 +782,7 @@ private fun PlatformLivePlayerScreen(
         awaitDispose { handle?.close() }
     }
     val continuityProxy = continuityProxyState.value
+    val lifecycleOwner = LocalLifecycleOwner.current
     val playbackUrl = continuityProxy?.localUrl() ?: stream?.activeCandidateOrNull?.url
     val context = androidx.compose.ui.platform.LocalContext.current
     val isMobile = state.effectiveDeviceMode == com.tvbox.app.domain.DeviceMode.Mobile
@@ -895,11 +899,14 @@ private fun PlatformLivePlayerScreen(
     }
 
     // 连续代理会周期性续流，定期把代理统计打进日志，便于确认续流是否正常。
-    LaunchedEffect(continuityProxy) {
+    // 退到后台时停止轮询，避免无意义的定时唤醒与日志刷屏。
+    LaunchedEffect(continuityProxy, lifecycleOwner) {
         val handle = continuityProxy ?: return@LaunchedEffect
-        while (true) {
-            delay(10_000)
-            android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【连续代理】${handle.stats()}")
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(10_000)
+                android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【连续代理】${handle.stats()}")
+            }
         }
     }
 
