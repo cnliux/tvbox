@@ -85,11 +85,12 @@ internal fun LiveEpgCard(
             .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            // 台标加大：32dp -> 40dp，卡片仍为 280dp 宽，右侧文字区自适应。
             LiveChannelLogo(
                 logo = channel.logo,
                 name = channel.name,
-                size = 32.dp,
-                initialFontSize = 11.sp,
+                size = 40.dp,
+                initialFontSize = 13.sp,
             )
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {

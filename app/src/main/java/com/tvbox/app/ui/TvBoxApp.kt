@@ -268,7 +268,6 @@ private fun TvBoxScreen(
     when (state.screen) {
         TvScreen.Home -> HomeScreen(state = state, actions = actions)
         TvScreen.History -> HistoryScreen(state = state, actions = actions)
-        TvScreen.ShortDrama -> ShortDramaScreen(state = state, actions = actions)
         TvScreen.Search -> SearchScreen(state = state, actions = actions)
         TvScreen.Detail -> DetailScreen(state = state, actions = actions)
         TvScreen.Player -> PlayerScreen(state = state, actions = actions)
@@ -2347,7 +2346,6 @@ private fun MobileNavScreenContent(
         else -> holder.SaveableStateProvider(state.screen.name) {
             when (navScreen) {
                 MobileNavScreen.Home -> HomeScreen(state = state, actions = actions)
-                MobileNavScreen.ShortDrama -> ShortDramaScreen(state = state, actions = actions)
                 MobileNavScreen.History -> HistoryScreen(state = state, actions = actions)
                 MobileNavScreen.Search -> SearchScreen(state = state, actions = actions)
                 // 手机模式「电视直播」：两层页面（列表页 + 播放页），电视端仍走 LiveScreen。

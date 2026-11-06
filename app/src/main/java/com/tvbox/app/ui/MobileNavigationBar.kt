@@ -66,7 +66,6 @@ fun MobileNavWrapper(
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     val tabs = listOf(
         MobileNavScreen.Home to "首页",
-        MobileNavScreen.ShortDrama to "短剧",
         MobileNavScreen.History to "历史",
         MobileNavScreen.Search to "搜索",
         MobileNavScreen.Live to "电视",
@@ -75,7 +74,6 @@ fun MobileNavWrapper(
     val currentTab = when (state.screen) {
         TvScreen.Home, TvScreen.Detail -> MobileNavScreen.Home
         TvScreen.History -> MobileNavScreen.History
-        TvScreen.ShortDrama -> MobileNavScreen.ShortDrama
         TvScreen.Search -> MobileNavScreen.Search
         TvScreen.Live -> MobileNavScreen.Live
         TvScreen.PlatformLive -> MobileNavScreen.PlatformLive
@@ -161,7 +159,6 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
     }
     val icon = when (screen) {
         MobileNavScreen.Home -> Icons.Filled.Home
-        MobileNavScreen.ShortDrama -> Icons.Filled.PlayArrow
         MobileNavScreen.History -> Icons.Filled.DateRange
         MobileNavScreen.Search -> Icons.Filled.Search
         MobileNavScreen.Live -> Icons.Filled.PlayArrow
@@ -175,7 +172,7 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
     )
 }
 
-public enum class MobileNavScreen { Home, ShortDrama, History, Search, Live, PlatformLive }
+public enum class MobileNavScreen { Home, History, Search, Live, PlatformLive }
 
 /** 底部导航默认选中色（绿）。 */
 private val MobileNavDefaultAccent = Color(0xFF1ED760)
@@ -186,7 +183,6 @@ private val MobileNavLiveAccent = Color(0xFFE50914)
 private fun TvBoxViewModel.navigateToMobileScreen(screen: MobileNavScreen) {
     when (screen) {
         MobileNavScreen.Home -> openHome()
-        MobileNavScreen.ShortDrama -> openShortDrama()
         MobileNavScreen.History -> openHistory()
         MobileNavScreen.Search -> openSearch()
         MobileNavScreen.Live -> openLive()

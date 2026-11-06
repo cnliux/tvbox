@@ -353,7 +353,8 @@ private fun LiveOverlayChannelRow(
                 .background(if (isFocused) LiveTvAccent else Color.Transparent),
         )
         Spacer(Modifier.width(7.dp))
-        LiveChannelLogo(logo = channel.logo, name = channel.name, size = 28.dp, initialFontSize = 9.sp)
+        // 台标加大：28dp -> 36dp（行高 44dp，上下各留 4dp），首字占位字号同步放大。
+        LiveChannelLogo(logo = channel.logo, name = channel.name, size = 36.dp, initialFontSize = 12.sp)
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
             Text(
