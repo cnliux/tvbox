@@ -47,6 +47,9 @@ data class AppSettings(
 /** 卡片区最多展示的行数，超出部分折叠为「更多」入口。 */
 const val CARD_AREA_MAX_ROWS = 3
 
+/** 订阅源卡片折叠上限（单列列表，单位为卡片数）。 */
+const val SOURCE_CARD_MAX_COUNT = 10
+
 /**
  * 把卡片数量收敛到当前布局可容纳的整行槽位数：
  * - [requested] <= 0 时使用 [defaultSlots]（设备默认值）；

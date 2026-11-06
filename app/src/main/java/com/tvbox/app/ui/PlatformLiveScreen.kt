@@ -124,23 +124,14 @@ private fun PlatformLiveSitesScreen(
         ?: if (touchMode) 2 else TvLayout.PlatformLiveColumns
     // 设备默认值：触屏 2 行、遥控 1 行，并按当前列数取整。
     val defaultCardSlots = resolveCardSlotCount(0, cardColumns, cardColumns * if (touchMode) 2 else 1)
-    val quickLayout = resolveCardAreaLayout(
-        total = state.platformLiveQuickCategories.size,
-        requested = state.appSettings.liveSourceCardCount,
-        columns = cardColumns,
-        defaultSlots = defaultCardSlots,
-    )
     val sitesLayout = resolveCardAreaLayout(
         total = state.platformLiveSites.size,
         requested = state.appSettings.platformLiveCardCount,
         columns = cardColumns,
         defaultSlots = defaultCardSlots,
     )
-    var quickExpanded by remember { mutableStateOf(false) }
     var sitesExpanded by remember { mutableStateOf(false) }
-    val quickMoreFocusRequester = remember { FocusRequester() }
     val sitesMoreFocusRequester = remember { FocusRequester() }
-    MoreExpandFocusEffect(quickExpanded, state.platformLiveQuickCategories.size, quickMoreFocusRequester)
     MoreExpandFocusEffect(sitesExpanded, state.platformLiveSites.size, sitesMoreFocusRequester)
     LaunchedEffect(Unit) {
         // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
@@ -171,34 +162,16 @@ private fun PlatformLiveSitesScreen(
                 modifier = Modifier.focusRequester(firstCardFocusRequester),
             )
         }
-        val visibleQuickCategories = if (quickExpanded) {
-            state.platformLiveQuickCategories
-        } else {
-            state.platformLiveQuickCategories.take(quickLayout.visibleCount)
-        }
         itemsIndexed(
-            visibleQuickCategories,
+            state.platformLiveQuickCategories,
             key = { _, quick -> "quick_${quick.site.id}_${quick.category.id}" },
-        ) { index, quick ->
+        ) { _, quick ->
             PlatformLiveTextCard(
                 title = "${quick.site.name}·${quick.category.name}",
                 subtitle = quick.category.parentName,
                 label = "常用分类",
                 onClick = { actions.openPlatformLiveQuickCategory(quick) },
-                modifier = if (quickExpanded && quickLayout.showMore && index == quickLayout.visibleCount) {
-                    Modifier.focusRequester(quickMoreFocusRequester)
-                } else {
-                    Modifier
-                },
             )
-        }
-        if (!quickExpanded && quickLayout.showMore) {
-            item(key = "more-quick-categories") {
-                ShowMoreCard(
-                    subtitle = "还有 ${state.platformLiveQuickCategories.size - quickLayout.visibleCount} 个常用分类",
-                    onClick = { quickExpanded = true },
-                )
-            }
         }
         val visibleSites = if (sitesExpanded) state.platformLiveSites else state.platformLiveSites.take(sitesLayout.visibleCount)
         itemsIndexed(visibleSites, key = { _, site -> site.id }) { index, site ->

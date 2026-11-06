@@ -488,10 +488,10 @@ private fun TvPlaybackDetail(
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "直播源卡片数量",
-            subtitle = cardCountSummary(state.appSettings.liveSourceCardCount, platformLiveColumns, defaultCardSlots),
+            subtitle = sourceCardCountSummary(state.appSettings.liveSourceCardCount, defaultCount = 5),
             trailing = {
                 TvChoiceChips(
-                    options = cardCountOptions,
+                    options = listOf(0, 4, 5, 6, 8, 10),
                     selected = state.appSettings.liveSourceCardCount,
                     label = { if (it == 0) "恢复默认" else "$it" },
                     onSelect = actions::updateLiveSourceCardCount,

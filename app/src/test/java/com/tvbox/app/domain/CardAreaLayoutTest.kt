@@ -55,4 +55,27 @@ class CardAreaLayoutTest {
         assertFalse(layout.showMore)
         assertEquals(0, layout.slotCount)
     }
+
+    @Test
+    fun `订阅源卡片按单列折叠且默认值生效`() {
+        // 手机默认 4 个、电视默认 5 个。
+        assertEquals(4, resolveCardSlotCount(requested = 0, columns = 1, defaultSlots = 4, maxRows = SOURCE_CARD_MAX_COUNT))
+        assertEquals(5, resolveCardSlotCount(requested = 0, columns = 1, defaultSlots = 5, maxRows = SOURCE_CARD_MAX_COUNT))
+        // 设置为 6 时显示 5 个内容 + 「更多」，正好 6 个槽位。
+        val layout = resolveCardAreaLayout(
+            total = 9,
+            requested = 6,
+            columns = 1,
+            defaultSlots = 4,
+            maxRows = SOURCE_CARD_MAX_COUNT,
+        )
+        assertEquals(5, layout.visibleCount)
+        assertTrue(layout.showMore)
+        assertEquals(6, layout.slotCount)
+        // 超过上限时收敛到 SOURCE_CARD_MAX_COUNT。
+        assertEquals(
+            SOURCE_CARD_MAX_COUNT,
+            resolveCardSlotCount(requested = 99, columns = 1, defaultSlots = 4, maxRows = SOURCE_CARD_MAX_COUNT),
+        )
+    }
 }

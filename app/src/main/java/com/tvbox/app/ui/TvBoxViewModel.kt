@@ -34,6 +34,7 @@ import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CARD_AREA_MAX_ROWS
+import com.tvbox.app.domain.SOURCE_CARD_MAX_COUNT
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.ApiLine
@@ -1588,10 +1589,10 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
-    /** 更新直播源卡片显示数量；0 表示恢复设备默认。 */
+    /** 更新订阅源卡片显示数量；0 表示恢复设备默认。 */
     fun updateLiveSourceCardCount(count: Int) {
         val settings = _state.value.appSettings.copy(
-            liveSourceCardCount = count.coerceIn(0, CARD_AREA_MAX_ROWS * 10),
+            liveSourceCardCount = count.coerceIn(0, SOURCE_CARD_MAX_COUNT),
         )
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
