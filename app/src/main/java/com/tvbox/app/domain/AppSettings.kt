@@ -38,10 +38,6 @@ data class AppSettings(
     val epgUrl: String = "",
     /** 平台直播卡片每行数量；0 表示跟随布局默认（触屏 4 / 遥控 6）。 */
     val platformLiveGridColumns: Int = 0,
-    /** 直播源（常用分类直达）卡片显示数量；0 表示跟随设备默认。 */
-    val liveSourceCardCount: Int = 0,
-    /** 直播平台卡片显示数量；0 表示跟随设备默认。 */
-    val platformLiveCardCount: Int = 0,
     /** 首页「继续观看」卡片数量。 */
     val continueWatchingCount: Int = QuantitySettings.ContinueWatchingCount.default,
     /** 电视直播 EPG 窄卡展示的节目条数。 */
@@ -56,6 +52,8 @@ data class AppSettings(
     val hotWordCount: Int = QuantitySettings.HotWordCount.default,
     /** 拼音首字母扩展出的候选片名数量。 */
     val searchSuggestionCount: Int = QuantitySettings.SearchSuggestionCount.default,
+    /** 首页「豆瓣热播」区域显示的条目数上限。 */
+    val homeHotContentCount: Int = QuantitySettings.HomeHotContentCount.default,
     /** 豆瓣热播每页条数。 */
     val doubanHotPageSize: Int = QuantitySettings.DoubanHotPageSize.default,
     /** 打开豆瓣热播时依次尝试的视频源数量。 */
@@ -94,63 +92,11 @@ object QuantitySettings {
     val RelatedChannelCount = QuantitySetting(12, 4, 24, listOf(6, 8, 10, 12, 16, 20, 24))
     val HotWordCount = QuantitySetting(18, 6, 30, listOf(12, 15, 18, 21, 24, 30))
     val SearchSuggestionCount = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 5, 6, 8))
+    val HomeHotContentCount = QuantitySetting(20, 4, 40, listOf(4, 6, 8, 10, 12, 16, 20, 30, 40))
     val DoubanHotPageSize = QuantitySetting(20, 5, 40, listOf(10, 15, 20, 25, 30, 40))
     val DoubanHotFallbackLines = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
     val HistoryMaxItems = QuantitySetting(100, 20, 500, listOf(50, 100, 200, 300, 500))
     val MaxParallelSourceRequests = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 6, 8))
-}
-
-/** 卡片区最多展示的行数，超出部分折叠为「更多」入口。 */
-const val CARD_AREA_MAX_ROWS = 3
-
-/** 订阅源卡片折叠上限（单列列表，单位为卡片数）。 */
-const val SOURCE_CARD_MAX_COUNT = 10
-
-/**
- * 把卡片数量收敛到当前布局可容纳的整行槽位数：
- * - [requested] <= 0 时使用 [defaultSlots]（设备默认值）；
- * - 结果按 [columns] 取整，避免出现半行或空位；
- * - 下限一行，上限 [maxRows] 行。
- */
-fun resolveCardSlotCount(
-    requested: Int,
-    columns: Int,
-    defaultSlots: Int,
-    maxRows: Int = CARD_AREA_MAX_ROWS,
-): Int {
-    val cols = columns.coerceAtLeast(1)
-    val maxSlots = cols * maxRows.coerceAtLeast(1)
-    val target = (if (requested > 0) requested else defaultSlots).coerceIn(cols, maxSlots)
-    return (target / cols) * cols
-}
-
-/** 卡片区的折叠结果：可见内容数量与末尾是否用「更多」补满最后一个槽位。 */
-data class CardAreaLayout(
-    /** 直接渲染的内容卡片数量（不含「更多」入口）。 */
-    val visibleCount: Int,
-    /** 内容超出槽位时，用最后一个槽位显示「更多」。 */
-    val showMore: Boolean,
-) {
-    /** 内容卡片 + 「更多」入口共占用的槽位数。 */
-    val slotCount: Int get() = visibleCount + if (showMore) 1 else 0
-}
-
-/** 按布局槽位计算卡片区渲染方式；内容不超出时全部展示。 */
-fun resolveCardAreaLayout(
-    total: Int,
-    requested: Int,
-    columns: Int,
-    defaultSlots: Int,
-    maxRows: Int = CARD_AREA_MAX_ROWS,
-): CardAreaLayout {
-    val slots = resolveCardSlotCount(requested, columns, defaultSlots, maxRows)
-    val safeTotal = total.coerceAtLeast(0)
-    return if (safeTotal <= slots) {
-        CardAreaLayout(visibleCount = safeTotal, showMore = false)
-    } else {
-        // 「更多」占用最后一个整行槽位，因此内容少显示一张，保证末行仍然铺满。
-        CardAreaLayout(visibleCount = (slots - 1).coerceAtLeast(0), showMore = true)
-    }
 }
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

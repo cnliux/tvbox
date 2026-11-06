@@ -13,6 +13,7 @@ class QuantitySettingsTest {
         QuantitySettings.RelatedChannelCount,
         QuantitySettings.HotWordCount,
         QuantitySettings.SearchSuggestionCount,
+        QuantitySettings.HomeHotContentCount,
         QuantitySettings.DoubanHotPageSize,
         QuantitySettings.DoubanHotFallbackLines,
         QuantitySettings.HistoryMaxItems,
@@ -28,6 +29,8 @@ class QuantitySettingsTest {
         assertEquals(12, QuantitySettings.RelatedChannelCount.default)
         assertEquals(18, QuantitySettings.HotWordCount.default)
         assertEquals(3, QuantitySettings.SearchSuggestionCount.default)
+        // 首页热播默认渲染一个豆瓣分页（20 条），与改造前一致。
+        assertEquals(20, QuantitySettings.HomeHotContentCount.default)
         assertEquals(20, QuantitySettings.DoubanHotPageSize.default)
         assertEquals(6, QuantitySettings.DoubanHotFallbackLines.default)
         assertEquals(100, QuantitySettings.HistoryMaxItems.default)
@@ -44,6 +47,7 @@ class QuantitySettingsTest {
         assertEquals(QuantitySettings.RelatedChannelCount.default, defaults.relatedChannelCount)
         assertEquals(QuantitySettings.HotWordCount.default, defaults.hotWordCount)
         assertEquals(QuantitySettings.SearchSuggestionCount.default, defaults.searchSuggestionCount)
+        assertEquals(QuantitySettings.HomeHotContentCount.default, defaults.homeHotContentCount)
         assertEquals(QuantitySettings.DoubanHotPageSize.default, defaults.doubanHotPageSize)
         assertEquals(QuantitySettings.DoubanHotFallbackLines.default, defaults.doubanHotFallbackLines)
         assertEquals(QuantitySettings.HistoryMaxItems.default, defaults.historyMaxItems)

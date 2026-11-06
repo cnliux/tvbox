@@ -33,9 +33,7 @@ import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
-import com.tvbox.app.domain.CARD_AREA_MAX_ROWS
 import com.tvbox.app.domain.QuantitySettings
-import com.tvbox.app.domain.SOURCE_CARD_MAX_COUNT
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.ApiLine
@@ -267,7 +265,11 @@ data class TvBoxUiState(
         get() = homeFeedMode == HomeFeedMode.DoubanHot && !doubanHotFallbackActive
 
     val homeItemCount: Int
-        get() = if (isShowingDoubanHot) doubanHotMovies.size else movies.size
+        get() = if (isShowingDoubanHot) {
+            doubanHotMovies.size.coerceAtMost(appSettings.homeHotContentCount)
+        } else {
+            movies.size
+        }
 
     val selectedApiLine: ApiLine?
         get() = apiLines.firstOrNull { it.id == selectedApiLineId }
@@ -1604,19 +1606,10 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
-    /** 更新订阅源卡片显示数量；0 表示恢复设备默认。 */
-    fun updateLiveSourceCardCount(count: Int) {
+    /** 更新首页「豆瓣热播」区域显示的条目数上限。 */
+    fun updateHomeHotContentCount(count: Int) {
         val settings = _state.value.appSettings.copy(
-            liveSourceCardCount = count.coerceIn(0, SOURCE_CARD_MAX_COUNT),
-        )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
-    /** 更新直播平台卡片显示数量；0 表示恢复设备默认。 */
-    fun updatePlatformLiveCardCount(count: Int) {
-        val settings = _state.value.appSettings.copy(
-            platformLiveCardCount = count.coerceIn(0, CARD_AREA_MAX_ROWS * 10),
+            homeHotContentCount = QuantitySettings.HomeHotContentCount.clamp(count),
         )
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }

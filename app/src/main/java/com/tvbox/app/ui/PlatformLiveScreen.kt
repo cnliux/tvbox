@@ -85,13 +85,9 @@ import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
-import com.tvbox.app.domain.resolveCardAreaLayout
-import com.tvbox.app.domain.resolveCardSlotCount
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
-import com.tvbox.app.ui.components.MoreExpandFocusEffect
 import com.tvbox.app.ui.components.PageSurface
-import com.tvbox.app.ui.components.ShowMoreCard
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvLayout
 import kotlinx.coroutines.delay
@@ -119,20 +115,6 @@ private fun PlatformLiveSitesScreen(
 ) {
     val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
-    // 与下方网格保持同一套列数：优先用户覆盖值，其次触屏 2 列 / 遥控按 TvLayout。
-    val cardColumns = state.appSettings.platformLiveGridColumns.takeIf { it > 0 }
-        ?: if (touchMode) 2 else TvLayout.PlatformLiveColumns
-    // 设备默认值：触屏 2 行、遥控 1 行，并按当前列数取整。
-    val defaultCardSlots = resolveCardSlotCount(0, cardColumns, cardColumns * if (touchMode) 2 else 1)
-    val sitesLayout = resolveCardAreaLayout(
-        total = state.platformLiveSites.size,
-        requested = state.appSettings.platformLiveCardCount,
-        columns = cardColumns,
-        defaultSlots = defaultCardSlots,
-    )
-    var sitesExpanded by remember { mutableStateOf(false) }
-    val sitesMoreFocusRequester = remember { FocusRequester() }
-    MoreExpandFocusEffect(sitesExpanded, state.platformLiveSites.size, sitesMoreFocusRequester)
     LaunchedEffect(Unit) {
         // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
         if (!touchMode) firstCardFocusRequester.requestFocus()
@@ -173,25 +155,11 @@ private fun PlatformLiveSitesScreen(
                 onClick = { actions.openPlatformLiveQuickCategory(quick) },
             )
         }
-        val visibleSites = if (sitesExpanded) state.platformLiveSites else state.platformLiveSites.take(sitesLayout.visibleCount)
-        itemsIndexed(visibleSites, key = { _, site -> site.id }) { index, site ->
+        itemsIndexed(state.platformLiveSites, key = { _, site -> site.id }) { _, site ->
             PlatformLiveSiteCard(
                 site = site,
                 onClick = { actions.selectPlatformLiveSite(site) },
-                modifier = if (sitesExpanded && sitesLayout.showMore && index == sitesLayout.visibleCount) {
-                    Modifier.focusRequester(sitesMoreFocusRequester)
-                } else {
-                    Modifier
-                },
             )
-        }
-        if (!sitesExpanded && sitesLayout.showMore) {
-            item(key = "more-platform-sites") {
-                ShowMoreCard(
-                    subtitle = "还有 ${state.platformLiveSites.size - sitesLayout.visibleCount} 个直播平台",
-                    onClick = { sitesExpanded = true },
-                )
-            }
         }
         if (state.platformLiveError != null) {
             item(key = "retry-platforms") {

@@ -2,16 +2,13 @@
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -52,21 +49,4 @@ fun Modifier.tvFocusScale(
             color = if (focused) resolvedFocusedBorder else resolvedIdleBorder,
             shape = shape,
         )
-}
-
-/**
- * 「更多」展开后的焦点接力：新卡片需要先进入组合，等一帧再把焦点交给首个新卡片，
- * 避免遥控焦点停留在已经移除的「更多」入口上。焦点样式仍沿用 [tvFocusScale]。
- */
-@Composable
-fun MoreExpandFocusEffect(
-    expanded: Boolean,
-    key: Any?,
-    firstRevealedRequester: FocusRequester,
-) {
-    LaunchedEffect(expanded, key) {
-        if (!expanded) return@LaunchedEffect
-        withFrameNanos { }
-        runCatching { firstRevealedRequester.requestFocus() }
-    }
 }

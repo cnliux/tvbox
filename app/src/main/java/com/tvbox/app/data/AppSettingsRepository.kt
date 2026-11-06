@@ -62,8 +62,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             videoGridColumns = prefs.getInt(KEY_VIDEO_GRID_COLUMNS, 0),
             epgUrl = prefs.getString(KEY_EPG_URL, "") ?: "",
             platformLiveGridColumns = prefs.getInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, 0),
-            liveSourceCardCount = prefs.getInt(KEY_LIVE_SOURCE_CARD_COUNT, 0),
-            platformLiveCardCount = prefs.getInt(KEY_PLATFORM_LIVE_CARD_COUNT, 0),
             continueWatchingCount = readQuantity(KEY_CONTINUE_WATCHING_COUNT, QuantitySettings.ContinueWatchingCount),
             epgCardRows = readQuantity(KEY_EPG_CARD_ROWS, QuantitySettings.EpgCardRows),
             liveNumberMatchRows = readQuantity(KEY_LIVE_NUMBER_MATCH_ROWS, QuantitySettings.LiveNumberMatchRows),
@@ -71,6 +69,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             relatedChannelCount = readQuantity(KEY_RELATED_CHANNEL_COUNT, QuantitySettings.RelatedChannelCount),
             hotWordCount = readQuantity(KEY_HOT_WORD_COUNT, QuantitySettings.HotWordCount),
             searchSuggestionCount = readQuantity(KEY_SEARCH_SUGGESTION_COUNT, QuantitySettings.SearchSuggestionCount),
+            homeHotContentCount = readQuantity(KEY_HOME_HOT_CONTENT_COUNT, QuantitySettings.HomeHotContentCount),
             doubanHotPageSize = readQuantity(KEY_DOUBAN_HOT_PAGE_SIZE, QuantitySettings.DoubanHotPageSize),
             doubanHotFallbackLines = readQuantity(KEY_DOUBAN_HOT_FALLBACK_LINES, QuantitySettings.DoubanHotFallbackLines),
             historyMaxItems = readQuantity(KEY_HISTORY_MAX_ITEMS, QuantitySettings.HistoryMaxItems),
@@ -112,8 +111,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_VIDEO_GRID_COLUMNS, settings.videoGridColumns)
             .putString(KEY_EPG_URL, settings.epgUrl)
             .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
-            .putInt(KEY_LIVE_SOURCE_CARD_COUNT, settings.liveSourceCardCount)
-            .putInt(KEY_PLATFORM_LIVE_CARD_COUNT, settings.platformLiveCardCount)
             .putInt(KEY_CONTINUE_WATCHING_COUNT, settings.continueWatchingCount)
             .putInt(KEY_EPG_CARD_ROWS, settings.epgCardRows)
             .putInt(KEY_LIVE_NUMBER_MATCH_ROWS, settings.liveNumberMatchRows)
@@ -121,6 +118,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_RELATED_CHANNEL_COUNT, settings.relatedChannelCount)
             .putInt(KEY_HOT_WORD_COUNT, settings.hotWordCount)
             .putInt(KEY_SEARCH_SUGGESTION_COUNT, settings.searchSuggestionCount)
+            .putInt(KEY_HOME_HOT_CONTENT_COUNT, settings.homeHotContentCount)
             .putInt(KEY_DOUBAN_HOT_PAGE_SIZE, settings.doubanHotPageSize)
             .putInt(KEY_DOUBAN_HOT_FALLBACK_LINES, settings.doubanHotFallbackLines)
             .putInt(KEY_HISTORY_MAX_ITEMS, settings.historyMaxItems)
@@ -201,8 +199,6 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_VIDEO_GRID_COLUMNS = "video_grid_columns"
         const val KEY_EPG_URL = "epg_url"
         const val KEY_PLATFORM_LIVE_GRID_COLUMNS = "platform_live_grid_columns"
-        const val KEY_LIVE_SOURCE_CARD_COUNT = "live_source_card_count"
-        const val KEY_PLATFORM_LIVE_CARD_COUNT = "platform_live_card_count"
         const val KEY_CONTINUE_WATCHING_COUNT = "continue_watching_count"
         const val KEY_EPG_CARD_ROWS = "epg_card_rows"
         const val KEY_LIVE_NUMBER_MATCH_ROWS = "live_number_match_rows"
@@ -210,6 +206,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         const val KEY_RELATED_CHANNEL_COUNT = "related_channel_count"
         const val KEY_HOT_WORD_COUNT = "hot_word_count"
         const val KEY_SEARCH_SUGGESTION_COUNT = "search_suggestion_count"
+        const val KEY_HOME_HOT_CONTENT_COUNT = "home_hot_content_count"
         const val KEY_DOUBAN_HOT_PAGE_SIZE = "douban_hot_page_size"
         const val KEY_DOUBAN_HOT_FALLBACK_LINES = "douban_hot_fallback_lines"
         const val KEY_HISTORY_MAX_ITEMS = "history_max_items"

@@ -102,8 +102,6 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
 import androidx.compose.material3.Icon
-import com.tvbox.app.domain.SOURCE_CARD_MAX_COUNT
-import com.tvbox.app.domain.resolveCardAreaLayout
 import com.tvbox.app.ui.components.AppHeader
 import com.tvbox.app.ui.components.AppNavigationRail
 import com.tvbox.app.ui.components.CategoryPill
@@ -111,11 +109,9 @@ import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
-import com.tvbox.app.ui.components.MoreExpandFocusEffect
 import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.PosterImage
-import com.tvbox.app.ui.components.ShowMoreCard
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
@@ -125,9 +121,6 @@ import com.tvbox.app.BuildConfig
 import com.tvbox.app.ui.theme.TvLayout
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-
-/** 订阅导入的源卡片折叠上限（单列列表，超出部分用「更多」展开）。 */
-private const val SOURCE_CARD_AREA_MAX_ROWS = SOURCE_CARD_MAX_COUNT
 
 @Composable
 fun TvBoxApp(
@@ -1126,8 +1119,15 @@ private fun MovieGrid(
         emptyList()
     }
     val itemOffset = (if (recent.isNotEmpty()) 1 else 0) + (if (state.homeNotice != null) 1 else 0)
+    val hotItems = if (state.isShowingDoubanHot) {
+        state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+    } else {
+        emptyList()
+    }
+    val hotCapReached = state.isShowingDoubanHot &&
+        hotItems.size >= state.appSettings.homeHotContentCount
     val focusItems = recent.map { "continue:${it.apiLineId}:${it.movieId}" to 0 } +
-        if (state.isShowingDoubanHot) state.doubanHotMovies.mapIndexed { index, item -> "douban:${item.doubanId}" to index + itemOffset }
+        if (state.isShowingDoubanHot) hotItems.mapIndexed { index, item -> "douban:${item.doubanId}" to index + itemOffset }
         else state.movies.mapIndexed { index, movie -> "${movie.apiLineId}:${movie.id}" to index + itemOffset }
     RestoreGridFocus(focus, gridState, focusItems)
     Column(modifier = modifier.fillMaxSize()) {
@@ -1210,15 +1210,15 @@ private fun MovieGrid(
                 }
             }
             if (state.isShowingDoubanHot) {
-                items(state.doubanHotMovies, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
                     DoubanHotPosterCard(
                         item = item,
                         resolving = state.resolvingDoubanHotId == item.doubanId,
                         onClick = {
-                            focus.mark("douban:${item.doubanId}", state.doubanHotMovies.indexOf(item) + itemOffset)
+                            focus.mark("douban:${item.doubanId}", hotItems.indexOf(item) + itemOffset)
                             onDoubanHotClick(item)
                         },
-                        modifier = focus.modifier("douban:${item.doubanId}", state.doubanHotMovies.indexOf(item) + itemOffset)
+                        modifier = focus.modifier("douban:${item.doubanId}", hotItems.indexOf(item) + itemOffset)
                             .onFocusChanged { if (it.hasFocus) onContentFocused() },
                     )
                 }
@@ -1235,7 +1235,7 @@ private fun MovieGrid(
                     )
                 }
             }
-            if (state.canLoadMore || state.loadingMore) {
+            if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
                         modifier = Modifier.padding(vertical = 10.dp),
@@ -1292,12 +1292,19 @@ private fun MobileHomeFeed(
     }
     // 触底加载更多
     var canLoadMore by remember { mutableStateOf(false) }
+    val hotItems = if (state.isShowingDoubanHot) {
+        state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+    } else {
+        emptyList()
+    }
+    val hotCapReached = state.isShowingDoubanHot &&
+        hotItems.size >= state.appSettings.homeHotContentCount
     LaunchedEffect(movieGridState.layoutInfo) {
         val info = movieGridState.layoutInfo
         canLoadMore = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 1 } == true
     }
-    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore) {
-        if (canLoadMore && state.canLoadMore && !state.loadingMore) {
+    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore, hotCapReached) {
+        if (canLoadMore && state.canLoadMore && !state.loadingMore && !hotCapReached) {
             actions.loadNextPage()
         }
     }
@@ -1431,7 +1438,7 @@ private fun MobileHomeFeed(
                     modifier = Modifier.weight(1f),
                 ) {
                     if (state.isShowingDoubanHot) {
-                        items(state.doubanHotMovies, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                        items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
                             DoubanHotPosterCard(
                                 item = item,
                                 resolving = state.resolvingDoubanHotId == item.doubanId,
@@ -1446,7 +1453,7 @@ private fun MobileHomeFeed(
                             )
                         }
                     }
-                    if (state.canLoadMore || state.loadingMore) {
+                    if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
                         item {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
@@ -1570,17 +1577,6 @@ private fun SourceManagerSetting(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
-    // 订阅导入的源卡片：手机默认 4 个、电视默认 5 个，超出部分折叠为「更多」。
-    val sourceCardLayout = resolveCardAreaLayout(
-        total = state.allSourceLines.size,
-        requested = state.appSettings.liveSourceCardCount,
-        columns = 1,
-        defaultSlots = if (isMobile) 4 else 5,
-        maxRows = SOURCE_CARD_AREA_MAX_ROWS,
-    )
-    var sourcesExpanded by remember { mutableStateOf(false) }
-    val sourceMoreFocusRequester = remember { FocusRequester() }
-    MoreExpandFocusEffect(sourcesExpanded, state.allSourceLines.size, sourceMoreFocusRequester)
     var importDialogVisible by remember { mutableStateOf(false) }
     var importDraft by remember { mutableStateOf("") }
     var exportMessage by remember { mutableStateOf<String?>(null) }
@@ -1658,16 +1654,10 @@ private fun SourceManagerSetting(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            val visibleSourceLines = if (sourcesExpanded) {
-                state.allSourceLines
-            } else {
-                state.allSourceLines.take(sourceCardLayout.visibleCount)
-            }
-            visibleSourceLines.forEachIndexed { index, line ->
+            state.allSourceLines.forEach { line ->
                 val blocked = line.id in state.appSettings.blockedSourceIds
                 val selected = line.id == state.selectedApiLine?.id
                 val statusSuffix = if (blocked) "（已屏蔽）" else ""
-                val firstRevealed = sourcesExpanded && sourceCardLayout.showMore && index == sourceCardLayout.visibleCount
                 val cardModifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
@@ -1697,7 +1687,6 @@ private fun SourceManagerSetting(
                             text = if (state.sourceTesting) "..." else "测速",
                             enabled = !state.sourceTesting,
                             onClick = { actions.testSourceSpeed(line.id) },
-                            modifier = if (firstRevealed) Modifier.focusRequester(sourceMoreFocusRequester) else Modifier,
                         )
                         SettingsActionButton(
                             text = "屏蔽",
@@ -1707,7 +1696,6 @@ private fun SourceManagerSetting(
                         SettingsActionButton(
                             text = "取消屏蔽",
                             onClick = { actions.unblockSource(line.id) },
-                            modifier = if (firstRevealed) Modifier.focusRequester(sourceMoreFocusRequester) else Modifier,
                         )
                     }
                     SettingsActionButton(
@@ -1734,12 +1722,6 @@ private fun SourceManagerSetting(
                         actionBlock()
                     }
                 }
-            }
-            if (!sourcesExpanded && sourceCardLayout.showMore) {
-                ShowMoreCard(
-                    subtitle = "还有 ${state.allSourceLines.size - sourceCardLayout.visibleCount} 个源",
-                    onClick = { sourcesExpanded = true },
-                )
             }
         }
     }

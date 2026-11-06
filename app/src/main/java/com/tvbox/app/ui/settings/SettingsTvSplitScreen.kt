@@ -58,12 +58,10 @@ import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
-import com.tvbox.app.domain.resolveCardSlotCount
 import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvColors
-import com.tvbox.app.ui.theme.TvLayout
 
 /**
  * TV 端设置页。
@@ -421,16 +419,6 @@ private fun TvPlaybackDetail(
     actions: TvBoxViewModel,
     onClearPlaybackStats: () -> Unit,
 ) {
-    // 电视端默认占 1 行，数量必须是当前列数的整数倍，避免半行空位。
-    val platformLiveColumns = state.appSettings.platformLiveGridColumns.takeIf { it > 0 }
-        ?: TvLayout.PlatformLiveColumns
-    val defaultCardSlots = resolveCardSlotCount(0, platformLiveColumns, platformLiveColumns)
-    val cardCountOptions = listOf(
-        0,
-        platformLiveColumns,
-        platformLiveColumns * 2,
-        platformLiveColumns * 3,
-    ).distinct()
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -474,6 +462,26 @@ private fun TvPlaybackDetail(
         TvDividerInGroup()
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
+            title = "首页热播数量",
+            subtitle = quantitySummary(
+                state.appSettings.homeHotContentCount,
+                QuantitySettings.HomeHotContentCount,
+                unit = " 个",
+            ),
+            trailing = {
+                TvChoiceChips(
+                    options = QuantitySettings.HomeHotContentCount.choices,
+                    selected = state.appSettings.homeHotContentCount,
+                    label = {
+                        if (it == QuantitySettings.HomeHotContentCount.default) "默认" else "$it"
+                    },
+                    onSelect = actions::updateHomeHotContentCount,
+                )
+            },
+        )
+        TvDividerInGroup()
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
             title = "直播卡片数量",
             subtitle = if (state.appSettings.platformLiveGridColumns > 0) "每行 ${state.appSettings.platformLiveGridColumns} 个" else "自动（按设备类型）",
             trailing = {
@@ -482,34 +490,6 @@ private fun TvPlaybackDetail(
                     selected = state.appSettings.platformLiveGridColumns,
                     label = { if (it == 0) "自动" else "$it" },
                     onSelect = actions::updatePlatformLiveGridColumns,
-                )
-            },
-        )
-        TvDividerInGroup()
-        TvSettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "直播源卡片数量",
-            subtitle = sourceCardCountSummary(state.appSettings.liveSourceCardCount, defaultCount = 5),
-            trailing = {
-                TvChoiceChips(
-                    options = listOf(0, 4, 5, 6, 8, 10),
-                    selected = state.appSettings.liveSourceCardCount,
-                    label = { if (it == 0) "恢复默认" else "$it" },
-                    onSelect = actions::updateLiveSourceCardCount,
-                )
-            },
-        )
-        TvDividerInGroup()
-        TvSettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "直播平台卡片数量",
-            subtitle = cardCountSummary(state.appSettings.platformLiveCardCount, platformLiveColumns, defaultCardSlots),
-            trailing = {
-                TvChoiceChips(
-                    options = cardCountOptions,
-                    selected = state.appSettings.platformLiveCardCount,
-                    label = { if (it == 0) "恢复默认" else "$it" },
-                    onSelect = actions::updatePlatformLiveCardCount,
                 )
             },
         )

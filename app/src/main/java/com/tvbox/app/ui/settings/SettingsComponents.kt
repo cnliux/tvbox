@@ -16,8 +16,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySetting
-import com.tvbox.app.domain.SOURCE_CARD_MAX_COUNT
-import com.tvbox.app.domain.resolveCardSlotCount
 
 /**
  * 扫码/远程配置三态徽标（B3）：设置页所有"是否已配置"类状态共用。
@@ -122,13 +120,6 @@ fun SettingsStatusSummary(
     }
 }
 
-/** 卡片数量设置项的可读摘要，例如“显示 4 个（2 行）”或“默认（4 个，2 行）”。 */
-fun cardCountSummary(value: Int, columns: Int, defaultSlots: Int): String {
-    val effective = resolveCardSlotCount(value, columns, defaultSlots)
-    val rows = effective / columns.coerceAtLeast(1)
-    return if (value > 0) "显示 $effective 个（$rows 行）" else "默认（$effective 个，$rows 行）"
-}
-
 /** 数量类设置项的可读摘要，例如“当前 6 条，默认 6 条”。 */
 fun quantitySummary(value: Int, setting: QuantitySetting, unit: String = ""): String {
     val suffix = if (unit.isEmpty()) "" else unit
@@ -137,10 +128,4 @@ fun quantitySummary(value: Int, setting: QuantitySetting, unit: String = ""): St
     } else {
         "当前 $value$suffix，默认 ${setting.default}$suffix"
     }
-}
-
-/** 订阅源卡片数量设置项的可读摘要，例如“显示 6 个源卡片”或“默认（4 个源卡片）”。 */
-fun sourceCardCountSummary(value: Int, defaultCount: Int): String {
-    val effective = (if (value > 0) value else defaultCount).coerceIn(1, SOURCE_CARD_MAX_COUNT)
-    return if (value > 0) "显示 $effective 个源卡片" else "默认（$effective 个源卡片）"
 }
