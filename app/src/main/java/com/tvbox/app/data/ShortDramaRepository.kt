@@ -96,24 +96,53 @@ class HongguoShortDramaRepository(
     override suspend fun resolvePlayUrl(seriesId: String, episodeId: String): String? =
         withContext(Dispatchers.IO) {
             if (seriesId.isBlank() || episodeId.isBlank()) return@withContext null
-            // 播放页本身是受保护的（videoList 为空），这里直接走代理接口换取地址。
-            val reference = buildPlayReference(seriesId, episodeId)
-            val url = "$playbackEndpoint?id=" + java.net.URLEncoder.encode(reference, "UTF-8")
-            val body = runCatching { fetchText(url) }.getOrNull()?.takeIf { it.isNotBlank() }
-                ?: return@withContext null
-            runCatching {
-                val json = JSONObject(body)
-                // parse/jx 非 0 表示解析失败；url 回显请求串同样是失败。
-                val failed = listOf("parse", "jx").any { key ->
-                    val value = json.opt(key)
-                    value != null && value != JSONObject.NULL && value.toString() !in setOf("false", "0", "")
-                }
-                if (failed) return@runCatching null
-                val direct = json.optString("url")
-                if (direct.isBlank() || direct == reference) return@runCatching null
-                direct
-            }.getOrNull()
+            // ① 优先用站点公开直链：实测可播（HTTP 206 / video/mp4 / 支持 Range）。
+            // 该直链只对源里「可试看」的前若干集存在，其余集返回 404，属源侧付费限制。
+            probePublicMedia(episodeId)?.let { return@withContext it }
+            // ② 回退到代理接口（仓库所用方式）。该接口在本地实测 TLS 握手失败，
+            //    因此这里保留但仅作兜底，失败即返回 null 由 UI 提示。
+            return@withContext resolveViaProxy(seriesId, episodeId)
         }
+
+    /** 探测站点公开直链（多清晰度，只按前 1KB 判断可用性）。 */
+    private fun probePublicMedia(episodeId: String): String? {
+        for (quality in PUBLIC_QUALITIES) {
+            val url = "$baseUrl/video/public/$episodeId/$quality.mp4"
+            val ok = runCatching {
+                val request = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", MOBILE_UA)
+                    .header("Referer", "$baseUrl/")
+                    .header("Range", "bytes=0-1023")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    response.isSuccessful &&
+                        response.header("Content-Type")?.contains("video", ignoreCase = true) == true
+                }
+            }.getOrDefault(false)
+            if (ok) return url
+        }
+        return null
+    }
+
+    /** 代理接口换取地址（仓库原方案）；接口不可用或返回解析失败时返回 null。 */
+    private fun resolveViaProxy(seriesId: String, episodeId: String): String? {
+        val reference = buildPlayReference(seriesId, episodeId)
+        val url = "$playbackEndpoint?id=" + java.net.URLEncoder.encode(reference, "UTF-8")
+        val body = runCatching { fetchText(url) }.getOrNull()?.takeIf { it.isNotBlank() } ?: return null
+        return runCatching {
+            val json = JSONObject(body)
+            // parse/jx 非 0 表示解析失败；url 回显请求串同样是失败。
+            val failed = listOf("parse", "jx").any { key ->
+                val value = json.opt(key)
+                value != null && value != JSONObject.NULL && value.toString() !in setOf("false", "0", "")
+            }
+            if (failed) return@runCatching null
+            val direct = json.optString("url")
+            if (direct.isBlank() || direct == reference) return@runCatching null
+            direct
+        }.getOrNull()
+    }
 
     private fun buildPlayReference(seriesId: String, episodeId: String): String {
         val payload = JSONObject()
@@ -145,6 +174,9 @@ class HongguoShortDramaRepository(
         const val MOBILE_UA =
             "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/120.0.0.0 Mobile Safari/537.36"
+
+        /** 站点公开直链的清晰度候选；实测通常只有 360p 存在，其余返回 404。 */
+        val PUBLIC_QUALITIES = listOf("720p", "1080p", "540p", "360p")
     }
 }
 
