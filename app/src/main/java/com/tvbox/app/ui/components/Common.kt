@@ -510,17 +510,20 @@ fun MoviePosterCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 封面 URL 可能因防盗链/过期而加载失败，失败后与「无海报」走同一兜底，避免留白。
+    var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
     MediaCard(
         title = movie.name,
         onClick = onClick,
         modifier = modifier,
         badge = movie.remarks.takeIf { it.isNotBlank() },
         cover = {
-            if (movie.posterUrl.isNotBlank()) {
+            if (movie.posterUrl.isNotBlank() && !posterFailed) {
                 AsyncImage(
                     model = movie.posterUrl,
                     contentDescription = movie.name,
                     contentScale = ContentScale.Crop,
+                    onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
                     imageLoader = rememberTvImageLoader(),
                 )
@@ -616,15 +619,21 @@ fun HistoryItemCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 封面加载失败（防盗链/地址失效）时同样显示「无封面」，避免历史卡出现空白海报。
+    var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
+    val progressText = if (item.durationMs > 0) {
+        "${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
+    } else {
+        "已看到 ${formatPlayerTime(item.positionMs)}"
+    }
     MediaCard(
         title = item.movieName,
         onClick = onClick,
         modifier = modifier,
-        subtitle = if (item.durationMs > 0) {
-            "${item.sourceName} / ${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
-        } else {
-            "${item.sourceName} / 已看到 ${formatPlayerTime(item.positionMs)}"
-        },
+        // 导入/迁移的历史可能没有来源名，过滤空段避免副标题以 " / " 开头。
+        subtitle = listOf(item.sourceName, progressText)
+            .filter { it.isNotBlank() }
+            .joinToString(" / "),
         badge = "继续观看",
         progress = item.progressPercent / 100f,
         bottomOverlay = {
@@ -637,11 +646,12 @@ fun HistoryItemCard(
             )
         },
         cover = {
-            if (item.posterUrl.isNotBlank()) {
+            if (item.posterUrl.isNotBlank() && !posterFailed) {
                 AsyncImage(
                     model = item.posterUrl,
                     contentDescription = item.movieName,
                     contentScale = ContentScale.Crop,
+                    onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
                     imageLoader = rememberTvImageLoader(),
                 )
@@ -735,50 +745,3 @@ fun SmallMeta(text: String, modifier: Modifier = Modifier) {
     }
 }
 
-/**
- * 卡片区「更多」入口：占据最后一个整行槽位，尺寸与普通卡片一致；
- * 焦点样式复用 [tvFocusScale]，触摸与遥控都可操作。
- */
-@Composable
-fun ShowMoreCard(
-    subtitle: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    var focused by remember { mutableStateOf(false) }
-    val shape = MaterialTheme.shapes.medium
-    val touchMode = LocalTouchMode.current
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .tvFocusScale(shape = shape)
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
-            .focusable()
-            .padding(if (touchMode) 14.dp else 22.dp),
-        verticalArrangement = Arrangement.spacedBy(if (touchMode) 4.dp else 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = "更多",
-            color = MaterialTheme.colorScheme.primary,
-            style = if (touchMode) MaterialTheme.typography.labelMedium else MaterialTheme.typography.labelLarge,
-        )
-        Text(
-            text = "查看全部",
-            style = if (touchMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = subtitle,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = if (touchMode) MaterialTheme.typography.bodySmall else MaterialTheme.typography.bodyMedium,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}

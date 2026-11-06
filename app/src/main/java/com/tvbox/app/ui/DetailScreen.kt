@@ -249,18 +249,21 @@ private fun EpisodeGrid(
         selectedEpisodeIndex.coerceIn(0, episodes.lastIndex)
     }
     val gridState = rememberLazyGridState()
-    val focusRequesters = remember(displayedEpisodes.map { it.title }) {
+    // 选集列表变化（切换线路）或正倒序切换后，按当前显示顺序重建焦点请求器。
+    val focusRequesters = remember(displayedEpisodes) {
         List(displayedEpisodes.size) { FocusRequester() }
     }
 
-    LaunchedEffect(safeSelectedEpisodeIndex) {
+    // 仅依赖选中下标时，正倒序切换/换线路后下标可能不变，effect 不会重跑，
+    // 导致新列表未滚动到选中集、焦点也留在已重建的旧请求器上。
+    LaunchedEffect(safeSelectedEpisodeIndex, displayedEpisodes, episodeSortReverse) {
         withFrameNanos { }
         if (gridState.layoutInfo.visibleItemsInfo.none { it.index == safeSelectedEpisodeIndex }) {
             gridState.scrollToItem(safeSelectedEpisodeIndex)
         }
         withFrameNanos { }
         runCatching {
-            focusRequesters[safeSelectedEpisodeIndex].requestFocus()
+            focusRequesters.getOrNull(safeSelectedEpisodeIndex)?.requestFocus()
         }
     }
 
