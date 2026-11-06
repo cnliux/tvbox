@@ -76,6 +76,7 @@ import com.tvbox.app.ui.components.ErrorState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -293,7 +294,16 @@ fun PlayerScreen(
         castDiscovering = false
     }
     DisposableEffect(Unit) {
-        onDispose { castingDevice?.let { device -> dlnaCaster.stopAsync(device, castStopScope) } }
+        onDispose {
+            val device = castingDevice
+            if (device != null) {
+                // 先发出停止投屏请求，请求完成后再释放页面持有的作用域，避免泄漏 Job。
+                castStopScope.launch { dlnaCaster.stop(device) }
+                    .invokeOnCompletion { castStopScope.cancel() }
+            } else {
+                castStopScope.cancel()
+            }
+        }
     }
 
     val handlePlaybackIssue = issue@ { issueType: PlaybackIssueType, switchPrefix: String, finalPrefix: String, message: String ->
