@@ -226,32 +226,36 @@ fun PlayerScreen(
     val latestState by rememberUpdatedState(state)
 
     // 片尾跳过：剩 N 秒时自动进入下一集（每集只触发一次）。
-    LaunchedEffect(player) {
-        while (true) {
-            delay(250L)
-            if (!isCurrentPlayback()) continue
-            val outroSkipMs = actions.state.value.appSettings.outroSkipSeconds.toLong() * 1_000L
-            if (outroSkipMs <= 0) continue
-            val duration = player.duration
-            if (duration <= 0 || player.playbackState != Player.STATE_READY) continue
-            val remaining = duration - player.currentPosition
-            val playbackKey = actions.state.value
-                .copy(playerEpisodeIndex = player.currentMediaItemIndex)
-                .currentPlaybackKey()
-            if (remaining > outroSkipMs) {
-                // 回看或拖动离开片尾后，允许再次触发。
-                if (outroSkipHandledKey == playbackKey) outroSkipHandledKey = null
-                continue
-            }
-            val nextIndex = player.currentMediaItemIndex + 1
-            if (
-                remaining > 0 && player.isPlaying && playbackKey != null &&
-                outroSkipHandledKey != playbackKey && nextIndex < player.mediaItemCount
-            ) {
-                outroSkipHandledKey = playbackKey
-                saveCurrentProgress(player.currentPosition, duration)
-                player.seekTo(nextIndex, 0L)
-                session.play(player)
+    LaunchedEffect(player, lifecycleOwner) {
+        // 片尾检测同样只在可见时轮询：后台时播放已被会话暂停，
+        // 继续 4 次/秒唤醒主线程既无意义又会干扰系统省电策略。
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(250L)
+                if (!isCurrentPlayback()) continue
+                val outroSkipMs = actions.state.value.appSettings.outroSkipSeconds.toLong() * 1_000L
+                if (outroSkipMs <= 0) continue
+                val duration = player.duration
+                if (duration <= 0 || player.playbackState != Player.STATE_READY) continue
+                val remaining = duration - player.currentPosition
+                val playbackKey = actions.state.value
+                    .copy(playerEpisodeIndex = player.currentMediaItemIndex)
+                    .currentPlaybackKey()
+                if (remaining > outroSkipMs) {
+                    // 回看或拖动离开片尾后，允许再次触发。
+                    if (outroSkipHandledKey == playbackKey) outroSkipHandledKey = null
+                    continue
+                }
+                val nextIndex = player.currentMediaItemIndex + 1
+                if (
+                    remaining > 0 && player.isPlaying && playbackKey != null &&
+                    outroSkipHandledKey != playbackKey && nextIndex < player.mediaItemCount
+                ) {
+                    outroSkipHandledKey = playbackKey
+                    saveCurrentProgress(player.currentPosition, duration)
+                    player.seekTo(nextIndex, 0L)
+                    session.play(player)
+                }
             }
         }
     }

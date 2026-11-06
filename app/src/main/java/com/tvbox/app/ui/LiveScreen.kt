@@ -72,6 +72,9 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -455,25 +458,32 @@ private fun LivePlayerScreen(
         }
     }
 
-    LaunchedEffect(player, currentLine.url) {
-        while (true) {
-            delay(LIVE_PROGRESS_SAMPLE_INTERVAL_MS)
-            val playing = player.isPlaying
-            val pos = player.currentPosition
-            val statePlayback = player.playbackState
-            android.util.Log.v(
-                LIVE_LOG_TAG,
-                "【进度采样】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, playing=$playing, state=$statePlayback, pos=$pos, buffered=${player.bufferedPercentage}%"
-            )
-            if (
-                playbackWatchdog.onSample(
-                    isPlaying = playing,
-                    positionMs = pos,
-                    nowMs = System.currentTimeMillis(),
+    val liveLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(player, currentLine.url, liveLifecycleOwner) {
+        // 退到后台后组合仍存活：不停止采样会持续 1 次/秒唤醒主线程并刷新 verbose 日志。
+        liveLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            // 停止采样期间没有新的进度点，恢复采样前先清空看门狗，
+            // 避免把后台暂停的这段时间误判成卡死。
+            playbackWatchdog.onPaused()
+            while (true) {
+                delay(LIVE_PROGRESS_SAMPLE_INTERVAL_MS)
+                val playing = player.isPlaying
+                val pos = player.currentPosition
+                val statePlayback = player.playbackState
+                android.util.Log.v(
+                    LIVE_LOG_TAG,
+                    "【进度采样】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, playing=$playing, state=$statePlayback, pos=$pos, buffered=${player.bufferedPercentage}%"
                 )
-            ) {
-                android.util.Log.e(LIVE_LOG_TAG, "【看门狗触发】长时间无进度，判定卡死，先原地重连")
-                switchLiveLineAfterIssue(LiveLineFallbackReason.Stall)
+                if (
+                    playbackWatchdog.onSample(
+                        isPlaying = playing,
+                        positionMs = pos,
+                        nowMs = System.currentTimeMillis(),
+                    )
+                ) {
+                    android.util.Log.e(LIVE_LOG_TAG, "【看门狗触发】长时间无进度，判定卡死，先原地重连")
+                    switchLiveLineAfterIssue(LiveLineFallbackReason.Stall)
+                }
             }
         }
     }
