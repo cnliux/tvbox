@@ -2256,6 +2256,11 @@ class TvBoxViewModel(
             liveFavoritesMutex.withLock {
                 runCatching { repository.toggleFavorite(channel.groupName, channel.name) }
                     .onSuccess { keys -> _state.update { it.copy(live = it.live.copy(favoriteKeys = keys)) } }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        android.util.Log.w(VM_LIVE_LOG_TAG, "【收藏】保存失败", error)
+                        _state.update { it.copy(live = it.live.copy(notice = "收藏保存失败，请重试")) }
+                    }
             }
         }
     }
