@@ -3225,15 +3225,6 @@ class TvBoxViewModel(
         refreshHome()
     }
 
-    private fun filterBlockedCategories(
-        categories: List<Category>,
-        blockedNames: List<String>,
-    ): List<Category> {
-        if (blockedNames.isEmpty()) return categories
-        val blockedIds = categories.filter { it.name in blockedNames }.map { it.id }.toSet()
-        return categories.filter { it.name !in blockedNames && it.parentId !in blockedIds }
-    }
-
     fun updateIntroSkipSeconds(seconds: Int) {
         val settings = _state.value.appSettings.copy(introSkipSeconds = seconds.coerceIn(0, 600))
         saveSettings(settings)
@@ -3462,7 +3453,7 @@ class TvBoxViewModel(
                 loadMoreRetryPage = -1
             }.onFailure { error ->
                 // 取消异常（切换分类时旧 job 被 cancel）不做任何 UI 处理，避免显示错误。
-                if (error is CancellationException) return@onFailure
+                val message = error.uiFailureMessageOrNull() ?: return@onFailure
                 if (!reset) {
                     loadMoreRetryPage = nextPage
                     loadMoreRetryAtMs = System.currentTimeMillis()
@@ -3471,7 +3462,7 @@ class TvBoxViewModel(
                     it.copy(
                         homeLoading = false,
                         loadingMore = false,
-                        homeError = error.userMessage(),
+                        homeError = message,
                     )
                 }
                 if (_state.value.categories.isEmpty()) {
@@ -3487,14 +3478,7 @@ class TvBoxViewModel(
         categoriesJob = relaunch(categoriesJob) {
             runCatching { repository.getCategories(apiLineId = apiLineId) }
                 .onSuccess { categories ->
-                    _state.update { state ->
-                        if (state.selectedApiLineId != apiLineId) {
-                            state
-                        } else {
-                            val blocked = state.appSettings.blockedVideoCategories
-                            state.copy(categories = filterBlockedCategories(categories, blocked))
-                        }
-                    }
+                    _state.update { state -> state.applyCategoryResult(apiLineId, categories) }
                 }
         }
     }
@@ -3684,11 +3668,11 @@ class TvBoxViewModel(
                     loadPlatformLiveQuickCategories(visibleSites)
                 }
                 .onFailure { error ->
-                    if (error is CancellationException) return@onFailure
+                    val message = error.uiFailureMessageOrNull() ?: return@onFailure
                     _state.update {
                         if (it.platformLive.destination != PlatformLiveDestination.Sites) it else it.copy(platformLive = it.platformLive.copy(
                             loading = false,
-                            error = error.userMessage()),
+                            error = message),
                         )
                     }
                 }
@@ -3818,11 +3802,7 @@ class TvBoxViewModel(
             } catch (_: Throwable) {
                 emptyMap()
             }
-            _state.update { state ->
-                // 地址在拉取期间被改掉时丢弃本次结果。
-                if (effectiveEpgUrl(state) != url) state
-                else state.copy(live = state.live.copy(epgByChannel = programs, epgLoaded = true))
-            }
+            _state.update { state -> state.applyEpgResult(url, programs) }
         }
     }
 
@@ -3955,7 +3935,7 @@ class TvBoxViewModel(
                     platformLiveRecoveryInProgress = false
                 }
                 .onFailure { error ->
-                    if (error is CancellationException) return@onFailure
+                    val message = error.uiFailureMessageOrNull() ?: return@onFailure
                     _state.update {
                         if (it.platformLive.destination != PlatformLiveDestination.Player ||
                             it.platformLive.selectedSite?.id != siteId ||
@@ -3966,7 +3946,7 @@ class TvBoxViewModel(
                             it.copy(platformLive = it.platformLive.copy(
                                 resolving = false,
                                 stream = null,
-                                error = error.userMessage()),
+                                error = message),
                             )
                         }
                     }
@@ -4004,28 +3984,6 @@ class TvBoxViewModel(
         remoteManageServer = null
         super.onCleared()
     }
-}
-
-private fun Throwable.userMessage(): String {
-    // 不把原始异常（如 "Unexpected JSON token at offset 0 ... JSON input: ..."）直接展示给用户，
-    // 统一转换成可读提示，原始内容仅用于本地排查。
-    // 先去掉内部异常类名前缀（如 "DouyuResolverError: WebView 初始化超时"），只保留可读部分。
-    val raw = localizedMessage.orEmpty().trim()
-        .replace(Regex("^[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\\s*"), "")
-        .trim()
-    val friendly = when {
-        raw.isBlank() -> "请求失败，请稍后重试"
-        raw.contains("timeout", ignoreCase = true) || raw.contains("超时") -> "网络超时，请稍后重试"
-        raw.contains("Unable to resolve host", ignoreCase = true) ||
-            raw.contains("Connection refused", ignoreCase = true) ||
-            raw.contains("Unable to connect", ignoreCase = true) -> "网络连接失败，请检查网络"
-        raw.contains("JSON input:", ignoreCase = true) ||
-            raw.contains("Unexpected JSON", ignoreCase = true) ||
-            raw.contains("Expected start of the object", ignoreCase = true) ->
-            "当前视频源不支持该操作，请在顶部切换到其他视频源后重试"
-        else -> raw
-    }
-    return friendly.take(80)
 }
 
 private fun TvBoxUiState.childCategoryIdsForSelectedParent(): List<Int> {
