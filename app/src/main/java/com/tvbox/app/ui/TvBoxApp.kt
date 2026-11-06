@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import android.view.KeyEvent as AndroidKeyEvent
 import android.graphics.Bitmap
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -131,6 +132,12 @@ fun TvBoxApp(
     onSaveUpdateApk: (String) -> Unit = {},
 ) {
     val screenStateHolder = rememberSaveableStateHolder()
+    val context = LocalContext.current
+    LaunchedEffect(state.settingsSaveError) {
+        val message = state.settingsSaveError ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+        actions.consumeSettingsSaveError()
+    }
     Box(modifier = Modifier.fillMaxSize()) {
         val showNavigationRail = state.appSettings.theme == TvTheme.Cinema &&
             state.screen != TvScreen.Player &&

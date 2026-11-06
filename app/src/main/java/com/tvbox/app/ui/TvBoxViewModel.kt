@@ -186,6 +186,8 @@ data class TvBoxUiState(
     val remoteManageServerError: String? = null,
     val remoteManageMessage: String? = null,
     val source: SourceManagerUiState = SourceManagerUiState(),
+    /** 设置持久化失败时的一次性提示，由 UI 消费后清空。 */
+    val settingsSaveError: String? = null,
 ) {
     // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写子 state.copy(...)。
     val availableUpdate: AppUpdate? get() = update.availableUpdate
@@ -504,10 +506,16 @@ class TvBoxViewModel(
     /** 首页分页防抖：防止快速滑动触发多次请求。 */
     private var lastLoadNextPageMs = 0L
 
+    /** 触底加载失败后暂停自动重试：记录失败页与失败时间，避免失败时每 800ms 无限重发。 */
+    private var loadMoreRetryPage = -1
+    private var loadMoreRetryAtMs = 0L
+
     fun loadNextPage() {
         val current = _state.value
         if (!current.canLoadMore) return
+        val nextPage = current.page + 1
         val now = System.currentTimeMillis()
+        if (loadMoreRetryPage == nextPage && now - loadMoreRetryAtMs < HOME_LOAD_MORE_RETRY_COOLDOWN_MS) return
         if (now - lastLoadNextPageMs < 800L) return
         lastLoadNextPageMs = now
         loadHomePage(reset = false, forceRefresh = current.homeNotice != null)
@@ -1756,6 +1764,12 @@ class TvBoxViewModel(
     /** 播放中断后的原地重连（不换线路）：bump nonce 让播放页对当前 URL 重新 prepare。 */
     fun reconnectLiveLine() {
         _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
+    }
+
+    /** 设置保存失败提示消费后清空，避免重复弹出。 */
+    fun consumeSettingsSaveError() {
+        if (_state.value.settingsSaveError == null) return
+        _state.update { it.copy(settingsSaveError = null) }
     }
 
     /** 消费一次性轻提示（自动切线路/订阅切换结果）。 */
@@ -3292,6 +3306,7 @@ class TvBoxViewModel(
         homeJob?.cancel()
         val current = _state.value
         val nextPage = if (reset) 1 else current.page + 1
+        if (reset) loadMoreRetryPage = -1
         homeJob = viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -3324,7 +3339,9 @@ class TvBoxViewModel(
                         homeNotice = null,
                     )
                 }
+                loadMoreRetryPage = -1
             }.onFailure { error ->
+                if (error is CancellationException) return@onFailure
                 if (reset) {
                     val fallbackNotice = "豆瓣热播暂时不可用，已显示当前线路最近更新"
                     _state.update { it.copy(doubanHotFallbackActive = true, homeNotice = fallbackNotice) }
@@ -3334,11 +3351,13 @@ class TvBoxViewModel(
                         cancelCurrent = false,
                     )
                 } else {
+                    loadMoreRetryPage = nextPage
+                    loadMoreRetryAtMs = System.currentTimeMillis()
                     _state.update {
                         it.copy(
                             homeLoading = false,
                             loadingMore = false,
-                            homeNotice = "热播加载失败，点击加载更多重试",
+                            homeNotice = "热播加载失败，稍后将自动重试",
                         )
                     }
                 }
@@ -3354,6 +3373,7 @@ class TvBoxViewModel(
         if (cancelCurrent) homeJob?.cancel()
         val current = _state.value
         val nextPage = if (reset) 1 else current.page + 1
+        if (reset) loadMoreRetryPage = -1
         homeJob = viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -3418,9 +3438,14 @@ class TvBoxViewModel(
                         homeError = if (result.movies.isEmpty() && reset) "当前没有影片" else null,
                     )
                 }
+                loadMoreRetryPage = -1
             }.onFailure { error ->
                 // 取消异常（切换分类时旧 job 被 cancel）不做任何 UI 处理，避免显示错误。
                 if (error is CancellationException) return@onFailure
+                if (!reset) {
+                    loadMoreRetryPage = nextPage
+                    loadMoreRetryAtMs = System.currentTimeMillis()
+                }
                 _state.update {
                     it.copy(
                         homeLoading = false,
@@ -3480,6 +3505,9 @@ class TvBoxViewModel(
         settingsWriteJob = viewModelScope.launch {
             previous?.join()
             runCatching { appSettingsRepository.saveSettings(settings) }
+                .onFailure {
+                    _state.update { state -> state.copy(settingsSaveError = "设置保存失败") }
+                }
         }
     }
 
@@ -3821,7 +3849,8 @@ class TvBoxViewModel(
                             }
                             it.copy(platformLive = it.platformLive.copy(
                                 rooms = rooms,
-                                roomPage = result.page,
+                                // 空页不推进页码：否则自动加载会连续把剩余页全部请求一遍。
+                                roomPage = if (result.rooms.isEmpty() && !reset) it.platformLive.roomPage else result.page,
                                 roomPageCount = result.pageCount,
                                 loading = false,
                                 loadingMore = false,
@@ -3851,6 +3880,7 @@ class TvBoxViewModel(
     ) {
         val state = _state.value
         val room = state.platformLive.rooms.getOrNull(state.platformLive.roomIndex) ?: return
+        val siteId = state.platformLive.selectedSite?.id
         if (!isRecovery) {
             // 用户主动换房间/手动重连：清空恢复熔断窗口与重连计数。
             platformLiveRecoveryInProgress = false
@@ -3862,6 +3892,7 @@ class TvBoxViewModel(
         platformLiveResolveJob = viewModelScope.launch {
             _state.update {
                 if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                    it.platformLive.selectedSite?.id != siteId ||
                     it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                 ) {
                     it
@@ -3873,6 +3904,7 @@ class TvBoxViewModel(
                 .onSuccess { stream ->
                     _state.update {
                         if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                            it.platformLive.selectedSite?.id != siteId ||
                             it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                         ) {
                             it
@@ -3887,8 +3919,10 @@ class TvBoxViewModel(
                     platformLiveRecoveryInProgress = false
                 }
                 .onFailure { error ->
+                    if (error is CancellationException) return@onFailure
                     _state.update {
                         if (it.platformLive.destination != PlatformLiveDestination.Player ||
+                            it.platformLive.selectedSite?.id != siteId ||
                             it.platformLive.rooms.getOrNull(it.platformLive.roomIndex)?.id != room.id
                         ) {
                             it
@@ -3987,6 +4021,8 @@ private fun customVideoApiLineId(baseUrl: String): String =
     com.tvbox.app.domain.customVideoApiLineId(baseUrl)
 
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
+// 首页触底加载失败后，同一页自动重试的冷却时间，避免持续失败时每 800ms 重发请求。
+private const val HOME_LOAD_MORE_RETRY_COOLDOWN_MS = 30_000L
 // 直播断流后切换到下一条候选线路前的最长等待时间（移动端 5s，避免在慢网络上误判）。
 private const val PLATFORM_LIVE_BUFFER_TIMEOUT_MS = 5_000L
 // 电视直播：缓冲/卡死类失败在同一线路上原地重连达到该次数后，才切下一条线路。

@@ -105,9 +105,9 @@ class DlnaCaster(context: Context) {
         sendSoap(device, "Stop", "<InstanceID>0</InstanceID>")
     }
 
-    /** 页面销毁时使用：不等待结果，避免阻塞主线程。 */
-    fun stopAsync(device: DlnaDevice) {
-        CoroutineScope(Dispatchers.IO).launch { stop(device) }
+    /** 页面销毁时使用：由调用方提供作用域，不等待结果，避免阻塞主线程。 */
+    fun stopAsync(device: DlnaDevice, scope: CoroutineScope) {
+        scope.launch { stop(device) }
     }
 
     private fun acquireMulticastLock(): WifiManager.MulticastLock? = runCatching {

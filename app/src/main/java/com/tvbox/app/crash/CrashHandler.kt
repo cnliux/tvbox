@@ -107,10 +107,14 @@ object CrashHandler {
     private fun purgeStaleLogs() {
         val dir = File(appContext.externalCacheDir, LOG_DIR_NAME)
         val files = dir.listFiles { file -> file.isFile && file.name.startsWith("crash_") }
-            ?.filter { file -> System.currentTimeMillis() - file.lastModified() < MAX_LOG_FILE_AGE_MS }
-            ?.sortedBy { file -> file.lastModified() } ?: return
-        val toDelete = files.dropLast(MAX_LOG_FILES.coerceAtLeast(files.size))
-        toDelete.forEach { it.delete() }
+            ?.sortedBy { file -> file.lastModified() }
+            ?: return
+        val now = System.currentTimeMillis()
+        // 先删除超过保留期的旧日志，再按数量只保留最新的 MAX_LOG_FILES 个。
+        files.filter { file -> now - file.lastModified() > MAX_LOG_FILE_AGE_MS }
+            .forEach { file -> file.delete() }
+        files.take((files.size - MAX_LOG_FILES).coerceAtLeast(0))
+            .forEach { file -> file.delete() }
     }
 
     fun shutdown() {

@@ -136,8 +136,11 @@ class DefaultLiveRepository : LiveRepository {
             }
         }
         throw IOException(
-            if (defaultIndex in sourceUrls.indices) "默认直播源不可用（${lastLoadError ?: "网络异常"}），已切换备用源"
-            else "所有直播源均加载失败",
+            if (defaultIndex in sourceUrls.indices) {
+                "默认直播源及备用源均不可用（${lastLoadError ?: "网络异常"}）"
+            } else {
+                "所有直播源均加载失败（${lastLoadError ?: "网络异常"}）"
+            },
             lastError,
         )
     }

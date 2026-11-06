@@ -947,7 +947,7 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { playerFocusRequester.requestFocus() } }
 
     // 自动/手动切换线路的结果必须有明确可见提示：仅靠 2 秒角标在电视端几乎看不到。
     LaunchedEffect(state.platformLiveNotice) {

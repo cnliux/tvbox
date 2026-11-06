@@ -73,6 +73,9 @@ import com.tvbox.app.domain.PlaybackIssueNotice
 import com.tvbox.app.domain.PlaybackResumeAnchor
 import com.tvbox.app.domain.SlowBufferReason
 import com.tvbox.app.ui.components.ErrorState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -149,7 +152,7 @@ fun PlayerScreen(
                 ).show()
             }
             controlsPanel != PlayerPanel.None -> controlsPanel = PlayerPanel.None
-            controlsVisible -> { controlsVisible = false; playerFocusRequester.requestFocus() }
+            controlsVisible -> { controlsVisible = false; runCatching { playerFocusRequester.requestFocus() } }
             else -> {
                 if (isMobile) {
                     val now = System.currentTimeMillis()
@@ -252,6 +255,8 @@ fun PlayerScreen(
     val canCast = !isTelevision
     val dlnaCaster = remember(context) { DlnaCaster(context) }
     val castScope = rememberCoroutineScope()
+    // 投屏停止需要在页面销毁时发出，使用页面持有的作用域，避免随 rememberCoroutineScope 一起被取消。
+    val castStopScope = remember { CoroutineScope(SupervisorJob() + Dispatchers.IO) }
     var castDialogVisible by remember { mutableStateOf(false) }
     var castDevices by remember { mutableStateOf<List<DlnaDevice>>(emptyList()) }
     var castDiscovering by remember { mutableStateOf(false) }
@@ -259,7 +264,7 @@ fun PlayerScreen(
     var castSearchNonce by remember { mutableIntStateOf(0) }
     var castingDevice by remember { mutableStateOf<DlnaDevice?>(null) }
     val stopCasting = {
-        castingDevice?.let(dlnaCaster::stopAsync)
+        castingDevice?.let { device -> dlnaCaster.stopAsync(device, castStopScope) }
         if (castingDevice != null) {
             castingDevice = null
             seekGesturePrompt = "已停止投屏"
@@ -292,7 +297,7 @@ fun PlayerScreen(
         castDiscovering = false
     }
     DisposableEffect(Unit) {
-        onDispose { castingDevice?.let(dlnaCaster::stopAsync) }
+        onDispose { castingDevice?.let { device -> dlnaCaster.stopAsync(device, castStopScope) } }
     }
 
     val handlePlaybackIssue = issue@ { issueType: PlaybackIssueType, switchPrefix: String, finalPrefix: String, message: String ->

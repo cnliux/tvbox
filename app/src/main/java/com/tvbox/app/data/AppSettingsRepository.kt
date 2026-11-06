@@ -1,6 +1,8 @@
 package com.tvbox.app.data
 
 import android.content.Context
+import android.util.Log
+import java.io.IOException
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.CustomVideoApiLine
@@ -74,7 +76,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
 
     override suspend fun saveSettings(settings: AppSettings): AppSettings = withContext(Dispatchers.IO) {
         blockedCategoriesStore.write(settings.blockedVideoCategories)
-        prefs.edit()
+        val committed = prefs.edit()
             .putString(KEY_HOME_API_LINE_ID, settings.homeApiLineId)
             .putString(KEY_CUSTOM_VIDEO_API_LINES, json.encodeToString(settings.customVideoApiLines))
             .putString(KEY_SOURCE_ORDER, json.encodeToString(settings.sourceOrder))
@@ -98,7 +100,10 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
             .putInt(KEY_VIDEO_GRID_COLUMNS, settings.videoGridColumns)
             .putString(KEY_EPG_URL, settings.epgUrl)
             .putInt(KEY_PLATFORM_LIVE_GRID_COLUMNS, settings.platformLiveGridColumns)
-            .apply()
+            .commit()
+        if (!committed) {
+            throw IOException("设置写入失败")
+        }
         settings
     }
 
@@ -119,6 +124,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         val raw = prefs.getString(KEY_CUSTOM_VIDEO_API_LINES, null).orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<CustomVideoApiLine>>(raw) }
+            .onFailure { error -> Log.w(TAG, "自定义视频源配置解码失败，已回退为空列表", error) }
             .getOrDefault(emptyList())
     }
 
@@ -126,13 +132,16 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
         val raw = prefs.getString(key, null).orEmpty()
         if (raw.isBlank()) return emptyList()
         return runCatching { json.decodeFromString<List<String>>(raw) }
+            .onFailure { error -> Log.w(TAG, "配置项 $key 解码失败，已回退为空列表", error) }
             .getOrDefault(emptyList())
     }
 
     override suspend fun getSpeedLatencies(): Map<String, Long?> = withContext(Dispatchers.IO) {
         val raw = prefs.getString(KEY_SOURCE_SPEED_LATENCIES, null).orEmpty()
         if (raw.isBlank()) return@withContext emptyMap()
-        val decoded = runCatching { json.decodeFromString<Map<String, Long>>(raw) }.getOrNull()
+        val decoded = runCatching { json.decodeFromString<Map<String, Long>>(raw) }
+            .onFailure { error -> Log.w(TAG, "测速延迟配置解码失败，已回退为空", error) }
+            .getOrNull()
         if (decoded == null) {
             emptyMap()
         } else {
@@ -152,6 +161,7 @@ class SharedAppSettingsRepository(context: Context) : AppSettingsRepository {
     }
 
     private companion object {
+        const val TAG = "AppSettingsRepository"
         const val KEY_HOME_API_LINE_ID = "home_api_line_id"
         const val KEY_CUSTOM_VIDEO_API_LINES = "custom_video_api_lines"
         const val KEY_SOURCE_ORDER = "source_order"

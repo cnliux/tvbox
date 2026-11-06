@@ -324,7 +324,9 @@ class DefaultMovieRepository(
     }
 
     private fun requireLine(apiLineId: String): ApiLine {
-        return apiLines.firstOrNull { it.id == apiLineId } ?: apiLines.first()
+        return apiLines.firstOrNull { it.id == apiLineId }
+            ?: apiLines.firstOrNull()
+            ?: throw IOException("没有可用的视频源，请先在源管理中启用至少一个源")
     }
 
     private suspend fun <T> withFallback(

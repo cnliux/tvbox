@@ -17,6 +17,7 @@ import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.atomic.AtomicInteger
 
 data class RemoteManageSession(
     val url: String,
@@ -77,6 +78,7 @@ class RemoteManageServer(
 ) {
     private var serverSocket: ServerSocket? = null
     private var serverJob: Job? = null
+    private val activeClients = AtomicInteger(0)
 
     suspend fun start(): RemoteManageSession = withContext(Dispatchers.IO) {
         stop()
@@ -103,14 +105,24 @@ class RemoteManageServer(
     private suspend fun acceptLoop(socket: ServerSocket) {
         while (scope.isActive && !socket.isClosed) {
             val client = runCatching { socket.accept() }.getOrNull() ?: break
+            if (activeClients.incrementAndGet() > MAX_CONCURRENT_CLIENTS) {
+                activeClients.decrementAndGet()
+                runCatching { client.close() }
+                continue
+            }
             scope.launch(Dispatchers.IO) {
-                runCatching { handleClient(client) }
+                try {
+                    runCatching { handleClient(client) }
+                } finally {
+                    activeClients.decrementAndGet()
+                }
             }
         }
     }
 
     private suspend fun handleClient(client: Socket) {
         client.use { socket ->
+            runCatching { socket.soTimeout = CLIENT_READ_TIMEOUT_MS }
             val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
             val requestLine = reader.readLine().orEmpty()
             if (requestLine.isBlank()) return
@@ -135,7 +147,12 @@ class RemoteManageServer(
                     writeHtmlResponse(socket, page(queryValue(target, "message")))
                 }
                 "POST" -> {
-                    val body = readBody(reader, headers["content-length"]?.toIntOrNull() ?: 0)
+                    val declaredLength = headers["content-length"]?.toLongOrNull() ?: 0L
+                    if (declaredLength > MAX_REQUEST_BODY_BYTES) {
+                        writeHtmlResponse(socket, "请求体过大，已拒绝。", status = "413 Payload Too Large")
+                        return
+                    }
+                    val body = readBody(reader, declaredLength.toInt())
                     val form = parseForm(body)
                     val request = RemoteManageRequest(
                         action = form["action"].orEmpty(),
@@ -157,10 +174,11 @@ class RemoteManageServer(
 
     private fun readBody(reader: BufferedReader, contentLength: Int): String {
         if (contentLength <= 0) return ""
-        val bodyChars = CharArray(contentLength)
+        val safeLength = contentLength.coerceAtMost(MAX_REQUEST_BODY_BYTES.toInt())
+        val bodyChars = CharArray(safeLength)
         var readTotal = 0
-        while (readTotal < contentLength) {
-            val read = reader.read(bodyChars, readTotal, contentLength - readTotal)
+        while (readTotal < safeLength) {
+            val read = reader.read(bodyChars, readTotal, safeLength - readTotal)
             if (read <= 0) break
             readTotal += read
         }
@@ -551,5 +569,8 @@ class RemoteManageServer(
 
     private companion object {
         const val PREFERRED_PORT = 9978
+        const val MAX_REQUEST_BODY_BYTES = 1_000_000L
+        const val MAX_CONCURRENT_CLIENTS = 8
+        const val CLIENT_READ_TIMEOUT_MS = 15_000
     }
 }

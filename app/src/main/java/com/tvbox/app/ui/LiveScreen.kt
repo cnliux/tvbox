@@ -304,6 +304,7 @@ private fun LivePlayerScreen(
 
     BackHandler(enabled = showLineControl) {
         showLineControl = false
+        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
     }
 
     DisposableEffect(activity, initialRequestedOrientation, isTelevision) {
@@ -475,7 +476,7 @@ private fun LivePlayerScreen(
     }
 
     LaunchedEffect(Unit) {
-        playerFocusRequester.requestFocus()
+        runCatching { playerFocusRequester.requestFocus() }
     }
 
     // ViewModel 侧的容错/订阅切换结果通过 liveNotice 下发，这里统一转成轻提示并消费。
