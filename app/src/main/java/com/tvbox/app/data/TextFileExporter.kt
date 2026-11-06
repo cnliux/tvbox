@@ -95,7 +95,13 @@ internal class SourceConfigFetcher {
                 var buffer = ByteArray(16_384)
                 var size = 0
                 var bufferOut = java.io.ByteArrayOutputStream()
-                if (body.contentLength() > 0) bufferOut = java.io.ByteArrayOutputStream(body.contentLength().toInt())
+                // 预分配按 20MB 上限截断：服务端 Content-Length 可能虚报成几百 MB/GB，
+                // 直接按它预分配会先 OOM，等不到下面的大小校验。
+                if (body.contentLength() > 0) {
+                    bufferOut = java.io.ByteArrayOutputStream(
+                        body.contentLength().coerceAtMost(MAX_PAYLOAD_BYTES).toInt(),
+                    )
+                }
                 while (true) {
                     val read = stream.read(buffer)
                     if (read <= 0) break
