@@ -823,10 +823,14 @@ class TvBoxViewModel(
 
     fun clearHistory() {
         viewModelScope.launch {
-            runCatching { historyRepository.clearHistory() }
-                .onSuccess { history ->
-                    _state.update { it.copy(historyItems = history) }
-                }
+            // 与 savePlaybackProgress 共用写锁：退出播放器时的 onDispose 保存仍在提交中，
+            // 不加锁直接清空会让这次保存随后落盘，历史“清空后又回来”。
+            historyWriteMutex.withLock {
+                runCatching { historyRepository.clearHistory() }
+                    .onSuccess { history ->
+                        _state.update { it.copy(historyItems = history) }
+                    }
+            }
         }
     }
 
@@ -3623,11 +3627,15 @@ class TvBoxViewModel(
 
     private fun loadHistory() {
         viewModelScope.launch {
-            runCatching { historyRepository.getHistory() }
-                .onSuccess { history ->
-                    val maxItems = _state.value.appSettings.historyMaxItems
-                    _state.update { it.copy(historyItems = history.take(maxItems)) }
-                }
+            // 同样串行化：若此前有进度保存在排队，先等它写完再读，
+            // 避免历史页短暂显示缺一条/旧位置的列表。
+            historyWriteMutex.withLock {
+                runCatching { historyRepository.getHistory() }
+                    .onSuccess { history ->
+                        val maxItems = _state.value.appSettings.historyMaxItems
+                        _state.update { it.copy(historyItems = history.take(maxItems)) }
+                    }
+            }
         }
     }
 
