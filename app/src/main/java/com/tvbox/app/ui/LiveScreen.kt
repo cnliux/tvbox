@@ -299,19 +299,21 @@ private fun LivePlayerScreen(
             LIVE_LOG_TAG,
             "【返回键】页面级返回, channelListVisible=$channelListVisible, showLineControl=$showLineControl",
         )
-        // 线路浮层打开时返回先收起浮层，避免"返回=退出直播页"越级。
-        if (showLineControl) showLineControl = false else actions.goBack()
-    }
-
-    BackHandler(enabled = channelListVisible) {
-        android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起频道浮层")
-        channelListVisible = false
-        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-    }
-
-    BackHandler(enabled = showLineControl) {
-        showLineControl = false
-        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+        // 返回键按浮层层级逐级收起：线路浮层 → 频道浮层 → 退出直播页。
+        // 只注册一个处理器，避免多个 BackHandler 的启用顺序导致一次返回只收起其中一层。
+        when {
+            showLineControl -> {
+                android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起线路浮层")
+                showLineControl = false
+                if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+            }
+            channelListVisible -> {
+                android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起频道浮层")
+                channelListVisible = false
+                if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+            }
+            else -> actions.goBack()
+        }
     }
 
     DisposableEffect(activity, initialRequestedOrientation, isTelevision) {

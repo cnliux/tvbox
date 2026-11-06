@@ -465,6 +465,11 @@ internal fun LiveLineOverlay(
                             onClose()
                             true
                         }
+                        // 浮层持有焦点时直接消费返回键，保证一次返回即收起，不依赖页面级分发顺序。
+                        ComposeKey.Back -> {
+                            onClose()
+                            true
+                        }
                         else -> false
                     }
                 }

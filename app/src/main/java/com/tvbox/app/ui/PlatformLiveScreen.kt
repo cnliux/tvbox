@@ -190,9 +190,11 @@ private fun PlatformLiveParentCategoriesScreen(
         state.platformLiveParentCategories.lastIndex.coerceAtLeast(0),
     )
     LaunchedEffect(state.platformLiveParentCategories, targetIndex) {
-        if (touchMode || state.platformLiveParentCategories.isEmpty()) return@LaunchedEffect
+        if (state.platformLiveParentCategories.isEmpty()) return@LaunchedEffect
         // 返回一级分类页时回到上次选中的分类，而不是永远落在第一项。
+        // 触摸模式只恢复滚动位置，不主动聚焦，避免首张卡片常驻焦点框。
         gridState.scrollToItem(targetIndex)
+        if (touchMode) return@LaunchedEffect
         firstCardFocusRequester.requestFocus()
     }
     val site = state.platformLiveSelectedSite
@@ -236,9 +238,11 @@ private fun PlatformLiveCategoriesScreen(
     val categories = state.platformLiveCategories.filter { it.parentId == parentCategory?.id }
     val targetIndex = state.platformLiveCategoryIndex.coerceIn(0, categories.lastIndex.coerceAtLeast(0))
     LaunchedEffect(categories, targetIndex) {
-        if (touchMode || categories.isEmpty()) return@LaunchedEffect
+        if (categories.isEmpty()) return@LaunchedEffect
         // 从房间页返回时回到上次选中的二级分类。
+        // 触摸模式只恢复滚动位置，不主动聚焦。
         gridState.scrollToItem(targetIndex)
+        if (touchMode) return@LaunchedEffect
         firstCardFocusRequester.requestFocus()
     }
     PlatformLiveBrowseSurface(
