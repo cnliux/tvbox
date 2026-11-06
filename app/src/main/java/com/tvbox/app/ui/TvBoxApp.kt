@@ -269,13 +269,17 @@ private fun UpdateDownloadCard(
     }
 }
 
+/** 屏幕内 rememberSaveable 状态按「屏幕 + 设备模式」隔离，切换电视/手机布局时不复用另一套布局的滚动/输入状态。 */
+private fun screenSaveableKey(state: TvBoxUiState): String =
+    "${state.screen.name}-${state.effectiveDeviceMode.name}"
+
 @Composable
 private fun TvBoxScreen(
     holder: SaveableStateHolder,
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    holder.SaveableStateProvider(state.screen.name) {
+    holder.SaveableStateProvider(screenSaveableKey(state)) {
     when (state.screen) {
         TvScreen.Home -> HomeScreen(state = state, actions = actions)
         TvScreen.History -> HistoryScreen(state = state, actions = actions)
@@ -2364,7 +2368,7 @@ private fun MobileNavScreenContent(
             state = state,
             actions = actions,
         )
-        else -> holder.SaveableStateProvider(state.screen.name) {
+        else -> holder.SaveableStateProvider(screenSaveableKey(state)) {
             when (navScreen) {
                 MobileNavScreen.Home -> HomeScreen(state = state, actions = actions)
                 MobileNavScreen.History -> HistoryScreen(state = state, actions = actions)
@@ -2412,7 +2416,11 @@ private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel)
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 ) { Text("设置", fontSize = 12.sp) }
                 TextButton(
-                    onClick = { dismissed = true },
+                    onClick = {
+                        dismissed = true
+                        // 「关闭」也算完成引导，否则每次冷启动都会再弹一次。
+                        actions.updateMobileOnboarded()
+                    },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                 ) { Text("关闭", fontSize = 12.sp) }
             }

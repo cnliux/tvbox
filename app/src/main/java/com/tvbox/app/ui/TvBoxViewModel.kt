@@ -1047,7 +1047,14 @@ class TvBoxViewModel(
             }
             "live-delete" -> {
                 val url = request.url.trim()
-                updateLiveSourceUrls(_state.value.appSettings.liveSourceUrls - url, _state.value.appSettings.liveSourceDefaultGroup)
+                val settings = _state.value.appSettings
+                // 默认源按 URL 追踪：只有默认源本身还在时才重算下标，避免删除前面的源后静默改指其它源。
+                val defaultUrl = settings.liveSourceUrls.getOrNull(settings.liveSourceDefaultIndex)
+                val remaining = settings.liveSourceUrls - url
+                val nextDefaultIndex = defaultUrl
+                    ?.let { target -> remaining.indexOf(target).takeIf { idx -> idx >= 0 } }
+                    ?: -1
+                updateLiveSourceUrls(remaining, settings.liveSourceDefaultGroup, nextDefaultIndex)
                 "已删除直播源：$url"
             }
             "live-default-set" -> {
@@ -2329,6 +2336,9 @@ class TvBoxViewModel(
             groups.getOrNull(state.live.groupIndex - 1)
         }
         pendingLiveGroupRestore = previousGroup
+        // 切订阅后旧源的容错/换台记忆不应继续生效，否则新源同号频道会被误判为已耗尽。
+        liveStallRetries = 0
+        lastExhaustedChannelNumber = null
         _state.update {
             it.copy(
                 live = it.live.copy(
@@ -2719,8 +2729,25 @@ class TvBoxViewModel(
         com.tvbox.app.domain.orderLinesByLatency(lines, latencies)
 
     private fun switchHomeApiLine(apiLineId: String) {
-        _state.update { it.copy(selectedApiLineId = apiLineId) }
-        loadHomePage(reset = true)
+        // 删除/屏蔽当前源后的兜底切换：旧源的分类、选中分类与分页必须一起清掉，
+        // 否则新源会沿用旧分类 id 请求影片，出现空列表或错分页。
+        _state.update {
+            it.copy(
+                selectedApiLineId = apiLineId,
+                selectedParentCategoryId = null,
+                selectedCategoryId = null,
+                categories = emptyList(),
+                movies = emptyList(),
+                doubanHotMovies = emptyList(),
+                doubanHotFallbackActive = false,
+                homeNotice = null,
+                page = 1,
+                pageCount = 1,
+                total = 0,
+                homeError = null,
+            )
+        }
+        refreshHome()
     }
 
 
@@ -3261,9 +3288,13 @@ class TvBoxViewModel(
         val normalized = urls.map { it.trim() }.filter { it.isNotEmpty() }
         val current = _state.value
         // 使用调用方传入的 defaultIndex；未传入时用当前设置（-1 表示无默认）。
-        val effectiveDefaultIndex = if (defaultIndex >= 0) defaultIndex
-            else current.appSettings.liveSourceDefaultIndex
+        val effectiveDefaultIndex = if (defaultIndex >= 0) {
+            // 调用方传入的下标也要按最终列表校验，避免持久化越界下标。
+            defaultIndex.takeIf { idx -> idx in normalized.indices } ?: -1
+        } else {
+            current.appSettings.liveSourceDefaultIndex
                 .takeIf { idx -> idx in normalized.indices } ?: -1
+        }
         val settings = current.appSettings.copy(
             liveSourceUrls = normalized,
             liveSourceDefaultGroup = defaultGroup,
@@ -3763,6 +3794,8 @@ class TvBoxViewModel(
                     loadLiveEpg()
                 }
                 .onFailure { error ->
+                    // 加载失败时丢弃待恢复分组，避免下一次成功加载误用旧订阅的分类。
+                    pendingLiveGroupRestore = null
                     _state.update {
                         it.copy(
                             live = it.live.copy(loading = false, error = error.userMessage()),
