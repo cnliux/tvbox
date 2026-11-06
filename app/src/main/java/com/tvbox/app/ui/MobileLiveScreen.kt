@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -478,7 +479,9 @@ private fun MobileLiveChannelRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(64.dp)
+            // 用最小高度而不是固定高度：频道名/节目名三行文本在放大字号后会超过 64dp，
+            // 固定高度会把"接下来…"整行裁掉。
+            .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (pressed) LiveField else LiveCard)
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
@@ -867,7 +870,8 @@ private fun MobileLivePlayerScreen(
                         overflow = TextOverflow.Ellipsis,
                         color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
                         modifier = Modifier
-                            .height(32.dp)
+                            // 同上：线路名胶囊按最小高度，避免放大字号后被裁切。
+                            .heightIn(min = 32.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(if (isSelected) LiveAccent else LiveField)
                             .clickable {
