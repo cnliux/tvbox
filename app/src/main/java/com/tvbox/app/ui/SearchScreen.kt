@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -816,7 +817,7 @@ internal fun MobileSearchScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(64.dp)
+                            .heightIn(min = 64.dp)
                             .padding(horizontal = 12.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -825,7 +826,7 @@ internal fun MobileSearchScreen(
                             onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(52.dp),
+                                .heightIn(min = 52.dp),
                             singleLine = true,
                             placeholder = { Text("搜索影片") },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
