@@ -74,6 +74,11 @@ android {
         ignoreAssetsPatterns += "!PublicSuffixDatabase.list"
     }
 
+    lint {
+        // 历史遗留 lint error 基线化，日常 CI 只拦截新引入的问题（见 .github/workflows/ci.yml）。
+        baseline = file("lint-baseline.xml")
+    }
+
     // 单一合集发行版：同一套代码通过 DeviceMode 在运行时适配电视/手机，不再拆 flavor。
 
     signingConfigs {

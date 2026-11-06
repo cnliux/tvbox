@@ -1,0 +1,68 @@
+name: CI
+
+# 日常质量门禁：push/PR 只做编译、单测、lint，不构建/上传 APK。
+# 发布构建由 release.yml（tag / 手动触发）负责，两者互不重复。
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一分支的新提交会取消上一次未完成的 CI，避免排队浪费。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # platformlive.aar 不入库，编译前需要 gomobile bind 产物；
+      # 与 release.yml 共用同一份源码哈希缓存，避免重复编译 Go。
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: platform_live_go/go.mod
+          cache-dependency-path: platform_live_go/go.sum
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Restore platformlive AAR cache
+        uses: actions/cache@v4
+        with:
+          path: app/libs/platformlive.aar
+          key: platformlive-aar-${{ hashFiles('platform_live_go/**', 'tools/bind-platform-live.sh') }}
+
+      - name: Compile Kotlin
+        run: ./gradlew --no-daemon :app:compileDebugKotlin
+
+      - name: Unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      - name: Android lint
+        run: ./gradlew --no-daemon :app:lintDebug
+
+      - name: Upload reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/reports/lint-results-debug.html
+            app/build/reports/lint-results-debug.xml
+          if-no-files-found: ignore
+          retention-days: 7
