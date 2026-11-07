@@ -888,7 +888,9 @@ private fun PlatformLivePlayerScreen(
                 .apply { playWhenReady = true }
         }
     }
-    val playerFocusRequester = remember { FocusRequester() }
+    // 控件显隐/自动隐藏/返回层级统一走共享状态；平台直播保留自己的房间与候选语义。
+    val chrome = remember { PlayerChromeState(initialVisible = true) }
+    val playerFocusRequester = chrome.rootFocus
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, player)
     // 候选/地址变化时重建快照，保持原 playerState 的重置语义。
@@ -897,7 +899,6 @@ private fun PlatformLivePlayerScreen(
         resetKey = stream?.url to stream?.safeActiveCandidateIndex,
     )
     var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
-    var badgeVisible by remember { mutableStateOf(true) }
     // 共享看门狗：首帧超时与出帧后卡死同一套判定；候选/地址变化时重建计时。
     var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex) {
         mutableStateOf(PlaybackWatchdog())
@@ -920,7 +921,7 @@ private fun PlatformLivePlayerScreen(
                     if (!session.canPlay) return
                     // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
                     playbackError = "播放失败，正在尝试恢复"
-                    badgeVisible = true
+                    chrome.bump()
                     actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Error)
                 }
 
@@ -963,7 +964,7 @@ private fun PlatformLivePlayerScreen(
             "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(targetUrl)}, sourceUrl=${logSafeUrl(stream.activeCandidateOrNull?.url)}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}"
         )
         playbackError = null
-        badgeVisible = true
+        chrome.bump()
         playbackWatchdog.onSourceRequested(System.currentTimeMillis())
         player.setMediaItem(MediaItem.fromUri(targetUrl))
         player.prepare()
@@ -983,12 +984,7 @@ private fun PlatformLivePlayerScreen(
     }
 
     // 控制条与角标显示 4 秒后自动隐藏，点击画面可再次唤出（与电视直播页一致）。
-    LaunchedEffect(badgeVisible) {
-        if (badgeVisible) {
-            delay(PLATFORM_LIVE_BADGE_HIDE_DELAY_MS)
-            badgeVisible = false
-        }
-    }
+    PlayerChromeAutoHide(chrome, playing = true, autoHideMs = PLATFORM_LIVE_BADGE_HIDE_DELAY_MS)
 
     LaunchedEffect(playbackHost?.snapshot?.playbackState, player, playbackUrl, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
@@ -1026,7 +1022,7 @@ private fun PlatformLivePlayerScreen(
                         PlaybackFailureKind.Stalled -> "直播连接中断，正在重新获取播放地址"
                         PlaybackFailureKind.SourceFailed -> "播放失败，正在尝试恢复"
                     }
-                    badgeVisible = true
+                    chrome.bump()
                     actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
                 }
             }
@@ -1040,12 +1036,36 @@ private fun PlatformLivePlayerScreen(
         val notice = state.platformLiveNotice ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, notice, android.widget.Toast.LENGTH_SHORT).show()
         android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【线路提示】$notice")
-        badgeVisible = true
+        chrome.bump()
         actions.consumePlatformLiveNotice()
     }
 
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
+    // 返回键仍逐层收起页面浮层：URL 浮层 → 候选线路浮层 → 退出；不额外增加“先隐藏控件”一层。
+    PlayerChromeBackHandler(
+        state = chrome,
+        onExit = { actions.goBack() },
+        dismissControls = false,
+        extraDismiss = listOf(
+            {
+                if (showUrlOverlay) {
+                    showUrlOverlay = false
+                    true
+                } else {
+                    false
+                }
+            },
+            {
+                if (showLineControl) {
+                    showLineControl = false
+                    true
+                } else {
+                    false
+                }
+            },
+        ),
+    )
     val lineListState = rememberLazyListState()
     val lineFocusRequester = remember { FocusRequester() }
     var focusedCandidateIndex by remember { mutableStateOf(-1) }
@@ -1081,12 +1101,12 @@ private fun PlatformLivePlayerScreen(
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_UP -> {
                         actions.playPreviousPlatformLiveCandidate()
-                        badgeVisible = true
+                        chrome.bump()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
                         actions.playNextPlatformLiveCandidate()
-                        badgeVisible = true
+                        chrome.bump()
                         true
                     }
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER,
@@ -1099,7 +1119,7 @@ private fun PlatformLivePlayerScreen(
                         } else {
                             showLineControl = true
                         }
-                        badgeVisible = true
+                        chrome.bump()
                         true
                     }
                     // 强制重连：重新解析当前直播间地址并重建 FLV 续流代理，
@@ -1108,7 +1128,7 @@ private fun PlatformLivePlayerScreen(
                     AndroidKeyEvent.KEYCODE_INFO,
                     -> {
                         actions.reconnectPlatformLiveChannel()
-                        badgeVisible = true
+                        chrome.bump()
                         true
                     }
                     else -> false
@@ -1125,7 +1145,7 @@ private fun PlatformLivePlayerScreen(
                 modifier = Modifier
                     .matchParentSize()
                     .pointerInput(Unit) {
-                        detectTapGestures { badgeVisible = !badgeVisible }
+                        detectTapGestures { chrome.toggle() }
                     },
             )
         }
@@ -1135,7 +1155,7 @@ private fun PlatformLivePlayerScreen(
                 actions.reconnectPlatformLiveChannel()
             }, Modifier.align(Alignment.Center))
         }
-        if (badgeVisible || state.platformLiveResolving || state.platformLiveError != null) {
+        if ((chrome.visible || state.platformLiveResolving || state.platformLiveError != null) && !isMobile) {
             PlatformLivePlayerBadge(
                 room = room,
                 stream = stream,
@@ -1146,41 +1166,71 @@ private fun PlatformLivePlayerScreen(
                     .padding(28.dp),
             )
         }
-        if (isMobile && badgeVisible) {
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ControlButton(
-                    text = "返回",
-                    onClick = { actions.goBack() },
-                )
-                ControlButton(
-                    text = if (videoScaleMode == VideoScaleMode.Zoom) "还原" else "全屏",
-                    onClick = {
-                        val next = if (videoScaleMode == VideoScaleMode.Zoom) {
-                            VideoScaleMode.Fit
+        if (isMobile) {
+            PlayerChrome(
+                state = chrome,
+                data = PlayerChromeData(
+                    title = stream?.title ?: room.title,
+                    subtitle = state.platformLiveError
+                        ?: playbackError
+                        ?: stream?.let { resolved ->
+                            buildString {
+                                append(resolved.quality)
+                                if (resolved.hasCandidates) {
+                                    val candidate = resolved.activeCandidateOrNull
+                                    append(" · ${resolved.safeActiveCandidateIndex + 1}/${resolved.candidates.size}")
+                                    candidate?.cdn?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                                }
+                            }
+                        },
+                    playing = player?.let { it.playWhenReady && !session.interrupted } ?: false,
+                    resizeMode = videoScaleMode,
+                    buffering = playbackHost?.snapshot?.isBuffering == true,
+                ),
+                capabilities = PlayerChromeCapabilities(
+                    seek = false,
+                    resize = true,
+                    orientation = true,
+                    room = true,
+                    lines = stream?.hasCandidates == true,
+                ),
+                actions = PlayerChromeActions(
+                    onToggle = {
+                        val currentPlayer = player ?: return@PlayerChromeActions
+                        if (session.interrupted) {
+                            session.play(currentPlayer)
+                            actions.reconnectPlatformLiveChannel()
+                        } else if (currentPlayer.playWhenReady) {
+                            session.pause(currentPlayer)
                         } else {
-                            VideoScaleMode.Zoom
+                            session.play(currentPlayer)
                         }
-                        actions.updateContentVideoScaleMode(scaleContentKey, next)
+                        chrome.bump()
                     },
-                )
-                ControlButton(
-                    text = if (landscapeRequested) "竖屏" else "横屏",
-                    onClick = {
+                    onPrevious = { actions.playPreviousPlatformLiveRoom(); chrome.bump() },
+                    onNext = { actions.playNextPlatformLiveRoom(); chrome.bump() },
+                    onSelectResize = { mode -> actions.updateContentVideoScaleMode(scaleContentKey, mode); chrome.bump() },
+                    onOpenLinePanel = {
+                        if (stream?.hasCandidates == true) {
+                            showLineControl = true
+                            chrome.bump()
+                        }
+                    },
+                    onOrientation = {
                         landscapeRequested = !landscapeRequested
                         activity?.requestedOrientation = if (landscapeRequested) {
                             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         } else {
                             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
                         }
+                        chrome.bump()
                     },
-                )
-            }
+                    onBack = { actions.goBack() },
+                    onInteraction = { chrome.bump() },
+                ),
+                touch = true,
+                fade = true,
+            )
         }
         if (state.platformLiveResolving) {
             Column(
@@ -1234,7 +1284,6 @@ private fun PlatformLivePlayerScreen(
 
         if (showLineControl && stream?.hasCandidates == true) {
             val lineStream = stream
-            BackHandler { showLineControl = false }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1288,7 +1337,7 @@ private fun PlatformLivePlayerScreen(
                                             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${lineStream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}")
                                             actions.switchPlatformLiveCandidate(index)
                                             showLineControl = false
-                                            badgeVisible = true
+                                            chrome.bump()
                                         }
                                         .padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically
