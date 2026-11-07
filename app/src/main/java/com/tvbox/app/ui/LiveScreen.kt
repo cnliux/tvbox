@@ -356,7 +356,7 @@ private fun LivePlayerScreen(
                 // 与 STATE_READY 区分：READY 只代表解码器可接收数据，出帧才是真正有画面。
                 android.util.Log.i(
                     LIVE_LOG_TAG,
-                    "【首帧渲染】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=$latestLineUrl.value"
+                    "【首帧渲染】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}"
                 )
             }
 
