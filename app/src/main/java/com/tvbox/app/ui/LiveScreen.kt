@@ -178,7 +178,9 @@ private fun LivePlayerScreen(
     }
     val playbackHost = rememberPlaybackHost()
     val player = playbackHost.player
-    val playerFocusRequester = remember { FocusRequester() }
+    // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
+    val chrome = remember { PlayerChromeState(initialVisible = true) }
+    val playerFocusRequester = chrome.rootFocus
     val blockedRetryFocus = remember { FocusRequester() }
     BindPlaybackSession(session, player)
     val bufferMonitor = remember {
@@ -194,9 +196,7 @@ private fun LivePlayerScreen(
     var channelListInteraction by remember { mutableIntStateOf(0) }
     // 浮层内遥控焦点移动时的"预览频道"：只驱动 EPG 卡，不改变播放目标（确认键才切台）。
     var previewChannel by remember { mutableStateOf<LiveChannel?>(null) }
-    // 顶/底信息条与频道 badge 共用一套显隐：任意按键/触摸恢复并重置 3 秒计时，超时整体淡出。
-    var barsVisible by remember { mutableStateOf(true) }
-    var barsNonce by remember { mutableIntStateOf(0) }
+
     var channelNumberInput by remember { mutableStateOf("") }
     var channelNumberNonce by remember { mutableIntStateOf(0) }
     var promptMessage by remember { mutableStateOf("") }
@@ -215,8 +215,7 @@ private fun LivePlayerScreen(
     val latestLineCount = rememberUpdatedState(currentChannel.lines.size)
 
     fun bumpBars() {
-        barsVisible = true
-        barsNonce++
+        chrome.bump()
     }
 
     fun showPrompt(message: String) {
@@ -313,27 +312,32 @@ private fun LivePlayerScreen(
         }
     }
 
-    BackHandler {
-        android.util.Log.d(
-            LIVE_LOG_TAG,
-            "【返回键】页面级返回, channelListVisible=$channelListVisible, showLineControl=$showLineControl",
-        )
-        // 返回键按浮层层级逐级收起：线路浮层 → 频道浮层 → 退出直播页。
-        // 只注册一个处理器，避免多个 BackHandler 的启用顺序导致一次返回只收起其中一层。
-        when {
-            showLineControl -> {
-                android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起线路浮层")
-                showLineControl = false
-                if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-            }
-            channelListVisible -> {
-                android.util.Log.d(LIVE_LOG_TAG, "【返回键】收起频道浮层")
-                channelListVisible = false
-                if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-            }
-            else -> actions.goBack()
-        }
-    }
+    // 返回键按浮层层级逐级收起：线路浮层 → 频道浮层 → 退出直播页；只注册一个处理器。
+    PlayerChromeBackHandler(
+        state = chrome,
+        onExit = { actions.goBack() },
+        dismissControls = false,
+        extraDismiss = listOf(
+            {
+                if (showLineControl) {
+                    showLineControl = false
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                    true
+                } else {
+                    false
+                }
+            },
+            {
+                if (channelListVisible) {
+                    channelListVisible = false
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                    true
+                } else {
+                    false
+                }
+            },
+        ),
+    )
 
     DisposableEffect(activity, initialRequestedOrientation, isTelevision) {
         activity?.requestedOrientation = if (isTelevision) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
@@ -583,11 +587,7 @@ private fun LivePlayerScreen(
     }
 
     // 顶/底信息条 3 秒无操作淡出；换台（取流 effect bumpBars）同样重新计时。
-    LaunchedEffect(barsNonce, barsVisible) {
-        if (!barsVisible) return@LaunchedEffect
-        delay(LIVE_BARS_HIDE_DELAY_MS)
-        barsVisible = false
-    }
+    PlayerChromeAutoHide(chrome, playing = true, autoHideMs = LIVE_BARS_HIDE_DELAY_MS)
 
     LaunchedEffect(liveLifecycleOwner) {
         // 退到后台后不再每 20 秒唤醒刷新时钟与节目单；恢复时先补一次 tick，
@@ -613,7 +613,7 @@ private fun LivePlayerScreen(
     PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
 
     val barsAlpha by animateFloatAsState(
-        targetValue = if (barsVisible) 1f else 0f,
+        targetValue = if (chrome.visible) 1f else 0f,
         animationSpec = tween(300),
         label = "live-bars-alpha",
     )
@@ -873,45 +873,59 @@ private fun LivePlayerScreen(
                 },
             )
         }
-        // ── 底部状态条（56dp，透明→黑 0.88 渐变，随 barsVisible 淡出）─────────
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(56.dp)
-                .graphicsLayer { alpha = barsAlpha },
-        ) {
-            Box(
-                modifier = Modifier
-                    .matchParentSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f)),
-                        ),
-                    ),
-            )
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(horizontal = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
+        // ── 底部状态条与控制按钮：统一走共享 PlayerChrome（能力清单驱动，无 if (isLive) 分叉）──
+        PlayerChrome(
+            state = chrome,
+            data = PlayerChromeData(
+                title = currentChannel.name,
+                subtitle = currentChannel.groupName,
+                playing = player.playWhenReady && !session.interrupted,
+                resizeMode = videoScaleMode,
+                buffering = playbackHost.snapshot.isBuffering,
+            ),
+            capabilities = PlayerChromeCapabilities(
+                seek = false,
+                resize = true,
+                channel = true,
+                lines = true,
+                favorite = true,
+                favoriteLabel = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
+                favoriteSelected = actions.isLiveFavorite(currentChannel),
+            ),
+            actions = PlayerChromeActions(
+                onToggle = {
+                    if (session.interrupted) {
+                        player.seekToDefaultPosition()
+                        session.play(player)
+                    } else if (player.playWhenReady) {
+                        bufferMonitor.onPaused()
+                        session.pause(player)
+                    } else {
+                        session.play(player)
+                    }
+                    bumpBars()
+                },
+                onPrevious = { actions.playPreviousLiveChannel(); bumpBars() },
+                onNext = { actions.playNextLiveChannel(); bumpBars() },
+                onSelectResize = { mode ->
+                    actions.updateContentVideoScaleMode(liveScaleContentKey, mode)
+                    showPrompt("画面模式：${mode.displayName}")
+                    bumpBars()
+                },
+                onOpenLinePanel = { showLineControl = true; bumpBars() },
+                onFavorite = { actions.toggleLiveFavorite(currentChannel); bumpBars() },
+                onBack = { actions.goBack() },
+                onInteraction = { bumpBars() },
+            ),
+            touch = false,
+            fade = true,
+            statusContent = {
                 Box(Modifier.size(7.dp).background(LiveTvAccent, CircleShape))
                 Text(
                     text = "直播中",
                     color = LiveTvAccent,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
-                )
-                Text(
-                    text = currentChannel.name,
-                    color = Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = "线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
@@ -928,44 +942,8 @@ private fun LivePlayerScreen(
                             .padding(horizontal = 5.dp, vertical = 1.dp),
                     )
                 }
-                Spacer(Modifier.weight(1f))
-                LiveBottomBarButton(
-                    text = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
-                    onClick = {
-                        actions.toggleLiveFavorite(currentChannel)
-                        bumpBars()
-                    },
-                )
-                LiveBottomBarButton(
-                    text = "⇄ 线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
-                    onClick = {
-                        showLineControl = true
-                        bumpBars()
-                    },
-                )
-                LiveBottomBarButton(
-                    text = if (session.interrupted) "⛶ 继续播放"
-                    else if (videoScaleMode == VideoScaleMode.Zoom) "⛶ 原始比例" else "⛶ 全屏",
-                    onClick = {
-                        if (session.interrupted) {
-                            player.seekToDefaultPosition()
-                            session.play(player)
-                        } else {
-                            // 「⛶」= 画面比例在"原始(FIT)"与"铺满裁切(ZOOM)"间切换，按频道记忆。
-                            // 真实 URL 调试入口保留在线路浮层的「查看 URL」。
-                            val next = if (videoScaleMode == VideoScaleMode.Zoom) {
-                                VideoScaleMode.Fit
-                            } else {
-                                VideoScaleMode.Zoom
-                            }
-                            actions.updateContentVideoScaleMode(liveScaleContentKey, next)
-                            showPrompt(if (next == VideoScaleMode.Zoom) "画面已铺满" else "已恢复原始比例")
-                        }
-                        bumpBars()
-                    },
-                )
-            }
-        }
+            },
+        )
         // ── 右下 EPG 卡（485dp，web 调参）──────────────────────────────────────
         // 规格：电视端节目单只在按确认键唤出浮层后才显示，全屏态不常驻，
         // 保证画面主体干净。浮层打开时卡片贴浮层右缘（267dp + 间距）。

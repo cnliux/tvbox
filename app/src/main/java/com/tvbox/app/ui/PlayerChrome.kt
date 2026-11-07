@@ -2,6 +2,12 @@ package com.tvbox.app.ui
 
 import android.view.KeyEvent as NativeKeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -264,6 +270,8 @@ internal data class PlayerChromeCapabilities(
     val castLabel: String? = null,
     val lock: Boolean = false,
     val favorite: Boolean = false,
+    val favoriteLabel: String? = null,
+    val favoriteSelected: Boolean = false,
     val orientation: Boolean = false,
     val mute: Boolean = false,
     val settings: Boolean = false,
@@ -276,7 +284,7 @@ internal data class PlayerChromeCapabilities(
 /** 页面注入的语义动作：共享层只负责按键/触摸到这些回调的映射。 */
 internal data class PlayerChromeActions(
     val onToggle: () -> Unit,
-    val onSeek: (Long) -> Unit,
+    val onSeek: (Long) -> Unit = {},
     val onSeekBy: (Long) -> Unit = {},
     val onPrevious: () -> Unit = {},
     val onNext: () -> Unit = {},
@@ -322,37 +330,45 @@ internal fun PlayerChrome(
     outroSkipSeconds: Int = 0,
     onIntroSkip: (Int) -> Unit = {},
     onOutroSkip: (Int) -> Unit = {},
+    statusContent: (@Composable RowScope.() -> Unit)? = null,
+    fade: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    if (!state.visible) return
-    if (touch) {
-        PlayerChromeTouch(
-            state = state,
-            data = data,
-            capabilities = capabilities,
-            actions = actions,
-            episodeSortReverse = episodeSortReverse,
-            onSortReverse = onSortReverse,
-            introSkipSeconds = introSkipSeconds,
-            outroSkipSeconds = outroSkipSeconds,
-            onIntroSkip = onIntroSkip,
-            onOutroSkip = onOutroSkip,
-            modifier = modifier,
-        )
-    } else {
-        PlayerChromeTv(
-            state = state,
-            data = data,
-            capabilities = capabilities,
-            actions = actions,
-            episodeSortReverse = episodeSortReverse,
-            onSortReverse = onSortReverse,
-            introSkipSeconds = introSkipSeconds,
-            outroSkipSeconds = outroSkipSeconds,
-            onIntroSkip = onIntroSkip,
-            onOutroSkip = onOutroSkip,
-            modifier = modifier,
-        )
+    AnimatedVisibility(
+        visible = state.visible,
+        enter = if (fade) fadeIn(tween(150)) else EnterTransition.None,
+        exit = if (fade) fadeOut(tween(250)) else ExitTransition.None,
+    ) {
+        if (touch) {
+            PlayerChromeTouch(
+                state = state,
+                data = data,
+                capabilities = capabilities,
+                actions = actions,
+                episodeSortReverse = episodeSortReverse,
+                onSortReverse = onSortReverse,
+                introSkipSeconds = introSkipSeconds,
+                outroSkipSeconds = outroSkipSeconds,
+                onIntroSkip = onIntroSkip,
+                onOutroSkip = onOutroSkip,
+                modifier = modifier,
+            )
+        } else {
+            PlayerChromeTv(
+                state = state,
+                data = data,
+                capabilities = capabilities,
+                actions = actions,
+                episodeSortReverse = episodeSortReverse,
+                onSortReverse = onSortReverse,
+                introSkipSeconds = introSkipSeconds,
+                outroSkipSeconds = outroSkipSeconds,
+                onIntroSkip = onIntroSkip,
+                onOutroSkip = onOutroSkip,
+                statusContent = statusContent,
+                modifier = modifier,
+            )
+        }
     }
 }
 
@@ -369,6 +385,7 @@ private fun PlayerChromeTv(
     outroSkipSeconds: Int,
     onIntroSkip: (Int) -> Unit,
     onOutroSkip: (Int) -> Unit,
+    statusContent: (@Composable RowScope.() -> Unit)?,
     modifier: Modifier,
 ) {
     val buttonScroll = rememberScrollState()
@@ -397,6 +414,14 @@ private fun PlayerChromeTv(
                     style = MaterialTheme.typography.titleSmall, color = Color.White.copy(alpha = 0.9f),
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
+                if (statusContent != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        content = statusContent,
+                    )
+                }
                 if (capabilities.seek) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(formatPlayerTime(preview?.toLong() ?: data.positionMs), modifier = Modifier.width(66.dp),
@@ -475,7 +500,7 @@ private fun PlayerChromeTv(
                     if (capabilities.episodes) ControlButton("选集", { state.openPanel(PlayerPanel.Episodes) })
                     if (capabilities.sources) ControlButton("线路", { state.openPanel(PlayerPanel.Sources) })
                     if (capabilities.lines) ControlButton("线路", { actions.onOpenLinePanel(); state.interaction++ })
-                    if (capabilities.favorite) ControlButton("收藏", { actions.onFavorite(); state.interaction++ })
+                    if (capabilities.favorite) ControlButton(capabilities.favoriteLabel ?: "收藏", { actions.onFavorite(); state.interaction++ })
                     if (capabilities.speed) ControlButton("${formatSpeedLabel(data.speed)}x", { state.openPanel(PlayerPanel.Speeds); actions.onInteraction() })
                     if (capabilities.resize) ControlButton("画面", { state.openPanel(PlayerPanel.Picture); actions.onInteraction() })
                     if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
@@ -587,8 +612,9 @@ private fun PlayerChromeTouch(
                 }
                 if (capabilities.favorite) {
                     MobileChip(
-                        text = "★",
+                        text = capabilities.favoriteLabel ?: "★",
                         modifier = Modifier.width(48.dp),
+                        selected = capabilities.favoriteSelected,
                         onClick = { actions.onFavorite(); state.interaction++ },
                     )
                     Spacer(Modifier.width(4.dp))
