@@ -922,6 +922,8 @@ private fun PlatformLivePlayerScreen(
                     playerState = playbackState
                     if (playbackState == Player.STATE_READY) {
                         hasReportedReady = true
+                        // 画面恢复即清除失败提示：重解析得到同一地址时 effect 不会重跑，避免提示常驻。
+                        playbackError = null
                         // 画面恢复即认为当前 CDN 健康，清零自动恢复计数，避免周期性关流被累积成"换线路"。
                         actions.notifyPlatformLivePlaybackReady()
                     }
