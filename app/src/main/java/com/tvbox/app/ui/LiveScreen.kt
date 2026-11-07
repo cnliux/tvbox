@@ -91,7 +91,11 @@ import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelNumberMatch
 import com.tvbox.app.domain.LiveLineFallbackReason
-import com.tvbox.app.domain.LivePlaybackWatchdog
+import com.tvbox.app.domain.PlaybackWatchdog
+import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.resolveVideoScaleMode
+import com.tvbox.app.domain.liveVideoScaleKey
+import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.findLiveChannelsByNumberPrefix
@@ -158,10 +162,13 @@ private fun LivePlayerScreen(
     val latestLineUrl = rememberUpdatedState(currentLine.url)
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
-    // 画面比例：false = 原始比例（FIT，默认），true = 铺满裁切（ZOOM）。底部「⛶」按钮切换。
-    var liveFillScreen by remember { mutableStateOf(false) }
+    // 画面比例按频道记忆；未记忆时回退设置里的全局默认值。
+    val liveScaleContentKey = liveVideoScaleKey(currentChannel.groupName, currentChannel.name)
+    val videoScaleMode = state.appSettings.resolveVideoScaleMode(liveScaleContentKey)
     // 线路兜底全部用尽后的兜底提示：避免黑屏时加载环无限旋转、用户没有可操作的出口。
     var streamBlocked by remember { mutableStateOf(false) }
+    // 区分"取流失败 / 已建源未出帧 / 出帧后卡死"，UI 与日志分别对应。
+    var blockedFailureKind by remember { mutableStateOf<PlaybackFailureKind?>(null) }
 
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -182,7 +189,7 @@ private fun LivePlayerScreen(
             cumulativeBufferThresholdMs = LIVE_CUMULATIVE_BUFFER_THRESHOLD_MS,
         )
     }
-    val playbackWatchdog = remember { LivePlaybackWatchdog() }
+    val playbackWatchdog = remember { PlaybackWatchdog() }
     var channelListVisible by remember { mutableStateOf(false) }
     var channelListInteraction by remember { mutableIntStateOf(0) }
     // 浮层内遥控焦点移动时的"预览频道"：只驱动 EPG 卡，不改变播放目标（确认键才切台）。
@@ -291,6 +298,11 @@ private fun LivePlayerScreen(
         android.util.Log.i(LIVE_LOG_TAG, "【自动容错】advanceLiveLineAfterFailure($reason) result=$result")
         if (!result) {
             // 所有线路都试过仍无可用流：停止无限缓冲提示，交给用户选择重试或换台。
+            blockedFailureKind = if (playbackWatchdog.hasFirstFrame) {
+                PlaybackFailureKind.Stalled
+            } else {
+                PlaybackFailureKind.FirstFrameTimeout
+            }
             streamBlocked = true
         }
     }
@@ -353,6 +365,7 @@ private fun LivePlayerScreen(
 
             override fun onRenderedFirstFrame() {
                 // 与 STATE_READY 区分：READY 只代表解码器可接收数据，出帧才是真正有画面。
+                playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
                 android.util.Log.i(
                     LIVE_LOG_TAG,
                     "【首帧渲染】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}"
@@ -433,8 +446,9 @@ private fun LivePlayerScreen(
             "【切换线路】channel=${currentChannel.name}, group=${currentChannel.groupName}, lineIndex=${state.liveLineIndex}, protocol=${currentLine.protocolHint}, headers=${currentLine.headers.keys}, nonce=${state.liveReconnectNonce}"
         )
         streamBlocked = false
+        blockedFailureKind = null
         bufferMonitor.onMediaChanged()
-        playbackWatchdog.onMediaChanged()
+        playbackWatchdog.onSourceRequested(System.currentTimeMillis())
         bufferingLineUrl = null
         automaticSwitchLineUrl = null
         // 换台/换线即一次"操作"：信息条与频道 badge 恢复显示并重新计时。
@@ -506,13 +520,34 @@ private fun LivePlayerScreen(
                     "【进度采样】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, playing=$playing, state=$statePlayback, pos=$pos, buffered=${player.bufferedPercentage}%"
                 )
                 if (
-                    playbackWatchdog.onSample(
-                        isPlaying = playing,
+                    playbackWatchdog.onProgressSample(
+                        // 用播放意图而不是 isPlaying：缓冲时 isPlaying=false，按它会把缓冲卡死当成暂停漏掉。
+                        isPlaying = player.playWhenReady,
                         positionMs = pos,
                         nowMs = System.currentTimeMillis(),
-                    )
+                    ) != null
                 ) {
                     android.util.Log.e(LIVE_LOG_TAG, "【看门狗触发】长时间无进度，判定卡死，先原地重连")
+                    switchLiveLineAfterIssue(LiveLineFallbackReason.Stall)
+                }
+            }
+        }
+    }
+
+    // 首帧看门狗：覆盖「取流/建源 → FIRST_FRAME」整段；READY 不等于出帧。
+    LaunchedEffect(player, currentLine.url, liveLifecycleOwner) {
+        liveLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(1_000L)
+                val failure = playbackWatchdog.checkFirstFrame(
+                    nowMs = System.currentTimeMillis(),
+                    playWhenReady = player.playWhenReady && !session.interrupted,
+                )
+                if (failure != null) {
+                    android.util.Log.w(
+                        LIVE_LOG_TAG,
+                        "【首帧超时】channel=${latestChannelLabel.value}, kind=${failure.kind}, elapsedMs=${failure.elapsedMs}",
+                    )
                     switchLiveLineAfterIssue(LiveLineFallbackReason.Stall)
                 }
             }
@@ -760,75 +795,41 @@ private fun LivePlayerScreen(
             }
             .focusable(),
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                PlayerView(viewContext).apply {
-                    this.player = player
-                    descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    useController = false
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                }
-            },
-            update = {
-                it.player = player
-                it.resizeMode = if (liveFillScreen) {
-                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                } else {
-                    AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
+        PlayerSurface(
+            player = player,
+            resizeMode = videoScaleMode,
+            showBuffering = false,
         )
-        // 缓冲/加载中：红色进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
-        if (playbackHost.snapshot.isBuffering && !session.interrupted && !streamBlocked) {
-            LiveLoadingState(
-                text = "正在加载 ${currentChannel.name}...",
-                modifier = Modifier.align(Alignment.Center),
+        val blockedKind = blockedFailureKind
+        val overlayStatus = when {
+            streamBlocked && !session.interrupted -> PlaybackStatus.Failed(
+                kind = blockedKind ?: PlaybackFailureKind.Stalled,
+                title = playbackFailureTitle(blockedKind ?: PlaybackFailureKind.Stalled),
+                message = playbackFailureMessage(blockedKind ?: PlaybackFailureKind.Stalled) +
+                    " 当前频道所有线路均已尝试。",
+                nextLabel = "下一台",
             )
+            // 缓冲/加载中：进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
+            playbackHost.snapshot.isBuffering && !session.interrupted -> PlaybackStatus.Loading(
+                "正在加载 ${currentChannel.name}...",
+            )
+            else -> PlaybackStatus.Hidden
         }
-        if (streamBlocked && !session.interrupted) {
-            // 线路兜底用尽：不再让加载环无限转，给出可操作的出口。
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .padding(horizontal = 28.dp, vertical = 20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(
-                    "当前频道所有线路均不可用",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    "可重试当前线路，或切换到下一台",
-                    color = Color.White.copy(alpha = 0.74f),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ControlButton(
-                        "重试",
-                        {
-                            streamBlocked = false
-                            actions.reconnectLiveLine()
-                        },
-                        Modifier.focusRequester(blockedRetryFocus),
-                        primary = true,
-                    )
-                    ControlButton(
-                        "下一台",
-                        {
-                            streamBlocked = false
-                            actions.playNextLiveChannel()
-                        },
-                    )
-                }
-            }
-        }
+        PlaybackStatusOverlay(
+            status = overlayStatus,
+            onRetry = {
+                streamBlocked = false
+                blockedFailureKind = null
+                actions.reconnectLiveLine()
+            },
+            onNext = {
+                streamBlocked = false
+                blockedFailureKind = null
+                actions.playNextLiveChannel()
+            },
+            modifier = Modifier.align(Alignment.Center),
+            retryFocusRequester = if (isTelevision) blockedRetryFocus else null,
+        )
         if (session.interrupted) {
             ControlButton("继续播放", {
                 player.seekToDefaultPosition()
@@ -943,16 +944,22 @@ private fun LivePlayerScreen(
                     },
                 )
                 LiveBottomBarButton(
-                    text = if (session.interrupted) "⛶ 继续播放" else if (liveFillScreen) "⛶ 原始比例" else "⛶ 全屏",
+                    text = if (session.interrupted) "⛶ 继续播放"
+                    else if (videoScaleMode == VideoScaleMode.Zoom) "⛶ 原始比例" else "⛶ 全屏",
                     onClick = {
                         if (session.interrupted) {
                             player.seekToDefaultPosition()
                             session.play(player)
                         } else {
-                            // 「⛶」= 画面比例在"原始(FIT)"与"铺满裁切(ZOOM)"间切换。
+                            // 「⛶」= 画面比例在"原始(FIT)"与"铺满裁切(ZOOM)"间切换，按频道记忆。
                             // 真实 URL 调试入口保留在线路浮层的「查看 URL」。
-                            liveFillScreen = !liveFillScreen
-                            showPrompt(if (liveFillScreen) "画面已铺满" else "已恢复原始比例")
+                            val next = if (videoScaleMode == VideoScaleMode.Zoom) {
+                                VideoScaleMode.Fit
+                            } else {
+                                VideoScaleMode.Zoom
+                            }
+                            actions.updateContentVideoScaleMode(liveScaleContentKey, next)
+                            showPrompt(if (next == VideoScaleMode.Zoom) "画面已铺满" else "已恢复原始比例")
                         }
                         bumpBars()
                     },
