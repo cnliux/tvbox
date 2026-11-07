@@ -13,6 +13,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -139,7 +140,6 @@ private fun PlatformLiveSitesScreen(
         isEmpty = false,
         emptyMessage = "没有可用平台直播服务",
         onRetry = actions::refreshPlatformLive,
-        touchColumns = 2,
         columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         item(key = "favorites") {
@@ -211,7 +211,6 @@ private fun PlatformLiveParentCategoriesScreen(
         emptyMessage = "没有可用直播大分类",
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
-        touchColumns = 2,
         columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         itemsIndexed(
@@ -258,7 +257,6 @@ private fun PlatformLiveCategoriesScreen(
         emptyMessage = "没有可用二级分类",
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
-        touchColumns = 3,
         columnsOverride = state.appSettings.platformLiveGridColumns,
     ) {
         itemsIndexed(categories, key = { _, category -> category.id }) { index, category ->
@@ -410,7 +408,6 @@ private fun PlatformLiveBrowseSurface(
     loadingMore: Boolean = false,
     loadingMoreError: String? = null,
     onRetryLoadMore: (() -> Unit)? = null,
-    touchColumns: Int = 2,
     columnsOverride: Int = 0,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
@@ -472,13 +469,19 @@ private fun PlatformLiveBrowseSurface(
                         }
                     }
                     val touchMode = LocalTouchMode.current
-                    Box(modifier = Modifier.fillMaxSize()) {
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        // 列数随可用宽度推导：每格不小于 176dp，竖屏自然回落到 2–3 列，
+                        // 避免 4 列时平台名/房间名只剩 1–2 个字符。
+                        val touchCapacity = (maxWidth / 176.dp).toInt().coerceIn(2, 4)
+                        val effectiveColumns = when {
+                            columnsOverride > 0 ->
+                                if (touchMode) columnsOverride.coerceAtMost(touchCapacity) else columnsOverride
+                            touchMode -> touchCapacity
+                            else -> TvLayout.PlatformLiveColumns
+                        }
                         LazyVerticalGrid(
                             state = resolvedGridState,
-                            columns = GridCells.Fixed(
-                                columnsOverride.takeIf { it > 0 }
-                                    ?: if (touchMode) touchColumns else TvLayout.PlatformLiveColumns,
-                            ),
+                            columns = GridCells.Fixed(effectiveColumns),
                             contentPadding = PaddingValues(if (touchMode) 2.dp else 8.dp),
                             horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
                             verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 14.dp),
@@ -631,7 +634,8 @@ private fun PlatformLiveTextCard(
             text = title,
             style = if (touchMode) MaterialTheme.typography.titleMedium else MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            maxLines = 1,
+            // 触摸模式允许两行：窄屏 2–3 列时站名/分类名不至于只剩首字。
+            maxLines = if (touchMode) 2 else 1,
             overflow = TextOverflow.Ellipsis,
         )
         Text(
@@ -710,7 +714,7 @@ private fun PlatformLiveImageCard(
                 ),
                 style = if (touchMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
                 fontWeight = if (touchMode) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
+                maxLines = if (touchMode) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
@@ -723,7 +727,7 @@ private fun PlatformLiveImageCard(
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = if (touchMode) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
