@@ -17,6 +17,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -685,9 +686,10 @@ private fun MobileLivePlayerScreen(
     // 画面比例按频道记忆；未记忆时回退设置里的全局默认值。
     val scaleContentKey = liveVideoScaleKey(channel.groupName, channel.name)
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
-    var controlsVisible by remember { mutableStateOf(true) }
-    var controlsInteraction by remember { mutableIntStateOf(0) }
+    // 控件显隐统一走共享状态；竖屏常驻、横屏 4 秒后自动收起。
+    val chrome = remember { PlayerChromeState(initialVisible = true) }
     var channelBadgeVisible by remember { mutableStateOf(true) }
+    LaunchedEffect(isPortrait) { if (isPortrait) chrome.bump() }
     // 按钮文案要看"播放意图"而不是 isPlaying：缓冲/起播阶段 isPlaying 仍为 false，
     // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。播放意图由共享宿主快照提供。
     // 所有线路都试过仍不可用：收起原生缓冲环，给出常驻的重试/换台出口。
@@ -829,11 +831,12 @@ private fun MobileLivePlayerScreen(
     }
 
     // 横屏时控件 4s 自动隐藏（竖屏常驻）；单击画面唤出。
-    LaunchedEffect(isPortrait, controlsVisible, controlsInteraction) {
-        if (isPortrait || !controlsVisible) return@LaunchedEffect
-        delay(MOBILE_LIVE_CONTROLS_HIDE_MS)
-        controlsVisible = false
-    }
+    PlayerChromeAutoHide(
+        chrome,
+        playing = true,
+        autoHideMs = MOBILE_LIVE_CONTROLS_HIDE_MS,
+        holdVisible = isPortrait,
+    )
 
     // 播放器画面 + 遮罩控件：竖屏置于 16:9 区、横屏铺满，两处复用。
     val playerSurface: @Composable () -> Unit = {
@@ -844,63 +847,94 @@ private fun MobileLivePlayerScreen(
             currentLine = currentLine,
             resizeMode = videoScaleMode,
             blockedFailureKind = blockedFailureKind,
-            controlsVisible = if (isPortrait) true else controlsVisible,
             channelBadgeVisible = channelBadgeVisible,
-            isFavorite = isFavorite,
-            isPlaying = playbackHost.snapshot.playWhenReady,
             isPortrait = isPortrait,
             streamBlocked = streamBlocked,
             onRetryStream = {
                 streamBlocked = false
                 actions.reconnectLiveLine()
-                controlsInteraction++
+                chrome.bump()
             },
             onNextChannel = {
                 streamBlocked = false
                 actions.playNextLiveChannel()
             },
             onToggleControls = {
-                if (!isPortrait) {
-                    controlsVisible = !controlsVisible
-                    if (controlsVisible) controlsInteraction++
-                }
+                if (!isPortrait) chrome.toggle()
             },
-            onBack = onBack,
-            onToggleFavorite = ::toggleFavoriteWithToast,
-            onToggleOrientation = {
-                activity?.requestedOrientation = if (isPortrait) {
-                    ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                } else {
-                    ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-                }
-                controlsInteraction++
+            controls = {
+                PlayerChrome(
+                    state = chrome,
+                    data = PlayerChromeData(
+                        title = channel.name,
+                        subtitle = buildString {
+                            append("线路 ${lineIndex + 1}/${channel.lines.size}")
+                            if (currentLine.protocolHint.isNotBlank()) {
+                                append(" · ${currentLine.protocolHint.uppercase()}")
+                            }
+                        },
+                        playing = playbackHost.snapshot.playWhenReady && !session.interrupted,
+                        resizeMode = videoScaleMode,
+                        buffering = playbackHost.snapshot.isBuffering,
+                    ),
+                    capabilities = PlayerChromeCapabilities(
+                        seek = false,
+                        resize = true,
+                        favorite = true,
+                        favoriteLabel = "★",
+                        favoriteSelected = isFavorite,
+                        orientation = true,
+                        mute = true,
+                        settings = true,
+                        channel = true,
+                    ),
+                    actions = PlayerChromeActions(
+                        onToggle = {
+                            // 走 session 记录播放意图：只用 player.pause() 会让策略仍认为用户想播，
+                            // 切线路/重连后 preparePlayback 会把用户已暂停的直播重新拉起。
+                            if (session.interrupted) {
+                                player.seekToDefaultPosition()
+                                session.play(player)
+                            } else if (player.playWhenReady) {
+                                session.pause(player)
+                            } else {
+                                session.play(player)
+                            }
+                            chrome.bump()
+                        },
+                        onPrevious = { actions.playPreviousLiveChannel(); chrome.bump() },
+                        onNext = { actions.playNextLiveChannel(); chrome.bump() },
+                        onSelectResize = { mode ->
+                            actions.updateContentVideoScaleMode(scaleContentKey, mode)
+                            chrome.bump()
+                        },
+                        onFavorite = ::toggleFavoriteWithToast,
+                        onOrientation = {
+                            activity?.requestedOrientation = if (isPortrait) {
+                                ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                            } else {
+                                ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                            }
+                            chrome.bump()
+                        },
+                        onMute = {
+                            // 音量图标 = 静音/恢复；竖屏也可在右半屏上下滑调节。
+                            val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                            if (am != null) {
+                                val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                                val muted = am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
+                                am.setStreamVolume(AudioManager.STREAM_MUSIC, if (muted) max / 2 else 0, 0)
+                            }
+                            chrome.bump()
+                        },
+                        onSettings = actions::openSettings,
+                        onBack = onBack,
+                        onInteraction = { chrome.bump() },
+                    ),
+                    touch = true,
+                    fade = true,
+                )
             },
-            onToggleZoom = {
-                val next = if (videoScaleMode == VideoScaleMode.Zoom) {
-                    VideoScaleMode.Fit
-                } else {
-                    VideoScaleMode.Zoom
-                }
-                actions.updateContentVideoScaleMode(scaleContentKey, next)
-                controlsInteraction++
-            },
-            onTogglePause = {
-                // 走 session 记录播放意图：只用 player.pause() 会让策略仍认为用户想播，
-                // 切线路/重连后 preparePlayback 会把用户已暂停的直播重新拉起。
-                if (player.playWhenReady) session.pause(player) else session.play(player)
-                controlsInteraction++
-            },
-            onToggleMute = {
-                // 音量图标 = 静音/恢复；竖屏也可在右半屏上下滑调节。
-                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
-                if (am != null) {
-                    val max = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                    val muted = am.getStreamVolume(AudioManager.STREAM_MUSIC) == 0
-                    am.setStreamVolume(AudioManager.STREAM_MUSIC, if (muted) max / 2 else 0, 0)
-                }
-                controlsInteraction++
-            },
-            onOpenSettings = actions::openSettings,
         )
     }
 
@@ -1168,22 +1202,13 @@ private fun MobileLivePlayerSurface(
     currentLine: LiveChannelLine,
     resizeMode: VideoScaleMode,
     blockedFailureKind: PlaybackFailureKind?,
-    controlsVisible: Boolean,
     channelBadgeVisible: Boolean,
-    isFavorite: Boolean,
-    isPlaying: Boolean,
     isPortrait: Boolean,
     streamBlocked: Boolean,
     onRetryStream: () -> Unit,
     onNextChannel: () -> Unit,
     onToggleControls: () -> Unit,
-    onBack: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleOrientation: () -> Unit,
-    onToggleZoom: () -> Unit,
-    onTogglePause: () -> Unit,
-    onToggleMute: () -> Unit,
-    onOpenSettings: () -> Unit,
+    controls: @Composable BoxScope.() -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -1304,141 +1329,7 @@ private fun MobileLivePlayerSurface(
             )
         }
 
-        if (controlsVisible) {
-            // 上渐变遮罩：左返回、右 铺满/收藏/横屏切换。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp)
-                    .align(Alignment.TopCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Black.copy(alpha = 0.6f),
-                            1f to Color.Transparent,
-                        ),
-                    )
-                    .windowInsetsPadding(WindowInsets.statusBars),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .clickable { onBack() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                    Spacer(modifier = Modifier.weight(1f))
-                    // 铺满/原始比例（RESIZE_MODE_ZOOM / FIT）。
-                    Text(
-                        text = if (resizeMode == VideoScaleMode.Zoom) "原始" else "铺满",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color.White.copy(alpha = 0.14f))
-                            .clickable { onToggleZoom() }
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "★",
-                        fontSize = 19.sp,
-                        color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.85f),
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .clickable { onToggleFavorite() },
-                    )
-                    // ⛶：竖屏强制横屏 / 横屏恢复传感器。
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .clickable { onToggleOrientation() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text("⛶", fontSize = 17.sp, color = Color.White)
-                    }
-                }
-            }
-
-            // 下渐变遮罩：左直播状态（协议大写），右暂停/继续（音量、设置暂无对应功能，隐藏）。
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            0f to Color.Transparent,
-                            1f to Color.Black.copy(alpha = 0.6f),
-                        ),
-                    )
-                    .windowInsetsPadding(WindowInsets.navigationBars),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.Bottom,
-                ) {
-                    val protocol = currentLine.protocolHint
-                    Text(
-                        text = if (protocol.isNotBlank()) "● 直播中 · ${protocol.uppercase()}" else "● 直播中",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.9f),
-                    )
-                    Spacer(modifier = Modifier.weight(1f))
-                    Text(
-                        text = if (isPlaying) "⏸ 暂停" else "▶ 继续",
-                        fontSize = 11.sp,
-                        color = Color.White.copy(alpha = 0.9f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color.White.copy(alpha = 0.14f))
-                            .clickable { onTogglePause() }
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    // 音量：静音/恢复（竖屏也可在右半屏上下滑调音量）。
-                    Text(
-                        text = "🔊",
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .clickable { onToggleMute() },
-                    )
-                    Spacer(modifier = Modifier.width(2.dp))
-                    // 设置：进入设置页（音量/画质等入口与项目现有设置页一致）。
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(CircleShape)
-                            .clickable { onOpenSettings() },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "设置",
-                            tint = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier.size(17.dp),
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(10.dp))
-                }
-            }
-        }
+        controls()
     }
 }
 

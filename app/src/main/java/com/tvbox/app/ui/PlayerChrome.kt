@@ -351,6 +351,7 @@ internal fun PlayerChrome(
                 outroSkipSeconds = outroSkipSeconds,
                 onIntroSkip = onIntroSkip,
                 onOutroSkip = onOutroSkip,
+                statusContent = statusContent,
                 modifier = modifier,
             )
         } else {
@@ -538,6 +539,7 @@ private fun PlayerChromeTouch(
     outroSkipSeconds: Int,
     onIntroSkip: (Int) -> Unit,
     onOutroSkip: (Int) -> Unit,
+    statusContent: (@Composable RowScope.() -> Unit)?,
     modifier: Modifier,
 ) {
     val wide = LocalConfiguration.current.screenWidthDp >= 600
@@ -647,6 +649,14 @@ private fun PlayerChromeTouch(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (statusContent != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        content = statusContent,
+                    )
+                }
                 if (state.panel != PlayerPanel.None) {
                     PlayerChromeMobilePanel(
                         section = state.panel,
