@@ -400,7 +400,9 @@ private fun PlatformLiveBrowseSurface(
     columnsOverride: Int = 0,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
 ) {
-    PageSurface { padding ->
+    PageSurface(
+        contentPadding = PaddingValues(horizontal = 5.dp, vertical = 4.dp),
+    ) { padding ->
         when {
             loading -> LoadingState(text = "正在加载$title", modifier = Modifier.padding(padding))
             error != null -> ErrorState(message = error, onRetry = onRetry, modifier = Modifier.padding(padding))
@@ -417,8 +419,8 @@ private fun PlatformLiveBrowseSurface(
                         .fillMaxSize()
                         .padding(padding)
                         .padding(
-                            horizontal = if (LocalTouchMode.current) 8.dp else 28.dp,
-                            vertical = if (LocalTouchMode.current) 10.dp else 18.dp,
+                            horizontal = if (LocalTouchMode.current) 3.dp else 29.dp,
+                            vertical = if (LocalTouchMode.current) 10.dp else 24.dp,
                         ),
                 ) {
                     AnimatedVisibility(visible = headerVisible) {
@@ -609,7 +611,7 @@ private fun PlatformLiveImageCard(
     var focused by remember { mutableStateOf(false) }
     val shape = MaterialTheme.shapes.medium
     val touchMode = LocalTouchMode.current
-    // 触摸模式：竖版 3:4 封面 + 封面右上角收藏星，文字占满卡宽，保证 4 列 × 3 行铺满屏幕且标题可读。
+    // 触摸模式：横向封面 + 封面右上角收藏星，文字占满卡宽。
     val hasFavorite = favorite != null && onFavoriteClick != null
     Box(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -625,7 +627,7 @@ private fun PlatformLiveImageCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(if (touchMode) 3f / 4f else 16f / 9f)
+                    .aspectRatio(if (touchMode) 1.15f else 1.7778f)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
             ) {
                 if (imageUrl.isNotBlank()) {

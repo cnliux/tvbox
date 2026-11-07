@@ -699,18 +699,19 @@ fun PosterImage(movie: Movie, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun PageSurface(content: @Composable (PaddingValues) -> Unit) {
+fun PageSurface(
+    contentPadding: PaddingValues = PaddingValues(
+        horizontal = TvDimens.PageHorizontalPadding,
+        vertical = TvDimens.PageVerticalPadding,
+    ),
+    content: @Composable (PaddingValues) -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = TvColors.Background,
         contentColor = TvColors.TextPrimary,
     ) {
-        content(
-            PaddingValues(
-                horizontal = TvDimens.PageHorizontalPadding,
-                vertical = TvDimens.PageVerticalPadding,
-            ),
-        )
+        content(contentPadding)
     }
 }
 
