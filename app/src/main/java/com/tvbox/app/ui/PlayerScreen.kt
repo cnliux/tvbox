@@ -879,6 +879,7 @@ fun PlayerScreen(
                 subtitleTracks = playerTracks.subtitleTracks,
                 playbackInfo = diagnostics?.info,
                 decoderStrategy = state.appSettings.decoderStrategy,
+                decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
                 playbackUrls = listOf(
                     PlayerChromeUrl(
                         label = "实际播放地址（点播线路）",

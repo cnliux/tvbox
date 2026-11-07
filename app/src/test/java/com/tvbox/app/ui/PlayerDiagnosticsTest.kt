@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import com.tvbox.app.domain.DecoderStrategy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -73,12 +74,30 @@ class PlayerDiagnosticsTest {
     }
 
     @Test
-    fun infoRowsMarkHardwareOnlyFallback() {
+    fun infoRowsMarkHardwareOnlyFallbackPerTrack() {
         val info = PlayerPlaybackInfo(decoderName = "c2.android.avc.decoder")
-        val rows = playerInfoRows(info, DecoderStrategy.HardwareOnly).associate { it.label to it.value }
-        assertEquals("强制硬解", rows["解码策略"])
-        assertEquals("c2.android.avc.decoder · 软解", rows["解码器"])
-        assertEquals("强制硬解 · 实际软解（已回落）", rows["策略与实际"])
+        val videoRows = playerInfoRows(
+            info,
+            DecoderStrategy.HardwareOnly,
+            setOf(DecoderTrackKind.Video),
+        ).associate { it.label to it.value }
+        assertEquals("强制硬解", videoRows["解码策略"])
+        assertEquals("c2.android.avc.decoder · 软解", videoRows["解码器"])
+        assertEquals("强制硬解 · 实际软解（已回落）", videoRows["视频回落"])
+        assertNull(videoRows["音频回落"])
+
+        val audioRows = playerInfoRows(
+            info,
+            DecoderStrategy.HardwareOnly,
+            setOf(DecoderTrackKind.Audio),
+        ).associate { it.label to it.value }
+        assertEquals("强制硬解 · 实际软解（已回落）", audioRows["音频回落"])
+        assertNull(audioRows["视频回落"])
+
+        // 自动策略下回落事件不应改变面板展示（回落提示只对应强制硬解）。
+        val autoRows = playerInfoRows(info, DecoderStrategy.Auto, setOf(DecoderTrackKind.Video))
+            .associate { it.label to it.value }
+        assertNull(autoRows["视频回落"])
     }
 
     @Test

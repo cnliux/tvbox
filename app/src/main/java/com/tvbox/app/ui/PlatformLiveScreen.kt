@@ -1182,6 +1182,7 @@ private fun PlatformLivePlayerScreen(
                     buffering = playbackHost?.snapshot?.isBuffering == true,
                     playbackInfo = diagnostics?.info,
                     decoderStrategy = state.appSettings.decoderStrategy,
+                    decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
                     playbackUrls = buildList {
                         playbackUrl?.let { actual ->
                             add(

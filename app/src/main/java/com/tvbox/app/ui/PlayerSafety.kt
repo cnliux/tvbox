@@ -21,8 +21,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.domain.DecoderStrategy
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 安全释放 ExoPlayer：先 pause + removeListener，再 release。
@@ -34,7 +34,7 @@ internal fun safeReleasePlayer(player: ExoPlayer) {
         // ExoPlayer 不支持并发 release，确保在调用线程执行
         player.release()
     } catch (e: Exception) {
-        android.util.Log.w("TVBoxPlayer", "safeReleasePlayer failed: ${e.message}")
+        android.util.Log.w("TVBoxPlayer", "safeReleasePlayer failed: ${logSafeText(e.message)}")
     }
 }
 
@@ -53,7 +53,7 @@ internal fun safePrepare(
         player.playWhenReady = playWhenReady
         true
     } catch (e: Exception) {
-        android.util.Log.e("TVBoxPlayer", "safePrepare failed: ${e.message}", e)
+        android.util.Log.e("TVBoxPlayer", "safePrepare failed: ${logSafeText(e.message)}")
         false
     }
 }
@@ -83,42 +83,70 @@ internal fun buildManagedExoPlayer(
         .apply { playWhenReady = true }
 }
 
-/** 「强制硬解」档回落到软件解码的一次性事件；只含编码类型，不含地址。 */
-internal data class HardwareDecoderFallbackEvent(val mimeType: String, val sequence: Long)
+/** 发生回落的轨道类型：视频/音频分别记录，信息面板据此分别标注。 */
+internal enum class DecoderTrackKind { Video, Audio }
+
+/** 「强制硬解」档回落到软件解码的一次性事件；只含编码类型与轨道类型，不含地址。 */
+internal data class HardwareDecoderFallbackEvent(
+    val mimeType: String,
+    val kind: DecoderTrackKind,
+    val sequence: Long,
+)
 
 /**
  * 强制硬解回落的全局通知：选择器在播放线程触发，播放页在主线程消费。
- * 每次重建播放器只上报一次，避免音频/视频多个编码重复提示。
+ * - [kinds] 记录本次构建中实际发生回落的轨道（视频/音频可同时存在）；
+ * - [event] 只在每次构建的首条回落时更新，保证 Toast 只弹一次；
+ * - [reset] 在每次构建选择器前清空，避免上一台的状态串到新播放器。
  */
 internal object HardwareDecoderFallbackNotice {
     var event: HardwareDecoderFallbackEvent? by mutableStateOf(null)
         private set
 
+    var kinds: Set<DecoderTrackKind> by mutableStateOf(emptySet())
+        private set
+
     private var sequence = 0L
 
-    fun report(mimeType: String) {
-        sequence += 1
-        event = HardwareDecoderFallbackEvent(mimeType, sequence)
+    fun reset() {
+        kinds = emptySet()
+        event = null
+    }
+
+    fun report(mimeType: String, kind: DecoderTrackKind) {
+        if (kind !in kinds) kinds = kinds + kind
+        if (event == null) {
+            sequence += 1
+            event = HardwareDecoderFallbackEvent(mimeType, kind, sequence)
+        }
     }
 }
 
 /**
  * 强制硬解：只返回 `hardwareAccelerated` 的解码器。
  * 设备确实没有对应硬解时回退默认候选，避免选择器返回空列表导致取流直接失败；
- * 但回落必须可见：记录一次脱敏日志，并通过 [HardwareDecoderFallbackNotice] 让播放页提示。
+ * 但回落必须可见：按编码去重记录脱敏日志，并通过 [HardwareDecoderFallbackNotice]
+ * 让播放页提示，同时区分是视频轨还是音频轨回落。
  */
 @OptIn(UnstableApi::class)
 private fun hardwareOnlyMediaCodecSelector(): MediaCodecSelector {
-    val reported = AtomicBoolean(false)
+    // 同一次构建里音频/视频可能各回落一次；按编码去重，但两类轨道都要上报给信息面板。
+    val reportedMimes = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    HardwareDecoderFallbackNotice.reset()
     return MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
         val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunneling)
         val hardware = all.filter { it.hardwareAccelerated }
         if (hardware.isNotEmpty()) {
             hardware
         } else {
-            if (reported.compareAndSet(false, true)) {
-                android.util.Log.w("TVBoxPlayer", "强制硬解回落：$mimeType 无可用硬件解码器")
-                HardwareDecoderFallbackNotice.report(mimeType)
+            if (reportedMimes.add(mimeType)) {
+                val kind = if (androidx.media3.common.MimeTypes.isAudio(mimeType)) {
+                    DecoderTrackKind.Audio
+                } else {
+                    DecoderTrackKind.Video
+                }
+                android.util.Log.w("TVBoxPlayer", "强制硬解回落：$mimeType 无可用硬件解码器（${kind.name}）")
+                HardwareDecoderFallbackNotice.report(mimeType, kind)
             }
             all
         }

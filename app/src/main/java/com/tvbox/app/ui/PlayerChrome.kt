@@ -288,6 +288,8 @@ internal data class PlayerChromeData(
     val playbackUrls: List<PlayerChromeUrl> = emptyList(),
     /** 当前解码策略：信息面板同时展示策略与实际解码器，便于确认是否发生回落。 */
     val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+    /** 本次播放器构建中实际发生回落的轨道；视频/音频分别标注，避免只看视频而漏掉音频回落。 */
+    val decoderFallbackKinds: Set<DecoderTrackKind> = emptySet(),
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -880,6 +882,7 @@ private fun PlayerChromePanel(
         PlayerInfoPanel(
             info = data.playbackInfo,
             decoderStrategy = data.decoderStrategy,
+            fallbackKinds = data.decoderFallbackKinds,
             onClose = { state.closePanel() },
             modifier = modifier,
         )
@@ -1006,17 +1009,24 @@ internal data class PlayerInfoRow(val label: String, val value: String)
 internal fun playerInfoRows(
     info: PlayerPlaybackInfo?,
     decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+    fallbackKinds: Set<DecoderTrackKind> = emptySet(),
 ): List<PlayerInfoRow> {
     val decoder = info?.decoderName?.takeIf { it.isNotBlank() }
     val actualKind = decoder?.let(::decoderKindLabel)
-    // 强制硬解却实际用了软解：在面板里直接标注，避免策略命中失败后无感。
-    val fallback = decoderStrategy == DecoderStrategy.HardwareOnly && actualKind == "软解"
+    // 强制硬解时按回落轨道分别标注：视频与音频都可能独立回落到软解。
+    val videoFallback = decoderStrategy == DecoderStrategy.HardwareOnly &&
+        DecoderTrackKind.Video in fallbackKinds
+    val audioFallback = decoderStrategy == DecoderStrategy.HardwareOnly &&
+        DecoderTrackKind.Audio in fallbackKinds
     return buildList {
         add(PlayerInfoRow("解码策略", decoderStrategy.displayName))
         add(PlayerInfoRow("分辨率", formatResolution(info?.videoWidth ?: 0, info?.videoHeight ?: 0)))
         add(PlayerInfoRow("解码器", decoder?.let { "$it · $actualKind" } ?: "—"))
-        if (fallback) {
-            add(PlayerInfoRow("策略与实际", "强制硬解 · 实际软解（已回落）"))
+        if (videoFallback) {
+            add(PlayerInfoRow("视频回落", "强制硬解 · 实际软解（已回落）"))
+        }
+        if (audioFallback) {
+            add(PlayerInfoRow("音频回落", "强制硬解 · 实际软解（已回落）"))
         }
         add(PlayerInfoRow("当前码率", formatBitrate(info?.currentBitrateBps ?: -1L)))
         add(PlayerInfoRow("平均码率", formatBitrate(info?.averageBitrateBps ?: -1L)))
@@ -1033,10 +1043,13 @@ internal fun playerInfoRows(
 private fun PlayerInfoPanel(
     info: PlayerPlaybackInfo?,
     decoderStrategy: DecoderStrategy,
+    fallbackKinds: Set<DecoderTrackKind>,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = remember(info, decoderStrategy) { playerInfoRows(info, decoderStrategy) }
+    val rows = remember(info, decoderStrategy, fallbackKinds) {
+        playerInfoRows(info, decoderStrategy, fallbackKinds)
+    }
     val listState = rememberLazyListState()
     val firstFocus = remember { FocusRequester() }
     Surface(
@@ -1364,8 +1377,16 @@ private fun PlayerChromeMobilePanel(
                     }
                 }
                 PlayerPanel.Info -> {
-                    val infoRows = remember(data.playbackInfo, data.decoderStrategy) {
-                        playerInfoRows(data.playbackInfo, data.decoderStrategy)
+                    val infoRows = remember(
+                        data.playbackInfo,
+                        data.decoderStrategy,
+                        data.decoderFallbackKinds,
+                    ) {
+                        playerInfoRows(
+                            data.playbackInfo,
+                            data.decoderStrategy,
+                            data.decoderFallbackKinds,
+                        )
                     }
                     // 信息行可能超出一屏：限制高度并允许滚动，不挤压上方的进度与功能行。
                     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.38f).dp
