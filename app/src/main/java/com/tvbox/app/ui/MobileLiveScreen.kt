@@ -70,6 +70,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -682,6 +683,8 @@ private fun MobileLivePlayerScreen(
     // 按钮文案要看"播放意图"而不是 isPlaying：缓冲/起播阶段 isPlaying 仍为 false，
     // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。
     var playRequested by remember(player) { mutableStateOf(player.playWhenReady) }
+    // 所有线路都试过仍不可用：收起原生缓冲环，给出常驻的重试/换台出口。
+    var streamBlocked by remember { mutableStateOf(false) }
 
     val isFavorite = actions.isLiveFavorite(channel)
 
@@ -707,7 +710,10 @@ private fun MobileLivePlayerScreen(
             MOBILE_LIVE_LOG_TAG,
             "【线路容错】reason=$reason channel=${latestChannelLabel.value} url=${logSafeUrl(latestLineUrl.value)}",
         )
-        actions.advanceLiveLineAfterFailure(reason)
+        if (!actions.advanceLiveLineAfterFailure(reason)) {
+            // 兜底耗尽：不再无限转圈，交给用户选择重试或换台。
+            streamBlocked = true
+        }
     }
 
     DisposableEffect(player) {
@@ -727,7 +733,10 @@ private fun MobileLivePlayerScreen(
 
             override fun onPlaybackStateChanged(playbackState: Int) {
                 when (playbackState) {
-                    Player.STATE_READY -> actions.notifyLivePlaybackReady()
+                    Player.STATE_READY -> {
+                        streamBlocked = false
+                        actions.notifyLivePlaybackReady()
+                    }
                     Player.STATE_ENDED -> switchLineAfterIssue(LiveLineFallbackReason.Ended)
                     else -> Unit
                 }
@@ -746,6 +755,7 @@ private fun MobileLivePlayerScreen(
             "【切换线路】channel=${channel.name} line=$lineIndex protocol=${currentLine.protocolHint} nonce=${state.liveReconnectNonce}",
         )
         channelBadgeVisible = true
+        streamBlocked = false
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(MOBILE_LIVE_CONNECT_TIMEOUT_MS)
@@ -794,6 +804,16 @@ private fun MobileLivePlayerScreen(
             isFavorite = isFavorite,
             isPlaying = playRequested,
             isPortrait = isPortrait,
+            streamBlocked = streamBlocked,
+            onRetryStream = {
+                streamBlocked = false
+                actions.reconnectLiveLine()
+                controlsInteraction++
+            },
+            onNextChannel = {
+                streamBlocked = false
+                actions.playNextLiveChannel()
+            },
             onToggleControls = {
                 if (!isPortrait) {
                     controlsVisible = !controlsVisible
@@ -1102,6 +1122,9 @@ private fun MobileLivePlayerSurface(
     isFavorite: Boolean,
     isPlaying: Boolean,
     isPortrait: Boolean,
+    streamBlocked: Boolean,
+    onRetryStream: () -> Unit,
+    onNextChannel: () -> Unit,
     onToggleControls: () -> Unit,
     onBack: () -> Unit,
     onToggleFavorite: () -> Unit,
@@ -1189,12 +1212,44 @@ private fun MobileLivePlayerSurface(
                 } else {
                     AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
+                // 兜底耗尽后原生缓冲环会一直转，改用常驻卡片承接反馈。
+                view.setShowBuffering(
+                    if (streamBlocked) PlayerView.SHOW_BUFFERING_NEVER else PlayerView.SHOW_BUFFERING_ALWAYS,
+                )
             },
             modifier = Modifier.fillMaxSize(),
         )
 
+        // 线路全部不可用：常驻卡片承接反馈，提供「重试」与「下一台」两个出口。
+        if (streamBlocked) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .padding(horizontal = 20.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.Black.copy(alpha = 0.74f))
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    text = "当前频道所有线路均不可用",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    LiveBlockedAction(text = "重试", onClick = onRetryStream)
+                    LiveBlockedAction(text = "下一台", onClick = onNextChannel)
+                }
+            }
+        }
+
         // 居中频道名徽标：● 红点 + 22sp 频道名，播放 2s 后隐藏。
-        if (channelBadgeVisible && !session.interrupted) {
+        if (channelBadgeVisible && !session.interrupted && !streamBlocked) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.align(Alignment.Center),
@@ -1371,3 +1426,26 @@ private fun MobileLivePlayerSurface(
 private val MOBILE_LIVE_CLOCK_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 private fun formatMobileLiveClock(ms: Long): String = MOBILE_LIVE_CLOCK_FORMAT.format(Date(ms))
+
+/** 直播兜底卡片里的操作按钮：触摸热区不小于 48dp，语义角色为按钮。 */
+@Composable
+private fun LiveBlockedAction(text: String, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(LiveAccent)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
