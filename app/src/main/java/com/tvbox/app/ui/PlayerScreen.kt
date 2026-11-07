@@ -74,6 +74,10 @@ import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.PlaybackIssueType
 import com.tvbox.app.domain.PlaybackIssueNotice
 import com.tvbox.app.domain.PlaybackResumeAnchor
+import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.PlaybackWatchdog
+import com.tvbox.app.domain.resolveVideoScaleMode
+import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
 import com.tvbox.app.ui.components.ErrorState
 import kotlinx.coroutines.CoroutineScope
@@ -117,6 +121,13 @@ fun PlayerScreen(
     val playbackHost = rememberPlaybackHost()
     val player = playbackHost.player
     val session = rememberPlaybackSession()
+    // 画面比例按"影片 + 集"记忆；未记忆时回退设置里的全局默认值。
+    val videoScaleContentKey = vodVideoScaleKey(
+        apiLineId = movie.apiLineId,
+        movieId = movie.id.toString(),
+        episodeIndex = player.currentMediaItemIndex.coerceAtLeast(0),
+    )
+    val videoScaleMode = state.appSettings.resolveVideoScaleMode(videoScaleContentKey)
     var loadedState by remember { mutableStateOf(state) }
     val resumeAnchor = remember { PlaybackResumeAnchor() }
     fun isCurrentPlayback(): Boolean = player.currentMediaItem?.mediaId?.let {
@@ -199,6 +210,13 @@ fun PlayerScreen(
     var playbackNotice by remember { mutableStateOf<String?>(null) }
     val bufferMonitor = remember { PlaybackBufferMonitor() }
     val attemptTracker = remember { PlaybackAttemptTracker() }
+    // 共享看门狗：从建源起算首帧，出帧后才开始判卡死。
+    val playbackWatchdog = remember { PlaybackWatchdog() }
+    var firstFrameRendered by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
+    var firstFrameFailure by remember(movie.apiLineId, movie.id) {
+        mutableStateOf<PlaybackFailureKind?>(null)
+    }
+    val overlayRetryFocus = remember { FocusRequester() }
     var bufferingPlaybackKey by remember { mutableStateOf<String?>(null) }
     var bufferingCheckNonce by remember { mutableIntStateOf(0) }
     var failedSourceIndexes by remember(movie.apiLineId, movie.id) {
@@ -370,8 +388,15 @@ fun PlayerScreen(
                 actions.updatePlayerPlayIntent(playWhenReady)
                 if (!playWhenReady) {
                     bufferMonitor.onPaused()
+                    playbackWatchdog.onPaused()
                     bufferingPlaybackKey = null
                 }
+            }
+
+            override fun onRenderedFirstFrame() {
+                playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
+                firstFrameRendered = true
+                firstFrameFailure = null
             }
 
             override fun onPositionDiscontinuity(
@@ -512,6 +537,10 @@ fun PlayerScreen(
         playbackIssue = null
         bufferingPlaybackKey = null
         bufferMonitor.onMediaChanged()
+        // 建源即开始首帧计时；READY 只代表解码器就绪，真正出画面由 onRenderedFirstFrame 收尾。
+        playbackWatchdog.onSourceRequested(System.currentTimeMillis())
+        firstFrameRendered = false
+        firstFrameFailure = null
         attemptTracker.onPlaybackChanged(state.currentPlaybackKey())
         // 从头播放时应用“开始跳过”；恢复进度时保持原位置。
         introSkipPending = state.playerStartPositionMs <= 0L
@@ -531,6 +560,26 @@ fun PlayerScreen(
             positionMs = state.playerStartPositionMs,
             durationMs = 0L,
         )
+    }
+
+    // 首帧看门狗：可见时才计时，暂停/退后台不计入；超时后进入明确的"重试/下一线路"出口。
+    LaunchedEffect(player, lifecycleOwner, movie.apiLineId, movie.id) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(1_000L)
+                if (!isCurrentPlayback() || firstFrameFailure != null) continue
+                val failure = playbackWatchdog.checkFirstFrame(
+                    nowMs = System.currentTimeMillis(),
+                    playWhenReady = player.playWhenReady && !session.interrupted,
+                )
+                if (failure != null) firstFrameFailure = failure.kind
+            }
+        }
+    }
+    LaunchedEffect(firstFrameFailure) {
+        if (isTelevision && firstFrameFailure != null) {
+            runCatching { overlayRetryFocus.requestFocus() }
+        }
     }
 
     PromptTimer(nonce = playbackNoticeNonce, hideDelayMs = 2_000L) { playbackNotice = null; playbackNoticeNonce = 0 }
@@ -804,21 +853,17 @@ fun PlayerScreen(
             }
             .focusable(),
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                val touchSlop = ViewConfiguration.get(viewContext).scaledTouchSlop
+        PlayerSurface(
+            player = player,
+            resizeMode = videoScaleMode,
+            showBuffering = false,
+            configure = { view ->
+                val touchSlop = ViewConfiguration.get(view.context).scaledTouchSlop
                 val doubleTapTimeoutMs = ViewConfiguration.getDoubleTapTimeout().toLong()
-                PlayerView(viewContext).apply {
-                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    this.player = player
-                    descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    useController = false
-                    resizeMode = state.appSettings.videoScaleMode.toPlayerResizeMode()
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                    val gestureTouchListener = View.OnTouchListener { _, event ->
-                        when (event.actionMasked) {
+                val gestureTouchListener = View.OnTouchListener { _, event ->
+                    val width = view.width
+                    val height = view.height
+                    when (event.actionMasked) {
                             MotionEvent.ACTION_DOWN -> {
                                 touchGesture.downX = event.x
                                 touchGesture.downY = event.y
@@ -969,18 +1014,50 @@ fun PlayerScreen(
                             }
                         }
                         true
-                    }
-                    // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
-                    if (!isTelevision) {
-                        setOnTouchListener(gestureTouchListener)
-                    }
+                }
+                // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
+                if (!isTelevision) {
+                    view.setOnTouchListener(gestureTouchListener)
                 }
             },
-            update = {
-                it.player = player
-                it.resizeMode = state.appSettings.videoScaleMode.toPlayerResizeMode()
+        )
+        val failureKind = firstFrameFailure
+        val overlayStatus = when {
+            failureKind != null -> PlaybackStatus.Failed(
+                kind = failureKind,
+                title = playbackFailureTitle(failureKind),
+                message = playbackFailureMessage(failureKind),
+                nextLabel = if (movie.playSources.size > 1) "下一线路" else null,
+            )
+            player.playWhenReady && !firstFrameRendered && !session.interrupted &&
+                controlsPanel == PlayerPanel.None -> PlaybackStatus.Loading("正在加载 ${movie.name}…")
+            else -> PlaybackStatus.Hidden
+        }
+        PlaybackStatusOverlay(
+            status = overlayStatus,
+            onRetry = {
+                firstFrameFailure = null
+                firstFrameRendered = false
+                playbackWatchdog.onSourceRequested(System.currentTimeMillis())
+                player.prepare()
+                session.play(player)
             },
-            modifier = Modifier.fillMaxSize(),
+            onNext = if (movie.playSources.size > 1) {
+                {
+                    val nextIndex = (state.playerSourceIndex + 1) % movie.playSources.size
+                    firstFrameFailure = null
+                    saveCurrentProgress(player.currentPosition, uiDuration)
+                    actions.switchPlayerSource(
+                        nextIndex,
+                        resumeAnchor.positionForFailure(player.currentPosition),
+                        playWhenReady = true,
+                    )
+                }
+            } else {
+                null
+            },
+            modifier = Modifier.align(Alignment.Center),
+            retryFocusRequester = if (isTelevision) overlayRetryFocus else null,
         )
         if (controlsVisible) {
             if (isMobile) {
@@ -989,7 +1066,7 @@ fun PlayerScreen(
                     sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
                     positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
                     speed = state.playerSpeed,
-                    videoScaleMode = state.appSettings.videoScaleMode,
+                    videoScaleMode = videoScaleMode,
                     onToggle = { togglePlaybackByGesture() },
                     onEpisode = { index ->
                         if (index in source.episodes.indices) {
@@ -1005,7 +1082,7 @@ fun PlayerScreen(
                         actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
                     },
                     onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed) },
-                    onVideoScale = { mode -> actions.updateVideoScaleMode(mode) },
+                    onVideoScale = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
                     onSeek = { position ->
                         bufferMonitor.onSeekStarted(System.currentTimeMillis())
                         player.seekTo(position)
@@ -1048,7 +1125,7 @@ fun PlayerScreen(
                     sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
                     positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
                     speed = state.playerSpeed, panel = controlsPanel,
-                    videoScaleMode = state.appSettings.videoScaleMode,
+                    videoScaleMode = videoScaleMode,
                     onPanel = { controlsPanel = it; controlsInteraction++ },
                     onToggle = { togglePlaybackByGesture(); controlsInteraction++ },
                     onEpisode = { index ->
@@ -1067,7 +1144,7 @@ fun PlayerScreen(
                         controlsInteraction++
                     },
                     onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed); controlsInteraction++ },
-                    onVideoScale = { mode -> actions.updateVideoScaleMode(mode); controlsInteraction++ },
+                    onVideoScale = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode); controlsInteraction++ },
                     onSeek = { position ->
                         bufferMonitor.onSeekStarted(System.currentTimeMillis())
                         player.seekTo(position)

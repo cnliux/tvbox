@@ -42,6 +42,7 @@ internal object SettingsStorageKeys {
     const val CHECK_UPDATES_ON_STARTUP = "check_updates_on_startup"
     const val PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
     const val VIDEO_SCALE_MODE = "video_scale_mode"
+    const val CONTENT_VIDEO_SCALE_MODES = "content_video_scale_modes"
     const val DEVICE_MODE = "device_mode"
     const val LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
     const val MOBILE_ONBOARDED = "mobile_onboarded"
@@ -94,6 +95,8 @@ internal fun readLegacySettings(
     fun quantity(key: String, setting: QuantitySetting): Int = setting.clamp(int(key, setting.default))
     fun stringList(key: String): List<String> =
         decodeLegacyStringList(string(key, ""), key, json, onWarning)
+    fun stringMap(key: String): Map<String, String> =
+        decodeLegacyStringMap(string(key, ""), key, json, onWarning)
 
     return AppSettings(
         homeApiLineId = string(SettingsStorageKeys.HOME_API_LINE_ID, AppSettings().homeApiLineId),
@@ -116,6 +119,7 @@ internal fun readLegacySettings(
         checkUpdatesOnStartup = boolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, true),
         playbackAgentAutoSwitchEnabled = boolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, true),
         videoScaleMode = VideoScaleMode.fromStorageKey(string(SettingsStorageKeys.VIDEO_SCALE_MODE, "")),
+        contentVideoScaleModes = stringMap(SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES),
         deviceMode = DeviceMode.fromStorageKey(string(SettingsStorageKeys.DEVICE_MODE, "")),
         liveSourceDefaultGroup = string(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP, ""),
         mobileOnboarded = boolean(SettingsStorageKeys.MOBILE_ONBOARDED, false),
@@ -152,6 +156,18 @@ internal fun decodeLegacyStringList(
     return runCatching { json.decodeFromString<List<String>>(raw) }
         .onFailure { error -> onWarning("配置项 $key 解码失败，已回退为空列表", error) }
         .getOrDefault(emptyList())
+}
+
+internal fun decodeLegacyStringMap(
+    raw: String,
+    key: String,
+    json: Json = legacySettingsJson,
+    onWarning: (String, Throwable) -> Unit = { _, _ -> },
+): Map<String, String> {
+    if (raw.isBlank()) return emptyMap()
+    return runCatching { json.decodeFromString<Map<String, String>>(raw) }
+        .onFailure { error -> onWarning("配置项 $key 解码失败，已回退为空表", error) }
+        .getOrDefault(emptyMap())
 }
 
 internal fun decodeLegacyCustomVideoApiLines(

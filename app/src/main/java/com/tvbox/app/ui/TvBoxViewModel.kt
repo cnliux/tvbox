@@ -35,6 +35,7 @@ import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.effectiveMode
+import com.tvbox.app.domain.withContentVideoScaleMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.AppUpdate
@@ -157,6 +158,8 @@ data class TvBoxUiState(
     val loadingMore: Boolean = false,
     val homeError: String? = null,
     val historyItems: List<WatchHistoryItem> = emptyList(),
+    /** 历史记录是否已完成首次读取：首页「继续观看」据此避免半加载造成的布局跳动。 */
+    val historyLoaded: Boolean = false,
     val searchQuery: String = "",
     val searchResults: List<Movie> = emptyList(),
     val searchLoading: Boolean = false,
@@ -856,6 +859,19 @@ class TvBoxViewModel(
 
     fun updateVideoScaleMode(mode: com.tvbox.app.domain.VideoScaleMode) {
         val settings = _state.value.appSettings.copy(videoScaleMode = mode)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /**
+     * 按内容记忆画面比例：写入覆盖表，不影响全局默认值；已单独记忆的其他内容保持原样。
+     * 内容 key 由 domain 的 vod/live/room 构造函数生成，避免把完整地址塞进偏好。
+     */
+    fun updateContentVideoScaleMode(
+        contentKey: String,
+        mode: com.tvbox.app.domain.VideoScaleMode,
+    ) {
+        val settings = _state.value.appSettings.withContentVideoScaleMode(contentKey, mode)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
     }
@@ -1637,6 +1653,11 @@ class TvBoxViewModel(
         )
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** 关闭首页提示条（如热播/详情失败提示），避免状态变化后仍长期残留。 */
+    fun dismissHomeNotice() {
+        _state.update { it.copy(homeNotice = null) }
     }
 
     /** 更新首页「继续观看」卡片数量。 */
@@ -3683,7 +3704,12 @@ class TvBoxViewModel(
                         val maxItems = _state.value.appSettings.historyMaxItems
                         _state.update { it.copy(historyItems = history.take(maxItems)) }
                     }
+                    .onFailure { error ->
+                        android.util.Log.w("TVBoxHistory", "【历史读取失败】${error::class.simpleName}")
+                    }
             }
+            // 无论成功与否都标记完成，首页据此一次性渲染「继续观看」，避免列表下移。
+            _state.update { it.copy(historyLoaded = true) }
         }
     }
 

@@ -64,6 +64,10 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putBoolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, settings.checkUpdatesOnStartup)
     putBoolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, settings.playbackAgentAutoSwitchEnabled)
     putString(SettingsStorageKeys.VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
+    putString(
+        SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES,
+        json.encodeToString(settings.contentVideoScaleModes),
+    )
     putString(SettingsStorageKeys.DEVICE_MODE, settings.deviceMode.storageKey)
     putString(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP, settings.liveSourceDefaultGroup)
     putBoolean(SettingsStorageKeys.MOBILE_ONBOARDED, settings.mobileOnboarded)
