@@ -7,6 +7,7 @@ import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.extractM3uEpgUrl
 import com.tvbox.app.domain.parseLiveChannels
+import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -104,7 +105,7 @@ class DefaultLiveRepository : LiveRepository {
                 } catch (error: NetworkException.Http) {
                     lastError = IOException("直播源加载失败：${error.statusCode}")
                     lastLoadError = "直播源加载失败（HTTP ${error.statusCode}）"
-                    android.util.Log.w(LIVE_SOURCE_TAG, "【源加载失败】$sourceUrl HTTP ${error.statusCode}")
+                    android.util.Log.w(LIVE_SOURCE_TAG, "【源加载失败】${logSafeUrl(sourceUrl)} HTTP ${error.statusCode}")
                     return@forEach
                 }
                 // 源自带的节目单地址（M3U 头部 url-tvg 等）；TXT 源没有该声明，保持 null。
@@ -118,13 +119,13 @@ class DefaultLiveRepository : LiveRepository {
                 if (channels.isNotEmpty()) {
                     android.util.Log.i(
                         LIVE_SOURCE_TAG,
-                        "【源加载成功】$sourceUrl channels=${channels.size} lines=${channels.sumOf { it.lines.size }}",
+                        "【源加载成功】${logSafeUrl(sourceUrl)} channels=${channels.size} lines=${channels.sumOf { it.lines.size }}",
                     )
                     return@withContext channels
                 }
                 lastError = IOException("直播源未返回可用频道")
                 lastLoadError = "直播源未返回可用频道"
-                android.util.Log.w(LIVE_SOURCE_TAG, "【源无频道】$sourceUrl 解析结果为空（HTML 目录页或格式不识别）")
+                android.util.Log.w(LIVE_SOURCE_TAG, "【源无频道】${logSafeUrl(sourceUrl)} 解析结果为空（HTML 目录页或格式不识别）")
                 throw IOException("直播源未返回可用频道")
             } catch (error: CancellationException) {
                 throw error

@@ -98,6 +98,7 @@ import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.probeLiveLineMimeType
+import com.tvbox.app.util.logSafeUrl
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -704,7 +705,7 @@ private fun MobileLivePlayerScreen(
         }
         android.util.Log.w(
             MOBILE_LIVE_LOG_TAG,
-            "【线路容错】reason=$reason channel=${latestChannelLabel.value} url=${latestLineUrl.value}",
+            "【线路容错】reason=$reason channel=${latestChannelLabel.value} url=${logSafeUrl(latestLineUrl.value)}",
         )
         actions.advanceLiveLineAfterFailure(reason)
     }
@@ -714,7 +715,7 @@ private fun MobileLivePlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 android.util.Log.e(
                     MOBILE_LIVE_LOG_TAG,
-                    "【播放器错误】code=${error.errorCodeName} channel=${latestChannelLabel.value} url=${latestLineUrl.value}",
+                    "【播放器错误】code=${error.errorCodeName} channel=${latestChannelLabel.value} url=${logSafeUrl(latestLineUrl.value)}",
                     error,
                 )
                 switchLineAfterIssue(LiveLineFallbackReason.Error)

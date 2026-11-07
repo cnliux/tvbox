@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.NetworkException
 import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.util.logSafeUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -79,7 +80,7 @@ class DlnaCaster(context: Context) {
         locations
             .mapNotNull { location ->
                 runCatching { loadDevice(location) }
-                    .onFailure { error -> Log.w(TAG, "loadDevice failed: $location", error) }
+                    .onFailure { error -> Log.w(TAG, "loadDevice failed: ${logSafeUrl(location)}", error) }
                     .getOrNull()
             }
             .distinctBy { it.controlUrl }

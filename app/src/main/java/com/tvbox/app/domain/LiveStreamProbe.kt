@@ -2,6 +2,7 @@ package com.tvbox.app.domain
 
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -54,7 +55,7 @@ suspend fun probeLiveLineMimeType(
     if (probed != LIVE_MIME_UNKNOWN) probeCache[url] = probed
     android.util.Log.i(
         LIVE_PROBE_LOG_TAG,
-        "【类型探测】url=$url mime=${probed.ifBlank { "未知（沿用播放器判断）" }}",
+        "【类型探测】url=${logSafeUrl(url)} mime=${probed.ifBlank { "未知（沿用播放器判断）" }}",
     )
     return probed
 }

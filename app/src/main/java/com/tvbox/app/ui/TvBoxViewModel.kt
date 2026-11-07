@@ -73,6 +73,7 @@ import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.findBestTitleMatchIndex
 import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.domain.toApiLines
+import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
@@ -1794,7 +1795,7 @@ class TvBoxViewModel(
         if (lines.size <= 1) return false
         liveStallRetries = 0
         val newIndex = (state.live.lineIndex + 1) % lines.size
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${lines[newIndex].url}")
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${logSafeUrl(lines[newIndex].url)}")
         _state.update {
             it.copy(live = it.live.copy(lineIndex = newIndex))
         }
@@ -1810,7 +1811,7 @@ class TvBoxViewModel(
         if (lines.size <= 1) return false
         liveStallRetries = 0
         val previousIndex = if (state.live.lineIndex <= 0) lines.lastIndex else state.live.lineIndex - 1
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${lines[previousIndex].url}")
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${logSafeUrl(lines[previousIndex].url)}")
         _state.update {
             it.copy(live = it.live.copy(lineIndex = previousIndex))
         }
@@ -1858,7 +1859,7 @@ class TvBoxViewModel(
         if (lineIndex !in channel.lines.indices) return
         if (lineIndex == state.live.lineIndex) return
         liveStallRetries = 0
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${channel.lines[lineIndex].url}")
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${logSafeUrl(channel.lines[lineIndex].url)}")
         _state.update { it.copy(live = it.live.copy(lineIndex = lineIndex)) }
         liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
     }
@@ -1911,7 +1912,7 @@ class TvBoxViewModel(
         if (reason == LiveLineFallbackReason.Error) {
             liveLinePrefs?.saveLineIndex(channel.key(), nextIndex)
         }
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【自动切换成功】切换到线路 ${nextIndex + 1}/${lines.size}, url=${lines[nextIndex].url}")
+        android.util.Log.i(VM_LIVE_LOG_TAG, "【自动切换成功】切换到线路 ${nextIndex + 1}/${lines.size}, url=${logSafeUrl(lines[nextIndex].url)}")
         return true
     }
 

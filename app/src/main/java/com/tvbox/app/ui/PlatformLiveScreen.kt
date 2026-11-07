@@ -95,6 +95,8 @@ import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvLayout
+import com.tvbox.app.util.logSafeHeaderNames
+import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.delay
 
 @Composable
@@ -869,7 +871,7 @@ private fun PlatformLivePlayerScreen(
             }
             android.util.Log.d(
                 PLATFORM_LIVE_LOG_TAG,
-                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${resolved.activeCandidateOrNull?.url.orEmpty()}, localUrl=$targetUrl, quality=${resolved.quality}, protocol=${resolved.protocol}, headers=${resolved.headers}, activeCdn=${resolved.activeCandidateOrNull?.cdn.orEmpty()}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
+                "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(resolved.activeCandidateOrNull?.url)}, localUrl=${logSafeUrl(targetUrl)}, quality=${resolved.quality}, protocol=${resolved.protocol}, headerNames=${logSafeHeaderNames(resolved.headers)}, activeCdn=${resolved.activeCandidateOrNull?.cdn.orEmpty()}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
             )
             ExoPlayer.Builder(context)
                 .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
@@ -896,7 +898,7 @@ private fun PlatformLivePlayerScreen(
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=$playbackUrl, sourceUrl=${stream?.url}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
+                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=${logSafeUrl(playbackUrl)}, sourceUrl=${logSafeUrl(stream?.url)}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
                         error
                     )
                     if (!session.canPlay) return
@@ -917,7 +919,7 @@ private fun PlatformLivePlayerScreen(
                     }
                     android.util.Log.d(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=$playbackUrl"
+                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(playbackUrl)}"
                     )
                     playerState = playbackState
                     if (playbackState == Player.STATE_READY) {
@@ -941,7 +943,7 @@ private fun PlatformLivePlayerScreen(
         if (player == null || stream == null || targetUrl.isNullOrBlank()) return@LaunchedEffect
         android.util.Log.d(
             PLATFORM_LIVE_LOG_TAG,
-            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=$targetUrl, sourceUrl=${stream.activeCandidateOrNull?.url.orEmpty()}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}"
+            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(targetUrl)}, sourceUrl=${logSafeUrl(stream.activeCandidateOrNull?.url)}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}"
         )
         playbackError = null
         badgeVisible = true

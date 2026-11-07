@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import com.tvbox.app.domain.AppUpdate
+import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -82,7 +83,7 @@ class DefaultAppUpdateRepository(
                 throw e
             } catch (e: Throwable) {
                 lastError = e
-                android.util.Log.w("TVBoxUpdate", "主备URL[$url]失败，尝试下一个: ${e.message}")
+                android.util.Log.w("TVBoxUpdate", "主备URL[${logSafeUrl(url)}]失败，尝试下一个: ${e.message}")
             }
         }
         throw IOException("更新检查失败，所有源均不可用：${lastError?.message}")

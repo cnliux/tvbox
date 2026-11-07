@@ -100,6 +100,7 @@ import com.tvbox.app.domain.resolveLiveChannelNumberTarget
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
+import com.tvbox.app.util.logSafeUrl
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -275,7 +276,7 @@ private fun LivePlayerScreen(
         val lineUrl = latestLineUrl.value
         android.util.Log.w(
             LIVE_LOG_TAG,
-            "【触发线路容错】reason=$reason channel=${latestChannelLabel.value}, currentLineIndex=${latestLineIndex.value}, totalLines=${latestLineCount.value}, currentUrl=$lineUrl, canPlay=${session.canPlay}"
+            "【触发线路容错】reason=$reason channel=${latestChannelLabel.value}, currentLineIndex=${latestLineIndex.value}, totalLines=${latestLineCount.value}, currentUrl=${logSafeUrl(lineUrl)}, canPlay=${session.canPlay}"
         )
         if (!session.canPlay) {
             android.util.Log.w(LIVE_LOG_TAG, "【容错跳过】session.canPlay=false")
@@ -337,7 +338,7 @@ private fun LivePlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 android.util.Log.e(
                     LIVE_LOG_TAG,
-                    "【播放器错误】code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, cause=${error.cause?.message}, channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=$latestLineUrl.value",
+                    "【播放器错误】code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, cause=${error.cause?.message}, channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}",
                     error
                 )
                 switchLiveLineAfterIssue(LiveLineFallbackReason.Error)
@@ -380,11 +381,11 @@ private fun LivePlayerScreen(
                 }
                 android.util.Log.d(
                     LIVE_LOG_TAG,
-                    "【播放状态】$stateName, playWhenReady=${player.playWhenReady}, position=${player.currentPosition}, buffered=${player.bufferedPercentage}%, url=$latestLineUrl.value"
+                    "【播放状态】$stateName, playWhenReady=${player.playWhenReady}, position=${player.currentPosition}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(latestLineUrl.value)}"
                 )
                 when (playbackState) {
                     Player.STATE_BUFFERING -> {
-                        android.util.Log.w(LIVE_LOG_TAG, "【开始缓冲】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=$latestLineUrl.value")
+                        android.util.Log.w(LIVE_LOG_TAG, "【开始缓冲】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}")
                         handleBufferDecision(
                             bufferMonitor.onBuffering(
                                 playWhenReady = player.playWhenReady,
@@ -397,7 +398,7 @@ private fun LivePlayerScreen(
                         }
                     }
                     Player.STATE_READY -> {
-                        android.util.Log.i(LIVE_LOG_TAG, "【播放就绪】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, buffered=${player.bufferedPercentage}%, url=$latestLineUrl.value")
+                        android.util.Log.i(LIVE_LOG_TAG, "【播放就绪】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(latestLineUrl.value)}")
                         bufferingLineUrl = null
                         // 画面真正就绪后清零卡顿重试计数，避免跨频道累计导致提前换线。
                         actions.notifyLivePlaybackReady()
@@ -409,7 +410,7 @@ private fun LivePlayerScreen(
                         )
                     }
                     Player.STATE_ENDED -> {
-                        android.util.Log.w(LIVE_LOG_TAG, "【播放结束】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=$latestLineUrl.value")
+                        android.util.Log.w(LIVE_LOG_TAG, "【播放结束】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}")
                         bufferingLineUrl = null
                         // 直播 ENDED 多为流被服务端正常关闭（token 到期），先原地重连同一条线路。
                         switchLiveLineAfterIssue(LiveLineFallbackReason.Ended)
