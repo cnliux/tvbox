@@ -17,7 +17,8 @@ import kotlinx.serialization.json.Json
  * 读取失败（旧格式/损坏）时返回空表，不阻塞播放。
  */
 class LiveDomainScoreStore(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true

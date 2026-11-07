@@ -17,7 +17,8 @@ interface PlatformLiveFavoritesRepository {
 }
 
 class SharedPlatformLiveFavoritesRepository(context: Context) : PlatformLiveFavoritesRepository {
-    private val prefs = context.applicationContext.getSharedPreferences("platform_live_favorites", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { context.applicationContext.getSharedPreferences("platform_live_favorites", Context.MODE_PRIVATE) }
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 

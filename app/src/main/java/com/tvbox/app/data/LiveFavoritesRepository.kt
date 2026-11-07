@@ -17,7 +17,8 @@ interface LiveFavoritesRepository {
 
 /** 电视直播频道收藏：SharedPreferences + JSON 字符串数组（与平台直播收藏同风格）。 */
 class SharedLiveFavoritesRepository(context: Context) : LiveFavoritesRepository {
-    private val prefs = context.applicationContext.getSharedPreferences("live_favorites", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { context.applicationContext.getSharedPreferences("live_favorites", Context.MODE_PRIVATE) }
     private val mutex = Mutex()
     private val json = Json { ignoreUnknownKeys = true }
 

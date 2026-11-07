@@ -107,7 +107,10 @@ data class DoubanHotCacheRecord(
 )
 
 class SharedDoubanHotCache(context: Context) : DoubanHotCache {
-    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val preferences by lazy {
+        context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+    }
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false

@@ -44,7 +44,8 @@ class DefaultAppUpdateRepository(
     context: Context,
 ) : AppUpdateRepository {
     private val appContext = context.applicationContext
-    private val downloadPrefs = appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val downloadPrefs by lazy { appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE) }
     private val downloadMutex = Mutex()
     private val downloadManager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
     private val json = Json {

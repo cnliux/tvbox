@@ -11,7 +11,8 @@ import com.tvbox.app.domain.LiveChannel
  * 记住的线号超出另一分组该频道的线路数时直接黑屏。
  */
 class LiveLinePreference(context: Context) {
-    private val prefs = context.applicationContext.getSharedPreferences("live_line_prefs", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { context.applicationContext.getSharedPreferences("live_line_prefs", Context.MODE_PRIVATE) }
 
     fun getSavedLineIndex(channel: LiveChannelKey): Int {
         if (channel.channelName.isBlank()) return -1

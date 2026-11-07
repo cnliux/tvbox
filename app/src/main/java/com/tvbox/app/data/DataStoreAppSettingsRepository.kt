@@ -42,6 +42,20 @@ internal class SharedPreferencesLegacySettingsSource(context: Context) : LegacyS
 }
 
 /**
+ * 延迟到首次真正读取时才构造旧设置来源：getSharedPreferences 首次调用会同步解析 XML，
+ * 而仓库在启动路径（ViewModel 工厂）上创建；迁移完成后旧来源永不参与读取，不应在启动时打开。
+ */
+private class DeferredLegacySettingsSource(
+    private val appContext: Context,
+) : LegacySettingsSource {
+    private val delegate by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        SharedPreferencesLegacySettingsSource(appContext)
+    }
+
+    override suspend fun read(): LegacySettingsSnapshot = delegate.read()
+}
+
+/**
  * 文件损坏时按空偏好重建：schemaVersion 随之丢失，下次读取会用仍保留的旧数据重跑迁移。
  */
 private val Context.appSettingsDataStore: DataStore<Preferences> by preferencesDataStore(
@@ -181,7 +195,7 @@ internal class DataStoreAppSettingsRepository(
         fun create(context: Context): DataStoreAppSettingsRepository =
             DataStoreAppSettingsRepository(
                 dataStore = context.appSettingsDataStore,
-                legacySource = SharedPreferencesLegacySettingsSource(context.applicationContext),
+                legacySource = DeferredLegacySettingsSource(context.applicationContext),
             )
     }
 }

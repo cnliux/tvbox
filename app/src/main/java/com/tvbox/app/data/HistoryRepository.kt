@@ -24,7 +24,8 @@ interface HistoryRepository {
 
 class SharedHistoryRepository(context: Context) : HistoryRepository {
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences("watch_history", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { appContext.getSharedPreferences("watch_history", Context.MODE_PRIVATE) }
     private val mutex = Mutex()
     private val json = Json {
         ignoreUnknownKeys = true

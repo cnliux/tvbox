@@ -58,7 +58,8 @@ class SharedPreferencesPlaybackHealthStore(
     context: Context,
     private val json: Json = Json { ignoreUnknownKeys = true; encodeDefaults = true },
 ) : PlaybackHealthStore {
-    private val prefs = context.applicationContext.getSharedPreferences("playback_health", Context.MODE_PRIVATE)
+    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    private val prefs by lazy { context.applicationContext.getSharedPreferences("playback_health", Context.MODE_PRIVATE) }
 
     override fun read(): Map<String, StoredPlaybackHealthEntry> {
         val raw = prefs.getString(KEY_ENTRIES, null) ?: return emptyMap()
