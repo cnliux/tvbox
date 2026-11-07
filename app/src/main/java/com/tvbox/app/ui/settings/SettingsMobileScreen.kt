@@ -1,5 +1,6 @@
 package com.tvbox.app.ui.settings
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -86,6 +87,12 @@ fun SettingsMobileScreen(
     var selectedCategory by remember { mutableStateOf<MobileSettingCategory?>(null) }
     var confirmClearHistory by remember { mutableStateOf(false) }
     var confirmClearPlaybackStats by remember { mutableStateOf(false) }
+
+    // 分类详情是二级页面：系统返回键优先回到分类入口，与顶部返回按钮一致。
+    // 只在详情页启用，入口页仍交给根 BackHandler 返回首页。
+    BackHandler(enabled = selectedCategory != null) {
+        selectedCategory = null
+    }
 
     if (state.remoteManageDialogVisible) {
         RemoteManageDialog(state = state, actions = actions)
