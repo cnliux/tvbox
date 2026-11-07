@@ -3616,6 +3616,8 @@ class TvBoxViewModel(
                         homeLoading = false,
                         loadingMore = false,
                         homeError = if (result.movies.isEmpty() && reset) "当前没有影片" else null,
+                        // 成功加载后清掉上一轮（含加载更多失败）的提示，避免常驻。
+                        homeNotice = null,
                     )
                 }
                 loadMoreRetryPage = -1
@@ -3630,7 +3632,9 @@ class TvBoxViewModel(
                     it.copy(
                         homeLoading = false,
                         loadingMore = false,
-                        homeError = message,
+                        // 加载更多失败不能整页替换列表：保留已加载内容与滚动位置，只给轻提示。
+                        homeError = if (!reset) null else message,
+                        homeNotice = if (!reset) "加载更多失败，稍后重试" else it.homeNotice,
                     )
                 }
                 if (_state.value.categories.isEmpty()) {
