@@ -1,6 +1,7 @@
 package com.tvbox.app.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,24 @@ internal class PlaybackHost(
     var snapshot by mutableStateOf(PlaybackSnapshot())
         private set
 
+    private val listener = object : Player.Listener {
+        // 状态切换需要立即反映到 UI（加载环不能等 250ms 轮询）。
+        override fun onPlaybackStateChanged(playbackState: Int) = refreshSnapshot()
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = refreshSnapshot()
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) = refreshSnapshot()
+    }
+
+    internal fun attach() {
+        player.addListener(listener)
+        refreshSnapshot()
+    }
+
+    internal fun detach() {
+        player.removeListener(listener)
+    }
+
     internal fun refreshSnapshot() {
         snapshot = playbackSnapshotOf(
             playbackState = player.playbackState,
@@ -62,6 +81,10 @@ internal fun rememberPlaybackHost(): PlaybackHost {
     val player = rememberManagedExoPlayer()
     val host = remember(player) { PlaybackHost(player) }
     val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(host) {
+        host.attach()
+        onDispose { host.detach() }
+    }
     LaunchedEffect(host, lifecycleOwner) {
         // 退到后台后组合仍存活：不停止轮询会持续 4 次/秒唤醒主线程。
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {

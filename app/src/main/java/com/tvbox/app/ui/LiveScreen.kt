@@ -160,9 +160,6 @@ private fun LivePlayerScreen(
     var showLineControl by remember { mutableStateOf(false) }
     // 画面比例：false = 原始比例（FIT，默认），true = 铺满裁切（ZOOM）。底部「⛶」按钮切换。
     var liveFillScreen by remember { mutableStateOf(false) }
-    // 缓冲标记必须走 Compose 状态：直接读 player.playbackState 不会触发重组，
-    // 加载环会一直挂在画面上。由播放器回调写入。
-    var playerBuffering by remember { mutableStateOf(false) }
     // 线路兜底全部用尽后的兜底提示：避免黑屏时加载环无限旋转、用户没有可操作的出口。
     var streamBlocked by remember { mutableStateOf(false) }
 
@@ -172,7 +169,8 @@ private fun LivePlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
-    val player = rememberManagedExoPlayer()
+    val playbackHost = rememberPlaybackHost()
+    val player = playbackHost.player
     val playerFocusRequester = remember { FocusRequester() }
     val blockedRetryFocus = remember { FocusRequester() }
     BindPlaybackSession(session, player)
@@ -369,8 +367,6 @@ private fun LivePlayerScreen(
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                // 加载环走 Compose 状态：直接读 player.playbackState 不会触发重组。
-                playerBuffering = playbackState == Player.STATE_BUFFERING
                 if (playbackState == Player.STATE_READY) streamBlocked = false
                 val stateName = when (playbackState) {
                     Player.STATE_IDLE -> "IDLE"
@@ -786,7 +782,7 @@ private fun LivePlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
         // 缓冲/加载中：红色进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
-        if (playerBuffering && !session.interrupted && !streamBlocked) {
+        if (playbackHost.snapshot.isBuffering && !session.interrupted && !streamBlocked) {
             LiveLoadingState(
                 text = "正在加载 ${currentChannel.name}...",
                 modifier = Modifier.align(Alignment.Center),
