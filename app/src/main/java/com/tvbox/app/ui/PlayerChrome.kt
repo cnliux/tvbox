@@ -1,6 +1,10 @@
 package com.tvbox.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.view.KeyEvent as NativeKeyEvent
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
@@ -77,6 +81,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -89,11 +94,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.coroutines.delay
 
 /** 共享面板标识：TV 居中面板与手机内嵌面板共用同一套状态。 */
-internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle, Info }
+internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle, Info, Url }
 
 internal const val PLAYER_CHROME_AUTO_HIDE_MS = 5_000L
 internal const val PLAYER_CHROME_LIVE_AUTO_HIDE_MS = 3_000L
@@ -252,6 +258,12 @@ internal data class PlayerChromeTrack(
     val selected: Boolean = false,
 )
 
+/** 播放地址：页面区分「原始」与「实际」，共享层只负责展示与复制。 */
+internal data class PlayerChromeUrl(
+    val label: String,
+    val url: String,
+)
+
 internal data class PlayerChromeData(
     val title: String,
     val subtitle: String? = null,
@@ -271,6 +283,8 @@ internal data class PlayerChromeData(
     val subtitleTracks: List<PlayerChromeTrack> = emptyList(),
     /** 播放信息面板快照；为 null 表示数据尚未就绪，面板统一显示「—」。 */
     val playbackInfo: PlayerPlaybackInfo? = null,
+    /** 当前播放地址（可含原始/实际两类），空列表表示该页没有可查看地址。 */
+    val playbackUrls: List<PlayerChromeUrl> = emptyList(),
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -294,6 +308,7 @@ internal data class PlayerChromeCapabilities(
     val room: Boolean = false,
     val lines: Boolean = false,
     val info: Boolean = false,
+    val url: Boolean = false,
     /** 点播视频的音轨/字幕选择；面板为空时由共享层给出明确提示。 */
     val audioTracks: Boolean = false,
     val subtitleTracks: Boolean = false,
@@ -528,6 +543,7 @@ private fun PlayerChromeTv(
                     if (capabilities.resize) ControlButton("画面", { state.openPanel(PlayerPanel.Picture); actions.onInteraction() })
                     if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
                     if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info) })
+                    if (capabilities.url) ControlButton("地址", { state.openPanel(PlayerPanel.Url) })
                     if (capabilities.settings) ControlButton("设置", { actions.onSettings(); state.interaction++ })
                 }
             }
@@ -782,6 +798,9 @@ private fun PlayerChromeTouch(
                     if (capabilities.info) add(ChromeFeature("信息", state.panel == PlayerPanel.Info) {
                         state.openPanel(PlayerPanel.Info)
                     })
+                    if (capabilities.url) add(ChromeFeature("地址", state.panel == PlayerPanel.Url) {
+                        state.openPanel(PlayerPanel.Url)
+                    })
                     if (capabilities.settings) add(ChromeFeature("设置") {
                         actions.onSettings(); state.interaction++
                     })
@@ -857,6 +876,14 @@ private fun PlayerChromePanel(
     if (panel == PlayerPanel.Info) {
         PlayerInfoPanel(
             info = data.playbackInfo,
+            onClose = { state.closePanel() },
+            modifier = modifier,
+        )
+        return
+    }
+    if (panel == PlayerPanel.Url) {
+        PlayerUrlPanel(
+            urls = data.playbackUrls,
             onClose = { state.closePanel() },
             modifier = modifier,
         )
@@ -1069,6 +1096,115 @@ private fun PlayerInfoRowItem(row: PlayerInfoRow, modifier: Modifier = Modifier)
     }
 }
 
+/** 地址过长时保留头尾、中间省略；展开后展示完整内容。 */
+internal fun middleEllipsis(text: String, maxChars: Int = 72): String {
+    if (text.length <= maxChars || maxChars < 8) return text
+    val head = maxChars / 2
+    val tail = maxChars - head - 1
+    return text.take(head) + "…" + text.takeLast(tail)
+}
+
+private fun copyPlaybackUrl(context: Context, url: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("playback_url", url))
+}
+
+/** TV 端播放地址面板：逐行可聚焦，聚焦即展开完整地址，复制按钮给出面板内反馈。 */
+@Composable
+private fun PlayerUrlPanel(
+    urls: List<PlayerChromeUrl>,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    var expandedIndex by remember { mutableIntStateOf(-1) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(feedback) {
+        if (feedback != null) {
+            delay(3_000L)
+            feedback = null
+        }
+    }
+    Surface(
+        modifier.fillMaxHeight(0.6f),
+        color = Color(0xFA202020),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("播放地址", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                ControlButton("关闭", onClose)
+            }
+            Text(
+                "地址包含请求参数，仅在本机查看；日志仍按既定规则脱敏",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.55f),
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+            if (urls.isEmpty()) {
+                Text(
+                    text = "暂无可查看的播放地址",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    modifier = Modifier.weight(1f).padding(top = 16.dp),
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    urls.forEachIndexed { index, item ->
+                        item(key = index) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        width = 2.dp,
+                                        color = if (expandedIndex == index) Color(0xFF7AE2BA) else Color.Transparent,
+                                        shape = RoundedCornerShape(10.dp),
+                                    )
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = item.label,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                    )
+                                    ControlButton("复制", {
+                                        copyPlaybackUrl(context, item.url)
+                                        feedback = "已复制：${item.label}"
+                                    })
+                                }
+                                Text(
+                                    text = if (expandedIndex == index) item.url else middleEllipsis(item.url),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        // 聚焦即展开完整地址：方向键逐行移动即可查看，不依赖触摸。
+                                        .onFocusChanged { if (it.isFocused) expandedIndex = index }
+                                        .focusable()
+                                        .padding(top = 6.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color.White.copy(alpha = 0.85f),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            Text(
+                text = feedback ?: " ",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFF7AE2BA),
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun PlayerChromeMobilePanel(
     section: PlayerPanel,
@@ -1102,6 +1238,7 @@ private fun PlayerChromeMobilePanel(
                         PlayerPanel.Subtitle -> "字幕（共 ${data.subtitleTracks.size} 条）"
                         PlayerPanel.Skip -> "跳过片头/片尾"
                         PlayerPanel.Info -> "播放信息"
+                        PlayerPanel.Url -> "播放地址"
                         PlayerPanel.None -> ""
                     },
                     modifier = Modifier.weight(1f),
@@ -1245,6 +1382,74 @@ private fun PlayerChromeMobilePanel(
                         }
                         Text(
                             text = "面板打开时每秒刷新，关闭后停止采样。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.5f),
+                        )
+                    }
+                }
+                PlayerPanel.Url -> {
+                    val context = LocalContext.current
+                    // 同一时间只展开一条地址，避免长地址把面板撑满。
+                    var expandedLabel by remember { mutableStateOf<String?>(null) }
+                    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.38f).dp
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = maxHeight)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        if (data.playbackUrls.isEmpty()) {
+                            Text(
+                                text = "暂无可查看的播放地址",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color.White.copy(alpha = 0.6f),
+                            )
+                        }
+                        data.playbackUrls.forEach { item ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.06f))
+                                    .padding(10.dp),
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = item.label,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.White.copy(alpha = 0.7f),
+                                    )
+                                    TextButton(
+                                        onClick = {
+                                            copyPlaybackUrl(context, item.url)
+                                            Toast.makeText(context, "已复制：${item.label}", Toast.LENGTH_SHORT).show()
+                                        },
+                                    ) {
+                                        Text("复制", fontSize = 12.sp)
+                                    }
+                                }
+                                Text(
+                                    text = if (expandedLabel == item.label) {
+                                        item.url
+                                    } else {
+                                        middleEllipsis(item.url, maxChars = 64)
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            expandedLabel = if (expandedLabel == item.label) null else item.label
+                                        }
+                                        .padding(top = 4.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    color = Color.White.copy(alpha = 0.88f),
+                                )
+                            }
+                        }
+                        Text(
+                            text = "点击地址可展开/收起完整内容",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.5f),
                         )

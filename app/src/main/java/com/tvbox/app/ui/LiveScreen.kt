@@ -797,6 +797,12 @@ private fun LivePlayerScreen(
                 resizeMode = videoScaleMode,
                 buffering = playbackHost.snapshot.isBuffering,
                 playbackInfo = diagnostics?.info,
+                playbackUrls = listOf(
+                    PlayerChromeUrl(
+                        label = "实际播放地址（播放列表线路）",
+                        url = currentLine.url,
+                    ),
+                ),
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = false,
@@ -804,6 +810,7 @@ private fun LivePlayerScreen(
                 channel = true,
                 lines = true,
                 info = true,
+                url = true,
                 favorite = true,
                 favoriteLabel = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
                 favoriteSelected = actions.isLiveFavorite(currentChannel),

@@ -71,6 +71,18 @@ class PlayerDiagnosticsTest {
     }
 
     @Test
+    fun middleEllipsisKeepsHeadAndTail() {
+        val url = "https://example.com/live/playlist.m3u8?token=abcdef"
+        assertEquals(url, middleEllipsis(url, maxChars = 100))
+
+        val compact = middleEllipsis(url, maxChars = 40)
+        assertEquals(40, compact.length)
+        assertTrue(compact.startsWith("https://example.co"))
+        assertTrue(compact.contains("…"))
+        assertTrue(compact.endsWith("token=abcdef"))
+    }
+
+    @Test
     fun infoRowsFormatKnownSnapshot() {
         val info = PlayerPlaybackInfo(
             videoWidth = 1920,

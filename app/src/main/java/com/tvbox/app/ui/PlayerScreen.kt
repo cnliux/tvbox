@@ -866,6 +866,12 @@ fun PlayerScreen(
                 audioTracks = playerTracks.audioTracks,
                 subtitleTracks = playerTracks.subtitleTracks,
                 playbackInfo = diagnostics?.info,
+                playbackUrls = listOf(
+                    PlayerChromeUrl(
+                        label = "实际播放地址（点播线路）",
+                        url = source.episodes[currentEpisodeIndex].url,
+                    ),
+                ),
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = true,
@@ -877,6 +883,7 @@ fun PlayerScreen(
                 audioTracks = true,
                 subtitleTracks = true,
                 info = true,
+                url = true,
                 cast = canCast,
                 castLabel = if (canCast) {
                     if (castingDevice != null) "停止投屏" else "投屏"

@@ -1168,6 +1168,24 @@ private fun PlatformLivePlayerScreen(
                     resizeMode = videoScaleMode,
                     buffering = playbackHost?.snapshot?.isBuffering == true,
                     playbackInfo = diagnostics?.info,
+                    playbackUrls = buildList {
+                        playbackUrl?.let { actual ->
+                            add(
+                                PlayerChromeUrl(
+                                    label = if (continuityProxy != null) {
+                                        "实际播放地址（本机续流代理）"
+                                    } else {
+                                        "实际播放地址（平台线路）"
+                                    },
+                                    url = actual,
+                                ),
+                            )
+                        }
+                        val original = stream?.url
+                        if (original != null && original != playbackUrl) {
+                            add(PlayerChromeUrl("原始地址（平台源）", original))
+                        }
+                    },
                 ),
                 capabilities = PlayerChromeCapabilities(
                     seek = false,
@@ -1176,6 +1194,7 @@ private fun PlatformLivePlayerScreen(
                     room = true,
                     lines = stream?.hasCandidates == true,
                     info = true,
+                    url = true,
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {
@@ -1245,9 +1264,9 @@ private fun PlatformLivePlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("当前播放真实 URL", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                    Text("当前实际取流 URL", color = Color.White, style = MaterialTheme.typography.titleLarge)
                     Text(
-                        text = stream.url,
+                        text = playbackUrl ?: stream.url,
                         color = Color(0xFF7AE2BA),
                         style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier
@@ -1255,6 +1274,13 @@ private fun PlatformLivePlayerScreen(
                             .background(Color.White.copy(alpha = 0.1f))
                             .padding(16.dp)
                     )
+                    if (continuityProxy != null && playbackUrl != stream.url) {
+                        Text(
+                            text = "原始地址：${middleEllipsis(stream.url)}",
+                            color = Color.White.copy(alpha = 0.7f),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                     Text(
                         text = "房间：${room.title} | 站点：${room.site} | 质量：${stream.quality} | 协议：${stream.protocol}",
                         color = Color.White.copy(alpha = 0.7f),

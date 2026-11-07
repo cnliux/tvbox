@@ -874,6 +874,12 @@ private fun MobileLivePlayerScreen(
                         resizeMode = videoScaleMode,
                         buffering = playbackHost.snapshot.isBuffering,
                         playbackInfo = diagnostics?.info,
+                        playbackUrls = listOf(
+                            PlayerChromeUrl(
+                                label = "实际播放地址（播放列表线路）",
+                                url = currentLine.url,
+                            ),
+                        ),
                     ),
                     capabilities = PlayerChromeCapabilities(
                         seek = false,
@@ -886,6 +892,7 @@ private fun MobileLivePlayerScreen(
                         settings = true,
                         channel = true,
                         info = true,
+                        url = true,
                     ),
                     actions = PlayerChromeActions(
                         onToggle = {
