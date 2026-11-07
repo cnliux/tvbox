@@ -301,14 +301,14 @@ private fun MobileLiveListScreen(
                 color = if (favoritesOnly) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
                 textAlign = TextAlign.Center,
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable { favoritesOnly = !favoritesOnly },
             )
             // 设置入口。
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .clickable { actions.openSettings() },
                 contentAlignment = Alignment.Center,
@@ -322,11 +322,11 @@ private fun MobileLiveListScreen(
             }
         }
 
-        // 2. 「电视直播｜平台直播」Tab 行 44dp。
+        // 2. 「电视直播｜平台直播」Tab 行 48dp。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(44.dp)
+                .height(48.dp)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(20.dp),
@@ -335,29 +335,22 @@ private fun MobileLiveListScreen(
             MobileLiveTabItem(label = "平台直播", selected = false, onClick = onOpenPlatformLive)
         }
 
-        // 3. 分组横滑（44dp）。
+        // 3. 分组横滑（48dp 触摸热区，视觉胶囊仍保持原尺寸）。
         if (channels.isNotEmpty()) {
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(48.dp)
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 items(groups) { group ->
                     val isSelected = (group == "全部" && selectedGroup == null) || group == selectedGroup
-                    Text(
+                    MobileLiveFilterChip(
                         text = group,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) LiveAccent else LiveField)
-                            .clickable { selectedGroup = if (group == "全部") null else group }
-                            .padding(horizontal = 14.dp, vertical = 7.dp),
+                        selected = isSelected,
+                        onClick = { selectedGroup = if (group == "全部") null else group },
                     )
                 }
             }
@@ -446,7 +439,9 @@ private fun MobileLiveTabItem(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = Modifier
+            .height(48.dp)
             .clip(RoundedCornerShape(6.dp))
             .clickable(enabled = !selected, onClick = onClick),
     ) {
@@ -463,6 +458,35 @@ private fun MobileLiveTabItem(
                 .height(3.dp)
                 .clip(RoundedCornerShape(2.dp))
                 .background(if (selected) LiveAccent else Color.Transparent),
+        )
+    }
+}
+
+@Composable
+private fun MobileLiveFilterChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    // 外层 48dp 触摸热区，内层保持原视觉胶囊高度，避免点到 chip 边缘时落到相邻频道行。
+    Box(
+        modifier = Modifier
+            .heightIn(min = 48.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 2.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
+            modifier = Modifier
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (selected) LiveAccent else LiveField)
+                .padding(horizontal = 14.dp, vertical = 7.dp),
         )
     }
 }
@@ -526,15 +550,20 @@ private fun MobileLiveChannelRow(
             horizontalAlignment = Alignment.End,
             modifier = Modifier.padding(end = 6.dp),
         ) {
-            Text(
-                text = "★",
-                fontSize = 16.sp,
-                color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.45f),
+            // 收藏星标使用 48dp 触摸热区（视觉 16sp），避免点按边缘时落进整行的频道点击区。
+            Box(
                 modifier = Modifier
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .clickable { onToggleFavorite() }
-                    .padding(4.dp),
-            )
+                    .clickable { onToggleFavorite() },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "★",
+                    fontSize = 16.sp,
+                    color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.45f),
+                )
+            }
             if (isPlaying) {
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
@@ -863,34 +892,41 @@ private fun MobileLivePlayerScreen(
                     fontSize = 20.sp,
                     color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
                     modifier = Modifier
+                        .size(48.dp)
                         .clip(CircleShape)
-                        .clickable { toggleFavoriteWithToast() }
-                        .padding(4.dp),
+                        .clickable { toggleFavoriteWithToast() },
+                    textAlign = TextAlign.Center,
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(channel.lines) { index, line ->
                     val isSelected = index == lineIndex
-                    Text(
-                        text = line.name,
-                        fontSize = 11.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                    // 线路胶囊：48dp 触摸热区包裹，视觉保持 32dp 最小高度，避免误触相邻频道/节目区。
+                    Box(
                         modifier = Modifier
-                            // 同上：线路名胶囊按最小高度，避免放大字号后被裁切。
-                            .heightIn(min = 32.dp)
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .background(if (isSelected) LiveAccent else LiveField)
                             .clickable {
                                 if (index != lineIndex) {
                                     actions.selectLiveLine(index)
                                     Toast.makeText(context, "已切换至${line.name}", Toast.LENGTH_SHORT).show()
                                 }
-                            }
-                            .padding(horizontal = 14.dp, vertical = 6.dp),
-                    )
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = line.name,
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(if (isSelected) LiveAccent else LiveField)
+                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                        )
+                    }
                 }
             }
         }
