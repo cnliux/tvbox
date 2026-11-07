@@ -54,6 +54,7 @@ import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlayEpisode
 import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.ui.components.CategoryPill
+import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.InfoLine
 import com.tvbox.app.ui.components.LoadingState
@@ -62,6 +63,9 @@ import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.SmallMeta
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvLayout
+
+/** 选集网格顶部「选集/排序」行占用的 item 数，用于把选集下标换算成网格 item 下标。 */
+private const val EPISODE_HEADER_ITEM_COUNT = 1
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -77,9 +81,13 @@ fun DetailScreen(
                 onRetry = actions::retryCurrent,
                 modifier = Modifier.padding(padding),
             )
-            state.detailMovie == null -> ErrorState(
-                message = "影片详情为空",
-                onRetry = actions::goBack,
+            // 这里不是「可重试」的错误：详情为空时重试只会拿同一请求再查一次，
+            // 正确动作是退回来源页重新选择影片，因此用空态而不是带「重试」按钮的错误态。
+            state.detailMovie == null -> EmptyState(
+                title = "影片详情为空",
+                subtitle = "请返回列表重新选择影片",
+                actionLabel = "返回",
+                onAction = actions::goBack,
                 modifier = Modifier.padding(padding),
             )
             else -> {
@@ -253,13 +261,19 @@ private fun EpisodeGrid(
     val focusRequesters = remember(displayedEpisodes) {
         List(displayedEpisodes.size) { FocusRequester() }
     }
+    // 触摸模式（手机）由用户自己点选集，不主动抢焦点；否则进详情页会莫名出现焦点框，
+    // 从播放页返回时还会把用户已滚动的位置拉回选中集。
+    val touchMode = LocalTouchMode.current
 
     // 仅依赖选中下标时，正倒序切换/换线路后下标可能不变，effect 不会重跑，
     // 导致新列表未滚动到选中集、焦点也留在已重建的旧请求器上。
-    LaunchedEffect(safeSelectedEpisodeIndex, displayedEpisodes, episodeSortReverse) {
+    LaunchedEffect(safeSelectedEpisodeIndex, displayedEpisodes, episodeSortReverse, touchMode) {
+        if (touchMode) return@LaunchedEffect
         withFrameNanos { }
-        if (gridState.layoutInfo.visibleItemsInfo.none { it.index == safeSelectedEpisodeIndex }) {
-            gridState.scrollToItem(safeSelectedEpisodeIndex)
+        // LazyVerticalGrid 里「选集/排序」标题行占一个 item，选集下标要 +1 才是网格 item 下标。
+        val targetItemIndex = safeSelectedEpisodeIndex + EPISODE_HEADER_ITEM_COUNT
+        if (gridState.layoutInfo.visibleItemsInfo.none { it.index == targetItemIndex }) {
+            gridState.scrollToItem(targetItemIndex)
         }
         withFrameNanos { }
         runCatching {
