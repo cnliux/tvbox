@@ -964,13 +964,20 @@ private fun HotSearchChips(
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xFF2A2A2A),
             ) {
-                Text(
-                    text = word,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                )
+                Box(
+                    modifier = Modifier
+                        // 热词原先由文字撑高（约 36dp），统一抬到 48dp 触摸目标。
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 14.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = word,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }

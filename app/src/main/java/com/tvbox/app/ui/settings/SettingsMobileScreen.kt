@@ -1045,7 +1045,8 @@ private fun <T> ChoiceChips(
             val isSelected = option == selected
             Box(
                 modifier = Modifier
-                    .heightIn(min = 44.dp)
+                    // 44dp 低于建议的最小触摸目标，统一抬到 48dp。
+                    .heightIn(min = 48.dp)
                     .widthIn(max = 240.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(

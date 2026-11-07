@@ -40,6 +40,9 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -778,7 +781,9 @@ private fun MobilePlayPauseButton(playing: Boolean, onClick: () -> Unit) {
             .size(58.dp)
             .clip(CircleShape)
             .background(Color.White)
-            .clickable(onClick = onClick),
+            // Canvas 图标本身没有文字，补语义供 TalkBack 朗读。
+            .semantics { contentDescription = if (playing) "暂停" else "播放" }
+            .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.size(22.dp)) {
@@ -817,7 +822,8 @@ private fun MobileChip(
 ) {
     Box(
         modifier = modifier
-            .heightIn(min = 44.dp)
+            // 44dp 低于建议的最小触摸目标，统一抬到 48dp。
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(
                 when {
