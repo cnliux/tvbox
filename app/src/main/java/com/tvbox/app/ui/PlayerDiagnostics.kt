@@ -165,18 +165,25 @@ internal class PlayerDiagnostics(private val player: ExoPlayer) {
     internal fun refresh() {
         // PlaybackStats 尚未产生事件时保持「未知」，避免把 0 当成真实的丢帧/码率。
         val stats = statsListener.playbackStats
+        val probe = ManagedPlayerProbes.get(player)
         val size = player.videoSize
-        val lastFormat = stats?.videoFormatHistory?.lastOrNull()?.format
+        // 解码器/码率可能在本监听挂载前已初始化（直播切台后复用解码器也不会再回调）：
+        // 优先读播放器当前值，再用构建期探针回填。
+        val counters = player.videoDecoderCounters ?: decoderCounters
+        val format = player.videoFormat
+            ?: probe?.videoFormat
+            ?: stats?.videoFormatHistory?.lastOrNull()?.format
+        val firstFrame = firstFrameMs.takeIf { it >= 0L } ?: probe?.firstFrameMs ?: -1L
         info = PlayerPlaybackInfo(
             videoWidth = size.width.coerceAtLeast(0),
             videoHeight = size.height.coerceAtLeast(0),
-            decodedFrames = decoderCounters?.renderedOutputBufferCount?.toLong() ?: -1L,
-            droppedFrames = stats?.totalDroppedFrames ?: -1L,
-            currentBitrateBps = lastFormat?.bitrate?.toLong() ?: -1L,
+            decodedFrames = counters?.renderedOutputBufferCount?.toLong() ?: -1L,
+            droppedFrames = stats?.totalDroppedFrames ?: counters?.droppedBufferCount?.toLong() ?: -1L,
+            currentBitrateBps = format?.bitrate?.toLong() ?: -1L,
             averageBitrateBps = stats?.meanVideoFormatBitrate?.toLong() ?: -1L,
             bufferedMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L),
-            firstFrameMs = firstFrameMs,
-            decoderName = decoderName,
+            firstFrameMs = firstFrame,
+            decoderName = decoderName ?: probe?.decoderName,
             errorCode = errorCode,
         )
     }

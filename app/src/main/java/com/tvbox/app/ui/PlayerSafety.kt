@@ -13,11 +13,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
@@ -30,6 +33,7 @@ import com.tvbox.app.domain.DecoderStrategy
  */
 internal fun safeReleasePlayer(player: ExoPlayer) {
     try {
+        ManagedPlayerProbes.remove(player)?.let { player.removeAnalyticsListener(it) }
         if (player.isPlaying) player.pause()
         // ExoPlayer 不支持并发 release，确保在调用线程执行
         player.release()
@@ -81,6 +85,87 @@ internal fun buildManagedExoPlayer(
     return configure(ExoPlayer.Builder(context, renderersFactory))
         .build()
         .apply { playWhenReady = true }
+        .also { player ->
+            // 解码器初始化可能早于页面级诊断监听挂载（直播切台时尤甚）：构建即挂探针。
+            val probe = ManagedPlayerProbe()
+            player.addAnalyticsListener(probe)
+            ManagedPlayerProbes.put(player, probe)
+        }
+}
+
+/**
+ * 播放器构建期探针：保留最近一次已初始化的解码器名、视频格式与首帧耗时。
+ * 页面监听晚到或切台复用解码器时，[PlayerDiagnostics] 用这里的数据回填。
+ */
+@OptIn(UnstableApi::class)
+internal class ManagedPlayerProbe : AnalyticsListener {
+    @Volatile
+    var decoderName: String? = null
+        private set
+
+    @Volatile
+    var videoFormat: Format? = null
+        private set
+
+    @Volatile
+    var firstFrameMs: Long = -1L
+        private set
+
+    private var firstFrameStartMs: Long? = null
+
+    override fun onVideoDecoderInitialized(
+        eventTime: AnalyticsListener.EventTime,
+        decoderName: String,
+        initializationDurationMs: Long,
+        initializedTimestampMs: Long,
+    ) {
+        this.decoderName = decoderName
+    }
+
+    override fun onVideoInputFormatChanged(
+        eventTime: AnalyticsListener.EventTime,
+        format: Format,
+        decoderReuseEvaluation: DecoderReuseEvaluation?,
+    ) {
+        videoFormat = format
+    }
+
+    override fun onRenderedFirstFrame(
+        eventTime: AnalyticsListener.EventTime,
+        output: Any,
+        renderTimeMs: Long,
+    ) {
+        if (firstFrameMs < 0L) {
+            val start = firstFrameStartMs ?: eventTime.realtimeMs
+            firstFrameMs = (eventTime.realtimeMs - start).coerceAtLeast(0L)
+        }
+    }
+
+    override fun onMediaItemTransition(
+        eventTime: AnalyticsListener.EventTime,
+        mediaItem: MediaItem?,
+        reason: Int,
+    ) {
+        // 切台/换集重新计时；不清空 decoderName：解码器复用时不会再回调初始化。
+        firstFrameStartMs = eventTime.realtimeMs
+        firstFrameMs = -1L
+    }
+}
+
+/** 探针注册表：播放器销毁时移除，避免页面监听晚于初始化而拿不到数据。 */
+internal object ManagedPlayerProbes {
+    private val probes = java.util.WeakHashMap<ExoPlayer, ManagedPlayerProbe>()
+
+    @Synchronized
+    fun put(player: ExoPlayer, probe: ManagedPlayerProbe) {
+        probes[player] = probe
+    }
+
+    @Synchronized
+    fun get(player: ExoPlayer): ManagedPlayerProbe? = probes[player]
+
+    @Synchronized
+    fun remove(player: ExoPlayer): ManagedPlayerProbe? = probes.remove(player)
 }
 
 /** 发生回落的轨道类型：视频/音频分别记录，信息面板据此分别标注。 */
