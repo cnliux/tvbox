@@ -64,8 +64,9 @@ internal object SettingsStorageKeys {
     const val MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
 }
 
-/** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 0；迁移后统一写入 [CURRENT]。 */
+/** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
 internal object SettingsSchema {
+    const val LEGACY = 0
     const val CURRENT = 1
 }
 
