@@ -105,6 +105,8 @@ fun PlayerScreen(
     }
     val playbackHost = rememberPlaybackHost()
     val player = playbackHost.player
+    // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。
+    val playerTracks = rememberPlayerTracks(player)
     val session = rememberPlaybackSession()
     // 画面比例按"影片 + 集"记忆；未记忆时回退设置里的全局默认值。
     val videoScaleContentKey = vodVideoScaleKey(
@@ -859,6 +861,8 @@ fun PlayerScreen(
                 resizeMode = videoScaleMode,
                 sourceLatencies = state.sourceLatencies,
                 buffering = player.playbackState == Player.STATE_BUFFERING,
+                audioTracks = playerTracks.audioTracks,
+                subtitleTracks = playerTracks.subtitleTracks,
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = true,
@@ -867,6 +871,8 @@ fun PlayerScreen(
                 speed = true,
                 resize = true,
                 skip = true,
+                audioTracks = true,
+                subtitleTracks = true,
                 cast = canCast,
                 castLabel = if (canCast) {
                     if (castingDevice != null) "停止投屏" else "投屏"
@@ -897,6 +903,8 @@ fun PlayerScreen(
                     actions.updatePlaybackSpeed(speed)
                 },
                 onSelectResize = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
+                onSelectAudioTrack = { player.selectAudioTrack(it) },
+                onSelectSubtitleTrack = { player.selectSubtitleTrack(it) },
                 onBack = {
                     saveCurrentProgress(player.currentPosition, uiDuration)
                     actions.goBack()

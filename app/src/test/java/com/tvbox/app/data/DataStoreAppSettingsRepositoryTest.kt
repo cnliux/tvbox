@@ -6,11 +6,13 @@ import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
@@ -103,6 +105,7 @@ class DataStoreAppSettingsRepositoryTest {
                     SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP to false,
                     SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH to false,
                     SettingsStorageKeys.VIDEO_SCALE_MODE to VideoScaleMode.Zoom.storageKey,
+                    SettingsStorageKeys.PLAYER_SPEED to 1.25f,
                     SettingsStorageKeys.DEVICE_MODE to DeviceMode.Mobile.storageKey,
                     SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP to "央视",
                     SettingsStorageKeys.MOBILE_ONBOARDED to true,
@@ -138,6 +141,7 @@ class DataStoreAppSettingsRepositoryTest {
         assertEquals(false, settings.checkUpdatesOnStartup)
         assertEquals(false, settings.playbackAgentAutoSwitchEnabled)
         assertEquals(VideoScaleMode.Zoom, settings.videoScaleMode)
+        assertEquals(1.25f, settings.playerSpeed)
         assertEquals(DeviceMode.Mobile, settings.deviceMode)
         assertEquals("央视", settings.liveSourceDefaultGroup)
         assertTrue(settings.mobileOnboarded)
@@ -254,6 +258,31 @@ class DataStoreAppSettingsRepositoryTest {
 
         assertEquals(input, repository.getSettings())
         assertEquals(mapOf("a" to 100L, "b" to null), repository.getSpeedLatencies())
+    }
+
+    @Test
+    fun `倍速默认一点零且越界值写入读回都收敛到区间`() = runBlocking {
+        val store = InMemoryPreferencesDataStore()
+        val repository = DataStoreAppSettingsRepository(store, FakeLegacySource())
+
+        assertEquals(PlayerSpeedSetting.Default, repository.getSettings().playerSpeed)
+
+        repository.saveSettings(AppSettings(playerSpeed = 1.5f))
+        assertEquals(1.5f, repository.getSettings().playerSpeed)
+
+        store.updateData { current ->
+            current.toMutablePreferences().apply {
+                this[floatPreferencesKey(SettingsStorageKeys.PLAYER_SPEED)] = 4.0f
+            }
+        }
+        assertEquals(PlayerSpeedSetting.Max, repository.getSettings().playerSpeed)
+
+        store.updateData { current ->
+            current.toMutablePreferences().apply {
+                this[floatPreferencesKey(SettingsStorageKeys.PLAYER_SPEED)] = 0.1f
+            }
+        }
+        assertEquals(PlayerSpeedSetting.Min, repository.getSettings().playerSpeed)
     }
 
     @Test

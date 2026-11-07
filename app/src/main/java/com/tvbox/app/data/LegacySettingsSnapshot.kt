@@ -3,6 +3,7 @@ package com.tvbox.app.data
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
@@ -42,6 +43,7 @@ internal object SettingsStorageKeys {
     const val CHECK_UPDATES_ON_STARTUP = "check_updates_on_startup"
     const val PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
     const val VIDEO_SCALE_MODE = "video_scale_mode"
+    const val PLAYER_SPEED = "player_speed"
     const val CONTENT_VIDEO_SCALE_MODES = "content_video_scale_modes"
     const val DEVICE_MODE = "device_mode"
     const val LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
@@ -91,6 +93,7 @@ internal fun readLegacySettings(
     val values = snapshot.values
     fun string(key: String, default: String): String = (values[key] as? String) ?: default
     fun int(key: String, default: Int): Int = (values[key] as? Int) ?: default
+    fun float(key: String, default: Float): Float = (values[key] as? Float) ?: default
     fun boolean(key: String, default: Boolean): Boolean = (values[key] as? Boolean) ?: default
     fun quantity(key: String, setting: QuantitySetting): Int = setting.clamp(int(key, setting.default))
     fun stringList(key: String): List<String> =
@@ -119,6 +122,9 @@ internal fun readLegacySettings(
         checkUpdatesOnStartup = boolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, true),
         playbackAgentAutoSwitchEnabled = boolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, true),
         videoScaleMode = VideoScaleMode.fromStorageKey(string(SettingsStorageKeys.VIDEO_SCALE_MODE, "")),
+        playerSpeed = PlayerSpeedSetting.clamp(
+            float(SettingsStorageKeys.PLAYER_SPEED, PlayerSpeedSetting.Default),
+        ),
         contentVideoScaleModes = stringMap(SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES),
         deviceMode = DeviceMode.fromStorageKey(string(SettingsStorageKeys.DEVICE_MODE, "")),
         liveSourceDefaultGroup = string(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP, ""),

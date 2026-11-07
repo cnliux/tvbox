@@ -89,7 +89,7 @@ import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.coroutines.delay
 
 /** 共享面板标识：TV 居中面板与手机内嵌面板共用同一套状态。 */
-internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip }
+internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle }
 
 internal const val PLAYER_CHROME_AUTO_HIDE_MS = 5_000L
 internal const val PLAYER_CHROME_LIVE_AUTO_HIDE_MS = 3_000L
@@ -241,6 +241,13 @@ internal data class PlayerChromeSource(
     val lineId: String,
 )
 
+/** 播放器轨道选项（音轨/字幕）；[id] 由共享层解释，页面只提供展示名与选中态。 */
+internal data class PlayerChromeTrack(
+    val id: String,
+    val label: String,
+    val selected: Boolean = false,
+)
+
 internal data class PlayerChromeData(
     val title: String,
     val subtitle: String? = null,
@@ -256,6 +263,8 @@ internal data class PlayerChromeData(
     val resizeMode: VideoScaleMode = VideoScaleMode.Fit,
     val sourceLatencies: Map<String, Long?> = emptyMap(),
     val buffering: Boolean = false,
+    val audioTracks: List<PlayerChromeTrack> = emptyList(),
+    val subtitleTracks: List<PlayerChromeTrack> = emptyList(),
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -279,6 +288,9 @@ internal data class PlayerChromeCapabilities(
     val room: Boolean = false,
     val lines: Boolean = false,
     val info: Boolean = false,
+    /** 点播视频的音轨/字幕选择；面板为空时由共享层给出明确提示。 */
+    val audioTracks: Boolean = false,
+    val subtitleTracks: Boolean = false,
 )
 
 /** 页面注入的语义动作：共享层只负责按键/触摸到这些回调的映射。 */
@@ -304,6 +316,9 @@ internal data class PlayerChromeActions(
     val onSettings: () -> Unit = {},
     val onLockChange: (Boolean) -> Unit = {},
     val onInteraction: () -> Unit = {},
+    /** 空字符串表示关闭字幕。 */
+    val onSelectAudioTrack: (String) -> Unit = {},
+    val onSelectSubtitleTrack: (String) -> Unit = {},
 )
 
 private val playerSpeeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
@@ -503,6 +518,8 @@ private fun PlayerChromeTv(
                     if (capabilities.lines) ControlButton("线路", { actions.onOpenLinePanel(); state.interaction++ })
                     if (capabilities.favorite) ControlButton(capabilities.favoriteLabel ?: "收藏", { actions.onFavorite(); state.interaction++ })
                     if (capabilities.speed) ControlButton("${formatSpeedLabel(data.speed)}x", { state.openPanel(PlayerPanel.Speeds); actions.onInteraction() })
+                    if (capabilities.audioTracks) ControlButton("音轨", { state.openPanel(PlayerPanel.Audio); actions.onInteraction() })
+                    if (capabilities.subtitleTracks) ControlButton("字幕", { state.openPanel(PlayerPanel.Subtitle); actions.onInteraction() })
                     if (capabilities.resize) ControlButton("画面", { state.openPanel(PlayerPanel.Picture); actions.onInteraction() })
                     if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
                     if (capabilities.info) ControlButton("信息", { actions.onOpenInfo(); state.interaction++ })
@@ -742,6 +759,12 @@ private fun PlayerChromeTouch(
                     if (capabilities.speed) add(ChromeFeature("${formatSpeedLabel(data.speed)}x", state.panel == PlayerPanel.Speeds) {
                         state.openPanel(PlayerPanel.Speeds)
                     })
+                    if (capabilities.audioTracks) add(ChromeFeature("音轨", state.panel == PlayerPanel.Audio) {
+                        state.openPanel(PlayerPanel.Audio)
+                    })
+                    if (capabilities.subtitleTracks) add(ChromeFeature("字幕", state.panel == PlayerPanel.Subtitle) {
+                        state.openPanel(PlayerPanel.Subtitle)
+                    })
                     if (capabilities.resize) add(ChromeFeature("画面", state.panel == PlayerPanel.Picture) {
                         state.openPanel(PlayerPanel.Picture)
                     })
@@ -829,11 +852,22 @@ private fun PlayerChromePanel(
     val orderedSources = remember(data.sources, data.sourceLatencies) {
         orderSourcesByLatency(data.sources, data.sourceLatencies)
     }
+    val subtitleOptions = remember(data.subtitleTracks) {
+        listOf(
+            PlayerChromeTrack(
+                id = "",
+                label = "关闭字幕",
+                selected = data.subtitleTracks.none { it.selected },
+            ),
+        ) + data.subtitleTracks
+    }
     val labels: List<AnnotatedString> = when (panel) {
         PlayerPanel.Episodes -> data.episodes.map { AnnotatedString(it) }
         PlayerPanel.Sources -> orderedSources.map { sourceTabLabel(it.value, data.sourceLatencies) }
         PlayerPanel.Speeds -> playerSpeeds.map { AnnotatedString("${it}x") }
         PlayerPanel.Picture -> VideoScaleMode.entries.map { AnnotatedString(it.displayName) }
+        PlayerPanel.Audio -> data.audioTracks.map { AnnotatedString(it.label) }
+        PlayerPanel.Subtitle -> subtitleOptions.map { AnnotatedString(it.label) }
         else -> emptyList()
     }
     val selected = when (panel) {
@@ -841,7 +875,15 @@ private fun PlayerChromePanel(
         PlayerPanel.Sources -> orderedSources.indexOfFirst { it.index == data.sourceIndex }.coerceAtLeast(0)
         PlayerPanel.Speeds -> playerSpeeds.indexOf(data.speed).coerceAtLeast(0)
         PlayerPanel.Picture -> VideoScaleMode.entries.indexOf(data.resizeMode)
+        PlayerPanel.Audio -> data.audioTracks.indexOfFirst { it.selected }.coerceAtLeast(0)
+        PlayerPanel.Subtitle -> subtitleOptions.indexOfFirst { it.selected }.coerceAtLeast(0)
         else -> 0
+    }
+    // 轨道面板为空时给出明确提示，而不是留下一个空面板。
+    val emptyTrackHint = when (panel) {
+        PlayerPanel.Audio -> "当前视频没有可用音轨".takeIf { data.audioTracks.isEmpty() }
+        PlayerPanel.Subtitle -> "当前视频没有字幕轨道".takeIf { data.subtitleTracks.isEmpty() }
+        else -> null
     }
     val pickerFocus = remember(panel, labels.size) { List(labels.size) { FocusRequester() } }
     val grid = rememberLazyGridState()
@@ -857,6 +899,8 @@ private fun PlayerChromePanel(
                     PlayerPanel.Episodes -> "选择集数${if (episodeSortReverse) "（倒序）" else ""}"
                     PlayerPanel.Sources -> "选择线路 · 已按测速排序"
                     PlayerPanel.Picture -> "画面比例 · ${data.resizeMode.displayName}"
+                    PlayerPanel.Audio -> "选择音轨 · 共 ${data.audioTracks.size} 条"
+                    PlayerPanel.Subtitle -> "选择字幕 · 共 ${data.subtitleTracks.size} 条"
                     else -> "播放倍速"
                 }, Modifier.weight(1f))
                 if (panel == PlayerPanel.Episodes) {
@@ -873,25 +917,38 @@ private fun PlayerChromePanel(
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
             }
-            LazyVerticalGrid(GridCells.Adaptive(130.dp), state = grid,
-                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(labels) { index, label ->
-                    val realIndex = if (panel == PlayerPanel.Sources) orderedSources[index].index else index
-                    val enabled = when (panel) {
-                        PlayerPanel.Sources -> data.sourceEnabled.getOrNull(realIndex) ?: true
-                        else -> true
-                    }
-                    ControlButton(if (index == selected) label.withSuffix(" ✓") else label, {
-                        actions.onInteraction()
-                        when (panel) {
-                            PlayerPanel.Episodes -> actions.onSelectEpisode(realIndex)
-                            PlayerPanel.Sources -> actions.onSelectSource(realIndex)
-                            PlayerPanel.Speeds -> actions.onSelectSpeed(playerSpeeds[realIndex])
-                            PlayerPanel.Picture -> actions.onSelectResize(VideoScaleMode.entries[realIndex])
-                            else -> Unit
+            if (emptyTrackHint != null) {
+                Text(
+                    emptyTrackHint,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White.copy(alpha = 0.75f),
+                    modifier = Modifier.padding(vertical = 12.dp),
+                )
+            } else {
+                LazyVerticalGrid(GridCells.Adaptive(130.dp), state = grid,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(labels) { index, label ->
+                        val realIndex = if (panel == PlayerPanel.Sources) orderedSources[index].index else index
+                        val enabled = when (panel) {
+                            PlayerPanel.Sources -> data.sourceEnabled.getOrNull(realIndex) ?: true
+                            else -> true
                         }
-                        state.closePanel()
-                    }, Modifier.focusRequester(pickerFocus[index]), enabled)
+                        ControlButton(if (index == selected) label.withSuffix(" ✓") else label, {
+                            actions.onInteraction()
+                            when (panel) {
+                                PlayerPanel.Episodes -> actions.onSelectEpisode(realIndex)
+                                PlayerPanel.Sources -> actions.onSelectSource(realIndex)
+                                PlayerPanel.Speeds -> actions.onSelectSpeed(playerSpeeds[realIndex])
+                                PlayerPanel.Picture -> actions.onSelectResize(VideoScaleMode.entries[realIndex])
+                                PlayerPanel.Audio -> data.audioTracks.getOrNull(realIndex)
+                                    ?.let { actions.onSelectAudioTrack(it.id) }
+                                PlayerPanel.Subtitle -> subtitleOptions.getOrNull(realIndex)
+                                    ?.let { actions.onSelectSubtitleTrack(it.id) }
+                                else -> Unit
+                            }
+                            state.closePanel()
+                        }, Modifier.focusRequester(pickerFocus[index]), enabled)
+                    }
                 }
             }
         }
@@ -927,6 +984,8 @@ private fun PlayerChromeMobilePanel(
                         PlayerPanel.Sources -> "线路（共 ${data.sources.size} 条）"
                         PlayerPanel.Speeds -> "播放倍速"
                         PlayerPanel.Picture -> "画面比例 · ${data.resizeMode.displayName}"
+                        PlayerPanel.Audio -> "音轨（共 ${data.audioTracks.size} 条）"
+                        PlayerPanel.Subtitle -> "字幕（共 ${data.subtitleTracks.size} 条）"
                         PlayerPanel.Skip -> "跳过片头/片尾"
                         PlayerPanel.None -> ""
                     },
@@ -995,6 +1054,47 @@ private fun PlayerChromeMobilePanel(
                     MobileSkipOptionRow(outroSkipOptions, outroSkipSeconds, onOutroSkip)
                     Text("设置立即保存，对之后播放生效。", style = MaterialTheme.typography.bodySmall,
                         color = Color.White.copy(alpha = 0.5f))
+                }
+                PlayerPanel.Audio -> if (data.audioTracks.isEmpty()) {
+                    Text("当前视频没有可用音轨，将使用默认音轨。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.72f))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        data.audioTracks.forEach { track ->
+                            MobileChip(
+                                text = track.label,
+                                selected = track.selected,
+                                onClick = { actions.onSelectAudioTrack(track.id); onClose() },
+                            )
+                        }
+                    }
+                }
+                PlayerPanel.Subtitle -> if (data.subtitleTracks.isEmpty()) {
+                    Text("当前视频没有字幕轨道。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.72f))
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        MobileChip(
+                            text = "关闭字幕",
+                            selected = data.subtitleTracks.none { it.selected },
+                            onClick = { actions.onSelectSubtitleTrack(""); onClose() },
+                        )
+                        data.subtitleTracks.forEach { track ->
+                            MobileChip(
+                                text = track.label,
+                                selected = track.selected,
+                                onClick = { actions.onSelectSubtitleTrack(track.id); onClose() },
+                            )
+                        }
+                    }
                 }
                 PlayerPanel.None -> Unit
             }

@@ -3,6 +3,7 @@ package com.tvbox.app.data
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.tvbox.app.domain.AppSettings
@@ -22,6 +23,10 @@ internal fun MutablePreferences.putString(name: String, value: String) {
 
 internal fun MutablePreferences.putInt(name: String, value: Int) {
     this[intPreferencesKey(name)] = value
+}
+
+internal fun MutablePreferences.putFloat(name: String, value: Float) {
+    this[floatPreferencesKey(name)] = value
 }
 
 internal fun MutablePreferences.putBoolean(name: String, value: Boolean) {
@@ -64,6 +69,7 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putBoolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, settings.checkUpdatesOnStartup)
     putBoolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, settings.playbackAgentAutoSwitchEnabled)
     putString(SettingsStorageKeys.VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
+    putFloat(SettingsStorageKeys.PLAYER_SPEED, settings.playerSpeed)
     putString(
         SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES,
         json.encodeToString(settings.contentVideoScaleModes),

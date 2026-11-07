@@ -63,6 +63,7 @@ import com.tvbox.app.domain.PlaybackAgent
 import com.tvbox.app.domain.PlaybackAgentDecision
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
+import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
@@ -399,6 +400,7 @@ class TvBoxViewModel(
                     allSourceLines = allApiLines,
                     selectedApiLineId = selectedApiLineId,
                     appSettings = normalizedSettings,
+                    playerSpeed = normalizedSettings.playerSpeed,
                     effectiveDeviceMode = normalizedSettings.effectiveMode(appContext),
                     playbackHealth = playbackHealth,
                     source = SourceManagerUiState(latencies = speedLatencies),
@@ -2593,8 +2595,13 @@ class TvBoxViewModel(
     }
 
     fun updatePlaybackSpeed(speed: Float) {
-        if (speed <= 0f || _state.value.playerSpeed == speed) return
-        _state.update { it.copy(playerSpeed = speed) }
+        val clamped = PlayerSpeedSetting.clamp(speed)
+        val current = _state.value
+        if (current.playerSpeed == clamped && current.appSettings.playerSpeed == clamped) return
+        // 倍速属于持久化偏好：统一走 AppSettings，再由既有的单写者队列落盘。
+        val settings = current.appSettings.copy(playerSpeed = clamped)
+        _state.update { it.copy(playerSpeed = clamped, appSettings = settings) }
+        saveSettings(settings)
     }
 
     fun updatePlayerPlayIntent(playWhenReady: Boolean) {

@@ -22,6 +22,8 @@ data class AppSettings(
     val checkUpdatesOnStartup: Boolean = true,
     val playbackAgentAutoSwitchEnabled: Boolean = true,
     val videoScaleMode: VideoScaleMode = VideoScaleMode.Fit,
+    /** 播放倍速（持久化）：默认 1.0，区间见 [PlayerSpeedSetting]。 */
+    val playerSpeed: Float = PlayerSpeedSetting.Default,
     /**
      * 按内容记忆的画面比例覆盖：key 由 [vodVideoScaleKey]/[liveVideoScaleKey]/[roomVideoScaleKey] 生成，
      * value 为 [VideoScaleMode.storageKey]。命中时优先于全局默认 [videoScaleMode]。
@@ -68,6 +70,15 @@ data class AppSettings(
     /** 多源搜索/详情同时请求的源数量。 */
     val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
 )
+
+/** 播放倍速的默认值与合法区间；写入前统一收敛，避免旧数据或异常输入越界。 */
+object PlayerSpeedSetting {
+    const val Default = 1.0f
+    const val Min = 0.5f
+    const val Max = 2.0f
+
+    fun clamp(value: Float): Float = value.coerceIn(Min, Max)
+}
 
 /** 一个数量类设置项：默认值、合法区间与可选档位。 */
 data class QuantitySetting(

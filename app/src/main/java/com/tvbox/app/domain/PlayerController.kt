@@ -74,7 +74,7 @@ class ExoPlayerController(private val player: androidx.media3.exoplayer.ExoPlaye
     }
 
     override fun setSpeed(speed: Float) {
-        val clamped = speed.coerceIn(0.5f, 4.0f)
+        val clamped = PlayerSpeedSetting.clamp(speed)
         player.setPlaybackSpeed(clamped)
     }
 
