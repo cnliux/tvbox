@@ -37,6 +37,14 @@ class PlaybackWatchdog(
     /** 是否已经渲染过至少一帧。 */
     val hasFirstFrame: Boolean get() = firstFrameAtMs != null
 
+    /** 最近一次「建源 → 首帧」耗时；未开始取流或尚未出帧时为 null。 */
+    val firstFrameElapsedMs: Long?
+        get() {
+            val requestedAt = sourceRequestedAtMs ?: return null
+            val firstFrameAt = firstFrameAtMs ?: return null
+            return (firstFrameAt - requestedAt).coerceAtLeast(0L)
+        }
+
     /** 新的取流/建源开始：重置整段计时，包括首帧与出帧后的卡死判定。 */
     fun onSourceRequested(nowMs: Long) {
         sourceRequestedAtMs = nowMs

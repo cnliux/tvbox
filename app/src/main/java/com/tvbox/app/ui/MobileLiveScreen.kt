@@ -688,6 +688,8 @@ private fun MobileLivePlayerScreen(
     var streamBlocked by remember { mutableStateOf(false) }
     var blockedFailureKind by remember { mutableStateOf<PlaybackFailureKind?>(null) }
     val playbackWatchdog = remember { PlaybackWatchdog() }
+    // 按线路暂存最近一次「建源 → 首帧」耗时，与线路测速一起帮助判断卡在哪一段。
+    var lineFirstFrameMs by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
 
     val isFavorite = actions.isLiveFavorite(channel)
 
@@ -737,6 +739,9 @@ private fun MobileLivePlayerScreen(
 
             override fun onRenderedFirstFrame() {
                 playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
+                playbackWatchdog.firstFrameElapsedMs?.let { elapsed ->
+                    lineFirstFrameMs = lineFirstFrameMs + (latestLineUrl.value to elapsed)
+                }
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -1016,7 +1021,9 @@ private fun MobileLivePlayerScreen(
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(channel.lines) { index, line ->
                     val isSelected = index == lineIndex
-                    // 线路胶囊：48dp 触摸热区包裹，视觉保持 32dp 最小高度，避免误触相邻频道/节目区。
+                    val hasResult = state.liveLineLatencies.containsKey(line.url)
+                    val latency = state.liveLineLatencies[line.url]
+                    // 线路胶囊：48dp 触摸热区包裹，名称下方展示测速状态与该线路最近一次首帧耗时。
                     Box(
                         modifier = Modifier
                             .heightIn(min = 48.dp)
@@ -1029,16 +1036,48 @@ private fun MobileLivePlayerScreen(
                             },
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(
-                            text = line.name,
-                            fontSize = 11.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                        Column(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(if (isSelected) LiveAccent else LiveField)
-                                .padding(horizontal = 14.dp, vertical = 6.dp),
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                text = if (isSelected) "${line.name}（播放中）" else line.name,
+                                fontSize = 11.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
+                            )
+                            Text(
+                                text = buildString {
+                                    append(liveLineLatencyLabel(hasResult, latency, state.liveLineTesting))
+                                    lineFirstFrameMs[line.url]?.let { append(" · 首帧 ${formatFirstFrame(it)}") }
+                                },
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
+                            )
+                        }
+                    }
+                }
+                item {
+                    // 测速只在用户点击时执行：不轮询，也不随面板开关自动触发。
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(LiveField)
+                            .clickable(enabled = !state.liveLineTesting) {
+                                actions.testLiveChannelLines()
+                            },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = if (state.liveLineTesting) "测速中…" else "重新测速",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = if (state.liveLineTesting) 0.4f else 1f),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         )
                     }
                 }

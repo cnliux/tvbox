@@ -78,6 +78,21 @@ class PlaybackWatchdogTest {
     }
 
     @Test
+    fun firstFrameElapsedMeasuresSourceToFrame() {
+        val watchdog = watchdog()
+        assertNull(watchdog.firstFrameElapsedMs)
+        watchdog.onSourceRequested(nowMs = 1_000L)
+        assertNull(watchdog.firstFrameElapsedMs)
+
+        watchdog.onFirstFrameRendered(nowMs = 4_500L)
+        assertEquals(3_500L, watchdog.firstFrameElapsedMs)
+
+        // 新的取流重新计时，旧的首帧耗时不再对外提供。
+        watchdog.onSourceRequested(nowMs = 10_000L)
+        assertNull(watchdog.firstFrameElapsedMs)
+    }
+
+    @Test
     fun advancingPositionKeepsPlaybackHealthy() {
         val watchdog = watchdog()
         watchdog.onSourceRequested(nowMs = 0L)

@@ -85,8 +85,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1864,20 +1862,34 @@ class TvBoxViewModel(
         liveLineTestJob?.cancel()
         liveLineTestJob = viewModelScope.launch {
             android.util.Log.i(VM_LIVE_LOG_TAG, "【线路测速】开始 channel=${channel.name}, lines=${lines.size}")
-            val results = lines.map { line ->
-                async {
-                    val latency = runCatching {
-                        measureLiveLineLatencyMs(line.url, line.headers)
-                    }.getOrNull()
-                    line.url to latency
+            val results = mutableMapOf<String, Long?>()
+            coroutineScope {
+                lines.forEach { line ->
+                    launch {
+                        val latency = runCatching {
+                            measureLiveLineLatencyMs(line.url, line.headers)
+                        }.getOrNull()
+                        results[line.url] = latency
+                        // 单条完成即写入：浮层里该行从「测速中」变成实测结果，不必等全部线路结束。
+                        _state.update { it.copy(live = it.live.copy(lineLatencies = results.toMap())) }
+                    }
                 }
-            }.awaitAll().toMap()
+            }
             android.util.Log.i(
                 VM_LIVE_LOG_TAG,
                 "【线路测速】完成 channel=${channel.name}, " +
                     results.entries.joinToString { (url, ms) -> "${url.takeLast(18)}=${ms?.let { "${it}ms" } ?: "超时"}" },
             )
-            _state.update { it.copy(live = it.live.copy(lineLatencies = results, lineTesting = false)) }
+            _state.update { it.copy(live = it.live.copy(lineLatencies = results.toMap(), lineTesting = false)) }
+        }
+    }
+
+    /** 线路浮层关闭即停：取消未完成的测速，不在后台继续占用网络。 */
+    fun cancelLiveChannelLineTest() {
+        liveLineTestJob?.cancel()
+        liveLineTestJob = null
+        if (_state.value.live.lineTesting) {
+            _state.update { it.copy(live = it.live.copy(lineTesting = false)) }
         }
     }
 

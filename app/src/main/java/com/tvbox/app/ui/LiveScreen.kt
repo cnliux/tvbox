@@ -202,6 +202,8 @@ private fun LivePlayerScreen(
     var bufferingLineUrl by remember { mutableStateOf<String?>(null) }
     var bufferingCheckNonce by remember { mutableIntStateOf(0) }
     var automaticSwitchLineUrl by remember { mutableStateOf<String?>(null) }
+    // 按线路暂存最近一次「建源 → 首帧」耗时，供线路浮层判断"慢在测速还是慢在出帧"。
+    var lineFirstFrameMs by remember { mutableStateOf<Map<String, Long>>(emptyMap()) }
     // 顶栏时钟与 EPG 卡"当前节目/进度"共用 20 秒节拍，保证分钟级刷新。
     var clockTick by remember { mutableIntStateOf(0) }
     val clockText = remember(clockTick) { formatClock(System.currentTimeMillis()) }
@@ -367,6 +369,9 @@ private fun LivePlayerScreen(
             override fun onRenderedFirstFrame() {
                 // 与 STATE_READY 区分：READY 只代表解码器可接收数据，出帧才是真正有画面。
                 playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
+                playbackWatchdog.firstFrameElapsedMs?.let { elapsed ->
+                    lineFirstFrameMs = lineFirstFrameMs + (latestLineUrl.value to elapsed)
+                }
                 android.util.Log.i(
                     LIVE_LOG_TAG,
                     "【首帧渲染】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}"
@@ -1010,6 +1015,7 @@ private fun LivePlayerScreen(
                 state = state,
                 actions = actions,
                 channel = currentChannel,
+                lineFirstFrameMs = lineFirstFrameMs,
                 onClose = {
                     showLineControl = false
                     if (isTelevision) runCatching { playerFocusRequester.requestFocus() }

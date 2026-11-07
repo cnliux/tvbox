@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -413,6 +415,32 @@ private fun LiveKeyHint(key: String, action: String) {
     }
 }
 
+/** 测速状态文案：测速中 / 已测 / 失败；没有结果时显示「—」。 */
+internal fun liveLineLatencyLabel(
+    hasResult: Boolean,
+    latencyMs: Long?,
+    testing: Boolean,
+): String = when {
+    testing && !hasResult -> "测速中"
+    !hasResult -> "—"
+    latencyMs == null -> "失败"
+    else -> "${latencyMs}ms · 已测"
+}
+
+/** 测速状态配色：失败标红，200ms 内绿色，800ms 以内常规，更慢标黄。 */
+internal fun liveLineLatencyColor(
+    hasResult: Boolean,
+    latencyMs: Long?,
+    testing: Boolean,
+): Color = when {
+    testing && !hasResult -> Color.White.copy(alpha = 0.45f)
+    !hasResult -> Color.White.copy(alpha = 0.45f)
+    latencyMs == null -> Color(0xFFFF7171)
+    latencyMs < 200L -> Color(0xFF1ED760)
+    latencyMs < 800L -> Color.White.copy(alpha = 0.7f)
+    else -> Color(0xFFFFB300)
+}
+
 /**
  * 线路浮层：保留原有"手动切线路 / 复制 URL / 查看真实 URL"能力，
  * 由底部「⇄ 线路」按钮打开，与频道浮层互斥。
@@ -422,6 +450,7 @@ internal fun LiveLineOverlay(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
     channel: LiveChannel,
+    lineFirstFrameMs: Map<String, Long>,
     onClose: () -> Unit,
     onCopyUrl: () -> Unit,
     onViewUrl: () -> Unit,
@@ -432,6 +461,10 @@ internal fun LiveLineOverlay(
         runCatching { focusRequester.requestFocus() }
         // 展开线路即测速：让用户按实际延迟挑线路，而不是逐条点播试错。
         actions.testLiveChannelLines()
+    }
+    // 浮层关闭即停：取消尚未完成的测速，不在后台继续跑。
+    DisposableEffect(Unit) {
+        onDispose { actions.cancelLiveChannelLineTest() }
     }
     Box(
         modifier = Modifier
@@ -499,10 +532,12 @@ internal fun LiveLineOverlay(
                 itemsIndexed(channel.lines) { index, line ->
                     val isPicked = index == pickedIndex
                     val isPlaying = index == state.liveLineIndex
+                    val hasResult = state.liveLineLatencies.containsKey(line.url)
+                    val latency = state.liveLineLatencies[line.url]
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(38.dp)
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(
                                 when {
@@ -520,41 +555,32 @@ internal fun LiveLineOverlay(
                                 actions.selectLiveLine(index)
                                 onClose()
                             }
-                            .padding(horizontal = 10.dp),
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text(
-                            text = line.name,
-                            color = Color.White,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        // 测速结果：null=超时，进行中显示"测速中"。
-                        val latency = state.liveLineLatencies[line.url]
-                        if (state.liveLineTesting) {
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                text = "测速中",
-                                color = Color.White.copy(alpha = 0.45f),
-                                fontSize = 10.sp,
+                                text = line.name,
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            Spacer(Modifier.width(8.dp))
-                        } else if (state.liveLineLatencies.isNotEmpty()) {
-                            Text(
-                                text = latency?.let { "${it}ms" } ?: "超时",
-                                color = when {
-                                    latency == null -> Color(0xFFFF7171)
-                                    // 200ms 内视为流畅，800ms 内一般，更慢标黄提示。
-                                    latency < 200L -> Color(0xFF1ED760)
-                                    latency < 800L -> Color.White.copy(alpha = 0.7f)
-                                    else -> Color(0xFFFFB300)
-                                },
-                                fontSize = 10.sp,
-                                fontFamily = FontFamily.Monospace,
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                        } else if (isPlaying) {
+                            Row {
+                                Text(
+                                    text = liveLineLatencyLabel(hasResult, latency, state.liveLineTesting),
+                                    color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                )
+                                Text(
+                                    text = " · 首帧 ${formatFirstFrame(lineFirstFrameMs[line.url] ?: -1L)}",
+                                    color = Color.White.copy(alpha = 0.55f),
+                                    fontSize = 10.sp,
+                                )
+                            }
+                        }
+                        if (isPlaying) {
                             Box(Modifier.size(4.dp).background(LiveTvAccent, CircleShape))
                             Spacer(Modifier.width(4.dp))
                             Text("播放中", color = LiveTvAccent, fontSize = 10.sp)
