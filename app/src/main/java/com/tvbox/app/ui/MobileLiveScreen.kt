@@ -666,7 +666,8 @@ private fun MobileLivePlayerScreen(
     }
 
     val session = rememberPlaybackSession()
-    val player = rememberManagedExoPlayer()
+    val playbackHost = rememberPlaybackHost()
+    val player = playbackHost.player
     BindPlaybackSession(session, player)
 
     val channels = state.liveChannels
@@ -681,8 +682,7 @@ private fun MobileLivePlayerScreen(
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var channelBadgeVisible by remember { mutableStateOf(true) }
     // 按钮文案要看"播放意图"而不是 isPlaying：缓冲/起播阶段 isPlaying 仍为 false，
-    // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。
-    var playRequested by remember(player) { mutableStateOf(player.playWhenReady) }
+    // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。播放意图由共享宿主快照提供。
     // 所有线路都试过仍不可用：收起原生缓冲环，给出常驻的重试/换台出口。
     var streamBlocked by remember { mutableStateOf(false) }
 
@@ -725,10 +725,6 @@ private fun MobileLivePlayerScreen(
                     error,
                 )
                 switchLineAfterIssue(LiveLineFallbackReason.Error)
-            }
-
-            override fun onPlayWhenReadyChanged(playWhenReadyNow: Boolean, reason: Int) {
-                playRequested = playWhenReadyNow
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -802,7 +798,7 @@ private fun MobileLivePlayerScreen(
             controlsVisible = if (isPortrait) true else controlsVisible,
             channelBadgeVisible = channelBadgeVisible,
             isFavorite = isFavorite,
-            isPlaying = playRequested,
+            isPlaying = playbackHost.snapshot.playWhenReady,
             isPortrait = isPortrait,
             streamBlocked = streamBlocked,
             onRetryStream = {
