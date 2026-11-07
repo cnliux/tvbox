@@ -57,6 +57,7 @@ internal fun Throwable.userMessage(): String {
         raw.isBlank() -> "请求失败，请稍后重试"
         raw.contains("timeout", ignoreCase = true) || raw.contains("超时") -> "网络超时，请稍后重试"
         raw.contains("Unable to resolve host", ignoreCase = true) ||
+            raw.contains("Failed to connect", ignoreCase = true) ||
             raw.contains("Connection refused", ignoreCase = true) ||
             raw.contains("Unable to connect", ignoreCase = true) -> "网络连接失败，请检查网络"
         raw.contains("JSON input:", ignoreCase = true) ||

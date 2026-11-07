@@ -79,6 +79,10 @@ fun DetailScreen(
             state.detailError != null -> ErrorState(
                 message = state.detailError,
                 onRetry = actions::retryCurrent,
+                // 明确失败态并给出「返回」出口：请求失败不能只留「重试」，也不能静默退回首页。
+                title = "详情加载失败",
+                secondaryActionLabel = "返回",
+                onSecondaryAction = { actions.goBack() },
                 modifier = Modifier.padding(padding),
             )
             // 这里不是「可重试」的错误：详情为空时重试只会拿同一请求再查一次，

@@ -66,4 +66,17 @@ class TvBoxStateReducersTest {
     fun nonCancellationFailureStillProducesMessage() {
         assertEquals("网络超时，请稍后重试", IOException("timeout").uiFailureMessageOrNull())
     }
+
+    /** 实机反馈：代理不可达时 OkHttp 抛出 "Failed to connect to /127.0.0.1:9"，不能原样显示给用户。 */
+    @Test
+    fun connectFailureIsLocalized() {
+        assertEquals(
+            "网络连接失败，请检查网络",
+            IOException("Failed to connect to /127.0.0.1:9").uiFailureMessageOrNull(),
+        )
+        assertEquals(
+            "网络连接失败，请检查网络",
+            IOException("Connection refused").uiFailureMessageOrNull(),
+        )
+    }
 }

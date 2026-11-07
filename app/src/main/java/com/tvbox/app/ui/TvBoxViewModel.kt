@@ -1368,6 +1368,7 @@ class TvBoxViewModel(
                     }
                 }
                 if (!receivedPrimary) {
+                    android.util.Log.w(DETAIL_LOG_TAG, "【详情为空】movieId=$movieId 未收到主源数据")
                     _state.update {
                         it.copy(detailLoading = false, detailError = "影片详情不存在")
                     }
@@ -1375,6 +1376,10 @@ class TvBoxViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
+                android.util.Log.w(
+                    DETAIL_LOG_TAG,
+                    "【详情加载失败】movieId=$movieId type=${error::class.simpleName} msg=${error.userMessage()}",
+                )
                 _state.update {
                     it.copy(detailLoading = false, detailError = error.userMessage())
                 }
@@ -4223,6 +4228,9 @@ private const val PLATFORM_LIVE_SAME_LINE_RETRY_MAX = 2
 // 平台直播重连退避基数，按重连次数线性递增，避免瞬时高频请求。
 private const val PLATFORM_LIVE_RECOVERY_BACKOFF_MS = 1_500L
 private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
+
+/** 详情加载诊断日志：只输出影片 id 与异常类型，不输出任何源地址。 */
+private const val DETAIL_LOG_TAG = "TVBoxDetail"
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null
