@@ -99,6 +99,7 @@ import com.tvbox.app.domain.resolveLiveChannelNumberTarget
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -359,8 +360,7 @@ private fun LivePlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 android.util.Log.e(
                     LIVE_LOG_TAG,
-                    "【播放器错误】code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, cause=${error.cause?.message}, channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}",
-                    error
+                    "【播放器错误】code=${error.errorCode}, name=${error.errorCodeName}, msg=${logSafeText(error.message)}, cause=${logSafeText(error.cause?.message)}, channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}"
                 )
                 switchLiveLineAfterIssue(LiveLineFallbackReason.Error)
             }
@@ -688,6 +688,7 @@ private fun LivePlayerScreen(
                 showChannelList()
             }
         },
+        isFailureCardVisible = { streamBlocked },
     )
 
     val barsAlpha by animateFloatAsState(

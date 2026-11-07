@@ -162,6 +162,8 @@ internal class PlayerChannelKeyMap(
         val onNextLine: () -> Unit,
         val onOpenChannelList: () -> Unit,
         val onConfirm: () -> Unit,
+        /** 失败卡（重试/下一台）在场时，OK 必须交给当前聚焦的按钮，不在页面级改写为打开频道列表。 */
+        val isFailureCardVisible: () -> Boolean = { false },
     )
 
     override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
@@ -241,6 +243,15 @@ internal class PlayerChannelKeyMap(
             }
             AndroidKeyEvent.KEYCODE_DPAD_CENTER,
             AndroidKeyEvent.KEYCODE_ENTER,
+            -> {
+                if (callbacks.isFailureCardVisible()) {
+                    // 焦点在「重试/下一台」上：不消费，让按钮自己拿到 OK。
+                    false
+                } else {
+                    callbacks.onConfirm()
+                    true
+                }
+            }
             AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             AndroidKeyEvent.KEYCODE_MEDIA_PLAY,
             AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
