@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -442,6 +443,9 @@ internal fun LiveLineOverlay(
             ) { onClose() },
         contentAlignment = Alignment.Center,
     ) {
+        // 浮层在场时注册局部返回处理器：它晚于页面级处理器加入 OnBackPressedDispatcher，
+        // 返回键会优先进到这里收起浮层，不依赖浮层当前焦点落在哪个子节点。
+        BackHandler { onClose() }
         var pickedIndex by remember { mutableIntStateOf(state.liveLineIndex.coerceIn(0, channel.lines.lastIndex)) }
         Column(
             modifier = Modifier
@@ -450,6 +454,12 @@ internal fun LiveLineOverlay(
                 .background(LiveTvPanelBg)
                 .focusRequester(focusRequester)
                 .onPreviewKeyEvent { event ->
+                    // 浮层持有焦点时整次返回在浮层内闭环：KeyDown 即收起并消费，
+                    // 避免部分遥控器 KeyUp 丢失、或 KeyUp 落到页面级处理器造成一次空按。
+                    if (event.key == ComposeKey.Back) {
+                        onClose()
+                        return@onPreviewKeyEvent true
+                    }
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     when (event.key) {
                         ComposeKey.DirectionUp -> {
@@ -462,11 +472,6 @@ internal fun LiveLineOverlay(
                         }
                         ComposeKey.DirectionCenter, ComposeKey.Enter -> {
                             actions.selectLiveLine(pickedIndex)
-                            onClose()
-                            true
-                        }
-                        // 浮层持有焦点时直接消费返回键，保证一次返回即收起，不依赖页面级分发顺序。
-                        ComposeKey.Back -> {
                             onClose()
                             true
                         }
