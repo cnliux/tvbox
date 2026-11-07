@@ -114,7 +114,8 @@ fun PlayerScreen(
     val initialScreenBrightness = remember(activity) {
         activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     }
-    val player = rememberManagedExoPlayer()
+    val playbackHost = rememberPlaybackHost()
+    val player = playbackHost.player
     val session = rememberPlaybackSession()
     var loadedState by remember { mutableStateOf(state) }
     val resumeAnchor = remember { PlaybackResumeAnchor() }
@@ -135,9 +136,6 @@ fun PlayerScreen(
     var controlsPanel by remember { mutableStateOf(PlayerPanel.None) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var scrubbing by remember { mutableStateOf(false) }
-    var uiPosition by remember { mutableStateOf(0L) }
-    var uiDuration by remember { mutableStateOf(0L) }
-    var uiPlaying by remember { mutableStateOf(true) }
     // 手机播放页“更多”面板展开时暂停自动隐藏，方便选集/切线路。
     var mobileMoreOpen by remember { mutableStateOf(false) }
     var mobileLocked by remember(movie.id, movie.apiLineId) { mutableStateOf(false) }
@@ -162,16 +160,16 @@ fun PlayerScreen(
         }
     }
     val lifecycleOwner = LocalLifecycleOwner.current
+    val uiPosition = playbackHost.snapshot.positionMs
+    val uiDuration = playbackHost.snapshot.durationMs
+    val uiPlaying = playbackHost.snapshot.playWhenReady
     LaunchedEffect(player, lifecycleOwner) {
-        // 退到后台后组合仍存活：不停止轮询会持续 4 次/秒唤醒主线程。
+        // 进度/时长/播放意图由 rememberPlaybackHost 轮询；这里只维护续播锚点。
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 if (isCurrentPlayback() && player.playbackState == Player.STATE_READY) {
                     resumeAnchor.update(player.currentPosition)
                 }
-                uiPosition = player.currentPosition.coerceAtLeast(0)
-                uiDuration = player.duration.takeIf { it > 0 } ?: 0
-                uiPlaying = player.playWhenReady
                 delay(250)
             }
         }
@@ -358,17 +356,7 @@ fun PlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 if (player.playerError != error) return
                 // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示。
-                val message = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "网络超时，请稍后重试"
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "网络连接失败，请检查网络"
-                    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
-                    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
-                    -> "播放地址无效，正在尝试其他线路"
-                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
-                    PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
-                    -> "当前线路格式不支持，正在尝试其他线路"
-                    else -> "播放失败，正在尝试其他线路"
-                }
+                val message = playbackErrorMessage(error.errorCode)
                 handlePlaybackIssue(
                     PlaybackIssueType.Error,
                     "播放管家：当前线路播放失败",
