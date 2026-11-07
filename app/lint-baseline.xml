@@ -530,17 +530,6 @@
 
     <issue
         id="AutoboxingStateCreation"
-        message="Prefer `mutableLongStateOf` instead of `mutableStateOf`"
-        errorLine1="    var lastBackPressTime by remember { mutableStateOf(0L) }"
-        errorLine2="                                        ~~~~~~~~~~~~~~">
-        <location
-            file="src/main/java/com/tvbox/app/ui/PlayerScreen.kt"
-            line="144"
-            column="41"/>
-    </issue>
-
-    <issue
-        id="AutoboxingStateCreation"
         message="Prefer `mutableIntStateOf` instead of `mutableStateOf`"
         errorLine1="        mutableStateOf(state.appSettings.liveSourceDefaultIndex)"
         errorLine2="        ~~~~~~~~~~~~~~">

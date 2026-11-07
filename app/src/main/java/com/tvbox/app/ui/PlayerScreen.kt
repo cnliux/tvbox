@@ -141,7 +141,6 @@ fun PlayerScreen(
     // 手机播放页“更多”面板展开时暂停自动隐藏，方便选集/切线路。
     var mobileMoreOpen by remember { mutableStateOf(false) }
     var mobileLocked by remember(movie.id, movie.apiLineId) { mutableStateOf(false) }
-    var lastBackPressTime by remember { mutableStateOf(0L) }
     BackHandler {
         when {
             mobileLocked && controlsVisible -> {
@@ -154,23 +153,11 @@ fun PlayerScreen(
             controlsPanel != PlayerPanel.None -> controlsPanel = PlayerPanel.None
             controlsVisible -> { controlsVisible = false; runCatching { playerFocusRequester.requestFocus() } }
             else -> {
+                // 控件已隐藏时单次返回直接退出；退出前保存进度，避免少一次确认后漏存。
                 if (isMobile) {
-                    val now = System.currentTimeMillis()
-                    if (now - lastBackPressTime < 1500L) {
-                        lastBackPressTime = 0L
-                        actions.goBack()
-                    } else {
-                        lastBackPressTime = now
-                        val activity = context.findActivity()
-                        android.widget.Toast.makeText(
-                            activity ?: context,
-                            "再按一次退出播放",
-                            android.widget.Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                } else {
-                    actions.goBack()
+                    saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
                 }
+                actions.goBack()
             }
         }
     }
