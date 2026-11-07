@@ -28,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
+import com.tvbox.app.data.DataStoreAppSettingsRepository
 import com.tvbox.app.data.DefaultAppUpdateRepository
 import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.DefaultDoubanHotRepository
@@ -35,7 +36,6 @@ import com.tvbox.app.data.DefaultMovieRepository
 import com.tvbox.app.data.DefaultSearchHotWordRepository
 import com.tvbox.app.data.LiveDomainScoreStore
 import com.tvbox.app.data.LiveLinePreference
-import com.tvbox.app.data.SharedAppSettingsRepository
 import com.tvbox.app.data.SharedDoubanHotCache
 import com.tvbox.app.data.SharedHistoryRepository
 import com.tvbox.app.data.SharedPlaybackHealthRepository
@@ -346,7 +346,7 @@ private class TvBoxViewModelFactory(
             ),
             platformLiveRepository = EmbeddedPlatformLiveRepository(activity.applicationContext),
             appUpdateRepository = DefaultAppUpdateRepository(activity.applicationContext),
-            appSettingsRepository = SharedAppSettingsRepository(activity.applicationContext),
+            appSettingsRepository = DataStoreAppSettingsRepository.create(activity.applicationContext),
             playbackHealthRepository = SharedPlaybackHealthRepository(activity.applicationContext),
             historyRepository = SharedHistoryRepository(activity.applicationContext),
             platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(activity.applicationContext),
