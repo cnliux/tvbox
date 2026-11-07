@@ -1,7 +1,6 @@
 package com.tvbox.app.ui
 
 import android.content.pm.ActivityInfo
-import android.view.KeyEvent as AndroidKeyEvent
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -58,10 +57,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -612,6 +607,73 @@ private fun LivePlayerScreen(
 
     PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
 
+    // 遥控键位收敛到共享 PlayerChannelKeyMap：页面只提供频道/线路语义与浮层状态。
+    val channelKeyMap = remember {
+        PlayerChannelKeyMap(
+            PlayerChannelKeyMap.Callbacks(
+                isChannelListVisible = { false },
+                closeChannelList = {},
+                isLineControlVisible = { false },
+                closeLineControl = {},
+                keepChannelListVisibleWhileBrowsing = {},
+                isNumberInputActive = { false },
+                onNumberKey = {},
+                onNumberMove = {},
+                onNumberCommit = {},
+                onNumberDelete = {},
+                onPreviousChannel = {},
+                onNextChannel = {},
+                onPreviousLine = {},
+                onNextLine = {},
+                onOpenChannelList = {},
+                onConfirm = {},
+            ),
+        )
+    }
+    channelKeyMap.callbacks = PlayerChannelKeyMap.Callbacks(
+        isChannelListVisible = { channelListVisible },
+        closeChannelList = {
+            channelListVisible = false
+            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+        },
+        isLineControlVisible = { showLineControl },
+        closeLineControl = {
+            showLineControl = false
+            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+        },
+        keepChannelListVisibleWhileBrowsing = { keepChannelListVisibleWhileBrowsing() },
+        isNumberInputActive = { channelNumberInput.isNotEmpty() },
+        onNumberKey = { handleNumberKey(it) },
+        onNumberMove = { delta ->
+            if (visibleNumberMatches.isNotEmpty()) {
+                numberMatchFocus = if (delta < 0) {
+                    (numberMatchFocus - 1).coerceAtLeast(0)
+                } else {
+                    (numberMatchFocus + 1).coerceAtMost(visibleNumberMatches.lastIndex)
+                }
+            }
+        },
+        onNumberCommit = { commitNumberInput(useFocusedMatch = visibleNumberMatches.isNotEmpty()) },
+        onNumberDelete = {
+            channelNumberInput = channelNumberInput.dropLast(1)
+            channelNumberNonce++
+        },
+        onPreviousChannel = { actions.playPreviousLiveChannel() },
+        onNextChannel = { actions.playNextLiveChannel() },
+        onPreviousLine = { actions.playPreviousLiveLine() },
+        onNextLine = { actions.playNextLiveLine() },
+        onOpenChannelList = { showChannelList() },
+        onConfirm = {
+            if (session.interrupted) {
+                player.seekToDefaultPosition()
+                session.play(player)
+            } else {
+                // 确认键唤出频道浮层（底部「线路」按钮负责打开线路弹层）。
+                showChannelList()
+            }
+        },
+    )
+
     val barsAlpha by animateFloatAsState(
         targetValue = if (chrome.visible) 1f else 0f,
         animationSpec = tween(300),
@@ -637,162 +699,7 @@ private fun LivePlayerScreen(
                     },
                 )
             }
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
-                // 规范：全屏态下任意按键唤出顶部/底部信息条（并重置 3 秒淡出计时）。
-                // 放在最前面统一处理，各分支里重复的 bumpBars 仅作为"操作生效"的冗余保险。
-                bumpBars()
-                // 浮层打开时方向键/确认键交给浮层自身的焦点系统，只顺手重置自动隐藏计时；
-                // 若在根节点把 D-PAD 吞掉换台，分组/频道列表将无法用遥控器操作。
-                if (channelListVisible) {
-                    // 浮层打开时数字键仍可直选：先收起浮层，再走统一的数字输入计时跳转。
-                    val overlayDigit = liveNumberKeyOf(event.nativeKeyEvent.keyCode)
-                    if (overlayDigit != null) {
-                        channelListVisible = false
-                        if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-                        handleNumberKey(overlayDigit)
-                        return@onPreviewKeyEvent true
-                    }
-                    when (event.nativeKeyEvent.keyCode) {
-                        AndroidKeyEvent.KEYCODE_MENU,
-                        AndroidKeyEvent.KEYCODE_INFO,
-                        -> {
-                            channelListVisible = false
-                            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_DPAD_UP,
-                        AndroidKeyEvent.KEYCODE_DPAD_DOWN,
-                        AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-                        AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                        AndroidKeyEvent.KEYCODE_ENTER,
-                        -> {
-                            keepChannelListVisibleWhileBrowsing()
-                            bumpBars()
-                            false
-                        }
-                        else -> false
-                    }
-                } else if (showLineControl) {
-                    // 线路浮层：方向/确认键放行给浮层焦点系统；MENU 收起浮层。
-                    when (event.nativeKeyEvent.keyCode) {
-                        AndroidKeyEvent.KEYCODE_MENU,
-                        AndroidKeyEvent.KEYCODE_INFO,
-                        -> {
-                            showLineControl = false
-                            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-                            true
-                        }
-                        else -> false
-                    }
-                } else if (channelNumberInput.isNotEmpty()) {
-                    // 数字输入中：方向键在候选里移动，确认键直接进台，退格删一位。
-                    when (event.nativeKeyEvent.keyCode) {
-                        AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                            if (visibleNumberMatches.isNotEmpty()) {
-                                numberMatchFocus = (numberMatchFocus - 1).coerceAtLeast(0)
-                            }
-                            bumpBars()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                            if (visibleNumberMatches.isNotEmpty()) {
-                                numberMatchFocus = (numberMatchFocus + 1).coerceAtMost(visibleNumberMatches.lastIndex)
-                            }
-                            bumpBars()
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                        AndroidKeyEvent.KEYCODE_ENTER,
-                        -> {
-                            commitNumberInput(useFocusedMatch = visibleNumberMatches.isNotEmpty())
-                            true
-                        }
-                        AndroidKeyEvent.KEYCODE_DEL -> {
-                            channelNumberInput = channelNumberInput.dropLast(1)
-                            channelNumberNonce++
-                            bumpBars()
-                            true
-                        }
-                        else -> false
-                    }
-                } else when (event.nativeKeyEvent.keyCode) {
-                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                        actions.playPreviousLiveChannel()
-                        bumpBars()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                        actions.playNextLiveChannel()
-                        bumpBars()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER,
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY,
-                    AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
-                    -> {
-                        if (session.interrupted) {
-                            player.seekToDefaultPosition()
-                            session.play(player)
-                        } else {
-                            // 确认键唤出频道浮层（底部「线路」按钮负责打开线路弹层）。
-                            showChannelList()
-                        }
-                        bumpBars()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MENU,
-                    AndroidKeyEvent.KEYCODE_INFO,
-                    -> {
-                        showChannelList()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                        actions.playPreviousLiveLine()
-                        bumpBars()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                        actions.playNextLiveLine()
-                        bumpBars()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_0,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_0,
-                    -> handleNumberKey(0)
-                    AndroidKeyEvent.KEYCODE_1,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_1,
-                    -> handleNumberKey(1)
-                    AndroidKeyEvent.KEYCODE_2,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_2,
-                    -> handleNumberKey(2)
-                    AndroidKeyEvent.KEYCODE_3,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_3,
-                    -> handleNumberKey(3)
-                    AndroidKeyEvent.KEYCODE_4,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_4,
-                    -> handleNumberKey(4)
-                    AndroidKeyEvent.KEYCODE_5,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_5,
-                    -> handleNumberKey(5)
-                    AndroidKeyEvent.KEYCODE_6,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_6,
-                    -> handleNumberKey(6)
-                    AndroidKeyEvent.KEYCODE_7,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_7,
-                    -> handleNumberKey(7)
-                    AndroidKeyEvent.KEYCODE_8,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_8,
-                    -> handleNumberKey(8)
-                    AndroidKeyEvent.KEYCODE_9,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_9,
-                    -> handleNumberKey(9)
-                    else -> false
-                }
-            }
+            .playerKeyInput(channelKeyMap, chrome)
             .focusable(),
     ) {
         PlayerSurface(
