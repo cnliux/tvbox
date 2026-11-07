@@ -1,5 +1,6 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
@@ -50,6 +51,7 @@ class LegacySettingsSnapshotTest {
                 SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP to false,
                 SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH to false,
                 SettingsStorageKeys.VIDEO_SCALE_MODE to VideoScaleMode.Zoom.storageKey,
+                SettingsStorageKeys.DECODER_STRATEGY to DecoderStrategy.HardwareOnly.storageKey,
                 SettingsStorageKeys.DEVICE_MODE to DeviceMode.Mobile.storageKey,
                 SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP to "央视",
                 SettingsStorageKeys.MOBILE_ONBOARDED to true,
@@ -87,6 +89,7 @@ class LegacySettingsSnapshotTest {
         assertEquals(false, settings.checkUpdatesOnStartup)
         assertEquals(false, settings.playbackAgentAutoSwitchEnabled)
         assertEquals(VideoScaleMode.Zoom, settings.videoScaleMode)
+        assertEquals(DecoderStrategy.HardwareOnly, settings.decoderStrategy)
         assertEquals(DeviceMode.Mobile, settings.deviceMode)
         assertEquals("央视", settings.liveSourceDefaultGroup)
         assertTrue(settings.mobileOnboarded)
@@ -147,13 +150,21 @@ class LegacySettingsSnapshotTest {
                 SettingsStorageKeys.THEME to "no-such-theme",
                 SettingsStorageKeys.FONT_SCALE to "huge",
                 SettingsStorageKeys.VIDEO_SCALE_MODE to "stretch",
+                SettingsStorageKeys.DECODER_STRATEGY to "software",
                 SettingsStorageKeys.DEVICE_MODE to "tablet",
             ),
         )
         assertEquals(TvTheme.Default, settings.theme)
         assertEquals(TvFontScale.Normal, settings.fontScale)
         assertEquals(VideoScaleMode.Fit, settings.videoScaleMode)
+        assertEquals(DecoderStrategy.Auto, settings.decoderStrategy)
         assertEquals(DeviceMode.Auto, settings.deviceMode)
+    }
+
+    @Test
+    fun `解码策略缺省为自动`() {
+        val settings = readLegacySettings(LegacySettingsSnapshot(emptyMap()))
+        assertEquals(DecoderStrategy.Auto, settings.decoderStrategy)
     }
 
     @Test

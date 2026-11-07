@@ -13,6 +13,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import com.tvbox.app.domain.DecoderStrategy
 import kotlinx.coroutines.delay
 
 /** 播放器可观察快照：四处播放页统一从这一份状态读进度、时长与播放意图。 */
@@ -77,8 +78,10 @@ internal class PlaybackHost(
 }
 
 @Composable
-internal fun rememberPlaybackHost(): PlaybackHost =
-    rememberPlaybackHostOrNull(rememberManagedExoPlayer())!!
+internal fun rememberPlaybackHost(
+    decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+): PlaybackHost =
+    rememberPlaybackHostOrNull(rememberManagedExoPlayer(decoderStrategy))!!
 
 /**
  * 平台直播在解析出可播地址前没有播放器实例；此重载让其余页面共用同一份快照逻辑。

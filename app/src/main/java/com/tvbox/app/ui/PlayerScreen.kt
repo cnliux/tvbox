@@ -103,7 +103,7 @@ fun PlayerScreen(
     val initialScreenBrightness = remember(activity) {
         activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
     }
-    val playbackHost = rememberPlaybackHost()
+    val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
     // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。
     val playerTracks = rememberPlayerTracks(player)
@@ -117,6 +117,12 @@ fun PlayerScreen(
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(videoScaleContentKey)
     var loadedState by remember { mutableStateOf(state) }
     val resumeAnchor = remember { PlaybackResumeAnchor() }
+    // 解码策略变化会重建播放器：本页记住重建前的集与进度，重建后原处续播。
+    // savePlaybackProgress 只写历史、不回写 state.playerStartPositionMs，不能从 state 恢复。
+    val rebuildSeed = remember { PlaybackRebuildSeed() }
+    DisposableEffect(player) {
+        onDispose { rebuildSeed.remember(player) }
+    }
     fun isCurrentPlayback(): Boolean = player.currentMediaItem?.mediaId?.let {
         it == actions.state.value.currentPlaybackKey()
     } == true
@@ -504,10 +510,14 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(state.playerSourceIndex, source.episodes) {
+    LaunchedEffect(player, state.playerSourceIndex, source.episodes) {
         if (castingDevice != null) stopCasting()
         loadedState = state
-        resumeAnchor.update(state.playerStartPositionMs)
+        // 重建播放器（切换解码策略）后按本地种子续播；首次进入仍沿用页面传入的起点。
+        val rebuilt = rebuildSeed.consume()
+        val startIndex = rebuilt?.first ?: state.playerEpisodeIndex
+        val startPositionMs = rebuilt?.second ?: state.playerStartPositionMs
+        resumeAnchor.update(startPositionMs)
         playbackIssue = null
         bufferingPlaybackKey = null
         bufferMonitor.onMediaChanged()
@@ -517,21 +527,21 @@ fun PlayerScreen(
         firstFrameFailure = null
         attemptTracker.onPlaybackChanged(state.currentPlaybackKey())
         // 从头播放时应用“开始跳过”；恢复进度时保持原位置。
-        introSkipPending = state.playerStartPositionMs <= 0L
+        introSkipPending = startPositionMs <= 0L
         outroSkipHandledKey = null
         player.setMediaItems(
             source.episodes.mapIndexed { index, item ->
                 MediaItem.Builder().setUri(item.url)
                     .setMediaId(state.copy(playerEpisodeIndex = index).currentPlaybackKey().orEmpty()).build()
             },
-            state.playerEpisodeIndex,
-            state.playerStartPositionMs,
+            startIndex,
+            startPositionMs,
         )
         player.prepare()
         player.setPlaybackSpeed(state.playerSpeed)
         if (!state.playerPlayWhenReady) session.pause(player) else session.preparePlayback(player)
         saveCurrentProgress(
-            positionMs = state.playerStartPositionMs,
+            positionMs = startPositionMs,
             durationMs = 0L,
         )
     }
@@ -1020,6 +1030,30 @@ private fun GesturePrompt(
             fontWeight = FontWeight.Bold,
             color = textColor,
         )
+    }
+}
+
+/**
+ * 重建播放器（切换解码策略）时的续播种子。
+ * 旧播放器离开组合时记录一次，新播放器建源后立即消费，避免影响后续换源/换集。
+ */
+private class PlaybackRebuildSeed {
+    private var episodeIndex: Int = -1
+    private var positionMs: Long = 0L
+
+    fun remember(player: ExoPlayer) {
+        if (player.currentPosition > 0L && player.currentMediaItemIndex >= 0) {
+            episodeIndex = player.currentMediaItemIndex
+            positionMs = player.currentPosition
+        }
+    }
+
+    fun consume(): Pair<Int, Long>? {
+        if (episodeIndex < 0) return null
+        val seed = episodeIndex to positionMs
+        episodeIndex = -1
+        positionMs = 0L
+        return seed
     }
 }
 

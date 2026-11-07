@@ -57,6 +57,7 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
+import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
@@ -452,6 +453,20 @@ private fun TvPlaybackDetail(
                     selected = state.appSettings.videoScaleMode,
                     label = { it.displayName },
                     onSelect = actions::updateVideoScaleMode,
+                )
+            },
+        )
+        TvDividerInGroup()
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "解码策略",
+            subtitle = state.appSettings.decoderStrategy.description,
+            trailing = {
+                TvChoiceChips(
+                    options = DecoderStrategy.entries,
+                    selected = state.appSettings.decoderStrategy,
+                    label = { it.displayName },
+                    onSelect = actions::updateDecoderStrategy,
                 )
             },
         )

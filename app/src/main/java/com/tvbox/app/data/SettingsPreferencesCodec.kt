@@ -70,6 +70,7 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putBoolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, settings.playbackAgentAutoSwitchEnabled)
     putString(SettingsStorageKeys.VIDEO_SCALE_MODE, settings.videoScaleMode.storageKey)
     putFloat(SettingsStorageKeys.PLAYER_SPEED, settings.playerSpeed)
+    putString(SettingsStorageKeys.DECODER_STRATEGY, settings.decoderStrategy.storageKey)
     putString(
         SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES,
         json.encodeToString(settings.contentVideoScaleModes),

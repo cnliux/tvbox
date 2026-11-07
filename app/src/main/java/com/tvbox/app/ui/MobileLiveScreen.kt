@@ -662,9 +662,17 @@ private fun MobileLivePlayerScreen(
     }
 
     val session = rememberPlaybackSession()
-    val playbackHost = rememberPlaybackHost()
+    val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
     BindPlaybackSession(session, player)
+    // 解码策略变化会重建播放器：重连当前频道/线路时提示一次。
+    var playerBuilt by remember { mutableStateOf(false) }
+    LaunchedEffect(player) {
+        if (playerBuilt) {
+            Toast.makeText(context, "解码器已切换，正在重连当前线路", Toast.LENGTH_SHORT).show()
+        }
+        playerBuilt = true
+    }
 
     val channels = state.liveChannels
     val lineIndex = state.liveLineIndex.coerceIn(0, channel.lines.lastIndex)
@@ -761,7 +769,7 @@ private fun MobileLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(state.live.channelIndex, state.liveLineIndex, currentLine.url, state.liveReconnectNonce) {
+    LaunchedEffect(player, state.live.channelIndex, state.liveLineIndex, currentLine.url, state.liveReconnectNonce) {
         // 不同频道/线路可能共用同一 URL（同地址不同 Referer），只按 URL 比较会漏掉重新取流。
         android.util.Log.d(
             MOBILE_LIVE_LOG_TAG,

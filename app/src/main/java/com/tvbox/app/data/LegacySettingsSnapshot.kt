@@ -2,6 +2,7 @@ package com.tvbox.app.data
 
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CustomVideoApiLine
+import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySetting
@@ -44,6 +45,7 @@ internal object SettingsStorageKeys {
     const val PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
     const val VIDEO_SCALE_MODE = "video_scale_mode"
     const val PLAYER_SPEED = "player_speed"
+    const val DECODER_STRATEGY = "decoder_strategy"
     const val CONTENT_VIDEO_SCALE_MODES = "content_video_scale_modes"
     const val DEVICE_MODE = "device_mode"
     const val LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
@@ -122,6 +124,9 @@ internal fun readLegacySettings(
         checkUpdatesOnStartup = boolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, true),
         playbackAgentAutoSwitchEnabled = boolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, true),
         videoScaleMode = VideoScaleMode.fromStorageKey(string(SettingsStorageKeys.VIDEO_SCALE_MODE, "")),
+        decoderStrategy = DecoderStrategy.fromStorageKey(
+            string(SettingsStorageKeys.DECODER_STRATEGY, DecoderStrategy.Auto.storageKey),
+        ),
         playerSpeed = PlayerSpeedSetting.clamp(
             float(SettingsStorageKeys.PLAYER_SPEED, PlayerSpeedSetting.Default),
         ),

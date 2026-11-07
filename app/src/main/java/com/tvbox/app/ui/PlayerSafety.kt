@@ -1,15 +1,21 @@
 package com.tvbox.app.ui
 
+import android.content.Context
 import android.view.ViewGroup
+import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import com.tvbox.app.domain.DecoderStrategy
 
 /**
  * 安全释放 ExoPlayer：先 pause + removeListener，再 release。
@@ -46,14 +52,58 @@ internal fun safePrepare(
 }
 
 /**
+ * 共享播放器工厂：四个播放页只通过这里配置 Renderers，避免各页各建一套 factory。
+ *
+ * 始终开启 [DefaultRenderersFactory.setEnableDecoderFallback]（默认「自动」档的解码失败回落）；
+ * [DecoderStrategy.HardwareOnly] 时再用 [MediaCodecSelector] 只保留硬件解码器。
+ * 工程未集成 FFmpeg 扩展解码器，因此不存在「强制软解」。
+ */
+@OptIn(UnstableApi::class)
+internal fun buildManagedExoPlayer(
+    context: Context,
+    decoderStrategy: DecoderStrategy,
+    configure: (ExoPlayer.Builder) -> ExoPlayer.Builder = { it },
+): ExoPlayer {
+    val renderersFactory = DefaultRenderersFactory(context)
+        .setEnableDecoderFallback(true)
+        .apply {
+            if (decoderStrategy == DecoderStrategy.HardwareOnly) {
+                setMediaCodecSelector(hardwareOnlyMediaCodecSelector())
+            }
+        }
+    return configure(ExoPlayer.Builder(context, renderersFactory))
+        .build()
+        .apply { playWhenReady = true }
+}
+
+/**
+ * 强制硬解：只返回 `hardwareAccelerated` 的解码器。
+ * 设备确实没有对应硬解时回退默认候选，避免选择器返回空列表导致取流直接失败。
+ */
+@OptIn(UnstableApi::class)
+private fun hardwareOnlyMediaCodecSelector(): MediaCodecSelector =
+    MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
+        val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunneling)
+        val hardware = all.filter { it.hardwareAccelerated }
+        if (hardware.isNotEmpty()) {
+            hardware
+        } else {
+            android.util.Log.w("TVBoxPlayer", "强制硬解：$mimeType 无可用硬件解码器，已回退默认解码器")
+            all
+        }
+    }
+
+/**
  * 统一的播放器持有：进入组合时创建，离开组合时安全释放。
- * 页面只负责播放逻辑，不再各自写 `remember { ExoPlayer... }` + `onDispose { release() }`。
+ * [decoderStrategy] 变化会重建播放器（解码器只在构建时选择），页面需按重建语义续播/重连。
  */
 @Composable
-internal fun rememberManagedExoPlayer(): ExoPlayer {
+internal fun rememberManagedExoPlayer(
+    decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+): ExoPlayer {
     val context = LocalContext.current.applicationContext
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply { playWhenReady = true }
+    val player = remember(decoderStrategy) {
+        buildManagedExoPlayer(context, decoderStrategy)
     }
     DisposableEffect(player) {
         onDispose { safeReleasePlayer(player) }

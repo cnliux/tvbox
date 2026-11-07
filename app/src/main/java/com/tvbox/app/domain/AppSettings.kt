@@ -69,7 +69,27 @@ data class AppSettings(
     val historyMaxItems: Int = QuantitySettings.HistoryMaxItems.default,
     /** 多源搜索/详情同时请求的源数量。 */
     val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
+    /** 解码器策略：默认硬解优先、失败自动回落；也可强制只选硬件解码器。 */
+    val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
 )
+
+/**
+ * 解码器策略。只区分两档：
+ * - [Auto]：默认硬解优先，解码失败时由 [setEnableDecoderFallback] 自动回落到软件解码；
+ * - [HardwareOnly]：选择器只返回硬件解码器；设备确实没有硬解时仍回退可用解码器，避免直接黑屏。
+ *
+ * 工程未集成 FFmpeg 扩展解码器，因此不提供「强制软解」档。
+ */
+enum class DecoderStrategy(val storageKey: String, val displayName: String, val description: String) {
+    Auto("auto", "自动", "硬解优先，失败时自动回落到软解。"),
+    HardwareOnly("hardware_only", "强制硬解", "只选择硬件解码器；设备无可用硬解时回退，避免黑屏。"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): DecoderStrategy =
+            entries.firstOrNull { it.storageKey == value } ?: Auto
+    }
+}
 
 /** 播放倍速的默认值与合法区间；写入前统一收敛，避免旧数据或异常输入越界。 */
 object PlayerSpeedSetting {

@@ -171,7 +171,7 @@ private fun LivePlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
-    val playbackHost = rememberPlaybackHost()
+    val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
     // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
@@ -221,6 +221,13 @@ private fun LivePlayerScreen(
         promptMessage = message
         promptVisible = true
         promptNonce++
+    }
+
+    // 解码策略变化会重建播放器（控件状态与焦点挂在共享 chrome 上，不会跳变）。
+    var playerBuilt by remember { mutableStateOf(false) }
+    LaunchedEffect(player) {
+        if (playerBuilt) showPrompt("解码器已切换，正在重连当前线路")
+        playerBuilt = true
     }
 
     fun showChannelList() {
@@ -440,6 +447,7 @@ private fun LivePlayerScreen(
     }
 
     LaunchedEffect(
+        player,
         state.live.channelIndex,
         state.liveLineIndex,
         currentLine.url,

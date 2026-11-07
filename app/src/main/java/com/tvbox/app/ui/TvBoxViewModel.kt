@@ -863,6 +863,13 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
+    /** 解码策略：写入 AppSettings 后由共享播放宿主按新策略重建播放器。 */
+    fun updateDecoderStrategy(strategy: com.tvbox.app.domain.DecoderStrategy) {
+        val settings = _state.value.appSettings.copy(decoderStrategy = strategy)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
     /**
      * 按内容记忆画面比例：写入覆盖表，不影响全局默认值；已单独记忆的其他内容保持原样。
      * 内容 key 由 domain 的 vod/live/room 构造函数生成，避免把完整地址塞进偏好。

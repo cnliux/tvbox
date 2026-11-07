@@ -73,7 +73,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -855,7 +854,12 @@ private fun PlatformLivePlayerScreen(
                 initialRequestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         }
     }
-    val player = rememberManagedExoPlayerOrNull(playbackUrl, stream?.headers) { context ->
+    val decoderStrategy = state.appSettings.decoderStrategy
+    val player = rememberManagedExoPlayerOrNull(
+        playbackUrl,
+        stream?.headers,
+        decoderStrategy,
+    ) { context ->
         val targetUrl = playbackUrl
         if (stream == null || targetUrl.isNullOrBlank()) {
             null
@@ -877,10 +881,18 @@ private fun PlatformLivePlayerScreen(
                 PLATFORM_LIVE_LOG_TAG,
                 "【构建播放器】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(resolved.activeCandidateOrNull?.url)}, localUrl=${logSafeUrl(targetUrl)}, quality=${resolved.quality}, protocol=${resolved.protocol}, headerNames=${logSafeHeaderNames(resolved.headers)}, activeCdn=${resolved.activeCandidateOrNull?.cdn.orEmpty()}, candidates=${resolved.candidates.size}, continuityProxy=${continuityProxy != null}"
             )
-            ExoPlayer.Builder(context)
-                .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
-                .build()
-                .apply { playWhenReady = true }
+            buildManagedExoPlayer(context, decoderStrategy) { builder ->
+                builder.setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            }
+        }
+    }
+    // 解码策略变化会重建播放器：重连当前频道/线路时提示一次（地址变化属正常换流，不提示）。
+    val lastPlayerStrategy = remember { mutableStateOf(decoderStrategy) }
+    LaunchedEffect(player) {
+        if (player == null) return@LaunchedEffect
+        if (lastPlayerStrategy.value != decoderStrategy) {
+            lastPlayerStrategy.value = decoderStrategy
+            android.widget.Toast.makeText(context, "解码器已切换，正在重连当前频道", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
     // 控件显隐/自动隐藏/返回层级统一走共享状态；平台直播保留自己的房间与候选语义。
