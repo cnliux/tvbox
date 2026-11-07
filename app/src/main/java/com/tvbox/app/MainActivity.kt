@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.StrictMode
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -79,8 +80,8 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // 手机模式默认竖屏、电视模式横屏：先同步读取已保存的设备模式，避免冷启动闪一下错误方向。
-        applyBaseOrientation(readSavedDeviceMode())
+        // debug 包开启 StrictMode：主线程 IO 只写 logcat，不 crash，release 编译期即剔除。
+        enableStrictModeInDebug()
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 // 订阅"生效模式"而非保存的偏好：Auto 模式下按系统识别结果切换横竖屏。
@@ -138,12 +139,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun readSavedDeviceMode(): DeviceMode {
-        // 未保存过（或保存为 auto）时按系统特征解析，避免手机冷启动先闪横屏。
-        val saved = DeviceMode.fromStorageKey(
-            getSharedPreferences("app_settings", MODE_PRIVATE).getString("device_mode", null),
+    /** 仅 debug 生效：主线程磁盘/网络 IO 与资源问题写 logcat，不 crash；release 编译期即剔除。 */
+    private fun enableStrictModeInDebug() {
+        if (!BuildConfig.DEBUG) return
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectAll()
+                .penaltyLog()
+                .build(),
         )
-        return if (saved == DeviceMode.Auto) DeviceMode.detectFromSystem(applicationContext) else saved
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectAll()
+                .penaltyLog()
+                .build(),
+        )
     }
 
     private fun applyBaseOrientation(mode: DeviceMode) {
