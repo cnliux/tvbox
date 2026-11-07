@@ -135,6 +135,8 @@ fun PlayerScreen(
     BindPlaybackSession(session, player) {
         saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
     }
+    // 强制硬解无可用硬解并回落时，四个播放页共用同一段一次性提示。
+    HardwareDecoderFallbackToast()
     // 控件状态收敛到共享层：visible / panel / 自动隐藏 / 焦点恢复 / 锁屏由 PlayerChromeState 统一管理。
     val chrome = remember(movie.id, movie.apiLineId) { PlayerChromeState() }
     val playerFocusRequester = chrome.rootFocus
@@ -876,6 +878,7 @@ fun PlayerScreen(
                 audioTracks = playerTracks.audioTracks,
                 subtitleTracks = playerTracks.subtitleTracks,
                 playbackInfo = diagnostics?.info,
+                decoderStrategy = state.appSettings.decoderStrategy,
                 playbackUrls = listOf(
                     PlayerChromeUrl(
                         label = "实际播放地址（点播线路）",

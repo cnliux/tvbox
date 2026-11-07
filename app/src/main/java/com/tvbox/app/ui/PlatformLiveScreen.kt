@@ -902,6 +902,7 @@ private fun PlatformLivePlayerScreen(
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, player)
+    HardwareDecoderFallbackToast()
     // 候选/地址变化时重建快照，保持原 playerState 的重置语义。
     val playbackHost = rememberPlaybackHostOrNull(
         player,
@@ -1180,6 +1181,7 @@ private fun PlatformLivePlayerScreen(
                     resizeMode = videoScaleMode,
                     buffering = playbackHost?.snapshot?.isBuffering == true,
                     playbackInfo = diagnostics?.info,
+                    decoderStrategy = state.appSettings.decoderStrategy,
                     playbackUrls = buildList {
                         playbackUrl?.let { actual ->
                             add(

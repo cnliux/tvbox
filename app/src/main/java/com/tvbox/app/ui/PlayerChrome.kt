@@ -95,6 +95,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.coroutines.delay
 
@@ -285,6 +286,8 @@ internal data class PlayerChromeData(
     val playbackInfo: PlayerPlaybackInfo? = null,
     /** 当前播放地址（可含原始/实际两类），空列表表示该页没有可查看地址。 */
     val playbackUrls: List<PlayerChromeUrl> = emptyList(),
+    /** 当前解码策略：信息面板同时展示策略与实际解码器，便于确认是否发生回落。 */
+    val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -876,6 +879,7 @@ private fun PlayerChromePanel(
     if (panel == PlayerPanel.Info) {
         PlayerInfoPanel(
             info = data.playbackInfo,
+            decoderStrategy = data.decoderStrategy,
             onClose = { state.closePanel() },
             modifier = modifier,
         )
@@ -999,29 +1003,40 @@ private fun PlayerChromePanel(
 internal data class PlayerInfoRow(val label: String, val value: String)
 
 /** 构造播放信息行：数据缺失一律显示「—」，不把哨兵值 0/-1 暴露给用户。 */
-internal fun playerInfoRows(info: PlayerPlaybackInfo?): List<PlayerInfoRow> {
+internal fun playerInfoRows(
+    info: PlayerPlaybackInfo?,
+    decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+): List<PlayerInfoRow> {
     val decoder = info?.decoderName?.takeIf { it.isNotBlank() }
-    return listOf(
-        PlayerInfoRow("分辨率", formatResolution(info?.videoWidth ?: 0, info?.videoHeight ?: 0)),
-        PlayerInfoRow("解码器", decoder?.let { "$it · ${decoderKindLabel(it)}" } ?: "—"),
-        PlayerInfoRow("当前码率", formatBitrate(info?.currentBitrateBps ?: -1L)),
-        PlayerInfoRow("平均码率", formatBitrate(info?.averageBitrateBps ?: -1L)),
-        PlayerInfoRow("缓冲时长", formatDurationMs(info?.bufferedMs ?: -1L)),
-        PlayerInfoRow("丢帧", formatFrameCount(info?.droppedFrames ?: -1L)),
-        PlayerInfoRow("已解码帧", formatFrameCount(info?.decodedFrames ?: -1L)),
-        PlayerInfoRow("首帧耗时", formatFirstFrame(info?.firstFrameMs ?: -1L)),
-        PlayerInfoRow("错误码", info?.let { formatErrorCode(it.errorCode) } ?: "—"),
-    )
+    val actualKind = decoder?.let(::decoderKindLabel)
+    // 强制硬解却实际用了软解：在面板里直接标注，避免策略命中失败后无感。
+    val fallback = decoderStrategy == DecoderStrategy.HardwareOnly && actualKind == "软解"
+    return buildList {
+        add(PlayerInfoRow("解码策略", decoderStrategy.displayName))
+        add(PlayerInfoRow("分辨率", formatResolution(info?.videoWidth ?: 0, info?.videoHeight ?: 0)))
+        add(PlayerInfoRow("解码器", decoder?.let { "$it · $actualKind" } ?: "—"))
+        if (fallback) {
+            add(PlayerInfoRow("策略与实际", "强制硬解 · 实际软解（已回落）"))
+        }
+        add(PlayerInfoRow("当前码率", formatBitrate(info?.currentBitrateBps ?: -1L)))
+        add(PlayerInfoRow("平均码率", formatBitrate(info?.averageBitrateBps ?: -1L)))
+        add(PlayerInfoRow("缓冲时长", formatDurationMs(info?.bufferedMs ?: -1L)))
+        add(PlayerInfoRow("丢帧", formatFrameCount(info?.droppedFrames ?: -1L)))
+        add(PlayerInfoRow("已解码帧", formatFrameCount(info?.decodedFrames ?: -1L)))
+        add(PlayerInfoRow("首帧耗时", formatFirstFrame(info?.firstFrameMs ?: -1L)))
+        add(PlayerInfoRow("错误码", info?.let { formatErrorCode(it.errorCode) } ?: "—"))
+    }
 }
 
 /** TV 端播放信息面板：每行可聚焦，方向键逐项移动，列表随焦点自动滚动。 */
 @Composable
 private fun PlayerInfoPanel(
     info: PlayerPlaybackInfo?,
+    decoderStrategy: DecoderStrategy,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = remember(info) { playerInfoRows(info) }
+    val rows = remember(info, decoderStrategy) { playerInfoRows(info, decoderStrategy) }
     val listState = rememberLazyListState()
     val firstFocus = remember { FocusRequester() }
     Surface(
@@ -1349,7 +1364,9 @@ private fun PlayerChromeMobilePanel(
                     }
                 }
                 PlayerPanel.Info -> {
-                    val infoRows = remember(data.playbackInfo) { playerInfoRows(data.playbackInfo) }
+                    val infoRows = remember(data.playbackInfo, data.decoderStrategy) {
+                        playerInfoRows(data.playbackInfo, data.decoderStrategy)
+                    }
                     // 信息行可能超出一屏：限制高度并允许滚动，不挤压上方的进度与功能行。
                     val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.38f).dp
                     Column(

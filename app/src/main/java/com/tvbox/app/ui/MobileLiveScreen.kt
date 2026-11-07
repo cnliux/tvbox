@@ -665,6 +665,7 @@ private fun MobileLivePlayerScreen(
     val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
     BindPlaybackSession(session, player)
+    HardwareDecoderFallbackToast()
     // 解码策略变化会重建播放器：重连当前频道/线路时提示一次。
     var playerBuilt by remember { mutableStateOf(false) }
     LaunchedEffect(player) {
@@ -882,6 +883,7 @@ private fun MobileLivePlayerScreen(
                         resizeMode = videoScaleMode,
                         buffering = playbackHost.snapshot.isBuffering,
                         playbackInfo = diagnostics?.info,
+                        decoderStrategy = state.appSettings.decoderStrategy,
                         playbackUrls = listOf(
                             PlayerChromeUrl(
                                 label = "实际播放地址（播放列表线路）",

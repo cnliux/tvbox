@@ -180,6 +180,7 @@ private fun LivePlayerScreen(
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     val blockedRetryFocus = remember { FocusRequester() }
     BindPlaybackSession(session, player)
+    HardwareDecoderFallbackToast()
     val bufferMonitor = remember {
         PlaybackBufferMonitor(
             continuousBufferThresholdMs = LIVE_CONTINUOUS_BUFFER_THRESHOLD_MS,
@@ -805,6 +806,7 @@ private fun LivePlayerScreen(
                 resizeMode = videoScaleMode,
                 buffering = playbackHost.snapshot.isBuffering,
                 playbackInfo = diagnostics?.info,
+                decoderStrategy = state.appSettings.decoderStrategy,
                 playbackUrls = listOf(
                     PlayerChromeUrl(
                         label = "实际播放地址（播放列表线路）",

@@ -2,10 +2,16 @@ package com.tvbox.app.ui
 
 import android.content.Context
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -16,6 +22,7 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import com.tvbox.app.domain.DecoderStrategy
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 安全释放 ExoPlayer：先 pause + removeListener，再 release。
@@ -76,22 +83,62 @@ internal fun buildManagedExoPlayer(
         .apply { playWhenReady = true }
 }
 
+/** 「强制硬解」档回落到软件解码的一次性事件；只含编码类型，不含地址。 */
+internal data class HardwareDecoderFallbackEvent(val mimeType: String, val sequence: Long)
+
+/**
+ * 强制硬解回落的全局通知：选择器在播放线程触发，播放页在主线程消费。
+ * 每次重建播放器只上报一次，避免音频/视频多个编码重复提示。
+ */
+internal object HardwareDecoderFallbackNotice {
+    var event: HardwareDecoderFallbackEvent? by mutableStateOf(null)
+        private set
+
+    private var sequence = 0L
+
+    fun report(mimeType: String) {
+        sequence += 1
+        event = HardwareDecoderFallbackEvent(mimeType, sequence)
+    }
+}
+
 /**
  * 强制硬解：只返回 `hardwareAccelerated` 的解码器。
- * 设备确实没有对应硬解时回退默认候选，避免选择器返回空列表导致取流直接失败。
+ * 设备确实没有对应硬解时回退默认候选，避免选择器返回空列表导致取流直接失败；
+ * 但回落必须可见：记录一次脱敏日志，并通过 [HardwareDecoderFallbackNotice] 让播放页提示。
  */
 @OptIn(UnstableApi::class)
-private fun hardwareOnlyMediaCodecSelector(): MediaCodecSelector =
-    MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
+private fun hardwareOnlyMediaCodecSelector(): MediaCodecSelector {
+    val reported = AtomicBoolean(false)
+    return MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
         val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunneling)
         val hardware = all.filter { it.hardwareAccelerated }
         if (hardware.isNotEmpty()) {
             hardware
         } else {
-            android.util.Log.w("TVBoxPlayer", "强制硬解：$mimeType 无可用硬件解码器，已回退默认解码器")
+            if (reported.compareAndSet(false, true)) {
+                android.util.Log.w("TVBoxPlayer", "强制硬解回落：$mimeType 无可用硬件解码器")
+                HardwareDecoderFallbackNotice.report(mimeType)
+            }
             all
         }
     }
+}
+
+/** 四个播放页共用的一次性提示：策略与实际不一致时不静默。 */
+@Composable
+internal fun HardwareDecoderFallbackToast() {
+    val context = LocalContext.current.applicationContext
+    val event = HardwareDecoderFallbackNotice.event
+    var lastSequence by remember { mutableLongStateOf(event?.sequence ?: 0L) }
+    LaunchedEffect(event?.sequence) {
+        val current = event ?: return@LaunchedEffect
+        if (current.sequence > lastSequence) {
+            lastSequence = current.sequence
+            Toast.makeText(context, "该编码无可用硬件解码器，已回落到软解", Toast.LENGTH_LONG).show()
+        }
+    }
+}
 
 /**
  * 统一的播放器持有：进入组合时创建，离开组合时安全释放。

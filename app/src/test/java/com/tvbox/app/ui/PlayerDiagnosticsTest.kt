@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.domain.DecoderStrategy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -66,8 +67,18 @@ class PlayerDiagnosticsTest {
     @Test
     fun infoRowsUsePlaceholderWhenSnapshotMissing() {
         val rows = playerInfoRows(null)
-        assertEquals(9, rows.size)
-        assertTrue(rows.all { it.value == "—" })
+        assertEquals(10, rows.size)
+        assertEquals("自动", rows.first().value)
+        assertTrue(rows.drop(1).all { it.value == "—" })
+    }
+
+    @Test
+    fun infoRowsMarkHardwareOnlyFallback() {
+        val info = PlayerPlaybackInfo(decoderName = "c2.android.avc.decoder")
+        val rows = playerInfoRows(info, DecoderStrategy.HardwareOnly).associate { it.label to it.value }
+        assertEquals("强制硬解", rows["解码策略"])
+        assertEquals("c2.android.avc.decoder · 软解", rows["解码器"])
+        assertEquals("强制硬解 · 实际软解（已回落）", rows["策略与实际"])
     }
 
     @Test
