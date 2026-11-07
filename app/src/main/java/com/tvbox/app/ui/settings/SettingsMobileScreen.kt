@@ -166,6 +166,8 @@ private fun SettingsMobileLanding(
                     color = TvColors.TextPrimary,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             },
             colors = TopAppBarDefaults.topAppBarColors(
@@ -361,6 +363,8 @@ private fun SettingsMobileDetail(
                     color = TvColors.TextPrimary,
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             },
             navigationIcon = {

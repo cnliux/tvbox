@@ -721,7 +721,8 @@ private fun MobileProgressRow(
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Text(
             text = formatPlayerTime(preview?.toLong() ?: positionMs),
-            modifier = Modifier.width(52.dp),
+            // 固定 52dp 在 1.36× 字号下会截断 HH:MM:SS，改为最小宽度让控件随字号伸展。
+            modifier = Modifier.widthIn(min = 52.dp),
             style = timeStyle,
             color = Color.White.copy(alpha = 0.85f),
             maxLines = 1,
@@ -765,7 +766,7 @@ private fun MobileProgressRow(
         )
         Text(
             text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
-            modifier = Modifier.width(52.dp),
+            modifier = Modifier.widthIn(min = 52.dp),
             style = timeStyle,
             color = Color.White.copy(alpha = 0.85f),
             maxLines = 1,

@@ -146,7 +146,10 @@ fun DetailScreen(
                                             SmallMeta(movie.remarks)
                                         }
                                         Spacer(modifier = Modifier.height(8.dp))
-                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        ) {
                                             Button(
                                                 onClick = {
                                                     actions.openPlayer(

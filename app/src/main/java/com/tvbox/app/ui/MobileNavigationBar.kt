@@ -117,7 +117,8 @@ fun MobileNavWrapper(
                     // edge-to-edge 下吸收系统导航栏高度，避免三键/手势条遮挡导航内容。
                     modifier = Modifier.fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.navigationBars)
-                        .height(56.dp),
+                        // 最小 56dp：大字号下标签行高增加，固定高度会裁切。
+                        .heightIn(min = 56.dp),
                     tonalElevation = 0.dp,
                     containerColor = Color(0xFF1A1A1A),
                 ) {
@@ -133,6 +134,8 @@ fun MobileNavWrapper(
                                     fontSize = 12.sp,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     color = if (isSelected) selectedColor else Color.White.copy(alpha = 0.6f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             },
                             selected = isSelected,

@@ -849,7 +849,7 @@ internal fun MobileSearchScreen(
                             onClick = { submit() },
                             enabled = !state.searchLoading,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(48.dp),
+                            modifier = Modifier.heightIn(min = 48.dp),
                         ) {
                             Text(if (state.searchLoading) "搜索中…" else "搜索")
                         }
