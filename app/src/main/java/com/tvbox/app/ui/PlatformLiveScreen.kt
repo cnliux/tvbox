@@ -1,6 +1,5 @@
 package com.tvbox.app.ui
 
-import android.view.KeyEvent as AndroidKeyEvent
 import android.view.ViewGroup
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -58,10 +57,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -1081,59 +1076,43 @@ private fun PlatformLivePlayerScreen(
         runCatching { lineFocusRequester.requestFocus() }
     }
 
+    // 遥控键位收敛到共享 PlayerRoomKeyMap：页面只提供房间/候选/线路浮层语义。
+    val roomKeyMap = remember {
+        PlayerRoomKeyMap(
+            PlayerRoomKeyMap.Callbacks(
+                isLineControlVisible = { false },
+                onPreviousRoom = {},
+                onNextRoom = {},
+                onPreviousCandidate = {},
+                onNextCandidate = {},
+                onOpenLine = {},
+                onReconnect = {},
+            ),
+        )
+    }
+    roomKeyMap.callbacks = PlayerRoomKeyMap.Callbacks(
+        isLineControlVisible = { showLineControl },
+        onPreviousRoom = { actions.playPreviousPlatformLiveRoom() },
+        onNextRoom = { actions.playNextPlatformLiveRoom() },
+        onPreviousCandidate = { actions.playPreviousPlatformLiveCandidate() },
+        onNextCandidate = { actions.playNextPlatformLiveCandidate() },
+        onOpenLine = {
+            if (session.interrupted && player != null) {
+                session.play(player)
+                actions.reconnectPlatformLiveChannel()
+            } else {
+                showLineControl = true
+            }
+        },
+        onReconnect = { actions.reconnectPlatformLiveChannel() },
+    )
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(playerFocusRequester)
-            .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
-                // 候选线路浮层打开时，方向键/确认键全部交给浮层内的候选行处理。
-                if (showLineControl) return@onPreviewKeyEvent false
-                when (event.nativeKeyEvent.keyCode) {
-                    AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                        actions.playPreviousPlatformLiveRoom()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                        actions.playNextPlatformLiveRoom()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                        actions.playPreviousPlatformLiveCandidate()
-                        chrome.bump()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                        actions.playNextPlatformLiveCandidate()
-                        chrome.bump()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER,
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                    -> {
-                        if (session.interrupted && player != null) {
-                            session.play(player)
-                            actions.reconnectPlatformLiveChannel()
-                        } else {
-                            showLineControl = true
-                        }
-                        chrome.bump()
-                        true
-                    }
-                    // 强制重连：重新解析当前直播间地址并重建 FLV 续流代理，
-                    // 用于代理端口异常/长时间无画面但未触发自动恢复的场景。
-                    AndroidKeyEvent.KEYCODE_MENU,
-                    AndroidKeyEvent.KEYCODE_INFO,
-                    -> {
-                        actions.reconnectPlatformLiveChannel()
-                        chrome.bump()
-                        true
-                    }
-                    else -> false
-                }
-            }
+            .playerKeyInput(roomKeyMap, chrome)
             .focusable(),
     ) {
         if (player != null) {
