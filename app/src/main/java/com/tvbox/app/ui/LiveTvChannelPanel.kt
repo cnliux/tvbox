@@ -85,6 +85,10 @@ internal fun LiveChannelOverlayPanel(
     val channels = state.liveChannels
     val groups = remember(channels) { listOf(LIVE_ALL_GROUP) + channels.map { it.groupName }.distinct() }
 
+    // 浮层在场时注册局部返回处理器：晚于页面级处理器加入 OnBackPressedDispatcher，
+    // 一次 BACK 只收起浮层，不再透传到 LiveScreen 的退出逻辑。
+    BackHandler { onClose() }
+
     // 打开浮层时落在当前播放频道所在分组，避免用户先翻一遍分组。
     var groupIndex by remember {
         mutableIntStateOf(
