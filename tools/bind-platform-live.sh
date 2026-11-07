@@ -58,10 +58,12 @@ fi
 echo "gomobile target=$BIND_TARGETS"
 
 mkdir -p "$(dirname "$OUTPUT_AAR")"
+# Android 15 起要求 so 的 LOAD 段按 16KB 页对齐；Go 外部链接器默认 4KB。
+# -extldflags 让 NDK lld 按 16384 生成 p_align，llvm-strip 不会改变段对齐。
 gomobile bind \
     -target="$BIND_TARGETS" \
     -androidapi 24 \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -extldflags=-Wl,-z,max-page-size=16384" \
     -trimpath \
     -o "$OUTPUT_AAR" \
     .

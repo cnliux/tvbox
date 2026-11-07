@@ -409,27 +409,6 @@
     </issue>
 
     <issue
-        id="Aligned16KB"
-        message="The native library `arm64-v8a/libgojni.so` (from `__local_aars__:G:\git\tvbox\app\libs\platformlive.aar:unspecified`) is not 16 KB aligned">
-        <location
-            file="$GRADLE_USER_HOME/caches/9.4.1/transforms/3f948657ae923c2f2c46a9b64050a1c5/transformed/platformlive/jni/arm64-v8a/libgojni.so"/>
-    </issue>
-
-    <issue
-        id="Aligned16KB"
-        message="The native library `arm64-v8a/libgojni.so` (from `__local_aars__:G:\git\tvbox\app\libs\platformlive.aar:unspecified`) is not 16 KB aligned">
-        <location
-            file="$GRADLE_USER_HOME/caches/9.4.1/transforms/3f948657ae923c2f2c46a9b64050a1c5/transformed/platformlive/jni/arm64-v8a/libgojni.so"/>
-    </issue>
-
-    <issue
-        id="Aligned16KB"
-        message="The native library `arm64-v8a/libgojni.so` (from `__local_aars__:G:\git\tvbox\app\libs\platformlive.aar:unspecified`) is not 16 KB aligned">
-        <location
-            file="$GRADLE_USER_HOME/caches/9.4.1/transforms/3f948657ae923c2f2c46a9b64050a1c5/transformed/platformlive/jni/arm64-v8a/libgojni.so"/>
-    </issue>
-
-    <issue
         id="DiscouragedApi"
         message="Fixed screen orientations will be ignored in most cases, starting from Android 16. Android is moving toward a model where apps are expected to adapt to various orientations, display sizes, and aspect ratios."
         errorLine1="            android:screenOrientation=&quot;landscape&quot;"
