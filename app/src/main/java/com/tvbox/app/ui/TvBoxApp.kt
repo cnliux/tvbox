@@ -538,6 +538,7 @@ private fun HomeScreen(
                         }
                     },
                     onContentFocused = { if (!movingToNavigation) forceNavigationVisible = false },
+                    onDismissNotice = actions::dismissHomeNotice,
                     showSectionHeader = cinemaTheme,
                     modifier = Modifier.weight(1f),
                 )
@@ -1109,8 +1110,14 @@ private fun MovieGrid(
     onContinue: (com.tvbox.app.domain.WatchHistoryItem) -> Unit,
     onMoveToNavigation: () -> Unit,
     onContentFocused: () -> Unit,
+    onDismissNotice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (state.appSettings.homeContinueWatchingEnabled && !state.historyLoaded) {
+        // 先等历史读完再渲染信息流：否则「继续观看」晚到时会把下方内容整体下移。
+        LoadingState(text = "正在准备首页内容…", modifier = modifier)
+        return
+    }
     var loadMoreFocused by remember { mutableStateOf(false) }
     val contextKey = "${state.selectedApiLineId}:${state.homeFeedMode}:${state.selectedParentCategoryId}:${state.selectedCategoryId}"
     var savedContext by rememberSaveable { mutableStateOf(contextKey) }
@@ -1209,12 +1216,20 @@ private fun MovieGrid(
                         color = TvColors.SurfaceRaised,
                         shape = RoundedCornerShape(6.dp),
                     ) {
-                        Text(
-                            text = notice,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                            color = TvColors.TextSecondary,
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = notice,
+                                modifier = Modifier.weight(1f).padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
+                                color = TvColors.TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                            )
+                            TextButton(
+                                onClick = onDismissNotice,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) {
+                                Text("关闭")
+                            }
+                        }
                     }
                 }
             }
@@ -1290,6 +1305,11 @@ private fun MobileHomeFeed(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    if (state.appSettings.homeContinueWatchingEnabled && !state.historyLoaded) {
+        // 历史尚未读完时整体延迟渲染，避免「继续观看」行出现/消失造成列表上下跳。
+        LoadingState(text = "正在准备首页内容…")
+        return
+    }
     val movieGridState = rememberLazyGridState()
     val contextKey = "${state.selectedApiLineId}:${state.homeFeedMode}:${state.selectedParentCategoryId}:${state.selectedCategoryId}"
     var savedContext by rememberSaveable { mutableStateOf(contextKey) }
@@ -1405,14 +1425,22 @@ private fun MobileHomeFeed(
                 color = TvColors.SurfaceRaised,
                 shape = RoundedCornerShape(6.dp),
             ) {
-                Text(
-                    text = notice,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    color = TvColors.TextSecondary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = notice,
+                        modifier = Modifier.weight(1f).padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
+                        color = TvColors.TextSecondary,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    TextButton(
+                        onClick = actions::dismissHomeNotice,
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) {
+                        Text("关闭")
+                    }
+                }
             }
         }
         // 影片列表
