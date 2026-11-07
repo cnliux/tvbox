@@ -84,7 +84,12 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.data.FlvContinuityProxy
 import platformlive.FlvProxyHandle
+import com.tvbox.app.domain.PlaybackWatchdog
+import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.roomVideoScaleKey
+import com.tvbox.app.domain.resolveVideoScaleMode
+import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
@@ -893,10 +898,13 @@ private fun PlatformLivePlayerScreen(
     )
     var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
     var badgeVisible by remember { mutableStateOf(true) }
-    // 首帧是否已经出来过：用于区分"起播慢"和"播放中断流"，避免首帧前 5 秒误判卡死。
-    var hasReportedReady by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf(false) }
-    // 手机"全屏"：裁剪铺满屏幕，消除横屏直播流的上下黑边。
-    var fullscreenZoom by remember { mutableStateOf(false) }
+    // 共享看门狗：首帧超时与出帧后卡死同一套判定；候选/地址变化时重建计时。
+    var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex) {
+        mutableStateOf(PlaybackWatchdog())
+    }
+    // 手机"全屏"：按房间记忆裁剪铺满；未记忆时回退设置里的全局默认值。
+    val scaleContentKey = roomVideoScaleKey(room.site, room.id.toString())
+    val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
 
     DisposableEffect(player) {
         if (player == null) {
@@ -913,8 +921,11 @@ private fun PlatformLivePlayerScreen(
                     // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
                     playbackError = "播放失败，正在尝试恢复"
                     badgeVisible = true
-                    hasReportedReady = false
                     actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Error)
+                }
+
+                override fun onRenderedFirstFrame() {
+                    playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
                 }
 
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -930,7 +941,6 @@ private fun PlatformLivePlayerScreen(
                         "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(playbackUrl)}"
                     )
                     if (playbackState == Player.STATE_READY) {
-                        hasReportedReady = true
                         // 画面恢复即清除失败提示：重解析得到同一地址时 effect 不会重跑，避免提示常驻。
                         playbackError = null
                         // 画面恢复即认为当前 CDN 健康，清零自动恢复计数，避免周期性关流被累积成"换线路"。
@@ -954,6 +964,7 @@ private fun PlatformLivePlayerScreen(
         )
         playbackError = null
         badgeVisible = true
+        playbackWatchdog.onSourceRequested(System.currentTimeMillis())
         player.setMediaItem(MediaItem.fromUri(targetUrl))
         player.prepare()
         session.preparePlayback(player)
@@ -981,34 +992,42 @@ private fun PlatformLivePlayerScreen(
 
     LaunchedEffect(playbackHost?.snapshot?.playbackState, player, playbackUrl, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
-        when (playbackHost?.snapshot?.playbackState ?: Player.STATE_IDLE) {
-            Player.STATE_ENDED -> {
-                // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
-                // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。
-                android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
-                hasReportedReady = false
-                actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Ended)
-            }
-            Player.STATE_BUFFERING -> {
-                if (!hasReportedReady) {
-                    // 首帧之前：仅等待，给足起播时间；真正连不上会由 onPlayerError 兜底。
-                    android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【缓冲中】room=${room.id}, 首帧未出，等待 ${PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS}ms")
-                    delay(PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS)
-                    if (player.playbackState == Player.STATE_BUFFERING) {
-                        android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【起播超时】room=${room.id}, 首帧始终未出，走线路容错")
-                        playbackError = "直播连接较慢，正在重新获取播放地址"
-                        badgeVisible = true
-                        actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
+        if (playbackHost?.snapshot?.playbackState == Player.STATE_ENDED) {
+            // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
+            // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。
+            android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
+            actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Ended)
+        }
+    }
+
+    // 共享看门狗：覆盖「取流/建源 → 首帧」整段与出帧后卡死；平台直播仍使用自己的 FLV 续流代理。
+    LaunchedEffect(player, playbackUrl, lifecycleOwner, playbackWatchdog) {
+        if (player == null) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            playbackWatchdog.onPaused()
+            while (true) {
+                delay(1_000L)
+                val now = System.currentTimeMillis()
+                val failure = playbackWatchdog.checkFirstFrame(
+                    nowMs = now,
+                    playWhenReady = player.playWhenReady && session.canPlay,
+                ) ?: playbackWatchdog.onProgressSample(
+                    isPlaying = player.playWhenReady,
+                    positionMs = player.currentPosition,
+                    nowMs = now,
+                )
+                if (failure != null) {
+                    android.util.Log.w(
+                        PLATFORM_LIVE_LOG_TAG,
+                        "【看门狗触发】kind=${failure.kind}, room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}, elapsedMs=${failure.elapsedMs}",
+                    )
+                    playbackError = when (failure.kind) {
+                        PlaybackFailureKind.FirstFrameTimeout -> "直播连接较慢，正在重新获取播放地址"
+                        PlaybackFailureKind.Stalled -> "直播连接中断，正在重新获取播放地址"
+                        PlaybackFailureKind.SourceFailed -> "播放失败，正在尝试恢复"
                     }
-                } else {
-                    android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【缓冲中】room=${room.id}, 播放中断流，等待 ${PLATFORM_LIVE_STALL_TIMEOUT_MS}ms")
-                    delay(PLATFORM_LIVE_STALL_TIMEOUT_MS)
-                    if (player.playbackState == Player.STATE_BUFFERING) {
-                        android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【缓冲超时】room=${room.id}, 判定卡住，走线路容错")
-                        playbackError = "直播连接中断，正在重新获取播放地址"
-                        badgeVisible = true
-                        actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
-                    }
+                    badgeVisible = true
+                    actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
                 }
             }
         }
@@ -1098,27 +1117,7 @@ private fun PlatformLivePlayerScreen(
             .focusable(),
     ) {
         if (player != null) {
-            AndroidView(
-                factory = { viewContext ->
-                    PlayerView(viewContext).apply {
-                        this.player = player
-                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        useController = false
-                        setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                    }
-                },
-                update = {
-                    it.player = player
-                    it.resizeMode = if (fullscreenZoom) {
-                        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                    } else {
-                        androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-            )
+            PlayerSurface(player = player, resizeMode = videoScaleMode)
         }
         if (isMobile) {
             // 点击画面切换控制条显隐；覆盖层位于按钮与角标之下，不拦截它们的手势。
@@ -1160,8 +1159,15 @@ private fun PlatformLivePlayerScreen(
                     onClick = { actions.goBack() },
                 )
                 ControlButton(
-                    text = if (fullscreenZoom) "还原" else "全屏",
-                    onClick = { fullscreenZoom = !fullscreenZoom },
+                    text = if (videoScaleMode == VideoScaleMode.Zoom) "还原" else "全屏",
+                    onClick = {
+                        val next = if (videoScaleMode == VideoScaleMode.Zoom) {
+                            VideoScaleMode.Fit
+                        } else {
+                            VideoScaleMode.Zoom
+                        }
+                        actions.updateContentVideoScaleMode(scaleContentKey, next)
+                    },
                 )
                 ControlButton(
                     text = if (landscapeRequested) "竖屏" else "横屏",
