@@ -48,6 +48,31 @@ class LogRedactionTest {
     }
 
     @Test
+    fun `异常文本里的地址只保留协议与主机`() {
+        val raw = "Source error: https://cdn.example.com/live/cctv1.m3u8?token=secret (PlaybackException)"
+        val safe = logSafeText(raw)
+        assertFalse(safe.contains("token"))
+        assertFalse(safe.contains("cctv1.m3u8"))
+        assertEquals("Source error: https://cdn.example.com (PlaybackException)", safe)
+    }
+
+    @Test
+    fun `文本中多个地址逐处脱敏并保留标点`() {
+        val raw = "a http://a.example.com:8080/x?t=1, b rtmp://b.example.com/live/1;"
+        val safe = logSafeText(raw)
+        assertFalse(safe.contains("/x?t=1"))
+        assertFalse(safe.contains("/live/1"))
+        assertTrue(safe.contains("http://a.example.com:8080,"))
+        assertTrue(safe.contains("rtmp://b.example.com;"))
+    }
+
+    @Test
+    fun `无地址的异常文本保持原样`() {
+        assertEquals("播放器错误：解码失败", logSafeText("播放器错误：解码失败"))
+        assertEquals("<空>", logSafeText(null))
+    }
+
+    @Test
     fun `请求头只输出名称`() {
         assertEquals(
             "Cookie,Referer",

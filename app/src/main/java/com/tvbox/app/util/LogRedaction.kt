@@ -24,6 +24,29 @@ internal fun logSafeUrl(raw: String?): String {
     }
 }
 
+/**
+ * 日志脱敏：处理整段文本（异常 message、第三方报错等）里夹杂的地址。
+ *
+ * ExoPlayer / OkHttp 的异常文本经常把完整 URL 写进 message，仅对显式的 `url=` 字段脱敏
+ * 仍会从 `msg=` 或 `cause=` 漏出路径与 query，因此文本里出现的地址逐处替换为协议 + 主机。
+ */
+internal fun logSafeText(raw: String?): String {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return "<空>"
+    return URL_IN_TEXT_PATTERN.replace(value) { match ->
+        val token = match.value
+        // 句末标点/括号不属于地址本身，替换后原样保留。
+        val trailing = token.takeLastWhile { it in TRAILING_PUNCTUATION }
+        val core = token.dropLast(trailing.length)
+        logSafeUrl(core) + trailing
+    }
+}
+
+private val URL_IN_TEXT_PATTERN =
+    Regex("""[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>，。；：、）】]+""")
+
+private const val TRAILING_PUNCTUATION = ".,;:!?)]}>"
+
 /** 日志里输出请求头时只列名称，值可能含 Referer（完整地址）或 Cookie。 */
 internal fun logSafeHeaderNames(headers: Map<String, String>?): String =
     headers?.keys?.sorted()?.joinToString(separator = ",") ?: "无"
