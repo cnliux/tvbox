@@ -372,23 +372,35 @@ private fun MobileLiveListScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                ) {
                     Text(
-                        text = if (state.liveError != null) "暂无可用线路" else "没有可用直播频道",
-                        color = Color.White.copy(alpha = 0.8f),
-                        fontSize = 14.sp,
+                        text = if (state.liveError != null) "直播源加载失败" else "没有可用直播频道",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "重试",
-                        color = Color.White,
-                        fontSize = 13.sp,
+                        text = if (state.liveError != null) "请检查网络，或切换其他直播源后重试" else "可在设置中添加或恢复直播源",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Box(
                         modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(24.dp))
                             .background(LiveAccent)
                             .clickable { actions.refreshLive() }
-                            .padding(horizontal = 24.dp, vertical = 8.dp),
-                    )
+                            .padding(horizontal = 28.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("重试", color = Color.White, fontSize = 13.sp)
+                    }
                 }
             }
             filtered.isEmpty() -> Box(
@@ -396,9 +408,11 @@ private fun MobileLiveListScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("📺", fontSize = 30.sp, color = Color.White.copy(alpha = 0.3f))
+                    Text("📺", fontSize = 30.sp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("该分组暂无频道", color = Color.White.copy(alpha = 0.4f), fontSize = 13.sp)
+                    Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
                 }
             }
             else -> LazyColumn(

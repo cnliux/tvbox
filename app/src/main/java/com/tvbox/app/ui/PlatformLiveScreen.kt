@@ -88,6 +88,7 @@ import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
+import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
@@ -406,7 +407,13 @@ private fun PlatformLiveBrowseSurface(
         when {
             loading -> LoadingState(text = "正在加载$title", modifier = Modifier.padding(padding))
             error != null -> ErrorState(message = error, onRetry = onRetry, modifier = Modifier.padding(padding))
-            isEmpty -> ErrorState(message = emptyMessage, onRetry = onRetry, modifier = Modifier.padding(padding))
+            isEmpty -> EmptyState(
+                title = emptyMessage,
+                subtitle = "可稍后刷新，或切换其他分类看看",
+                actionLabel = "刷新",
+                onAction = onRetry,
+                modifier = Modifier.padding(padding),
+            )
             else -> {
                 val resolvedGridState = gridState ?: rememberLazyGridState()
                 val headerVisible by remember {
