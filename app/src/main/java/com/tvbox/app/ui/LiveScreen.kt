@@ -78,6 +78,7 @@ import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -161,6 +162,8 @@ private fun LivePlayerScreen(
     // 缓冲标记必须走 Compose 状态：直接读 player.playbackState 不会触发重组，
     // 加载环会一直挂在画面上。由播放器回调写入。
     var playerBuffering by remember { mutableStateOf(false) }
+    // 线路兜底全部用尽后的兜底提示：避免黑屏时加载环无限旋转、用户没有可操作的出口。
+    var streamBlocked by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
@@ -170,6 +173,7 @@ private fun LivePlayerScreen(
     }
     val player = rememberManagedExoPlayer()
     val playerFocusRequester = remember { FocusRequester() }
+    val blockedRetryFocus = remember { FocusRequester() }
     BindPlaybackSession(session, player)
     val bufferMonitor = remember {
         PlaybackBufferMonitor(
@@ -286,6 +290,10 @@ private fun LivePlayerScreen(
         }
         val result = actions.advanceLiveLineAfterFailure(reason)
         android.util.Log.i(LIVE_LOG_TAG, "【自动容错】advanceLiveLineAfterFailure($reason) result=$result")
+        if (!result) {
+            // 所有线路都试过仍无可用流：停止无限缓冲提示，交给用户选择重试或换台。
+            streamBlocked = true
+        }
     }
 
     fun handleBufferDecision(decision: PlaybackBufferDecision?) {
@@ -344,9 +352,25 @@ private fun LivePlayerScreen(
                 }
             }
 
+            override fun onRenderedFirstFrame() {
+                // 与 STATE_READY 区分：READY 只代表解码器可接收数据，出帧才是真正有画面。
+                android.util.Log.i(
+                    LIVE_LOG_TAG,
+                    "【首帧渲染】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=$latestLineUrl.value"
+                )
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                android.util.Log.i(
+                    LIVE_LOG_TAG,
+                    "【视频尺寸】${videoSize.width}x${videoSize.height}, pixelRatio=${videoSize.pixelWidthHeightRatio}"
+                )
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // 加载环走 Compose 状态：直接读 player.playbackState 不会触发重组。
                 playerBuffering = playbackState == Player.STATE_BUFFERING
+                if (playbackState == Player.STATE_READY) streamBlocked = false
                 val stateName = when (playbackState) {
                     Player.STATE_IDLE -> "IDLE"
                     Player.STATE_BUFFERING -> "BUFFERING"
@@ -399,11 +423,19 @@ private fun LivePlayerScreen(
         }
     }
 
-    LaunchedEffect(currentLine.url, state.liveReconnectNonce) {
+    LaunchedEffect(
+        state.live.channelIndex,
+        state.liveLineIndex,
+        currentLine.url,
+        state.liveReconnectNonce,
+    ) {
+        // 频道/线路身份也必须参与 key：不同频道或不同线路可能共用同一个 URL
+        // （同一地址配不同 Referer），只按 URL 比较会漏掉重新 setMediaSource，表现为换台后黑屏。
         android.util.Log.d(
             LIVE_LOG_TAG,
             "【切换线路】channel=${currentChannel.name}, group=${currentChannel.groupName}, lineIndex=${state.liveLineIndex}, protocol=${currentLine.protocolHint}, headers=${currentLine.headers.keys}, nonce=${state.liveReconnectNonce}"
         )
+        streamBlocked = false
         bufferMonitor.onMediaChanged()
         playbackWatchdog.onMediaChanged()
         bufferingLineUrl = null
@@ -492,6 +524,15 @@ private fun LivePlayerScreen(
 
     LaunchedEffect(Unit) {
         runCatching { playerFocusRequester.requestFocus() }
+    }
+
+    // 线路兜底用尽后把遥控焦点移到「重试」，恢复后交还播放器。
+    LaunchedEffect(streamBlocked) {
+        if (!isTelevision) return@LaunchedEffect
+        runCatching {
+            if (streamBlocked) blockedRetryFocus.requestFocus()
+            else playerFocusRequester.requestFocus()
+        }
     }
 
     // ViewModel 侧的容错/订阅切换结果通过 liveNotice 下发，这里统一转成轻提示并消费。
@@ -744,11 +785,52 @@ private fun LivePlayerScreen(
             modifier = Modifier.fillMaxSize(),
         )
         // 缓冲/加载中：红色进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
-        if (playerBuffering && !session.interrupted) {
+        if (playerBuffering && !session.interrupted && !streamBlocked) {
             LiveLoadingState(
                 text = "正在加载 ${currentChannel.name}...",
                 modifier = Modifier.align(Alignment.Center),
             )
+        }
+        if (streamBlocked && !session.interrupted) {
+            // 线路兜底用尽：不再让加载环无限转，给出可操作的出口。
+            Column(
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 28.dp, vertical = 20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "当前频道所有线路均不可用",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    "可重试当前线路，或切换到下一台",
+                    color = Color.White.copy(alpha = 0.74f),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    ControlButton(
+                        "重试",
+                        {
+                            streamBlocked = false
+                            actions.reconnectLiveLine()
+                        },
+                        Modifier.focusRequester(blockedRetryFocus),
+                        primary = true,
+                    )
+                    ControlButton(
+                        "下一台",
+                        {
+                            streamBlocked = false
+                            actions.playNextLiveChannel()
+                        },
+                    )
+                }
+            }
         }
         if (session.interrupted) {
             ControlButton("继续播放", {

@@ -738,7 +738,8 @@ private fun MobileLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(currentLine.url, state.liveReconnectNonce) {
+    LaunchedEffect(state.live.channelIndex, state.liveLineIndex, currentLine.url, state.liveReconnectNonce) {
+        // 不同频道/线路可能共用同一 URL（同地址不同 Referer），只按 URL 比较会漏掉重新取流。
         android.util.Log.d(
             MOBILE_LIVE_LOG_TAG,
             "【切换线路】channel=${channel.name} line=$lineIndex protocol=${currentLine.protocolHint} nonce=${state.liveReconnectNonce}",
