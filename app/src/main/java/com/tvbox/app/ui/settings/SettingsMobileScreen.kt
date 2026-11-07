@@ -5,8 +5,10 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,11 +18,13 @@ import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -915,28 +919,46 @@ private fun SettingsRow(
     subtitle: String,
     trailing: @Composable () -> Unit,
 ) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // 窄屏时给 trailing 最多占一半宽度，剩余空间留给标题，选项 chips 在自身区域内换行。
+        val trailingMaxWidth = if (maxWidth < 480.dp) maxWidth * 0.52f else 320.dp
+        Row(
             modifier = Modifier
-                .size(38.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(TvColors.AccentSoft.copy(alpha = 0.6f)),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(20.dp))
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(TvColors.AccentSoft.copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    color = TvColors.TextPrimary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            Box(modifier = Modifier.widthIn(max = trailingMaxWidth)) {
+                trailing()
+            }
         }
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = TvColors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-            Text(text = subtitle, color = TvColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
-        }
-        Spacer(Modifier.width(8.dp))
-        trailing()
     }
 }
 
@@ -970,8 +992,20 @@ private fun SkipSecondsRow(
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(text = title, color = TvColors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-                Text(text = subtitle, color = TvColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+                Text(
+                    text = title,
+                    color = TvColors.TextPrimary,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Text(
                 text = "${seconds}s",
@@ -1002,24 +1036,33 @@ private fun <T> ChoiceChips(
     label: (T) -> String,
     onSelect: (T) -> Unit,
 ) {
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    // 窄屏或大字号下自动换行，避免选项被挤出屏幕右侧。
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         options.forEach { option ->
             val isSelected = option == selected
             Box(
                 modifier = Modifier
+                    .heightIn(min = 44.dp)
+                    .widthIn(max = 240.dp)
                     .clip(RoundedCornerShape(8.dp))
                     .background(
                         if (isSelected) TvColors.Accent.copy(alpha = 0.18f)
                         else TvColors.SurfaceRaised.copy(alpha = 0.6f)
                     )
                     .clickable { onSelect(option) }
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                    .padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = label(option),
                     color = if (isSelected) TvColors.Accent else TvColors.TextSecondary,
                     style = MaterialTheme.typography.labelMedium,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
