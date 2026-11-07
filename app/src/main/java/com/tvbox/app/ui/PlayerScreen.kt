@@ -132,6 +132,8 @@ fun PlayerScreen(
     // 控件状态收敛到共享层：visible / panel / 自动隐藏 / 焦点恢复 / 锁屏由 PlayerChromeState 统一管理。
     val chrome = remember(movie.id, movie.apiLineId) { PlayerChromeState() }
     val playerFocusRequester = chrome.rootFocus
+    // 播放信息只在面板打开时采样，关闭即停；采集器本身不改变播放行为。
+    val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     PlayerChromeBackHandler(
         state = chrome,
         onExit = {
@@ -863,6 +865,7 @@ fun PlayerScreen(
                 buffering = player.playbackState == Player.STATE_BUFFERING,
                 audioTracks = playerTracks.audioTracks,
                 subtitleTracks = playerTracks.subtitleTracks,
+                playbackInfo = diagnostics?.info,
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = true,
@@ -873,6 +876,7 @@ fun PlayerScreen(
                 skip = true,
                 audioTracks = true,
                 subtitleTracks = true,
+                info = true,
                 cast = canCast,
                 castLabel = if (canCast) {
                     if (castingDevice != null) "停止投屏" else "投屏"

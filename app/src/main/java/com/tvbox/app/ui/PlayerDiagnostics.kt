@@ -13,7 +13,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.analytics.PlaybackStats
 import androidx.media3.exoplayer.analytics.PlaybackStatsListener
 import kotlinx.coroutines.delay
 import java.util.Locale
@@ -164,16 +163,17 @@ internal class PlayerDiagnostics(private val player: ExoPlayer) {
 
     /** 读取当前值；只应在面板打开时按秒调用。 */
     internal fun refresh() {
-        val stats = statsListener.playbackStats ?: PlaybackStats.EMPTY
+        // PlaybackStats 尚未产生事件时保持「未知」，避免把 0 当成真实的丢帧/码率。
+        val stats = statsListener.playbackStats
         val size = player.videoSize
-        val lastFormat = stats.videoFormatHistory.lastOrNull()?.format
+        val lastFormat = stats?.videoFormatHistory?.lastOrNull()?.format
         info = PlayerPlaybackInfo(
             videoWidth = size.width.coerceAtLeast(0),
             videoHeight = size.height.coerceAtLeast(0),
             decodedFrames = decoderCounters?.renderedOutputBufferCount?.toLong() ?: -1L,
-            droppedFrames = stats.totalDroppedFrames,
+            droppedFrames = stats?.totalDroppedFrames ?: -1L,
             currentBitrateBps = lastFormat?.bitrate?.toLong() ?: -1L,
-            averageBitrateBps = stats.meanVideoFormatBitrate.toLong(),
+            averageBitrateBps = stats?.meanVideoFormatBitrate?.toLong() ?: -1L,
             bufferedMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L),
             firstFrameMs = firstFrameMs,
             decoderName = decoderName,

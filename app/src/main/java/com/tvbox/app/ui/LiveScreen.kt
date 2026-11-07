@@ -176,6 +176,8 @@ private fun LivePlayerScreen(
     // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
     val playerFocusRequester = chrome.rootFocus
+    // 播放信息只在面板打开时采样，关闭即停。
+    val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     val blockedRetryFocus = remember { FocusRequester() }
     BindPlaybackSession(session, player)
     val bufferMonitor = remember {
@@ -789,12 +791,14 @@ private fun LivePlayerScreen(
                 playing = player.playWhenReady && !session.interrupted,
                 resizeMode = videoScaleMode,
                 buffering = playbackHost.snapshot.isBuffering,
+                playbackInfo = diagnostics?.info,
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = false,
                 resize = true,
                 channel = true,
                 lines = true,
+                info = true,
                 favorite = true,
                 favoriteLabel = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
                 favoriteSelected = actions.isLiveFavorite(currentChannel),

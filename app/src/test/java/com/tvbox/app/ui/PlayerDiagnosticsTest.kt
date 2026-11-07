@@ -62,4 +62,37 @@ class PlayerDiagnosticsTest {
         assertTrue(formatted.startsWith("0x"))
         assertTrue(formatted.contains("网络"))
     }
+
+    @Test
+    fun infoRowsUsePlaceholderWhenSnapshotMissing() {
+        val rows = playerInfoRows(null)
+        assertEquals(9, rows.size)
+        assertTrue(rows.all { it.value == "—" })
+    }
+
+    @Test
+    fun infoRowsFormatKnownSnapshot() {
+        val info = PlayerPlaybackInfo(
+            videoWidth = 1920,
+            videoHeight = 1080,
+            decodedFrames = 12_345L,
+            droppedFrames = 3L,
+            currentBitrateBps = 2_400_000L,
+            averageBitrateBps = 128_000L,
+            bufferedMs = 8_000L,
+            firstFrameMs = 850L,
+            decoderName = "c2.amlogic.avc.decoder",
+            errorCode = 0,
+        )
+        val rows = playerInfoRows(info).associate { it.label to it.value }
+        assertEquals("1920 × 1080", rows["分辨率"])
+        assertEquals("c2.amlogic.avc.decoder · 硬解", rows["解码器"])
+        assertEquals("2.4 Mbps", rows["当前码率"])
+        assertEquals("128 Kbps", rows["平均码率"])
+        assertEquals("8 s", rows["缓冲时长"])
+        assertEquals("3", rows["丢帧"])
+        assertEquals("12,345", rows["已解码帧"])
+        assertEquals("850 ms", rows["首帧耗时"])
+        assertEquals("无错误", rows["错误码"])
+    }
 }

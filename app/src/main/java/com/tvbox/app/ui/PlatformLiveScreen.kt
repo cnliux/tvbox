@@ -886,6 +886,8 @@ private fun PlatformLivePlayerScreen(
     // 控件显隐/自动隐藏/返回层级统一走共享状态；平台直播保留自己的房间与候选语义。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
     val playerFocusRequester = chrome.rootFocus
+    // 播放信息只在面板打开时采样，关闭即停。
+    val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, player)
     // 候选/地址变化时重建快照，保持原 playerState 的重置语义。
@@ -1165,6 +1167,7 @@ private fun PlatformLivePlayerScreen(
                     playing = player?.let { it.playWhenReady && !session.interrupted } ?: false,
                     resizeMode = videoScaleMode,
                     buffering = playbackHost?.snapshot?.isBuffering == true,
+                    playbackInfo = diagnostics?.info,
                 ),
                 capabilities = PlayerChromeCapabilities(
                     seek = false,
@@ -1172,6 +1175,7 @@ private fun PlatformLivePlayerScreen(
                     orientation = true,
                     room = true,
                     lines = stream?.hasCandidates == true,
+                    info = true,
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {

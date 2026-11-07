@@ -678,6 +678,8 @@ private fun MobileLivePlayerScreen(
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
     // 控件显隐统一走共享状态；竖屏常驻、横屏 4 秒后自动收起。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
+    // 播放信息只在面板打开时采样，关闭即停。
+    val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     var channelBadgeVisible by remember { mutableStateOf(true) }
     LaunchedEffect(isPortrait) { if (isPortrait) chrome.bump() }
     // 按钮文案要看"播放意图"而不是 isPlaying：缓冲/起播阶段 isPlaying 仍为 false，
@@ -866,6 +868,7 @@ private fun MobileLivePlayerScreen(
                         playing = playbackHost.snapshot.playWhenReady && !session.interrupted,
                         resizeMode = videoScaleMode,
                         buffering = playbackHost.snapshot.isBuffering,
+                        playbackInfo = diagnostics?.info,
                     ),
                     capabilities = PlayerChromeCapabilities(
                         seek = false,
@@ -877,6 +880,7 @@ private fun MobileLivePlayerScreen(
                         mute = true,
                         settings = true,
                         channel = true,
+                        info = true,
                     ),
                     actions = PlayerChromeActions(
                         onToggle = {

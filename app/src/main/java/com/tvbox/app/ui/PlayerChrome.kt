@@ -12,7 +12,9 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -34,7 +36,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -89,7 +93,7 @@ import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.coroutines.delay
 
 /** 共享面板标识：TV 居中面板与手机内嵌面板共用同一套状态。 */
-internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle }
+internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle, Info }
 
 internal const val PLAYER_CHROME_AUTO_HIDE_MS = 5_000L
 internal const val PLAYER_CHROME_LIVE_AUTO_HIDE_MS = 3_000L
@@ -265,6 +269,8 @@ internal data class PlayerChromeData(
     val buffering: Boolean = false,
     val audioTracks: List<PlayerChromeTrack> = emptyList(),
     val subtitleTracks: List<PlayerChromeTrack> = emptyList(),
+    /** 播放信息面板快照；为 null 表示数据尚未就绪，面板统一显示「—」。 */
+    val playbackInfo: PlayerPlaybackInfo? = null,
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -307,7 +313,6 @@ internal data class PlayerChromeActions(
     val onOpenLinePanel: () -> Unit = {},
     val onOpenChannels: () -> Unit = {},
     val onOpenRoomPanel: () -> Unit = {},
-    val onOpenInfo: () -> Unit = {},
     val onBack: () -> Unit = {},
     val onCast: () -> Unit = {},
     val onFavorite: () -> Unit = {},
@@ -522,7 +527,7 @@ private fun PlayerChromeTv(
                     if (capabilities.subtitleTracks) ControlButton("字幕", { state.openPanel(PlayerPanel.Subtitle); actions.onInteraction() })
                     if (capabilities.resize) ControlButton("画面", { state.openPanel(PlayerPanel.Picture); actions.onInteraction() })
                     if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
-                    if (capabilities.info) ControlButton("信息", { actions.onOpenInfo(); state.interaction++ })
+                    if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info) })
                     if (capabilities.settings) ControlButton("设置", { actions.onSettings(); state.interaction++ })
                 }
             }
@@ -774,8 +779,8 @@ private fun PlayerChromeTouch(
                     if (capabilities.mute) add(ChromeFeature("音量") {
                         actions.onMute(); state.interaction++
                     })
-                    if (capabilities.info) add(ChromeFeature("信息") {
-                        actions.onOpenInfo(); state.interaction++
+                    if (capabilities.info) add(ChromeFeature("信息", state.panel == PlayerPanel.Info) {
+                        state.openPanel(PlayerPanel.Info)
                     })
                     if (capabilities.settings) add(ChromeFeature("设置") {
                         actions.onSettings(); state.interaction++
@@ -844,6 +849,14 @@ private fun PlayerChromePanel(
             outroSeconds = outroSkipSeconds,
             onIntroSkip = { onIntroSkip(it); state.interaction++ },
             onOutroSkip = { onOutroSkip(it); state.interaction++ },
+            onClose = { state.closePanel() },
+            modifier = modifier,
+        )
+        return
+    }
+    if (panel == PlayerPanel.Info) {
+        PlayerInfoPanel(
+            info = data.playbackInfo,
             onClose = { state.closePanel() },
             modifier = modifier,
         )
@@ -955,6 +968,107 @@ private fun PlayerChromePanel(
     }
 }
 
+/** 播放信息面板的一行：只读展示，不承载任何播放操作。 */
+internal data class PlayerInfoRow(val label: String, val value: String)
+
+/** 构造播放信息行：数据缺失一律显示「—」，不把哨兵值 0/-1 暴露给用户。 */
+internal fun playerInfoRows(info: PlayerPlaybackInfo?): List<PlayerInfoRow> {
+    val decoder = info?.decoderName?.takeIf { it.isNotBlank() }
+    return listOf(
+        PlayerInfoRow("分辨率", formatResolution(info?.videoWidth ?: 0, info?.videoHeight ?: 0)),
+        PlayerInfoRow("解码器", decoder?.let { "$it · ${decoderKindLabel(it)}" } ?: "—"),
+        PlayerInfoRow("当前码率", formatBitrate(info?.currentBitrateBps ?: -1L)),
+        PlayerInfoRow("平均码率", formatBitrate(info?.averageBitrateBps ?: -1L)),
+        PlayerInfoRow("缓冲时长", formatDurationMs(info?.bufferedMs ?: -1L)),
+        PlayerInfoRow("丢帧", formatFrameCount(info?.droppedFrames ?: -1L)),
+        PlayerInfoRow("已解码帧", formatFrameCount(info?.decodedFrames ?: -1L)),
+        PlayerInfoRow("首帧耗时", formatFirstFrame(info?.firstFrameMs ?: -1L)),
+        PlayerInfoRow("错误码", info?.let { formatErrorCode(it.errorCode) } ?: "—"),
+    )
+}
+
+/** TV 端播放信息面板：每行可聚焦，方向键逐项移动，列表随焦点自动滚动。 */
+@Composable
+private fun PlayerInfoPanel(
+    info: PlayerPlaybackInfo?,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val rows = remember(info) { playerInfoRows(info) }
+    val listState = rememberLazyListState()
+    val firstFocus = remember { FocusRequester() }
+    Surface(
+        modifier.fillMaxHeight(0.6f),
+        color = Color(0xFA202020),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("播放信息", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                ControlButton("关闭", onClose)
+            }
+            Text(
+                "面板打开时每秒刷新，关闭后停止采样",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                rows.forEachIndexed { index, row ->
+                    item(key = index) {
+                        if (index == 0) {
+                            LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+                        }
+                        PlayerInfoRowItem(
+                            row = row,
+                            modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerInfoRowItem(row: PlayerInfoRow, modifier: Modifier = Modifier) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .border(
+                width = 2.dp,
+                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                shape = RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = row.label,
+            modifier = Modifier.width(96.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.7f),
+        )
+        Text(
+            text = row.value,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
 @Composable
 private fun PlayerChromeMobilePanel(
     section: PlayerPanel,
@@ -987,6 +1101,7 @@ private fun PlayerChromeMobilePanel(
                         PlayerPanel.Audio -> "音轨（共 ${data.audioTracks.size} 条）"
                         PlayerPanel.Subtitle -> "字幕（共 ${data.subtitleTracks.size} 条）"
                         PlayerPanel.Skip -> "跳过片头/片尾"
+                        PlayerPanel.Info -> "播放信息"
                         PlayerPanel.None -> ""
                     },
                     modifier = Modifier.weight(1f),
@@ -1094,6 +1209,45 @@ private fun PlayerChromeMobilePanel(
                                 onClick = { actions.onSelectSubtitleTrack(track.id); onClose() },
                             )
                         }
+                    }
+                }
+                PlayerPanel.Info -> {
+                    val infoRows = remember(data.playbackInfo) { playerInfoRows(data.playbackInfo) }
+                    // 信息行可能超出一屏：限制高度并允许滚动，不挤压上方的进度与功能行。
+                    val maxHeight = (LocalConfiguration.current.screenHeightDp * 0.38f).dp
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = maxHeight)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        infoRows.forEach { row ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = row.label,
+                                    modifier = Modifier.width(88.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.65f),
+                                )
+                                Text(
+                                    text = row.value,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color.White.copy(alpha = 0.92f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                        Text(
+                            text = "面板打开时每秒刷新，关闭后停止采样。",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.5f),
+                        )
                     }
                 }
                 PlayerPanel.None -> Unit
