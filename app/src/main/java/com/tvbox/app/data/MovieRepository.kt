@@ -224,7 +224,10 @@ class DefaultMovieRepository(
                     val result = try {
                         semaphore.withPermit {
                             withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                                loadMovies(line = line, page = requestedPage, keyword = keyword).movies
+                                // 同上：并行搜索的网络读取必须在 IO 线程执行。
+                                withContext(Dispatchers.IO) {
+                                    loadMovies(line = line, page = requestedPage, keyword = keyword).movies
+                                }
                             } ?: run {
                                 completedNormally = false
                                 sourceHealth.recordFailure(line.id)
@@ -288,7 +291,13 @@ class DefaultMovieRepository(
                         val matched = try {
                             semaphore.withPermit {
                                 val response = withTimeoutOrNull(DETAIL_SOURCE_TIMEOUT_MS) {
-                                    Result.success(findSameMovie(line, primary.name)?.toLinePlaySource())
+                                    // channelFlow 的 async 继承收集方（主线程）上下文，
+                                    // 网络读取若不切 IO 会阻塞主线程并堆积按键事件。
+                                    Result.success(
+                                        withContext(Dispatchers.IO) {
+                                            findSameMovie(line, primary.name)?.toLinePlaySource()
+                                        },
+                                    )
                                 }
                                 if (response == null) {
                                     completedNormally = false
