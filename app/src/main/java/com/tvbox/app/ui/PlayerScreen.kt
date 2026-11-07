@@ -3,15 +3,7 @@ package com.tvbox.app.ui
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
-import android.provider.Settings
-import android.view.KeyEvent as AndroidKeyEvent
-import android.os.Handler
-import android.os.Looper
-import android.view.MotionEvent
-import android.view.View
-import android.view.ViewConfiguration
 import android.view.ViewGroup
-import android.view.Window
 import android.view.WindowManager
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -46,13 +38,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -62,7 +50,6 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.ui.PlayerView
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
@@ -87,8 +74,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
-import kotlin.math.roundToInt
-import kotlin.math.roundToLong
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -187,7 +172,6 @@ fun PlayerScreen(
             playerFocusRequester.requestFocus()
         }
     }
-    val remoteKeyState = remember { PlayerRemoteKeyState() }
     var videoDisplayMode by remember { mutableStateOf(VideoDisplayMode.Unknown) }
     var playbackIssue by remember { mutableStateOf<PlaybackIssueNotice?>(null) }
     var seekGesturePrompt by remember { mutableStateOf<String?>(null) }
@@ -614,44 +598,8 @@ fun PlayerScreen(
         seekGesturePrompt = "2x 倍速播放"
         seekGesturePromptNonce++
     }
-    val touchHandler = remember { Handler(Looper.getMainLooper()) }
-    val touchGesture = remember { PlayerTouchGestureState() }
-    val cancelPendingSingleTap = {
-        touchGesture.singleTapRunnable?.let(touchHandler::removeCallbacks)
-        touchGesture.singleTapRunnable = null
-    }
-    val cancelLongPressSpeed = {
-        touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
-        touchGesture.longPressRunnable = null
-        if (touchGesture.longPressActive) {
-            touchGesture.longPressActive = false
-            seekGesturePrompt = null
-            player.setPlaybackSpeed(touchGesture.originalSpeed)
-        }
-    }
-    val scheduleLongPressSpeed = {
-        if (!chrome.locked) {
-            touchGesture.originalSpeed = player.playbackParameters.speed
-            touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
-            touchGesture.longPressActive = false
-            val runnable = Runnable {
-                touchGesture.longPressActive = true
-                player.setPlaybackSpeed(LONG_PRESS_PLAYBACK_SPEED)
-                showLongPressSpeedPrompt()
-            }
-            touchGesture.longPressRunnable = runnable
-            touchHandler.postDelayed(
-                runnable,
-                ViewConfiguration.getLongPressTimeout().toLong(),
-            )
-        }
-    }
-    val showPlaybackStatusByTap = {
-        chrome.toggle()
-    }
+    var longPressOriginalSpeed = 1f
     val togglePlaybackByGesture = {
-        cancelLongPressSpeed()
-        cancelPendingSingleTap()
         if (chrome.locked) {
             chrome.bump()
             seekGesturePrompt = "已锁定，先解锁"
@@ -666,8 +614,6 @@ fun PlayerScreen(
         seekGesturePromptNonce++
     }
     val seekByGesture = { deltaMs: Long, label: String ->
-        cancelLongPressSpeed()
-        cancelPendingSingleTap()
         if (chrome.locked) {
             chrome.bump()
             seekGesturePrompt = "已锁定，先解锁"
@@ -694,16 +640,12 @@ fun PlayerScreen(
             "$action  ${formatPlayerTime(targetPosition)} / ${formatPlayerTime(durationMs)}"
         }
         seekGesturePromptNonce++
-        remoteKeyState.seekChanged = true
     }
     val finishRemoteSeek = {
-        if (remoteKeyState.seekChanged) {
-            saveCurrentProgress(
-                positionMs = player.currentPosition.coerceAtLeast(0L),
-                durationMs = player.duration.takeIf { it > 0L } ?: 0L,
-            )
-        }
-        remoteKeyState.resetSeek()
+        saveCurrentProgress(
+            positionMs = player.currentPosition.coerceAtLeast(0L),
+            durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+        )
     }
     val changeEpisodeByRemote = { offset: Int ->
         val currentIndex = player.currentMediaItemIndex
@@ -726,12 +668,107 @@ fun PlayerScreen(
         seekGesturePromptNonce++
     }
 
-    DisposableEffect(touchHandler, player, activity, initialScreenBrightness) {
+    // 遥控键位收敛到共享 PlayerSeekKeyMap：页面只提供语义回调，不含键码判断。
+    val seekKeyMap = remember {
+        PlayerSeekKeyMap(
+            PlayerSeekKeyMap.Callbacks(
+                onSeekBy = {},
+                onFinishSeek = {},
+                onToggle = {},
+                onPlay = {},
+                onPause = {},
+                onChangeEpisode = {},
+                onCycleSpeed = {},
+            ),
+        )
+    }
+    seekKeyMap.callbacks = PlayerSeekKeyMap.Callbacks(
+        onSeekBy = { seekByRemote(it) },
+        onFinishSeek = { finishRemoteSeek() },
+        onToggle = { togglePlaybackByGesture() },
+        onPlay = {
+            session.play(player)
+            seekGesturePrompt = "播放"
+            seekGesturePromptNonce++
+        },
+        onPause = {
+            bufferMonitor.onPaused()
+            session.pause(player)
+            seekGesturePrompt = "暂停"
+            seekGesturePromptNonce++
+        },
+        onChangeEpisode = { changeEpisodeByRemote(it) },
+        onCycleSpeed = { cyclePlaybackSpeedByRemote() },
+    )
+
+    val touchController = remember {
+        PlayerTouchGestureHandler(
+            activity = activity,
+            audioManager = audioManager,
+            capabilities = PlayerTouchCapabilities(),
+            callbacks = PlayerTouchCallbacks(
+                isLocked = { false },
+                currentPositionMs = { 0L },
+                durationMs = { null },
+                onToggleControls = {},
+                onLockedTap = {},
+                onPlaybackToggle = {},
+                onSeekBy = { _, _ -> },
+                onSeekDragPreview = { _, _ -> },
+                onSeekDragCommit = {},
+                onBrightnessChanged = { _, _ -> },
+                onVolumeChanged = { _, _ -> },
+                onLongPressStart = {},
+                onLongPressEnd = {},
+            ),
+        )
+    }
+    touchController.callbacks = PlayerTouchCallbacks(
+        isLocked = { chrome.locked },
+        currentPositionMs = { player.currentPosition.coerceAtLeast(0L) },
+        durationMs = { player.duration.takeIf { it > 0L } },
+        onToggleControls = { chrome.toggle() },
+        onLockedTap = {
+            chrome.bump()
+            seekGesturePrompt = "已锁定，点“解锁”恢复"
+            seekGesturePromptNonce++
+        },
+        onPlaybackToggle = { togglePlaybackByGesture() },
+        onSeekBy = { deltaMs, label -> seekByGesture(deltaMs, label) },
+        onSeekDragPreview = { positionMs, durationMs ->
+            seekGesturePrompt = "进度 ${formatPlayerTime(positionMs)} / ${formatPlayerTime(durationMs)}"
+            seekGesturePromptNonce++
+        },
+        onSeekDragCommit = { positionMs ->
+            bufferMonitor.onSeekStarted(System.currentTimeMillis())
+            player.seekTo(positionMs)
+            seekGesturePromptNonce++
+            saveCurrentProgress(
+                positionMs = positionMs,
+                durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+            )
+        },
+        onBrightnessChanged = { brightness, percent ->
+            seekGesturePrompt = "亮度 $percent%"
+            seekGesturePromptNonce++
+        },
+        onVolumeChanged = { volume, maxVolume ->
+            seekGesturePrompt = "音量 $volume/$maxVolume"
+            seekGesturePromptNonce++
+        },
+        onLongPressStart = {
+            longPressOriginalSpeed = player.playbackParameters.speed
+            player.setPlaybackSpeed(LONG_PRESS_PLAYBACK_SPEED)
+            showLongPressSpeedPrompt()
+        },
+        onLongPressEnd = {
+            player.setPlaybackSpeed(longPressOriginalSpeed)
+            seekGesturePrompt = null
+        },
+    )
+    DisposableEffect(player, activity, initialScreenBrightness) {
         onDispose {
-            touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
-            touchGesture.singleTapRunnable?.let(touchHandler::removeCallbacks)
-            touchGesture.longPressRunnable = null
-            touchGesture.singleTapRunnable = null
+            touchController.release()
             activity?.window?.restoreScreenBrightness(initialScreenBrightness)
         }
     }
@@ -741,99 +778,7 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .focusRequester(playerFocusRequester)
-            .onPreviewKeyEvent { event ->
-                val nativeEvent = event.nativeKeyEvent
-                if (chrome.visible) chrome.interaction++
-                if (chrome.visible && nativeEvent.keyCode in listOf(
-                    AndroidKeyEvent.KEYCODE_DPAD_LEFT, AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                    AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN
-                )) return@onPreviewKeyEvent false
-                when (nativeEvent.keyCode) {
-                    AndroidKeyEvent.KEYCODE_BACK -> {
-                        if (chrome.visible || chrome.panel != PlayerPanel.None) {
-                            if (event.type == KeyEventType.KeyUp) {
-                                if (chrome.panel != PlayerPanel.None) chrome.closePanel()
-                                else chrome.hide()
-                            }
-                            true
-                        } else false
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-                    AndroidKeyEvent.KEYCODE_MEDIA_REWIND,
-                    -> {
-                        when (event.type) {
-                            KeyEventType.KeyDown -> {
-                                if (remoteKeyState.shouldHandleSeek(nativeEvent.eventTime, nativeEvent.repeatCount)) {
-                                    seekByRemote(-REMOTE_SEEK_STEP_MS)
-                                }
-                            }
-                            KeyEventType.KeyUp -> finishRemoteSeek()
-                        }
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                    AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-                    -> {
-                        when (event.type) {
-                            KeyEventType.KeyDown -> {
-                                if (remoteKeyState.shouldHandleSeek(nativeEvent.eventTime, nativeEvent.repeatCount)) {
-                                    seekByRemote(REMOTE_SEEK_STEP_MS)
-                                }
-                            }
-                            KeyEventType.KeyUp -> finishRemoteSeek()
-                        }
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                    AndroidKeyEvent.KEYCODE_ENTER,
-                    -> {
-                        if (chrome.visible) false else {
-                            if (event.type == KeyEventType.KeyUp) chrome.bump()
-                            true
-                        }
-                    }
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                        if (event.type == KeyEventType.KeyUp) togglePlaybackByGesture()
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                        if (event.type == KeyEventType.KeyUp) {
-                            session.play(player)
-                            seekGesturePrompt = "播放"
-                            seekGesturePromptNonce++
-                        }
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
-                        if (event.type == KeyEventType.KeyUp) {
-                            bufferMonitor.onPaused()
-                            session.pause(player)
-                            seekGesturePrompt = "暂停"
-                            seekGesturePromptNonce++
-                        }
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
-                    AndroidKeyEvent.KEYCODE_1,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_1,
-                    -> {
-                        if (event.type == KeyEventType.KeyUp) changeEpisodeByRemote(-1)
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MEDIA_NEXT,
-                    AndroidKeyEvent.KEYCODE_3,
-                    AndroidKeyEvent.KEYCODE_NUMPAD_3,
-                    -> {
-                        if (event.type == KeyEventType.KeyUp) changeEpisodeByRemote(1)
-                        true
-                    }
-                    AndroidKeyEvent.KEYCODE_MENU -> {
-                        if (event.type == KeyEventType.KeyUp) cyclePlaybackSpeedByRemote()
-                        true
-                    }
-                    else -> false
-                }
-            }
+            .playerKeyInput(seekKeyMap, chrome)
             .focusable(),
     ) {
         PlayerSurface(
@@ -841,165 +786,9 @@ fun PlayerScreen(
             resizeMode = videoScaleMode,
             showBuffering = false,
             configure = { view ->
-                val touchSlop = ViewConfiguration.get(view.context).scaledTouchSlop
-                val doubleTapTimeoutMs = ViewConfiguration.getDoubleTapTimeout().toLong()
-                val gestureTouchListener = View.OnTouchListener { _, event ->
-                    val width = view.width
-                    val height = view.height
-                    when (event.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> {
-                                touchGesture.downX = event.x
-                                touchGesture.downY = event.y
-                                touchGesture.downPositionMs = player.currentPosition.coerceAtLeast(0L)
-                                touchGesture.seekTargetMs = touchGesture.downPositionMs
-                                touchGesture.seeking = false
-                                touchGesture.swipeMode = PlayerSwipeMode.None
-                                touchGesture.startBrightness = activity?.window
-                                    ?.currentScreenBrightness(context)
-                                    ?: DEFAULT_SCREEN_BRIGHTNESS
-                                touchGesture.startVolume = audioManager
-                                    ?.getStreamVolume(AudioManager.STREAM_MUSIC)
-                                    ?: 0
-                                touchGesture.maxVolume = audioManager
-                                    ?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                                    ?: 0
-                                if (!chrome.locked) scheduleLongPressSpeed()
-                            }
-                            MotionEvent.ACTION_MOVE -> {
-                                val totalDx = event.x - touchGesture.downX
-                                val totalDy = event.y - touchGesture.downY
-                                val durationMs = player.duration.takeIf { it > 0L }
-                                if (touchGesture.longPressActive) return@OnTouchListener true
-
-                                if (!chrome.locked && touchGesture.swipeMode == PlayerSwipeMode.None) {
-                                    when {
-                                        abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) && durationMs != null -> {
-                                            touchGesture.swipeMode = PlayerSwipeMode.Seek
-                                        }
-                                        abs(totalDy) > touchSlop && abs(totalDy) > abs(totalDx) -> {
-                                            touchGesture.swipeMode = if (touchGesture.downX < width / 2f) {
-                                                PlayerSwipeMode.Brightness
-                                            } else {
-                                                PlayerSwipeMode.Volume
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (chrome.locked) {
-                                    cancelLongPressSpeed()
-                                } else if (touchGesture.swipeMode == PlayerSwipeMode.Seek && durationMs != null) {
-                                    cancelLongPressSpeed()
-                                    cancelPendingSingleTap()
-                                    if (!touchGesture.seeking) {
-                                        touchGesture.seeking = true
-                                    }
-                                    val targetPosition = calculateDragSeekPosition(
-                                        startPositionMs = touchGesture.downPositionMs,
-                                        dragPx = totalDx,
-                                        viewWidthPx = width,
-                                        durationMs = durationMs,
-                                    )
-                                    touchGesture.seekTargetMs = targetPosition
-                                    seekGesturePrompt = "进度 ${formatPlayerTime(targetPosition)} / ${formatPlayerTime(durationMs)}"
-                                    seekGesturePromptNonce++
-                                } else if (touchGesture.swipeMode == PlayerSwipeMode.Brightness) {
-                                    cancelLongPressSpeed()
-                                    cancelPendingSingleTap()
-                                    val brightness = (touchGesture.startBrightness - totalDy / height.toFloat())
-                                        .coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
-                                    activity?.window?.setScreenBrightness(brightness)
-                                    seekGesturePrompt = "亮度 ${(brightness * 100).roundToInt()}%"
-                                    seekGesturePromptNonce++
-                                } else if (!chrome.locked && touchGesture.swipeMode == PlayerSwipeMode.Volume && touchGesture.maxVolume > 0) {
-                                    cancelLongPressSpeed()
-                                    cancelPendingSingleTap()
-                                    val volume = (
-                                        touchGesture.startVolume -
-                                            (totalDy / height.toFloat() * touchGesture.maxVolume).roundToInt()
-                                        )
-                                        .coerceIn(0, touchGesture.maxVolume)
-                                    audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
-                                    seekGesturePrompt = "音量 $volume/${touchGesture.maxVolume}"
-                                    seekGesturePromptNonce++
-                                }
-                            }
-                            MotionEvent.ACTION_UP,
-                            MotionEvent.ACTION_CANCEL,
-                            -> {
-                                val swipeMode = touchGesture.swipeMode
-                                touchGesture.swipeMode = PlayerSwipeMode.None
-                                val wasLongPressActive = touchGesture.longPressActive
-                                cancelLongPressSpeed()
-                                if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
-                                    touchGesture.seeking = false
-                                    cancelPendingSingleTap()
-                                    return@OnTouchListener true
-                                }
-                                if (chrome.locked) {
-                                    touchGesture.seeking = false
-                                    cancelPendingSingleTap()
-                                    // 锁定态下轻点唤出解锁层（控件可见时已显示解锁按钮）
-                                    if (swipeMode == PlayerSwipeMode.None && !wasLongPressActive) {
-                                        chrome.bump()
-                                        seekGesturePrompt = "已锁定，点“解锁”恢复"
-                                        seekGesturePromptNonce++
-                                    }
-                                    return@OnTouchListener true
-                                }
-                                if (touchGesture.seeking) {
-                                    touchGesture.seeking = false
-                                    bufferMonitor.onSeekStarted(System.currentTimeMillis())
-                                    player.seekTo(touchGesture.seekTargetMs)
-                                    seekGesturePromptNonce++
-                                    saveCurrentProgress(
-                                        positionMs = touchGesture.seekTargetMs,
-                                        durationMs = player.duration.takeIf { it > 0L } ?: 0L,
-                                    )
-                                    return@OnTouchListener true
-                                }
-                                if (swipeMode == PlayerSwipeMode.Brightness || swipeMode == PlayerSwipeMode.Volume) {
-                                    cancelPendingSingleTap()
-                                    return@OnTouchListener true
-                                }
-                                if (wasLongPressActive) {
-                                    cancelPendingSingleTap()
-                                    return@OnTouchListener true
-                                }
-                                val distanceFromLastTap = squaredDistance(
-                                    event.x,
-                                    event.y,
-                                    touchGesture.lastTapX,
-                                    touchGesture.lastTapY,
-                                )
-                                val isDoubleTap = event.eventTime - touchGesture.lastTapUpTimeMs <= doubleTapTimeoutMs &&
-                                    distanceFromLastTap <= touchSlop * touchSlop
-                                if (isDoubleTap) {
-                                    touchGesture.lastTapUpTimeMs = 0L
-                                    when {
-                                        event.x < width / 3f -> seekByGesture(-DOUBLE_TAP_SEEK_MS, "快退 10 秒")
-                                        event.x > width * 2f / 3f -> seekByGesture(DOUBLE_TAP_SEEK_MS, "快进 10 秒")
-                                        else -> togglePlaybackByGesture()
-                                    }
-                                } else {
-                                    touchGesture.lastTapUpTimeMs = event.eventTime
-                                    touchGesture.lastTapX = event.x
-                                    touchGesture.lastTapY = event.y
-                                    cancelPendingSingleTap()
-                                    val singleTapRunnable = Runnable {
-                                        touchGesture.singleTapRunnable = null
-                                        showPlaybackStatusByTap()
-                                    }
-                                    touchGesture.singleTapRunnable = singleTapRunnable
-                                    touchHandler.postDelayed(singleTapRunnable, doubleTapTimeoutMs)
-                                }
-                            }
-                        }
-                        true
-                }
                 // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
                 if (!isTelevision) {
-                    view.setOnTouchListener(gestureTouchListener)
+                    view.setOnTouchListener(touchController)
                 }
             },
         )
@@ -1118,8 +907,7 @@ fun PlayerScreen(
                 onLockChange = { locked ->
                     chrome.interaction++
                     if (locked) {
-                        cancelLongPressSpeed()
-                        cancelPendingSingleTap()
+                        touchController.cancelPendingGestures()
                     }
                     seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
                     seekGesturePromptNonce++
@@ -1260,28 +1048,6 @@ private fun ExoPlayer.seekByOffset(deltaMs: Long): Long {
     return targetPosition
 }
 
-private fun calculateDragSeekPosition(
-    startPositionMs: Long,
-    dragPx: Float,
-    viewWidthPx: Int,
-    durationMs: Long,
-): Long {
-    if (viewWidthPx <= 0) return startPositionMs.coerceIn(0L, durationMs)
-    val offsetMs = (dragPx / viewWidthPx.toFloat() * durationMs).roundToLong()
-    return (startPositionMs + offsetMs).coerceIn(0L, durationMs)
-}
-
-private fun squaredDistance(
-    x1: Float,
-    y1: Float,
-    x2: Float,
-    y2: Float,
-): Float {
-    val dx = x1 - x2
-    val dy = y1 - y2
-    return dx * dx + dy * dy
-}
-
 private fun VideoSize.toVideoDisplayMode(): VideoDisplayMode {
     if (width <= 0 || height <= 0) return VideoDisplayMode.Unknown
     val aspectRatio = width.toFloat() * pixelWidthHeightRatio / height
@@ -1292,34 +1058,6 @@ private fun VideoSize.toVideoDisplayMode(): VideoDisplayMode {
     }
 }
 
-internal fun Window.currentScreenBrightness(context: Context): Float {
-    val current = attributes.screenBrightness
-    if (current >= 0f) return current.coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
-    val systemBrightness = runCatching {
-        Settings.System.getInt(context.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
-    }.getOrDefault(DEFAULT_SYSTEM_BRIGHTNESS)
-    return (systemBrightness / MAX_SYSTEM_BRIGHTNESS).coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
-}
-
-internal fun Window.setScreenBrightness(brightness: Float) {
-    attributes = attributes.apply {
-        screenBrightness = brightness.coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
-    }
-}
-
-private fun Window.restoreScreenBrightness(brightness: Float) {
-    attributes = attributes.apply {
-        screenBrightness = brightness
-    }
-}
-
-private enum class PlayerSwipeMode {
-    None,
-    Seek,
-    Brightness,
-    Volume,
-}
-
 private enum class VideoDisplayMode(
     val requestedOrientation: Int? = null,
 ) {
@@ -1328,55 +1066,7 @@ private enum class VideoDisplayMode(
     Landscape(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE),
 }
 
-private class PlayerTouchGestureState {
-    var originalSpeed: Float = 1f
-    var downX: Float = 0f
-    var downY: Float = 0f
-    var downPositionMs: Long = 0L
-    var seekTargetMs: Long = 0L
-    var seeking: Boolean = false
-    var swipeMode: PlayerSwipeMode = PlayerSwipeMode.None
-    var startBrightness: Float = DEFAULT_SCREEN_BRIGHTNESS
-    var startVolume: Int = 0
-    var maxVolume: Int = 0
-    var longPressActive: Boolean = false
-    var longPressRunnable: Runnable? = null
-    var singleTapRunnable: Runnable? = null
-    var lastTapUpTimeMs: Long = 0L
-    var lastTapX: Float = 0f
-    var lastTapY: Float = 0f
-}
-
-private class PlayerRemoteKeyState {
-    var lastSeekEventTimeMs: Long = Long.MIN_VALUE
-    var seekChanged: Boolean = false
-
-    fun shouldHandleSeek(eventTimeMs: Long, repeatCount: Int): Boolean {
-        if (
-            repeatCount == 0 ||
-            lastSeekEventTimeMs == Long.MIN_VALUE ||
-            eventTimeMs - lastSeekEventTimeMs >= REMOTE_SEEK_REPEAT_INTERVAL_MS
-        ) {
-            lastSeekEventTimeMs = eventTimeMs
-            return true
-        }
-        return false
-    }
-
-    fun resetSeek() {
-        lastSeekEventTimeMs = Long.MIN_VALUE
-        seekChanged = false
-    }
-}
-
-private const val DOUBLE_TAP_SEEK_MS = 10_000L
-private const val REMOTE_SEEK_STEP_MS = 10_000L
-private const val REMOTE_SEEK_REPEAT_INTERVAL_MS = 150L
 private const val LONG_PRESS_PLAYBACK_SPEED = 2f
-private const val MIN_SCREEN_BRIGHTNESS = 0.01f
-private const val DEFAULT_SCREEN_BRIGHTNESS = 0.5f
-private const val DEFAULT_SYSTEM_BRIGHTNESS = 128
-private const val MAX_SYSTEM_BRIGHTNESS = 255f
 private const val PORTRAIT_VIDEO_ASPECT_RATIO_MAX = 0.8f
 private const val LANDSCAPE_VIDEO_ASPECT_RATIO_MIN = 1.1f
 private val PLAYBACK_SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
