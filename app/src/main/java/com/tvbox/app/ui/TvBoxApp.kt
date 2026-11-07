@@ -92,6 +92,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.ApiLine
@@ -482,6 +483,9 @@ private fun HomeScreen(
                             FeaturedMovieHero(
                                 movie = featuredMovie,
                                 onOpen = { actions.openDetail(featuredMovie.id) },
+                                // 大字号下「今日热播 + 标题 + 信息 + 按钮」总高会超过 190dp 被裁切，
+                                // 上限随字体缩放同比放宽（正常 190 / 大 224 / 超大 258）。
+                                maxHeight = 190.dp * state.appSettings.fontScale.typographyScale,
                             )
                             Spacer(modifier = Modifier.height(TvDimens.SectionGap))
                         }
@@ -546,12 +550,13 @@ private fun HomeScreen(
 private fun FeaturedMovieHero(
     movie: com.tvbox.app.domain.Movie,
     onOpen: () -> Unit,
+    maxHeight: Dp,
 ) {
     val heroShape = RoundedCornerShape(18.dp)
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 165.dp, max = 190.dp)
+            .heightIn(min = 165.dp, max = maxHeight)
             .clip(heroShape)
             .background(
                 Brush.horizontalGradient(
