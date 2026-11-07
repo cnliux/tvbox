@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.navigationBars
@@ -106,7 +107,8 @@ fun MobileNavWrapper(
             if (showTopBar) {
                 MobileTopBar(state = state, actions = actions)
             }
-            Box(modifier = Modifier.weight(1f)) {
+            // 内容区避让输入法：edge-to-edge 下键盘不会自动缩小窗口。
+            Box(modifier = Modifier.weight(1f).imePadding()) {
                 content(currentTab)
             }
             // 底部导航：放在内容下方，避免遮挡首屏内容。

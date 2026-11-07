@@ -1273,7 +1273,8 @@ class TvBoxViewModel(
                         searchLoading = false,
                         searchCompletedSources = completedBase,
                         searchTotalSources = completedBase,
-                        searchError = if (mergedResults.isEmpty()) "没有找到相关影片" else null,
+                        // 零结果是正常空态，不是请求错误；错误分支只保留网络/解析失败。
+                        searchError = null,
                     )
                 }
             } catch (error: CancellationException) {
