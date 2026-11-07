@@ -43,7 +43,9 @@ private val DefaultTokens = TvColorTokens(
     border = Color(0x664D4D4D),
     textPrimary = Color.White,
     textSecondary = Color(0xFFB3B3B3),
-    textTertiary = Color(0xFF888888),
+    // 三级文字常用于 12sp 设置标签/说明，落在 surfaceRaised(#252525) 上需 ≥4.5:1；
+    // 原 #888888 实测约 4.3:1，提亮到 #9A9A9A 后约 5.4:1，仍与二级文字保持层级差。
+    textTertiary = Color(0xFF9A9A9A),
     accent = Color(0xFF1ED760),
     accentStrong = Color(0xFF1DB954),
     accentSoft = Color(0x331ED760),
@@ -61,7 +63,8 @@ private val CinemaTokens = TvColorTokens(
     border = Color(0x3357635C),
     textPrimary = Color(0xFFF5F8F6),
     textSecondary = Color(0xFFA6B0AA),
-    textTertiary = Color(0xFF7D8982),
+    // 与默认主题对齐：原 #7D8982 在 surfaceRaised(#1A211E) 上约 4.1:1，提亮到 #8F9A94 约 5.5:1。
+    textTertiary = Color(0xFF8F9A94),
     accent = Color(0xFF29E68C),
     accentStrong = Color(0xFF55F0A1),
     accentSoft = Color(0x2229E68C),

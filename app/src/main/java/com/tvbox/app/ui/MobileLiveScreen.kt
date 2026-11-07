@@ -266,7 +266,7 @@ private fun MobileLiveListScreen(
                         if (query.isEmpty()) {
                             Text(
                                 text = "搜索频道/节目",
-                                color = Color.White.copy(alpha = 0.4f),
+                                color = Color.White.copy(alpha = 0.6f),
                                 fontSize = 13.sp,
                                 maxLines = 1,
                             )
@@ -385,7 +385,7 @@ private fun MobileLiveListScreen(
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (state.liveError != null) "请检查网络，或切换其他直播源后重试" else "可在设置中添加或恢复直播源",
-                        color = Color.White.copy(alpha = 0.5f),
+                        color = Color.White.copy(alpha = 0.6f),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,
                     )
@@ -412,7 +412,7 @@ private fun MobileLiveListScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
+                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
                 }
             }
             else -> LazyColumn(
@@ -553,7 +553,7 @@ private fun MobileLiveChannelRow(
                 Text(
                     text = "接下来 $nextTitle",
                     fontSize = 10.sp,
-                    color = Color.White.copy(alpha = 0.4f),
+                    color = Color.White.copy(alpha = 0.6f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -958,7 +958,7 @@ private fun MobileLivePlayerScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("节目单", fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f))
-            Text("今天", fontSize = 11.sp, color = Color.White.copy(alpha = 0.5f))
+            Text("今天", fontSize = 11.sp, color = Color.White.copy(alpha = 0.6f))
         }
         if (epgPrograms.isEmpty()) {
             Box(
@@ -967,7 +967,7 @@ private fun MobileLivePlayerScreen(
                     .weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("暂无节目单", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+                Text("暂无节目单", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
             }
         } else {
             LazyColumn(
@@ -1016,7 +1016,7 @@ private fun MobileLivePlayerScreen(
                                 Text(
                                     text = "${minutes}分钟",
                                     fontSize = 10.sp,
-                                    color = Color.White.copy(alpha = 0.4f),
+                                    color = Color.White.copy(alpha = 0.6f),
                                 )
                             }
                         }
@@ -1036,7 +1036,7 @@ private fun MobileLivePlayerScreen(
         Text(
             text = "相关频道",
             fontSize = 12.sp,
-            color = Color.White.copy(alpha = 0.5f),
+            color = Color.White.copy(alpha = 0.6f),
             modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 10.dp, bottom = 6.dp),
         )
         LazyRow(
@@ -1071,7 +1071,7 @@ private fun MobileLivePlayerScreen(
                         Text(
                             text = relatedNow,
                             fontSize = 9.sp,
-                            color = Color.White.copy(alpha = 0.4f),
+                            color = Color.White.copy(alpha = 0.6f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.padding(horizontal = 6.dp),
