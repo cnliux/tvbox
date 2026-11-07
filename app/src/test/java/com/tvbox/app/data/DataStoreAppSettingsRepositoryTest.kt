@@ -343,6 +343,31 @@ class DataStoreAppSettingsRepositoryTest {
         assertEquals(listOf("偏好分类"), repository.getSettings().blockedVideoCategories)
     }
 
+    @Test
+    fun `存储被清空后自动从旧数据重新迁移`() = runBlocking {
+        val source = FakeLegacySource(
+            LegacySettingsSnapshot(
+                values = mapOf(
+                    SettingsStorageKeys.HISTORY_MAX_ITEMS to 200,
+                    SettingsStorageKeys.THEME to TvTheme.Cinema.storageKey,
+                ),
+            ),
+        )
+        val store = InMemoryPreferencesDataStore()
+        val repository = DataStoreAppSettingsRepository(store, source)
+        assertEquals(200, repository.getSettings().historyMaxItems)
+
+        // 模拟 DataStore 文件损坏后被 ReplaceFileCorruptionHandler 重置为空。
+        store.updateData { emptyPreferences() }
+        assertEquals(SettingsSchema.LEGACY, store.current().schemaVersion())
+
+        val recovered = repository.getSettings()
+        assertEquals(200, recovered.historyMaxItems)
+        assertEquals(TvTheme.Cinema, recovered.theme)
+        assertEquals(SettingsSchema.CURRENT, store.current().schemaVersion())
+        assertEquals(2, source.reads)
+    }
+
     private class FakeLegacySource(
         private val snapshot: LegacySettingsSnapshot = LegacySettingsSnapshot(emptyMap()),
         private val failures: Int = 0,
