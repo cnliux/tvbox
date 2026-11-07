@@ -97,7 +97,12 @@ import coil.compose.AsyncImage
 import com.tvbox.app.data.liveFavoriteKey
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
+import com.tvbox.app.domain.PlaybackWatchdog
+import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.resolveVideoScaleMode
+import com.tvbox.app.domain.liveVideoScaleKey
+import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.probeLiveLineMimeType
 import com.tvbox.app.util.logSafeUrl
 import kotlin.math.abs
@@ -677,7 +682,9 @@ private fun MobileLivePlayerScreen(
     val latestLineUrl = rememberUpdatedState(currentLine.url)
     val latestChannelLabel = rememberUpdatedState("${channel.groupName}/${channel.name}")
 
-    var fullscreenZoom by remember { mutableStateOf(false) }
+    // 画面比例按频道记忆；未记忆时回退设置里的全局默认值。
+    val scaleContentKey = liveVideoScaleKey(channel.groupName, channel.name)
+    val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
     var controlsVisible by remember { mutableStateOf(true) }
     var controlsInteraction by remember { mutableIntStateOf(0) }
     var channelBadgeVisible by remember { mutableStateOf(true) }
@@ -685,6 +692,8 @@ private fun MobileLivePlayerScreen(
     // 按 isPlaying 会显示"继续"，此时点一下实际会走暂停分支，语义相反。播放意图由共享宿主快照提供。
     // 所有线路都试过仍不可用：收起原生缓冲环，给出常驻的重试/换台出口。
     var streamBlocked by remember { mutableStateOf(false) }
+    var blockedFailureKind by remember { mutableStateOf<PlaybackFailureKind?>(null) }
+    val playbackWatchdog = remember { PlaybackWatchdog() }
 
     val isFavorite = actions.isLiveFavorite(channel)
 
@@ -712,6 +721,11 @@ private fun MobileLivePlayerScreen(
         )
         if (!actions.advanceLiveLineAfterFailure(reason)) {
             // 兜底耗尽：不再无限转圈，交给用户选择重试或换台。
+            blockedFailureKind = when {
+                !playbackWatchdog.hasFirstFrame -> PlaybackFailureKind.FirstFrameTimeout
+                reason == LiveLineFallbackReason.Error -> PlaybackFailureKind.SourceFailed
+                else -> PlaybackFailureKind.Stalled
+            }
             streamBlocked = true
         }
     }
@@ -725,6 +739,10 @@ private fun MobileLivePlayerScreen(
                     error,
                 )
                 switchLineAfterIssue(LiveLineFallbackReason.Error)
+            }
+
+            override fun onRenderedFirstFrame() {
+                playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -752,6 +770,8 @@ private fun MobileLivePlayerScreen(
         )
         channelBadgeVisible = true
         streamBlocked = false
+        blockedFailureKind = null
+        playbackWatchdog.onSourceRequested(System.currentTimeMillis())
         val httpFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(MOBILE_LIVE_CONNECT_TIMEOUT_MS)
@@ -780,6 +800,34 @@ private fun MobileLivePlayerScreen(
         channelBadgeVisible = false
     }
 
+    // 共享看门狗：首帧超时与出帧后卡死走同一套判定，可见时才计时。
+    val watchdogLifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(player, currentLine.url, watchdogLifecycleOwner) {
+        watchdogLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            playbackWatchdog.onPaused()
+            while (true) {
+                delay(1_000L)
+                val now = System.currentTimeMillis()
+                val failure = playbackWatchdog.checkFirstFrame(
+                    nowMs = now,
+                    playWhenReady = player.playWhenReady && !session.interrupted,
+                ) ?: playbackWatchdog.onProgressSample(
+                    // 缓冲时 isPlaying=false；按播放意图判定才能捕获"出帧后卡死"。
+                    isPlaying = player.playWhenReady,
+                    positionMs = player.currentPosition,
+                    nowMs = now,
+                )
+                if (failure != null) {
+                    android.util.Log.w(
+                        MOBILE_LIVE_LOG_TAG,
+                        "【看门狗触发】kind=${failure.kind} channel=${latestChannelLabel.value} elapsedMs=${failure.elapsedMs}",
+                    )
+                    switchLineAfterIssue(LiveLineFallbackReason.Stall)
+                }
+            }
+        }
+    }
+
     // 横屏时控件 4s 自动隐藏（竖屏常驻）；单击画面唤出。
     LaunchedEffect(isPortrait, controlsVisible, controlsInteraction) {
         if (isPortrait || !controlsVisible) return@LaunchedEffect
@@ -794,7 +842,8 @@ private fun MobileLivePlayerScreen(
             session = session,
             channel = channel,
             currentLine = currentLine,
-            fullscreenZoom = fullscreenZoom,
+            resizeMode = videoScaleMode,
+            blockedFailureKind = blockedFailureKind,
             controlsVisible = if (isPortrait) true else controlsVisible,
             channelBadgeVisible = channelBadgeVisible,
             isFavorite = isFavorite,
@@ -827,7 +876,12 @@ private fun MobileLivePlayerScreen(
                 controlsInteraction++
             },
             onToggleZoom = {
-                fullscreenZoom = !fullscreenZoom
+                val next = if (videoScaleMode == VideoScaleMode.Zoom) {
+                    VideoScaleMode.Fit
+                } else {
+                    VideoScaleMode.Zoom
+                }
+                actions.updateContentVideoScaleMode(scaleContentKey, next)
                 controlsInteraction++
             },
             onTogglePause = {
@@ -1112,7 +1166,8 @@ private fun MobileLivePlayerSurface(
     session: PlaybackSession,
     channel: LiveChannel,
     currentLine: LiveChannelLine,
-    fullscreenZoom: Boolean,
+    resizeMode: VideoScaleMode,
+    blockedFailureKind: PlaybackFailureKind?,
     controlsVisible: Boolean,
     channelBadgeVisible: Boolean,
     isFavorite: Boolean,
@@ -1190,58 +1245,26 @@ private fun MobileLivePlayerSurface(
                 }
             },
     ) {
-        AndroidView(
-            factory = { viewContext ->
-                PlayerView(viewContext).apply {
-                    player = exoPlayer
-                    descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    useController = false
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
-                }
-            },
-            update = { view ->
-                view.player = exoPlayer
-                view.resizeMode = if (fullscreenZoom) {
-                    AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                } else {
-                    AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-                // 兜底耗尽后原生缓冲环会一直转，改用常驻卡片承接反馈。
-                view.setShowBuffering(
-                    if (streamBlocked) PlayerView.SHOW_BUFFERING_NEVER else PlayerView.SHOW_BUFFERING_ALWAYS,
-                )
-            },
-            modifier = Modifier.fillMaxSize(),
+        PlayerSurface(
+            player = exoPlayer,
+            resizeMode = resizeMode,
+            showBuffering = !streamBlocked,
         )
 
         // 线路全部不可用：常驻卡片承接反馈，提供「重试」与「下一台」两个出口。
         if (streamBlocked) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 20.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color.Black.copy(alpha = 0.74f))
-                    .padding(horizontal = 18.dp, vertical = 14.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    text = "当前频道所有线路均不可用",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                    textAlign = TextAlign.Center,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LiveBlockedAction(text = "重试", onClick = onRetryStream)
-                    LiveBlockedAction(text = "下一台", onClick = onNextChannel)
-                }
-            }
+            val kind = blockedFailureKind ?: PlaybackFailureKind.Stalled
+            PlaybackStatusOverlay(
+                status = PlaybackStatus.Failed(
+                    kind = kind,
+                    title = playbackFailureTitle(kind),
+                    message = playbackFailureMessage(kind) + " 当前频道所有线路均已尝试。",
+                    nextLabel = "下一台",
+                ),
+                onRetry = onRetryStream,
+                onNext = onNextChannel,
+                modifier = Modifier.align(Alignment.Center),
+            )
         }
 
         // 居中频道名徽标：● 红点 + 22sp 频道名，播放 2s 后隐藏。
@@ -1317,7 +1340,7 @@ private fun MobileLivePlayerSurface(
                     Spacer(modifier = Modifier.weight(1f))
                     // 铺满/原始比例（RESIZE_MODE_ZOOM / FIT）。
                     Text(
-                        text = if (fullscreenZoom) "原始" else "铺满",
+                        text = if (resizeMode == VideoScaleMode.Zoom) "原始" else "铺满",
                         fontSize = 11.sp,
                         color = Color.White.copy(alpha = 0.9f),
                         modifier = Modifier
