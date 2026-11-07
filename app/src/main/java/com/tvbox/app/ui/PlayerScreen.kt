@@ -13,7 +13,6 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
-import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
@@ -69,6 +68,7 @@ import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlaybackAttemptTracker
+import com.tvbox.app.domain.correspondingEpisodeIndex
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.PlaybackIssueType
@@ -142,34 +142,26 @@ fun PlayerScreen(
     BindPlaybackSession(session, player) {
         saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
     }
-    val playerFocusRequester = remember { FocusRequester() }
-    var controlsVisible by remember { mutableStateOf(false) }
-    var controlsPanel by remember { mutableStateOf(PlayerPanel.None) }
-    var controlsInteraction by remember { mutableIntStateOf(0) }
-    var scrubbing by remember { mutableStateOf(false) }
-    // 手机播放页“更多”面板展开时暂停自动隐藏，方便选集/切线路。
-    var mobileMoreOpen by remember { mutableStateOf(false) }
-    var mobileLocked by remember(movie.id, movie.apiLineId) { mutableStateOf(false) }
-    BackHandler {
-        when {
-            mobileLocked && controlsVisible -> {
-                android.widget.Toast.makeText(
-                    context,
-                    "播放已锁定，点“解锁”恢复",
-                    android.widget.Toast.LENGTH_SHORT,
-                ).show()
+    // 控件状态收敛到共享层：visible / panel / 自动隐藏 / 焦点恢复 / 锁屏由 PlayerChromeState 统一管理。
+    val chrome = remember(movie.id, movie.apiLineId) { PlayerChromeState() }
+    val playerFocusRequester = chrome.rootFocus
+    PlayerChromeBackHandler(
+        state = chrome,
+        onExit = {
+            // 控件已隐藏时单次返回直接退出；退出前保存进度，避免少一次确认后漏存。
+            if (isMobile) {
+                saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
             }
-            controlsPanel != PlayerPanel.None -> controlsPanel = PlayerPanel.None
-            controlsVisible -> { controlsVisible = false; runCatching { playerFocusRequester.requestFocus() } }
-            else -> {
-                // 控件已隐藏时单次返回直接退出；退出前保存进度，避免少一次确认后漏存。
-                if (isMobile) {
-                    saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
-                }
-                actions.goBack()
-            }
-        }
-    }
+            actions.goBack()
+        },
+        onLockedHint = {
+            android.widget.Toast.makeText(
+                context,
+                "播放已锁定，点“解锁”恢复",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        },
+    )
     val lifecycleOwner = LocalLifecycleOwner.current
     val uiPosition = playbackHost.snapshot.positionMs
     val uiDuration = playbackHost.snapshot.durationMs
@@ -185,18 +177,12 @@ fun PlayerScreen(
             }
         }
     }
-    LaunchedEffect(controlsVisible, controlsPanel, controlsInteraction, uiPlaying, scrubbing, mobileMoreOpen, mobileLocked) {
-        if (controlsVisible && controlsPanel == PlayerPanel.None && uiPlaying && !scrubbing && !mobileMoreOpen && !mobileLocked) {
-            delay(5_000)
-            controlsVisible = false
-            playerFocusRequester.requestFocus()
-        }
-    }
+    PlayerChromeAutoHide(chrome, uiPlaying, autoHideMs = PLAYER_CHROME_AUTO_HIDE_MS)
     LaunchedEffect(session.interrupted) {
-        if (session.interrupted) controlsVisible = true
+        if (session.interrupted) chrome.bump()
     }
-    LaunchedEffect(controlsVisible) {
-        if (!controlsVisible) {
+    LaunchedEffect(chrome.visible) {
+        if (!chrome.visible) {
             androidx.compose.runtime.withFrameNanos { }
             playerFocusRequester.requestFocus()
         }
@@ -644,7 +630,7 @@ fun PlayerScreen(
         }
     }
     val scheduleLongPressSpeed = {
-        if (!mobileLocked) {
+        if (!chrome.locked) {
             touchGesture.originalSpeed = player.playbackParameters.speed
             touchGesture.longPressRunnable?.let(touchHandler::removeCallbacks)
             touchGesture.longPressActive = false
@@ -661,15 +647,13 @@ fun PlayerScreen(
         }
     }
     val showPlaybackStatusByTap = {
-        controlsVisible = !controlsVisible
-        controlsInteraction++
+        chrome.toggle()
     }
     val togglePlaybackByGesture = {
         cancelLongPressSpeed()
         cancelPendingSingleTap()
-        if (mobileLocked) {
-            controlsVisible = true
-            controlsInteraction++
+        if (chrome.locked) {
+            chrome.bump()
             seekGesturePrompt = "已锁定，先解锁"
         } else if (player.playWhenReady) {
             bufferMonitor.onPaused()
@@ -684,9 +668,8 @@ fun PlayerScreen(
     val seekByGesture = { deltaMs: Long, label: String ->
         cancelLongPressSpeed()
         cancelPendingSingleTap()
-        if (mobileLocked) {
-            controlsVisible = true
-            controlsInteraction++
+        if (chrome.locked) {
+            chrome.bump()
             seekGesturePrompt = "已锁定，先解锁"
             seekGesturePromptNonce++
         } else {
@@ -760,17 +743,17 @@ fun PlayerScreen(
             .focusRequester(playerFocusRequester)
             .onPreviewKeyEvent { event ->
                 val nativeEvent = event.nativeKeyEvent
-                if (controlsVisible) controlsInteraction++
-                if (controlsVisible && nativeEvent.keyCode in listOf(
+                if (chrome.visible) chrome.interaction++
+                if (chrome.visible && nativeEvent.keyCode in listOf(
                     AndroidKeyEvent.KEYCODE_DPAD_LEFT, AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
                     AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN
                 )) return@onPreviewKeyEvent false
                 when (nativeEvent.keyCode) {
                     AndroidKeyEvent.KEYCODE_BACK -> {
-                        if (controlsVisible || controlsPanel != PlayerPanel.None) {
+                        if (chrome.visible || chrome.panel != PlayerPanel.None) {
                             if (event.type == KeyEventType.KeyUp) {
-                                if (controlsPanel != PlayerPanel.None) controlsPanel = PlayerPanel.None
-                                else controlsVisible = false
+                                if (chrome.panel != PlayerPanel.None) chrome.closePanel()
+                                else chrome.hide()
                             }
                             true
                         } else false
@@ -804,8 +787,8 @@ fun PlayerScreen(
                     AndroidKeyEvent.KEYCODE_DPAD_CENTER,
                     AndroidKeyEvent.KEYCODE_ENTER,
                     -> {
-                        if (controlsVisible) false else {
-                            if (event.type == KeyEventType.KeyUp) { controlsVisible = true; controlsInteraction++ }
+                        if (chrome.visible) false else {
+                            if (event.type == KeyEventType.KeyUp) chrome.bump()
                             true
                         }
                     }
@@ -880,7 +863,7 @@ fun PlayerScreen(
                                 touchGesture.maxVolume = audioManager
                                     ?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                     ?: 0
-                                if (!mobileLocked) scheduleLongPressSpeed()
+                                if (!chrome.locked) scheduleLongPressSpeed()
                             }
                             MotionEvent.ACTION_MOVE -> {
                                 val totalDx = event.x - touchGesture.downX
@@ -888,7 +871,7 @@ fun PlayerScreen(
                                 val durationMs = player.duration.takeIf { it > 0L }
                                 if (touchGesture.longPressActive) return@OnTouchListener true
 
-                                if (!mobileLocked && touchGesture.swipeMode == PlayerSwipeMode.None) {
+                                if (!chrome.locked && touchGesture.swipeMode == PlayerSwipeMode.None) {
                                     when {
                                         abs(totalDx) > touchSlop && abs(totalDx) > abs(totalDy) && durationMs != null -> {
                                             touchGesture.swipeMode = PlayerSwipeMode.Seek
@@ -903,7 +886,7 @@ fun PlayerScreen(
                                     }
                                 }
 
-                                if (mobileLocked) {
+                                if (chrome.locked) {
                                     cancelLongPressSpeed()
                                 } else if (touchGesture.swipeMode == PlayerSwipeMode.Seek && durationMs != null) {
                                     cancelLongPressSpeed()
@@ -928,7 +911,7 @@ fun PlayerScreen(
                                     activity?.window?.setScreenBrightness(brightness)
                                     seekGesturePrompt = "亮度 ${(brightness * 100).roundToInt()}%"
                                     seekGesturePromptNonce++
-                                } else if (!mobileLocked && touchGesture.swipeMode == PlayerSwipeMode.Volume && touchGesture.maxVolume > 0) {
+                                } else if (!chrome.locked && touchGesture.swipeMode == PlayerSwipeMode.Volume && touchGesture.maxVolume > 0) {
                                     cancelLongPressSpeed()
                                     cancelPendingSingleTap()
                                     val volume = (
@@ -953,13 +936,12 @@ fun PlayerScreen(
                                     cancelPendingSingleTap()
                                     return@OnTouchListener true
                                 }
-                                if (mobileLocked) {
+                                if (chrome.locked) {
                                     touchGesture.seeking = false
                                     cancelPendingSingleTap()
                                     // 锁定态下轻点唤出解锁层（控件可见时已显示解锁按钮）
                                     if (swipeMode == PlayerSwipeMode.None && !wasLongPressActive) {
-                                        controlsVisible = true
-                                        controlsInteraction++
+                                        chrome.bump()
                                         seekGesturePrompt = "已锁定，点“解锁”恢复"
                                         seekGesturePromptNonce++
                                     }
@@ -1030,7 +1012,7 @@ fun PlayerScreen(
                 nextLabel = if (movie.playSources.size > 1) "下一线路" else null,
             )
             player.playWhenReady && !firstFrameRendered && !session.interrupted &&
-                controlsPanel == PlayerPanel.None -> PlaybackStatus.Loading("正在加载 ${movie.name}…")
+                chrome.panel == PlayerPanel.None -> PlaybackStatus.Loading("正在加载 ${movie.name}…")
             else -> PlaybackStatus.Hidden
         }
         PlaybackStatusOverlay(
@@ -1059,116 +1041,99 @@ fun PlayerScreen(
             modifier = Modifier.align(Alignment.Center),
             retryFocusRequester = if (isTelevision) overlayRetryFocus else null,
         )
-        if (controlsVisible) {
-            if (isMobile) {
-                PlayerControlsMobile(
-                    title = movie.name, sources = movie.playSources,
-                    sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
-                    positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
-                    speed = state.playerSpeed,
-                    videoScaleMode = videoScaleMode,
-                    onToggle = { togglePlaybackByGesture() },
-                    onEpisode = { index ->
-                        if (index in source.episodes.indices) {
-                            saveCurrentProgress(player.currentPosition, uiDuration)
-                            val skipMs = state.appSettings.introSkipSeconds.toLong() * 1_000L
-                            player.seekTo(index, skipMs)
-                            introSkipPending = skipMs > 0L
-                            session.play(player)
-                        }
-                    },
-                    onSource = { index ->
-                        saveCurrentProgress(player.currentPosition, uiDuration)
-                        actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
-                    },
-                    onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed) },
-                    onVideoScale = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
-                    onSeek = { position ->
-                        bufferMonitor.onSeekStarted(System.currentTimeMillis())
-                        player.seekTo(position)
-                        saveCurrentProgress(position, uiDuration)
-                    },
-                    castLabel = if (canCast) {
-                        if (castingDevice != null) "停止投屏" else "投屏"
-                    } else null,
-                    onCast = {
-                        if (castingDevice != null) stopCasting() else castDialogVisible = true
-                    },
-                    onBack = {
-                        saveCurrentProgress(player.currentPosition, uiDuration)
-                        actions.goBack()
-                    },
-                    onMorePanelChange = { mobileMoreOpen = it },
-                    episodeSortReverse = state.appSettings.episodeSortReverse,
-                    onSortReverse = { actions.toggleEpisodeSortReverse() },
-                    introSkipSeconds = state.appSettings.introSkipSeconds,
-                    outroSkipSeconds = state.appSettings.outroSkipSeconds,
-                    onIntroSkip = { actions.updateIntroSkipSeconds(it) },
-                    onOutroSkip = { actions.updateOutroSkipSeconds(it) },
-                    locked = mobileLocked,
-                    onLockChange = { locked ->
-                        mobileLocked = locked
-                        controlsInteraction++
-                        if (locked) {
-                            cancelLongPressSpeed()
-                            cancelPendingSingleTap()
-                        }
-                        seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
-                        seekGesturePromptNonce++
-                    },
-                    onSeekBy = { delta -> seekByGesture(delta, if (delta < 0) "快退 ${-delta / 1000} 秒" else "快进 ${delta / 1000} 秒") },
-                    buffering = player.playbackState == Player.STATE_BUFFERING,
-                )
-            } else {
-                PlayerControls(
-                    title = movie.name, sources = movie.playSources,
-                    sourceIndex = state.playerSourceIndex, episodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex),
-                    positionMs = uiPosition, durationMs = uiDuration, playing = uiPlaying,
-                    speed = state.playerSpeed, panel = controlsPanel,
-                    videoScaleMode = videoScaleMode,
-                    onPanel = { controlsPanel = it; controlsInteraction++ },
-                    onToggle = { togglePlaybackByGesture(); controlsInteraction++ },
-                    onEpisode = { index ->
-                        if (index in source.episodes.indices) {
-                            saveCurrentProgress(player.currentPosition, uiDuration)
-                            val skipMs = state.appSettings.introSkipSeconds.toLong() * 1_000L
-                            player.seekTo(index, skipMs)
-                            introSkipPending = skipMs > 0L
-                            session.play(player)
-                            controlsInteraction++
-                        }
-                    },
-                    onSource = { index ->
-                        saveCurrentProgress(player.currentPosition, uiDuration)
-                        actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
-                        controlsInteraction++
-                    },
-                    onSpeed = { speed -> player.setPlaybackSpeed(speed); actions.updatePlaybackSpeed(speed); controlsInteraction++ },
-                    onVideoScale = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode); controlsInteraction++ },
-                    onSeek = { position ->
-                        bufferMonitor.onSeekStarted(System.currentTimeMillis())
-                        player.seekTo(position)
-                        saveCurrentProgress(position, uiDuration)
-                    },
-                    onInteraction = { controlsInteraction++ },
-                    onScrubbing = { scrubbing = it },
-                    sourceLatencies = state.sourceLatencies,
-                    introSkipSeconds = state.appSettings.introSkipSeconds,
-                    outroSkipSeconds = state.appSettings.outroSkipSeconds,
-                    onIntroSkip = { seconds -> actions.updateIntroSkipSeconds(seconds); controlsInteraction++ },
-                    onOutroSkip = { seconds -> actions.updateOutroSkipSeconds(seconds); controlsInteraction++ },
-                    castLabel = if (canCast) {
-                        if (castingDevice != null) "停止投屏" else "投屏"
-                    } else {
-                        null
-                    },
-                    onCast = {
-                        if (castingDevice != null) stopCasting() else castDialogVisible = true
-                        controlsInteraction++
-                    },
-                )
+        val currentEpisodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex)
+        val currentEpisodeTitle = source.episodes[currentEpisodeIndex].title
+        val changeEpisode = { index: Int ->
+            if (index in source.episodes.indices) {
+                saveCurrentProgress(player.currentPosition, uiDuration)
+                val skipMs = state.appSettings.introSkipSeconds.toLong() * 1_000L
+                player.seekTo(index, skipMs)
+                introSkipPending = skipMs > 0L
+                session.play(player)
             }
         }
+        PlayerChrome(
+            state = chrome,
+            data = PlayerChromeData(
+                title = movie.name,
+                episodes = source.episodes.map { it.title },
+                sources = movie.playSources.map { PlayerChromeSource(name = it.name, lineId = it.lineId) },
+                episodeIndex = currentEpisodeIndex,
+                sourceIndex = state.playerSourceIndex,
+                sourceEnabled = movie.playSources.map { candidate ->
+                    correspondingEpisodeIndex(candidate, currentEpisodeTitle, currentEpisodeIndex) != null
+                },
+                positionMs = uiPosition,
+                durationMs = uiDuration,
+                playing = uiPlaying,
+                speed = state.playerSpeed,
+                resizeMode = videoScaleMode,
+                sourceLatencies = state.sourceLatencies,
+                buffering = player.playbackState == Player.STATE_BUFFERING,
+            ),
+            capabilities = PlayerChromeCapabilities(
+                seek = true,
+                episodes = true,
+                sources = true,
+                speed = true,
+                resize = true,
+                skip = true,
+                cast = canCast,
+                castLabel = if (canCast) {
+                    if (castingDevice != null) "停止投屏" else "投屏"
+                } else {
+                    null
+                },
+                lock = true,
+            ),
+            actions = PlayerChromeActions(
+                onToggle = { togglePlaybackByGesture() },
+                onSeek = { position ->
+                    bufferMonitor.onSeekStarted(System.currentTimeMillis())
+                    player.seekTo(position)
+                    saveCurrentProgress(position, uiDuration)
+                },
+                onSeekBy = { delta ->
+                    seekByGesture(delta, if (delta < 0) "快退 ${-delta / 1000} 秒" else "快进 ${delta / 1000} 秒")
+                },
+                onPrevious = { changeEpisode(currentEpisodeIndex - 1) },
+                onNext = { changeEpisode(currentEpisodeIndex + 1) },
+                onSelectEpisode = changeEpisode,
+                onSelectSource = { index ->
+                    saveCurrentProgress(player.currentPosition, uiDuration)
+                    actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
+                },
+                onSelectSpeed = { speed ->
+                    player.setPlaybackSpeed(speed)
+                    actions.updatePlaybackSpeed(speed)
+                },
+                onSelectResize = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
+                onBack = {
+                    saveCurrentProgress(player.currentPosition, uiDuration)
+                    actions.goBack()
+                },
+                onCast = {
+                    if (castingDevice != null) stopCasting() else castDialogVisible = true
+                },
+                onLockChange = { locked ->
+                    chrome.interaction++
+                    if (locked) {
+                        cancelLongPressSpeed()
+                        cancelPendingSingleTap()
+                    }
+                    seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
+                    seekGesturePromptNonce++
+                },
+                onInteraction = { chrome.interaction++ },
+            ),
+            touch = isMobile,
+            episodeSortReverse = state.appSettings.episodeSortReverse,
+            onSortReverse = { actions.toggleEpisodeSortReverse() },
+            introSkipSeconds = state.appSettings.introSkipSeconds,
+            outroSkipSeconds = state.appSettings.outroSkipSeconds,
+            onIntroSkip = { actions.updateIntroSkipSeconds(it) },
+            onOutroSkip = { actions.updateOutroSkipSeconds(it) },
+        )
         val playbackStatus = playbackIssue?.message ?: playbackNotice
         if (playbackStatus != null) {
             GesturePrompt(
