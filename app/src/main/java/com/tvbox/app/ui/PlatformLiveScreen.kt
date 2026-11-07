@@ -882,8 +882,12 @@ private fun PlatformLivePlayerScreen(
     val playerFocusRequester = remember { FocusRequester() }
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, player)
+    // 候选/地址变化时重建快照，保持原 playerState 的重置语义。
+    val playbackHost = rememberPlaybackHostOrNull(
+        player,
+        resetKey = stream?.url to stream?.safeActiveCandidateIndex,
+    )
     var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
-    var playerState by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableIntStateOf(Player.STATE_IDLE) }
     var badgeVisible by remember { mutableStateOf(true) }
     // 首帧是否已经出来过：用于区分"起播慢"和"播放中断流"，避免首帧前 5 秒误判卡死。
     var hasReportedReady by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf(false) }
@@ -921,7 +925,6 @@ private fun PlatformLivePlayerScreen(
                         PLATFORM_LIVE_LOG_TAG,
                         "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(playbackUrl)}"
                     )
-                    playerState = playbackState
                     if (playbackState == Player.STATE_READY) {
                         hasReportedReady = true
                         // 画面恢复即清除失败提示：重解析得到同一地址时 effect 不会重跑，避免提示常驻。
@@ -972,9 +975,9 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(playerState, player, playbackUrl, session.canPlay) {
+    LaunchedEffect(playbackHost?.snapshot?.playbackState, player, playbackUrl, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
-        when (playerState) {
+        when (playbackHost?.snapshot?.playbackState ?: Player.STATE_IDLE) {
             Player.STATE_ENDED -> {
                 // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
                 // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。

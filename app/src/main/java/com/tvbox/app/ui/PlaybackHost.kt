@@ -77,20 +77,32 @@ internal class PlaybackHost(
 }
 
 @Composable
-internal fun rememberPlaybackHost(): PlaybackHost {
-    val player = rememberManagedExoPlayer()
-    val host = remember(player) { PlaybackHost(player) }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(host) {
-        host.attach()
-        onDispose { host.detach() }
-    }
-    LaunchedEffect(host, lifecycleOwner) {
-        // 退到后台后组合仍存活：不停止轮询会持续 4 次/秒唤醒主线程。
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
-            while (true) {
-                host.refreshSnapshot()
-                delay(PLAYBACK_SNAPSHOT_INTERVAL_MS)
+internal fun rememberPlaybackHost(): PlaybackHost =
+    rememberPlaybackHostOrNull(rememberManagedExoPlayer())!!
+
+/**
+ * 平台直播在解析出可播地址前没有播放器实例；此重载让其余页面共用同一份快照逻辑。
+ * [resetKey] 变化时重建快照（对应原页面按候选/地址重置 playerState 的语义）。
+ */
+@Composable
+internal fun rememberPlaybackHostOrNull(
+    player: ExoPlayer?,
+    resetKey: Any? = null,
+): PlaybackHost? {
+    val host = remember(player, resetKey) { player?.let(::PlaybackHost) }
+    if (host != null) {
+        val lifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(host) {
+            host.attach()
+            onDispose { host.detach() }
+        }
+        LaunchedEffect(host, lifecycleOwner) {
+            // 退到后台后组合仍存活：不停止轮询会持续 4 次/秒唤醒主线程。
+            lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    host.refreshSnapshot()
+                    delay(PLAYBACK_SNAPSHOT_INTERVAL_MS)
+                }
             }
         }
     }
