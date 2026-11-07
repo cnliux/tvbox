@@ -252,6 +252,7 @@ data class TvBoxUiState(
     val platformLiveRoomPageCount: Int get() = platformLive.roomPageCount
     val platformLiveRoomPage: Int get() = platformLive.roomPage
     val platformLiveLoadingMore: Boolean get() = platformLive.loadingMore
+    val platformLiveLoadingMoreError: String? get() = platformLive.loadingMoreError
     val platformLiveLoading: Boolean get() = platformLive.loading
     val platformLiveResolving: Boolean get() = platformLive.resolving
     val platformLiveError: String? get() = platformLive.error
@@ -4021,9 +4022,11 @@ class TvBoxViewModel(
             _state.update {
                 if (it.platformLive.selectedCategory?.id != category.id) it else {
                     if (reset) {
-                        it.copy(platformLive = it.platformLive.copy(loading = true, loadingMore = false, error = null))
+                        it.copy(platformLive = it.platformLive.copy(
+                            loading = true, loadingMore = false, loadingMoreError = null, error = null))
                     } else {
-                        it.copy(platformLive = it.platformLive.copy(loadingMore = true, error = null))
+                        it.copy(platformLive = it.platformLive.copy(
+                            loadingMore = true, loadingMoreError = null, error = null))
                     }
                 }
             }
@@ -4043,6 +4046,7 @@ class TvBoxViewModel(
                                 roomPageCount = result.pageCount,
                                 loading = false,
                                 loadingMore = false,
+                                loadingMoreError = null,
                                 error = if (rooms.isEmpty()) "这个分类暂时没有正在直播的房间" else null),
                             )
                         }
@@ -4051,11 +4055,22 @@ class TvBoxViewModel(
                 .onFailure { error ->
                     _state.update {
                         if (it.platformLive.selectedCategory?.id != category.id) it else {
-                            it.copy(platformLive = it.platformLive.copy(
-                                loading = false,
-                                loadingMore = false,
-                                error = error.userMessage()),
-                            )
+                            it.copy(platformLive = if (reset) {
+                                // 首屏加载失败：整页错误态 + 重试。
+                                it.platformLive.copy(
+                                    loading = false,
+                                    loadingMore = false,
+                                    loadingMoreError = null,
+                                    error = error.userMessage(),
+                                )
+                            } else {
+                                // 分页失败：已加载的房间保持展示，只在列表底部提示并提供重试，
+                                // 页码不推进，重试仍从同一页继续。
+                                it.platformLive.copy(
+                                    loadingMore = false,
+                                    loadingMoreError = error.userMessage(),
+                                )
+                            })
                         }
                     }
                 }

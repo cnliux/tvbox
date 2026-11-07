@@ -37,6 +37,8 @@ data class PlatformLiveUiState(
     val roomPageCount: Int = 1,
     val loading: Boolean = false,
     val loadingMore: Boolean = false,
+    /** 分页（加载更多）失败：只影响列表底部提示，不清空已加载房间、不触发整页错误态。 */
+    val loadingMoreError: String? = null,
     val resolving: Boolean = false,
     val error: String? = null,
     /** 平台直播轻提示（自动切换线路结果等）；由 UI 消费后清空。 */

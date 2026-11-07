@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -373,6 +374,8 @@ private fun PlatformLiveRoomsScreen(
         gridState = gridState,
         notice = state.platformLiveFavoriteError,
         loadingMore = !favoritesMode && state.platformLiveLoadingMore,
+        loadingMoreError = if (favoritesMode) null else state.platformLiveLoadingMoreError,
+        onRetryLoadMore = actions::loadMorePlatformLiveRooms,
     ) {
         itemsIndexed(state.platformLiveRooms, key = { _, room -> room.id }) { index, room ->
             PlatformLiveRoomCard(
@@ -403,6 +406,8 @@ private fun PlatformLiveBrowseSurface(
     gridState: LazyGridState? = null,
     notice: String? = null,
     loadingMore: Boolean = false,
+    loadingMoreError: String? = null,
+    onRetryLoadMore: (() -> Unit)? = null,
     touchColumns: Int = 2,
     columnsOverride: Int = 0,
     content: androidx.compose.foundation.lazy.grid.LazyGridScope.() -> Unit,
@@ -478,6 +483,18 @@ private fun PlatformLiveBrowseSurface(
                             modifier = Modifier.fillMaxSize(),
                         ) {
                             content()
+                            // 分页失败时在列表末尾插入整行「重试」卡片：不打断已加载列表，
+                            // 触摸可直接点，遥控也能顺焦点下移到达。
+                            if (loadingMoreError != null && onRetryLoadMore != null) {
+                                item(key = "load-more-error", span = { GridItemSpan(maxLineSpan) }) {
+                                    PlatformLiveTextCard(
+                                        title = "加载更多失败",
+                                        subtitle = loadingMoreError,
+                                        label = "点击重试",
+                                        onClick = onRetryLoadMore,
+                                    )
+                                }
+                            }
                         }
                         // 自动加载更多时的轻量提示，不参与网格布局与焦点遍历。
                         if (loadingMore) {
