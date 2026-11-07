@@ -343,7 +343,13 @@ private fun PlatformLiveRoomsScreen(
             ) {
                 Text("还没有收藏的直播房间", style = MaterialTheme.typography.titleMedium)
                 state.platformLiveFavoriteError?.let { error ->
-                    Text(text = "收藏读取失败：$error", color = MaterialTheme.colorScheme.error)
+                    Text(
+                        text = "收藏读取失败：$error",
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 PlatformLiveTextCard(
                     title = "返回直播平台",
@@ -432,15 +438,29 @@ private fun PlatformLiveBrowseSurface(
                 ) {
                     AnimatedVisibility(visible = headerVisible) {
                         Column {
-                            Text(text = title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+                            // 站点名/分类名可能很长（分类页直接用二级分类名当标题），限制两行避免页头无限增高。
+                            Text(
+                                text = title,
+                                style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
                             Text(
                                 text = subtitle,
                                 modifier = Modifier.padding(top = 5.dp, bottom = 18.dp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
                             )
                             if (notice != null) {
-                                Text(text = notice, color = MaterialTheme.colorScheme.error)
+                                Text(
+                                    text = notice,
+                                    color = MaterialTheme.colorScheme.error,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
                         }
                     }
@@ -1135,7 +1155,13 @@ private fun PlatformLivePlayerScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 CircularProgressIndicator()
-                Text("正在解析 ${room.title}", color = Color.White)
+                Text(
+                    text = "正在解析 ${room.title}",
+                    modifier = Modifier.padding(horizontal = 24.dp),
+                    color = Color.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
 
@@ -1190,7 +1216,12 @@ private fun PlatformLivePlayerScreen(
                     contentColor = Color.White
                 ) {
                     Column(modifier = Modifier.padding(24.dp)) {
-                        Text("候选线路切换 - ${room.title}", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = "候选线路切换 - ${room.title}",
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Spacer(modifier = Modifier.height(16.dp))
                         LazyColumn(
                             state = lineListState,
@@ -1229,7 +1260,14 @@ private fun PlatformLivePlayerScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f))
-                                    Text("${candidate.cdn} | ${candidate.protocol.uppercase()}", modifier = Modifier.weight(1f), color = if (selected) Color.White else Color.White.copy(alpha = 0.8f))
+                                    Text(
+                                        text = "${candidate.cdn} | ${candidate.protocol.uppercase()}",
+                                        modifier = Modifier.weight(1f),
+                                        color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
+                                        // CDN 名称较长时单行省略，避免每行高度不一致、挤占线路列表。
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                     if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
