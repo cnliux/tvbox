@@ -9,10 +9,6 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -67,7 +63,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -106,8 +101,6 @@ import com.tvbox.app.domain.liveVideoScaleKey
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.probeLiveLineMimeType
 import com.tvbox.app.util.logSafeUrl
-import kotlin.math.abs
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -142,9 +135,6 @@ private const val MOBILE_LIVE_EPG_TICK_MS = 30_000L
 
 /** 手势提示（亮度/音量）停留时长。 */
 private const val MOBILE_LIVE_GESTURE_PROMPT_MS = 1_200L
-
-/** 无系统亮度可读时的兜底初始值。 */
-private const val MOBILE_LIVE_DEFAULT_BRIGHTNESS = 0.5f
 
 /**
  * 播放页沉浸标记：[MobileLiveScreen] 内部切到播放层时置 true，[MobileNavWrapper] 以此决定
@@ -1222,58 +1212,79 @@ private fun MobileLivePlayerSurface(
         gesturePrompt = null
     }
 
+    // 触摸手势收敛到共享 PlayerTouchGestureHandler：本页只启用单击唤出与竖滑亮度/音量。
+    val touchHandler = remember {
+        PlayerTouchGestureHandler(
+            activity = activity,
+            audioManager = audioManager,
+            capabilities = PlayerTouchCapabilities(
+                seekDrag = false,
+                doubleTapSeek = false,
+                longPressSpeed = false,
+                lock = false,
+                verticalSwipeEnabled = isPortrait,
+                verticalSwipeLoose = true,
+            ),
+            callbacks = PlayerTouchCallbacks(
+                isLocked = { false },
+                currentPositionMs = { 0L },
+                durationMs = { null },
+                onToggleControls = {},
+                onLockedTap = {},
+                onPlaybackToggle = {},
+                onSeekBy = { _, _ -> },
+                onSeekDragPreview = { _, _ -> },
+                onSeekDragCommit = {},
+                onBrightnessChanged = { _, _ -> },
+                onVolumeChanged = { _, _ -> },
+                onLongPressStart = {},
+                onLongPressEnd = {},
+            ),
+        )
+    }
+    touchHandler.capabilities = PlayerTouchCapabilities(
+        seekDrag = false,
+        doubleTapSeek = false,
+        longPressSpeed = false,
+        lock = false,
+        verticalSwipeEnabled = isPortrait,
+        verticalSwipeLoose = true,
+    )
+    touchHandler.callbacks = PlayerTouchCallbacks(
+        isLocked = { false },
+        currentPositionMs = { 0L },
+        durationMs = { null },
+        onToggleControls = onToggleControls,
+        onLockedTap = {},
+        onPlaybackToggle = {},
+        onSeekBy = { _, _ -> },
+        onSeekDragPreview = { _, _ -> },
+        onSeekDragCommit = {},
+        onBrightnessChanged = { _, percent ->
+            gesturePrompt = "亮度 $percent%"
+            gesturePromptNonce++
+        },
+        onVolumeChanged = { volume, maxVolume ->
+            gesturePrompt = "音量 $volume/$maxVolume"
+            gesturePromptNonce++
+        },
+        onLongPressStart = {},
+        onLongPressEnd = {},
+    )
+    DisposableEffect(touchHandler) {
+        onDispose { touchHandler.release() }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(isPortrait) {
-                // 竖屏：上下滑调亮度/音量（左半屏亮度、右半屏音量，沿用播放页既有约定）；
-                // 未滑动的单击仍然唤出/收起控件。
-                val touchSlop = viewConfiguration.touchSlop
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val downX = down.position.x
-                    val startBrightness = activity?.window?.currentScreenBrightness(context)
-                        ?: MOBILE_LIVE_DEFAULT_BRIGHTNESS
-                    val startVolume = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
-                    val maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
-                    var dragging = false
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) {
-                            // 抬起时未越过阈值 = 单击。
-                            if (!dragging) onToggleControls()
-                            break
-                        }
-                        val totalDy = change.position.y - down.position.y
-                        if (!dragging && abs(totalDy) > touchSlop) dragging = true
-                        if (!dragging) continue
-                        if (!isPortrait) {
-                            // 横屏不接管上下滑，交给外层控件显隐逻辑。
-                            break
-                        }
-                        val height = size.height.toFloat().coerceAtLeast(1f)
-                        if (downX < size.width / 2f) {
-                            val target = (startBrightness - totalDy / height).coerceIn(0.01f, 1f)
-                            activity?.window?.setScreenBrightness(target)
-                            gesturePrompt = "亮度 ${(target * 100).roundToInt()}%"
-                        } else if (maxVolume > 0) {
-                            val delta = (totalDy / height * maxVolume).roundToInt()
-                            val target = (startVolume - delta).coerceIn(0, maxVolume)
-                            audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, target, 0)
-                            gesturePrompt = "音量 $target/$maxVolume"
-                        }
-                        gesturePromptNonce++
-                        change.consume()
-                    }
-                }
-            },
+            .background(Color.Black),
     ) {
         PlayerSurface(
             player = exoPlayer,
             resizeMode = resizeMode,
             showBuffering = !streamBlocked,
+            configure = { view -> view.setOnTouchListener(touchHandler) },
         )
 
         // 线路全部不可用：常驻卡片承接反馈，提供「重试」与「下一台」两个出口。

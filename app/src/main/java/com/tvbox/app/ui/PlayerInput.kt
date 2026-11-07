@@ -341,6 +341,8 @@ internal data class PlayerTouchCapabilities(
     val volume: Boolean = true,
     val lock: Boolean = true,
     val verticalSwipeEnabled: Boolean = true,
+    /** 上下滑不再要求「垂直方向占优」；关闭上下滑时仍把这类拖动视为误触，不触发单击。 */
+    val verticalSwipeLoose: Boolean = false,
 )
 
 internal data class PlayerTouchCallbacks(
@@ -385,6 +387,7 @@ internal class PlayerTouchGestureHandler(
                 state.seekTargetMs = state.downPositionMs
                 state.seeking = false
                 state.swipeMode = PlayerSwipeMode.None
+                state.dragWithoutAction = false
                 state.startBrightness = context?.let { window?.currentScreenBrightness(it) } ?: DEFAULT_SCREEN_BRIGHTNESS
                 state.startVolume = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
                 state.maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
@@ -402,7 +405,7 @@ internal class PlayerTouchGestureHandler(
                             state.swipeMode = PlayerSwipeMode.Seek
                         }
                         capabilities.verticalSwipeEnabled && abs(totalDy) > touchSlop(view) &&
-                            abs(totalDy) > abs(totalDx) -> {
+                            (capabilities.verticalSwipeLoose || abs(totalDy) > abs(totalDx)) -> {
                             state.swipeMode = when {
                                 !capabilities.brightness && !capabilities.volume -> PlayerSwipeMode.None
                                 !capabilities.brightness -> PlayerSwipeMode.Volume
@@ -410,6 +413,10 @@ internal class PlayerTouchGestureHandler(
                                 state.downX < width / 2f -> PlayerSwipeMode.Brightness
                                 else -> PlayerSwipeMode.Volume
                             }
+                        }
+                        capabilities.verticalSwipeLoose && abs(totalDy) > touchSlop(view) -> {
+                            // 关闭上下滑时（如手机直播横屏）仍视为拖动，抬手不触发单击。
+                            state.dragWithoutAction = true
                         }
                     }
                 }
@@ -450,6 +457,8 @@ internal class PlayerTouchGestureHandler(
                 val swipeMode = state.swipeMode
                 state.swipeMode = PlayerSwipeMode.None
                 val wasLongPressActive = state.longPressActive
+                val dragWithoutAction = state.dragWithoutAction
+                state.dragWithoutAction = false
                 cancelLongPressSpeed()
                 if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
                     state.seeking = false
@@ -473,7 +482,7 @@ internal class PlayerTouchGestureHandler(
                     cancelPendingSingleTap()
                     return true
                 }
-                if (wasLongPressActive) {
+                if (wasLongPressActive || dragWithoutAction) {
                     cancelPendingSingleTap()
                     return true
                 }
@@ -562,6 +571,7 @@ private class PlayerTouchGestureState {
     var seekTargetMs: Long = 0L
     var seeking: Boolean = false
     var swipeMode: PlayerSwipeMode = PlayerSwipeMode.None
+    var dragWithoutAction: Boolean = false
     var startBrightness: Float = DEFAULT_SCREEN_BRIGHTNESS
     var startVolume: Int = 0
     var maxVolume: Int = 0
