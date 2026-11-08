@@ -96,6 +96,7 @@ import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.findLiveChannelsByNumberPrefix
 import com.tvbox.app.domain.probeLiveLineMimeType
 import com.tvbox.app.domain.resolveLiveChannelNumberTarget
+import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
@@ -134,9 +135,12 @@ fun LiveScreen(
                 onRetry = actions::refreshLive,
                 modifier = Modifier.padding(padding),
             )
-            state.liveChannels.isEmpty() -> ErrorState(
-                message = "没有可用直播频道",
-                onRetry = actions::refreshLive,
+            // 没有频道不是网络错误：用空态给出「去设置/刷新」的出口，避免错误图标与「重试」误导。
+            state.liveChannels.isEmpty() -> EmptyState(
+                title = "没有可用直播频道",
+                subtitle = "可在设置中添加或恢复直播源，然后刷新频道列表",
+                actionLabel = "刷新频道",
+                onAction = actions::refreshLive,
                 modifier = Modifier.padding(padding),
             )
             else -> LivePlayerScreen(state = state, actions = actions, session = session)

@@ -370,19 +370,21 @@ private fun MobileLiveListScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center,
             ) {
+                // 加载失败与「没有频道」分开给动作：前者重试有意义，后者应先回设置里添加/恢复直播源。
+                val hasError = state.liveError != null
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(horizontal = 24.dp),
                 ) {
                     Text(
-                        text = if (state.liveError != null) "直播源加载失败" else "没有可用直播频道",
+                        text = if (hasError) "直播源加载失败" else "没有可用直播频道",
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Medium,
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = if (state.liveError != null) "请检查网络，或切换其他直播源后重试" else "可在设置中添加或恢复直播源",
+                        text = if (hasError) "请检查网络，或切换其他直播源后重试" else "可在设置中添加或恢复直播源",
                         color = Color.White.copy(alpha = 0.6f),
                         fontSize = 12.sp,
                         textAlign = TextAlign.Center,
@@ -393,11 +395,24 @@ private fun MobileLiveListScreen(
                             .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(24.dp))
                             .background(LiveAccent)
-                            .clickable { actions.refreshLive() }
+                            .clickable { if (hasError) actions.refreshLive() else actions.openSettings() }
                             .padding(horizontal = 28.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("重试", color = Color.White, fontSize = 13.sp)
+                        Text(if (hasError) "重试" else "去设置", color = Color.White, fontSize = 13.sp)
+                    }
+                    if (!hasError) {
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Box(
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .clip(RoundedCornerShape(24.dp))
+                                .clickable { actions.refreshLive() }
+                                .padding(horizontal = 20.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("刷新频道", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                        }
                     }
                 }
             }
