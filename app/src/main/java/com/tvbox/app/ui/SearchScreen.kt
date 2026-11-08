@@ -486,7 +486,8 @@ private fun HotSearchWord(
             )
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "热门搜索：$word" }
             .focusable(),
         shape = shape,
         color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
@@ -552,14 +553,16 @@ private fun SearchKeyboardKey(
     var focused by remember { mutableStateOf(false) }
     Surface(
         modifier = modifier
-            .height(44.dp)
+            // 遥控键盘按键文字约 44dp 高，触摸模式不足最小热区，统一抬到 48dp。
+            .heightIn(min = 48.dp)
             .tvFocusScale(
                 shape = shape,
                 focusedBorder = TvColors.FocusRing,
             )
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "键盘按键 $text" }
             .focusable(),
         shape = shape,
         color = if (focused) TvColors.Accent else TvColors.SurfaceRaised,
@@ -1045,9 +1048,11 @@ private fun SearchResultCardMobile(
                     Text(
                         movie.apiLineName,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                        style = MaterialTheme.typography.labelSmall,
+                        // 手机卡片角标下限对齐 14sp（labelMedium），避免窄列下 12sp 不可读。
+                        style = MaterialTheme.typography.labelMedium,
                         color = Color.Black,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -1059,9 +1064,10 @@ private fun SearchResultCardMobile(
                         .align(Alignment.BottomEnd)
                         .background(Color(0xCC000000))
                         .padding(horizontal = 6.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelMedium,
                     color = Color.White,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

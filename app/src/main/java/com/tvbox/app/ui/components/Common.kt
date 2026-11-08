@@ -10,6 +10,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -48,6 +49,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.Font
@@ -192,6 +195,8 @@ private fun TvNavigationItem(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            // 图标 24dp + 上下 10dp 内边距只有 44dp，触摸模式补足 48dp 最小热区。
+            .heightIn(min = 48.dp)
             .tvFocusScale(
                 shape = shape,
                 focusedBorder = TvColors.FocusRing,
@@ -199,7 +204,11 @@ private fun TvNavigationItem(
             )
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics {
+                contentDescription = label
+                stateDescription = if (selected) "已选中" else "未选中"
+            }
             .focusable(),
         shape = shape,
         color = when {
@@ -282,7 +291,7 @@ private fun HeaderActionButton(
             )
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
             .focusable(),
         shape = shape,
         color = when {
@@ -294,16 +303,21 @@ private fun HeaderActionButton(
         tonalElevation = if (focused) 5.dp else 0.dp,
         shadowElevation = if (focused) 8.dp else 0.dp,
     ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(
-                horizontal = if (legacyStyle) 20.dp else 14.dp,
-                vertical = if (legacyStyle) 10.dp else 8.dp,
-            ),
-            style = if (legacyStyle) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
-            fontWeight = if (focused || legacyStyle) FontWeight.Medium else FontWeight.Normal,
-            maxLines = 1,
-        )
+        // 顶栏动作按钮的文字高度约 32dp，触摸模式下低于 48dp 最小热区；外层补足并垂直居中。
+        Box(
+            modifier = Modifier.heightIn(min = 48.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.padding(
+                    horizontal = if (legacyStyle) 20.dp else 14.dp,
+                ),
+                style = if (legacyStyle) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
+                fontWeight = if (focused || legacyStyle) FontWeight.Medium else FontWeight.Normal,
+                maxLines = 1,
+            )
+        }
     }
 }
 
@@ -487,7 +501,17 @@ fun MediaCard(
         animationSpec = tween(durationMillis = 120),
         label = "media-card-press",
     )
-    Column(
+    // 卡片内封面、标题、副标题、角标、进度各自是独立语义节点，读屏会逐条朗读；
+    // 合并成「片名 + 副标题 + 角标」，整卡作为一个按钮播报。
+    val cardLabel = buildString {
+        append(title)
+        if (!subtitle.isNullOrBlank()) append("，").append(subtitle)
+        if (!badge.isNullOrBlank()) append("，").append(badge)
+        if (progress != null) append("，已观看 ").append((progress.coerceIn(0f, 1f) * 100).toInt()).append("%")
+    }
+    // 用局部变量避免在语义块里与 androidx.compose.ui.semantics.onClick 同名。
+    val activateCard = onClick
+    BoxWithConstraints(
         modifier = modifier
             .tvFocusScale(
                 shape = shape,
@@ -514,75 +538,104 @@ fun MediaCard(
                         )
                     }
                 } else {
-                    Modifier.clickable(onClick = onClick)
+                    Modifier.clickable(role = Role.Button, onClick = onClick)
                 },
             )
-            .then(if (touchMode) Modifier else Modifier.focusable()),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(MediaCardAspectRatio)
-                .background(TvColors.SurfaceRaised),
-        ) {
-            cover()
-            bottomOverlay?.let { overlay ->
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, MediaCardScrim),
-                            ),
-                        )
-                        .padding(8.dp),
-                ) {
-                    overlay()
+            .semantics(mergeDescendants = true) {
+                contentDescription = cardLabel
+                role = Role.Button
+                // 触摸模式走 pointerInput，没有 clickable 的语义点击动作；补一个动作，
+                // 让 TalkBack 双击卡片能真正打开详情。
+                if (touchMode) {
+                    onClick {
+                        activateCard()
+                        true
+                    }
                 }
             }
-            if (!badge.isNullOrBlank()) {
-                MediaCardBadge(
-                    text = badge,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(8.dp),
+            .then(if (touchMode) Modifier else Modifier.focusable()),
+    ) {
+        // 触摸模式按实测卡宽选字号档位：3–4 列窄卡用较小档并放开两行，2 列宽卡用较大档。
+        // 全部取自 typography token，因此仍随设置里的字号缩放。
+        val narrowCard = maxWidth < 132.dp
+        val cardTitleStyle = when {
+            !touchMode -> MaterialTheme.typography.titleSmall
+            narrowCard -> MaterialTheme.typography.titleSmall
+            else -> MaterialTheme.typography.titleMedium
+        }
+        val cardTitleLines = if (touchMode && narrowCard) 2 else 1
+        val cardSubtitleStyle = when {
+            !touchMode -> MaterialTheme.typography.labelMedium
+            narrowCard -> MaterialTheme.typography.labelMedium
+            else -> MaterialTheme.typography.bodySmall
+        }
+        val cardSubtitleLines = if (touchMode && narrowCard) 2 else 1
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(MediaCardAspectRatio)
+                    .background(TvColors.SurfaceRaised),
+            ) {
+                cover()
+                bottomOverlay?.let { overlay ->
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(Color.Transparent, MediaCardScrim),
+                                ),
+                            )
+                            .padding(8.dp),
+                    ) {
+                        overlay()
+                    }
+                }
+                if (!badge.isNullOrBlank()) {
+                    MediaCardBadge(
+                        text = badge,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp),
+                    )
+                }
+                coverOverlay()
+            }
+            progress?.let { rawProgress ->
+                val progressValue = rawProgress.coerceIn(0f, 1f)
+                LinearProgressIndicator(
+                    progress = { progressValue },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = TvColors.SurfaceRaised,
                 )
             }
-            coverOverlay()
-        }
-        progress?.let { rawProgress ->
-            val progressValue = rawProgress.coerceIn(0f, 1f)
-            LinearProgressIndicator(
-                progress = { progressValue },
-                modifier = Modifier.fillMaxWidth(),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = TvColors.SurfaceRaised,
-            )
-        }
-        Text(
-            text = title,
-            modifier = Modifier.padding(
-                start = 10.dp,
-                top = 8.dp,
-                end = 10.dp,
-                bottom = if (subtitle.isNullOrBlank()) 10.dp else 2.dp,
-            ),
-            style = MaterialTheme.typography.titleSmall,
-            // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        if (!subtitle.isNullOrBlank()) {
             Text(
-                text = subtitle,
-                modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
-                color = TvColors.TextSecondary,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
+                text = title,
+                modifier = Modifier.padding(
+                    start = 10.dp,
+                    top = 8.dp,
+                    end = 10.dp,
+                    bottom = if (subtitle.isNullOrBlank()) 10.dp else 2.dp,
+                ),
+                style = cardTitleStyle,
+                // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = cardTitleLines,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (!subtitle.isNullOrBlank()) {
+                Text(
+                    text = subtitle,
+                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                    color = TvColors.TextSecondary,
+                    style = cardSubtitleStyle,
+                    maxLines = cardSubtitleLines,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

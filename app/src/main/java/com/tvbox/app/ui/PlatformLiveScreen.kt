@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -58,8 +59,10 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -600,6 +603,12 @@ private fun PlatformLiveTextCard(
     var focused by remember { mutableStateOf(false) }
     val shape = MaterialTheme.shapes.medium
     val touchMode = LocalTouchMode.current
+    // 卡片内「分类 / 站名 / 描述」是三个文本节点，合并成一条播报。
+    val cardLabel = buildString {
+        if (label.isNotBlank()) append(label).append("，")
+        append(title)
+        if (subtitle.isNotBlank()) append("，").append(subtitle)
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -607,7 +616,8 @@ private fun PlatformLiveTextCard(
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = cardLabel }
             .focusable()
             .padding(if (touchMode) 14.dp else 22.dp),
         verticalArrangement = Arrangement.spacedBy(if (touchMode) 4.dp else 8.dp),
@@ -652,7 +662,12 @@ private fun PlatformLiveImageCard(
     val touchMode = LocalTouchMode.current
     // 触摸模式：横向封面 + 封面右上角收藏星，文字占满卡宽。
     val hasFavorite = favorite != null && onFavoriteClick != null
-    Box(modifier = Modifier.fillMaxWidth()) {
+    // 图片卡的封面 contentDescription 与标题/副标题是分开的节点；整卡合并播报。
+    val cardLabel = if (subtitle.isBlank()) title else "$title，$subtitle"
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // 触摸模式按实测卡宽选档位：4 列房间卡（约 76–104dp）用 titleSmall，2 列卡用 titleMedium；
+        // 副标题统一不低于 labelMedium，避免 labelSmall 在窄卡上小到看不清。
+        val narrowCard = maxWidth < 132.dp
         Column(
             modifier = modifier
                 .fillMaxWidth()
@@ -660,7 +675,8 @@ private fun PlatformLiveImageCard(
                 .clip(shape)
                 .onFocusChanged { focused = it.isFocused || it.hasFocus }
                 .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
-                .clickable(onClick = onClick)
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics(mergeDescendants = true) { contentDescription = cardLabel }
                 .focusable(),
         ) {
             Box(
@@ -701,7 +717,11 @@ private fun PlatformLiveImageCard(
                     top = if (touchMode) 6.dp else 10.dp,
                     end = if (touchMode || favorite == null) (if (touchMode) 8.dp else 12.dp) else 62.dp,
                 ),
-                style = if (touchMode) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall,
+                style = when {
+                    !touchMode -> MaterialTheme.typography.titleSmall
+                    narrowCard -> MaterialTheme.typography.titleSmall
+                    else -> MaterialTheme.typography.titleMedium
+                },
                 fontWeight = if (touchMode) FontWeight.Medium else FontWeight.Normal,
                 maxLines = if (touchMode) 2 else 1,
                 overflow = TextOverflow.Ellipsis,
@@ -715,7 +735,8 @@ private fun PlatformLiveImageCard(
                     bottom = if (touchMode) 7.dp else 12.dp,
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = if (touchMode) MaterialTheme.typography.labelSmall else MaterialTheme.typography.bodySmall,
+                // 12sp 的 labelSmall 在 4 列窄卡上不可读；触摸模式统一用 labelMedium(14sp) 作为下限。
+                style = if (touchMode) MaterialTheme.typography.labelMedium else MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -748,8 +769,11 @@ private fun PlatformLiveFavoriteStar(
         modifier = modifier
             .size(touchTarget)
             .onFocusChanged { starFocused = it.isFocused || it.hasFocus }
-            .semantics { contentDescription = if (favorite) "取消收藏 $title" else "收藏 $title" }
-            .clickable(onClick = onFavoriteClick),
+            .semantics {
+                contentDescription = if (favorite) "取消收藏 $title" else "收藏 $title"
+                stateDescription = if (favorite) "已收藏" else "未收藏"
+            }
+            .clickable(role = Role.Button, onClick = onFavoriteClick),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -1329,6 +1353,7 @@ private fun PlatformLivePlayerScreen(
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
                                         .clip(MaterialTheme.shapes.small)
                                         .background(
                                             when {
@@ -1346,11 +1371,19 @@ private fun PlatformLivePlayerScreen(
                                             if (selected) Modifier.focusRequester(lineFocusRequester) else Modifier,
                                         )
                                         .onFocusChanged { if (it.isFocused) focusedCandidateIndex = index }
-                                        .clickable {
+                                        .clickable(role = Role.Button) {
                                             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【手动切换候选】from=${lineStream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}")
                                             actions.switchPlatformLiveCandidate(index)
                                             showLineControl = false
                                             chrome.bump()
+                                        }
+                                        .semantics(mergeDescendants = true) {
+                                            contentDescription = buildString {
+                                                append(index + 1).append("，")
+                                                append(candidate.cdn).append("，")
+                                                append(candidate.protocol.uppercase())
+                                                if (selected) append("，当前线路")
+                                            }
                                         }
                                         .padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically
