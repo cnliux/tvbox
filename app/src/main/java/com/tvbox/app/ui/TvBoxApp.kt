@@ -90,10 +90,11 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
@@ -2444,7 +2445,12 @@ private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel)
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("📱", fontSize = 20.sp)
+            // 表情符号对读屏器没有语义含义，补一条稳定的「手机模式」描述。
+            Text(
+                "📱",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.semantics { contentDescription = "手机模式" },
+            )
             Column(modifier = Modifier.weight(1f)) {
                 Text("手机模式已启用", style = MaterialTheme.typography.bodyMedium, color = Color.White)
                 Text("可在设置中调整主题、字体大小或切换回电视模式",
@@ -2452,18 +2458,22 @@ private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel)
                     color = Color.White.copy(alpha = 0.7f))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                // 原按钮由 12sp 文字 + 4dp 内边距撑高（约 25dp），触摸热区不足；
+                // 统一抬到 48dp，并改用 typography token 跟随全局字号设置。
                 TextButton(
                     onClick = { actions.openSettings(); actions.updateMobileOnboarded() },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                ) { Text("设置", fontSize = 12.sp) }
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                ) { Text("设置", style = MaterialTheme.typography.labelMedium) }
                 TextButton(
                     onClick = {
                         dismissed = true
                         // 「关闭」也算完成引导，否则每次冷启动都会再弹一次。
                         actions.updateMobileOnboarded()
                     },
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
-                ) { Text("关闭", fontSize = 12.sp) }
+                    modifier = Modifier.heightIn(min = 48.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp),
+                ) { Text("关闭", style = MaterialTheme.typography.labelMedium) }
             }
         }
     }
