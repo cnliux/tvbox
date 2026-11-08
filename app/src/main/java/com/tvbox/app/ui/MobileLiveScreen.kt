@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -175,8 +176,9 @@ fun MobileLiveScreen(
     }
 
     val currentChannel = state.liveChannels.getOrNull(state.liveChannelIndex)
-    // 列表页筛选状态（搜索/分组/只看收藏）挂在本层，进出播放层不丢失。
+    // 列表页筛选状态（搜索/分组/只看收藏）与滚动位置都挂在本层，进出播放层不丢失。
     val listFilters = remember { MobileLiveListFilters() }
+    val listScrollState = remember { LazyListState() }
     if (playerOpen && currentChannel != null) {
         MobileLivePlayerScreen(
             state = state,
@@ -193,6 +195,7 @@ fun MobileLiveScreen(
             state = state,
             actions = actions,
             filters = listFilters,
+            listScrollState = listScrollState,
             onOpenPlatformLive = onOpenPlatformLive,
             onChannelClick = { index ->
                 actions.selectLiveChannel(index)
@@ -218,6 +221,7 @@ private fun MobileLiveListScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
     filters: MobileLiveListFilters,
+    listScrollState: LazyListState,
     onOpenPlatformLive: () -> Unit,
     onChannelClick: (Int) -> Unit,
 ) {
@@ -453,6 +457,7 @@ private fun MobileLiveListScreen(
                 }
             }
             else -> LazyColumn(
+                state = listScrollState,
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -562,7 +567,11 @@ private fun MobileLiveChannelRow(
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(if (pressed) LiveField else LiveCard)
-            .clickable(interactionSource = interactionSource, indication = null) { onClick() }
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+            ) { onClick() }
             .padding(4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -606,7 +615,11 @@ private fun MobileLiveChannelRow(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .clickable { onToggleFavorite() },
+                    .clickable(role = Role.Button) { onToggleFavorite() }
+                    .semantics {
+                        contentDescription =
+                            if (isFavorite) "取消收藏 ${channel.name}" else "收藏 ${channel.name}"
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
