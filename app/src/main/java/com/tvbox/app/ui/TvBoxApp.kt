@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -88,7 +89,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -1473,54 +1473,63 @@ private fun MobileHomeFeed(
                     color = TvColors.TextSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
-                val screenWidthDp = LocalConfiguration.current.screenWidthDp
-                LazyVerticalGrid(
-                    // 手机竖屏按大卡片展示：常规手机 2 列，大屏/平板 3 列，避免出现 4 列以上的小图。
-                    columns = GridCells.Fixed(if (screenWidthDp >= 600) 3 else 2),
-                    state = movieGridState,
-                    contentPadding = PaddingValues(start = 10.dp, top = 8.dp, end = 10.dp, bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                    modifier = Modifier.weight(1f),
-                ) {
-                    if (state.isShowingDoubanHot) {
-                        items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
-                            DoubanHotPosterCard(
-                                item = item,
-                                resolving = state.resolvingDoubanHotId == item.doubanId,
-                                onClick = { actions.openDoubanHotDetail(item) },
-                            )
-                        }
-                    } else {
-                        items(state.movies, key = { "${it.apiLineId}-${it.id}" }) { movie ->
-                            MoviePosterCard(
-                                movie = movie,
-                                onClick = { actions.openDetail(movie.id) },
-                            )
-                        }
-                    }
-                    if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
-                        item {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                if (state.loadingMore) {
-                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                                } else {
-                                    Button(onClick = actions::loadNextPage) { Text("加载更多") }
-                                }
+                val gridSpacing = 10.dp
+                val gridPadding = 10.dp
+                // 手机端每格最小宽度：保证 360dp 窄屏仍有 2 列，平板/大屏按宽度自然增加列数。
+                val minCardWidth = 160.dp
+                BoxWithConstraints(modifier = Modifier.weight(1f)) {
+                    val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
+                        .toInt()
+                        .coerceAtLeast(1)
+                    val requested = state.appSettings.videoGridColumns
+                    val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(columns),
+                        state = movieGridState,
+                        contentPadding = PaddingValues(start = gridPadding, top = 8.dp, end = gridPadding, bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        if (state.isShowingDoubanHot) {
+                            items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                                DoubanHotPosterCard(
+                                    item = item,
+                                    resolving = state.resolvingDoubanHotId == item.doubanId,
+                                    onClick = { actions.openDoubanHotDetail(item) },
+                                )
+                            }
+                        } else {
+                            items(state.movies, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                                MoviePosterCard(
+                                    movie = movie,
+                                    onClick = { actions.openDetail(movie.id) },
+                                )
                             }
                         }
-                    } else if (state.homeItemCount > 0) {
-                        item {
-                            Text(
-                                text = "已经到底了",
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                color = TvColors.TextSecondary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            )
+                        if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    if (state.loadingMore) {
+                                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                    } else {
+                                        Button(onClick = actions::loadNextPage) { Text("加载更多") }
+                                    }
+                                }
+                            }
+                        } else if (state.homeItemCount > 0) {
+                            item {
+                                Text(
+                                    text = "已经到底了",
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    color = TvColors.TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                            }
                         }
                     }
                 }
