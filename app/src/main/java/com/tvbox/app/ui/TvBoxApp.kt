@@ -107,6 +107,7 @@ import com.tvbox.app.ui.components.AppHeader
 import com.tvbox.app.ui.components.AppNavigationRail
 import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.DoubanHotPosterCard
+import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
@@ -710,17 +711,13 @@ private fun HistoryScreen(
             }
             Spacer(modifier = Modifier.height(22.dp))
             if (state.historyItems.isEmpty()) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center,
-                ) {
-                    Text("暂无观看历史", style = MaterialTheme.typography.titleMedium)
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Button(onClick = actions::goBack) {
-                        Text("去看影片")
-                    }
-                }
+                // 空态统一走共享 EmptyState：与详情/平台直播的空态保持同一层级（标题 + 说明 + 动作）。
+                EmptyState(
+                    title = "暂无观看历史",
+                    subtitle = "在首页选择任意影片开始观看，进度会自动记录在这里",
+                    actionLabel = "去看影片",
+                    onAction = actions::goBack,
+                )
             } else {
                 val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
                 // 手机模式固定 2 列，避免 Adaptive 在窄屏下算出 1 列或间距过大导致布局异常。

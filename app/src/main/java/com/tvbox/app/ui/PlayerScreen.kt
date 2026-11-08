@@ -66,7 +66,7 @@ import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
-import com.tvbox.app.ui.components.ErrorState
+import com.tvbox.app.ui.components.EmptyState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -88,7 +88,14 @@ fun PlayerScreen(
 
 
     if (movie == null || source == null || episode == null) {
-        ErrorState(message = "播放地址不存在", onRetry = actions::goBack)
+        // 这里没有可重试的请求：地址本身不存在，重试只会拿同一条数据再走一遍。
+        // 与详情页「详情为空」保持一致，用空态给出明确的返回出口，避免出现写着「重试」实际却返回的按钮。
+        EmptyState(
+            title = "播放地址不存在",
+            subtitle = "请返回详情页重新选择线路或集数",
+            actionLabel = "返回详情",
+            onAction = actions::goBack,
+        )
         return
     }
 
