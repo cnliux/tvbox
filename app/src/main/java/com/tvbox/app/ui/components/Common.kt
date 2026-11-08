@@ -1,6 +1,8 @@
 package com.tvbox.app.ui.components
 
 import android.net.Uri
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -36,6 +38,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -464,6 +467,14 @@ fun MediaCard(
     val shape = RoundedCornerShape(TvDimens.CardRadius)
     val touchMode = LocalTouchMode.current
     var focused by remember { mutableStateOf(false) }
+    // 触摸模式走 pointerInput 消费点击（避免与焦点逻辑竞争），因此拿不到 clickable 的涟漪反馈；
+    // 这里用按下时整体压暗作为最基本的点击反馈，松开或手势被滚动接管后立即恢复。
+    var pressed by remember { mutableStateOf(false) }
+    val pressAlpha by animateFloatAsState(
+        targetValue = if (pressed) 0.7f else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "media-card-press",
+    )
     Column(
         modifier = modifier
             .tvFocusScale(
@@ -474,10 +485,22 @@ fun MediaCard(
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .background(if (focused) TvColors.SurfaceRaised else TvColors.Surface)
+            .alpha(pressAlpha)
             .then(
                 if (touchMode) {
-                    // 手机触摸模式直接消费点击，避免焦点逻辑与点击手势竞争导致点击无响应。
-                    Modifier.pointerInput(onClick) { detectTapGestures { onClick() } }
+                    Modifier.pointerInput(onClick) {
+                        detectTapGestures(
+                            onPress = {
+                                pressed = true
+                                try {
+                                    tryAwaitRelease()
+                                } finally {
+                                    pressed = false
+                                }
+                            },
+                            onTap = { onClick() },
+                        )
+                    }
                 } else {
                     Modifier.clickable(onClick = onClick)
                 },
