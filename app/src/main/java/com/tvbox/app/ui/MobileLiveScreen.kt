@@ -71,6 +71,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -1069,7 +1070,7 @@ private fun MobileLivePlayerScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = channel.name,
-                    fontSize = 17.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     maxLines = 1,
@@ -1078,12 +1079,19 @@ private fun MobileLivePlayerScreen(
                 )
                 Text(
                     text = "★",
-                    fontSize = 20.sp,
+                    style = MaterialTheme.typography.titleLarge,
                     color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .clickable { toggleFavoriteWithToast() },
+                        .clickable(role = Role.Button) { toggleFavoriteWithToast() }
+                        .semantics {
+                            contentDescription = if (isFavorite) {
+                                "取消收藏 ${channel.name}"
+                            } else {
+                                "收藏 ${channel.name}"
+                            }
+                        },
                     textAlign = TextAlign.Center,
                 )
             }
@@ -1098,12 +1106,13 @@ private fun MobileLivePlayerScreen(
                         modifier = Modifier
                             .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(16.dp))
-                            .clickable {
+                            .clickable(role = Role.Button) {
                                 if (index != lineIndex) {
                                     actions.selectLiveLine(index)
                                     Toast.makeText(context, "已切换至${line.name}", Toast.LENGTH_SHORT).show()
                                 }
-                            },
+                            }
+                            .semantics { stateDescription = if (isSelected) "播放中" else "未选中" },
                         contentAlignment = Alignment.Center,
                     ) {
                         Column(
@@ -1114,7 +1123,7 @@ private fun MobileLivePlayerScreen(
                         ) {
                             Text(
                                 text = if (isSelected) "${line.name}（播放中）" else line.name,
-                                fontSize = 11.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 color = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
@@ -1124,7 +1133,7 @@ private fun MobileLivePlayerScreen(
                                     append(liveLineLatencyLabel(hasResult, latency, state.liveLineTesting))
                                     lineFirstFrameMs[line.url]?.let { append(" · 首帧 ${formatFirstFrame(it)}") }
                                 },
-                                fontSize = 9.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
                                 color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
                             )
@@ -1138,14 +1147,14 @@ private fun MobileLivePlayerScreen(
                             .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(16.dp))
                             .background(LiveField)
-                            .clickable(enabled = !state.liveLineTesting) {
+                            .clickable(role = Role.Button, enabled = !state.liveLineTesting) {
                                 actions.testLiveChannelLines()
                             },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = if (state.liveLineTesting) "测速中…" else "重新测速",
-                            fontSize = 11.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = if (state.liveLineTesting) 0.4f else 1f),
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
                         )
@@ -1166,8 +1175,8 @@ private fun MobileLivePlayerScreen(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("节目单", fontSize = 13.sp, color = Color.White, modifier = Modifier.weight(1f))
-            Text("今天", fontSize = 11.sp, color = Color.White.copy(alpha = 0.6f))
+            Text("节目单", style = MaterialTheme.typography.bodySmall, color = Color.White, modifier = Modifier.weight(1f))
+            Text("今天", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f))
         }
         if (epgPrograms.isEmpty()) {
             Box(
@@ -1176,7 +1185,7 @@ private fun MobileLivePlayerScreen(
                     .weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("暂无节目单", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                Text("暂无节目单", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
             }
         } else {
             LazyColumn(
@@ -1205,14 +1214,14 @@ private fun MobileLivePlayerScreen(
                         ) {
                             Text(
                                 text = formatMobileLiveClock(program.startMs),
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = if (isCurrent) LiveAccent else Color.White.copy(alpha = 0.7f),
                             )
                             Spacer(modifier = Modifier.width(12.dp))
                             Text(
                                 text = program.title,
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                                 color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.8f),
                                 maxLines = 1,
@@ -1224,7 +1233,7 @@ private fun MobileLivePlayerScreen(
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "${minutes}分钟",
-                                    fontSize = 10.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     color = Color.White.copy(alpha = 0.6f),
                                 )
                             }
@@ -1244,7 +1253,7 @@ private fun MobileLivePlayerScreen(
         // 4. 相关频道区。
         Text(
             text = "相关频道",
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = 0.6f),
             modifier = Modifier.fillMaxWidth().padding(start = 14.dp, top = 10.dp, bottom = 6.dp),
         )
@@ -1255,12 +1264,21 @@ private fun MobileLivePlayerScreen(
         ) {
             items(relatedChannels, key = { it.value.number }) { pair ->
                 val related = pair.value
+                // 提前取「正在播」用于整卡合并播报，避免读屏逐个朗读名称与节目。
+                val relatedNow = actions.liveEpgNow(related)?.title
                 Column(
                     modifier = Modifier
                         .width(100.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(LiveCard)
-                        .clickable { onChannelPicked(pair.index, related.number) }
+                        .clickable(role = Role.Button) { onChannelPicked(pair.index, related.number) }
+                        .semantics(mergeDescendants = true) {
+                            contentDescription = if (relatedNow.isNullOrBlank()) {
+                                related.name
+                            } else {
+                                "${related.name}，正在播 $relatedNow"
+                            }
+                        }
                         .padding(vertical = 8.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -1268,18 +1286,17 @@ private fun MobileLivePlayerScreen(
                     Spacer(modifier = Modifier.height(5.dp))
                     Text(
                         text = related.name,
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         color = Color.White,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 6.dp),
                     )
-                    val relatedNow = actions.liveEpgNow(related)?.title
                     if (!relatedNow.isNullOrBlank()) {
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
                             text = relatedNow,
-                            fontSize = 9.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.6f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
