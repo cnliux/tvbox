@@ -67,6 +67,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -231,20 +233,20 @@ private fun MobileLiveListScreen(
             .fillMaxSize()
             .background(LiveBackground),
     ) {
-        // 1. 顶部搜索栏 52dp（edge-to-edge：自行吸收状态栏高度，保持状态栏可见）。
+        // 1. 顶部搜索栏 56dp（与手机端全局顶栏一致；edge-to-edge 下自行吸收状态栏高度）。
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .windowInsetsPadding(WindowInsets.statusBars)
-                .height(52.dp)
+                .height(56.dp)
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
                 modifier = Modifier
                     .weight(1f)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(20.dp))
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .background(LiveField)
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart,
@@ -279,30 +281,42 @@ private fun MobileLiveListScreen(
                         )
                     }
                     if (query.isNotEmpty()) {
-                        Text(
-                            text = "✕",
-                            color = Color.White.copy(alpha = 0.5f),
-                            fontSize = 14.sp,
+                        Box(
                             modifier = Modifier
+                                .size(48.dp)
                                 .clip(CircleShape)
-                                .clickable { query = "" }
-                                .padding(4.dp),
-                        )
+                                .clickable(role = Role.Button) { query = "" }
+                                .semantics { contentDescription = "清空搜索" },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "✕",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 14.sp,
+                            )
+                        }
                     }
                 }
             }
             Spacer(modifier = Modifier.width(8.dp))
             // 收藏筛选开关（点按只显示收藏频道）。
-            Text(
-                text = "★",
-                fontSize = 20.sp,
-                color = if (favoritesOnly) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
-                textAlign = TextAlign.Center,
+            Box(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .clickable { favoritesOnly = !favoritesOnly },
-            )
+                    .clickable(role = Role.Button) { favoritesOnly = !favoritesOnly }
+                    .semantics {
+                        contentDescription =
+                            if (favoritesOnly) "取消只看收藏频道" else "只看收藏频道"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "★",
+                    fontSize = 20.sp,
+                    color = if (favoritesOnly) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
+                )
+            }
             // 设置入口。
             Box(
                 modifier = Modifier
