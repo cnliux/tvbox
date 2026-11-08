@@ -60,6 +60,9 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -960,7 +963,8 @@ private fun HotSearchChips(
             Surface(
                 modifier = Modifier
                     .clip(RoundedCornerShape(18.dp))
-                    .clickable { onWordClick(word) },
+                    .clickable(role = Role.Button) { onWordClick(word) }
+                    .semantics { contentDescription = "热门搜索：$word" },
                 shape = RoundedCornerShape(18.dp),
                 color = Color(0xFF2A2A2A),
             ) {
@@ -993,7 +997,16 @@ private fun SearchResultCardMobile(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(Color(0xFF1E1E1E))
-            .clickable(onClick = onClick),
+            .clickable(role = Role.Button, onClick = onClick)
+            // 卡片内海报、标题、来源、更新信息原本是多个语义节点，读屏会逐条朗读；
+            // 合并成一条「片名，来源，更新信息」，整卡按一个按钮播报。
+            .semantics(mergeDescendants = true) {
+                contentDescription = buildString {
+                    append(movie.name)
+                    if (movie.apiLineName.isNotBlank()) append("，来源 ").append(movie.apiLineName)
+                    if (movie.remarks.isNotBlank()) append("，").append(movie.remarks)
+                }
+            },
     ) {
         // 大尺寸海报
         val imageLoader = rememberTvImageLoader()
