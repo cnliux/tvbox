@@ -51,6 +51,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
@@ -113,67 +114,39 @@ fun DetailScreen(
                     val headerMaxHeight = if (compact) 190.dp else 320.dp
                     val descriptionLines = if (compact) 2 else 5
                     val sectionGap = if (compact) 12.dp else 24.dp
-                    val selectedSource = movie.playSources.getOrNull(state.selectedSourceIndex)
-                    val canPlay = selectedSource?.episodes?.isNotEmpty() == true
-
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = headerMaxHeight),
-                        ) {
-                            PosterImage(
-                                movie = movie,
+                    // 手机端把头部信息作为列表首项参与整页滚动：旧布局把主演/导演/地区/语言/简介
+                    // 塞进「海报高度范围内、最多 190dp 高」的右侧小列，超出部分被直接裁掉，
+                    // 只剩一块不明显的内部滚动区；竖屏大字号与横屏（可用高度更小）都会看不全。
+                    if (isMobile) {
+                        MobileDetailContent(
+                            movie = movie,
+                            state = state,
+                            actions = actions,
+                            posterWidth = posterWidth,
+                            horizontalGap = horizontalGap,
+                            sectionGap = sectionGap,
+                        )
+                    } else {
+                        val selectedSource = movie.playSources.getOrNull(state.selectedSourceIndex)
+                        val canPlay = selectedSource?.episodes?.isNotEmpty() == true
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Row(
                                 modifier = Modifier
-                                    .width(posterWidth)
-                                    .aspectRatio(2f / 3f),
-                            )
-                            Spacer(modifier = Modifier.width(horizontalGap))
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .verticalScroll(rememberScrollState()),
+                                    .fillMaxWidth()
+                                    .heightIn(max = headerMaxHeight),
                             ) {
-                                if (isMobile) {
-                                    Column(modifier = Modifier.fillMaxWidth()) {
-                                        Text(
-                                            text = movie.name,
-                                            style = MaterialTheme.typography.titleLarge,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                        Spacer(modifier = Modifier.height(6.dp))
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                                        ) {
-                                            SmallMeta(movie.typeName)
-                                            SmallMeta(movie.year)
-                                            SmallMeta(movie.remarks)
-                                        }
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        FlowRow(
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                                        ) {
-                                            Button(
-                                                onClick = {
-                                                    actions.openPlayer(
-                                                        state.selectedSourceIndex,
-                                                        state.selectedEpisodeIndex,
-                                                    )
-                                                },
-                                                enabled = canPlay,
-                                            ) {
-                                                Text("立即播放")
-                                            }
-                                            Button(onClick = actions::goBack) {
-                                                Text("返回")
-                                            }
-                                        }
-                                    }
-                                } else {
+                                PosterImage(
+                                    movie = movie,
+                                    modifier = Modifier
+                                        .width(posterWidth)
+                                        .aspectRatio(2f / 3f),
+                                )
+                                Spacer(modifier = Modifier.width(horizontalGap))
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .verticalScroll(rememberScrollState()),
+                                ) {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -212,36 +185,128 @@ fun DetailScreen(
                                             }
                                         }
                                     }
+                                    Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
+                                    InfoLine(label = "主演", value = movie.actor)
+                                    InfoLine(label = "导演", value = movie.director)
+                                    InfoLine(label = "地区", value = movie.area)
+                                    InfoLine(label = "语言", value = movie.language)
+                                    Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
+                                    Text(
+                                        text = movie.description.ifBlank { "暂无简介" },
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = descriptionLines,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
-                                InfoLine(label = "主演", value = movie.actor)
-                                InfoLine(label = "导演", value = movie.director)
-                                InfoLine(label = "地区", value = movie.area)
-                                InfoLine(label = "语言", value = movie.language)
-                                Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
-                                Text(
-                                    text = movie.description.ifBlank { "暂无简介" },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    maxLines = descriptionLines,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
                             }
+                            Spacer(modifier = Modifier.height(sectionGap))
+                            EpisodeGrid(
+                                source = movie.playSources.getOrNull(state.selectedSourceIndex),
+                                selectedEpisodeIndex = state.selectedEpisodeIndex,
+                                episodeSortReverse = state.appSettings.episodeSortReverse,
+                                onToggleSort = { actions.toggleEpisodeSortReverse() },
+                                onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
+                                modifier = Modifier.weight(1f),
+                            )
                         }
-                        Spacer(modifier = Modifier.height(sectionGap))
-                        EpisodeGrid(
-                            source = movie.playSources.getOrNull(state.selectedSourceIndex),
-                            selectedEpisodeIndex = state.selectedEpisodeIndex,
-                            episodeSortReverse = state.appSettings.episodeSortReverse,
-                            onToggleSort = { actions.toggleEpisodeSortReverse() },
-                            onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
-                            modifier = Modifier.weight(1f),
-                        )
                     }
                 }
             }
         }
     }
+}
+
+/**
+ * 手机端详情页：头部（海报 + 标题 + 操作按钮 + 影片信息 + 简介）与选集放进同一个
+ * LazyVerticalGrid，整页只有一个滚动容器。头部不再受海报高度和固定上限约束，
+ * 竖屏、横屏与大字号下都能滚动看到完整信息，也不会剩下一小块不明显的内部滚动区。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MobileDetailContent(
+    movie: Movie,
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    posterWidth: Dp,
+    horizontalGap: Dp,
+    sectionGap: Dp,
+) {
+    val selectedSource = movie.playSources.getOrNull(state.selectedSourceIndex)
+    val canPlay = selectedSource?.episodes?.isNotEmpty() == true
+    EpisodeGrid(
+        source = selectedSource,
+        selectedEpisodeIndex = state.selectedEpisodeIndex,
+        episodeSortReverse = state.appSettings.episodeSortReverse,
+        onToggleSort = { actions.toggleEpisodeSortReverse() },
+        // 头部信息作为首项参与同一次滚动，避免嵌套滚动把影片信息裁掉。
+        header = {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    PosterImage(
+                        movie = movie,
+                        modifier = Modifier
+                            .width(posterWidth)
+                            .aspectRatio(2f / 3f),
+                    )
+                    Spacer(modifier = Modifier.width(horizontalGap))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = movie.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            SmallMeta(movie.typeName)
+                            SmallMeta(movie.year)
+                            SmallMeta(movie.remarks)
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = {
+                                    actions.openPlayer(
+                                        state.selectedSourceIndex,
+                                        state.selectedEpisodeIndex,
+                                    )
+                                },
+                                enabled = canPlay,
+                            ) {
+                                Text("立即播放")
+                            }
+                            Button(onClick = actions::goBack) {
+                                Text("返回")
+                            }
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(sectionGap))
+                // 影片信息全宽展示，不再挤在海报右侧的窄列里被省略号截断。
+                InfoLine(label = "主演", value = movie.actor)
+                InfoLine(label = "导演", value = movie.director)
+                InfoLine(label = "地区", value = movie.area)
+                InfoLine(label = "语言", value = movie.language)
+                Spacer(modifier = Modifier.height(8.dp))
+                // 简介跟随整页滚动，不再用 maxLines 截断。
+                Text(
+                    text = movie.description.ifBlank { "暂无简介" },
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        },
+        onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
+        modifier = Modifier.fillMaxSize(),
+    )
 }
 
 @Composable
@@ -250,16 +315,39 @@ private fun EpisodeGrid(
     selectedEpisodeIndex: Int,
     episodeSortReverse: Boolean = false,
     onToggleSort: () -> Unit = {},
+    header: (@Composable () -> Unit)? = null,
     onEpisode: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val episodes = source?.episodes.orEmpty()
     if (episodes.isEmpty()) {
-        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("当前播放源暂无剧集", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (header == null) {
+            Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("当前播放源暂无剧集", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            return
+        }
+        // 手机端没有剧集时头部信息仍要完整展示，空状态作为列表项跟随整页滚动。
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = TvLayout.EpisodeGridMinWidth),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            modifier = modifier.fillMaxSize(),
+        ) {
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                header()
+            }
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("当前播放源暂无剧集", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         return
     }
+    val leadingItemCount = EPISODE_HEADER_ITEM_COUNT + if (header != null) 1 else 0
     val displayedEpisodes = if (episodeSortReverse) episodes.asReversed() else episodes
     val safeSelectedEpisodeIndex = if (episodeSortReverse) {
         (episodes.size - 1 - selectedEpisodeIndex).coerceIn(0, displayedEpisodes.lastIndex)
@@ -277,11 +365,12 @@ private fun EpisodeGrid(
 
     // 仅依赖选中下标时，正倒序切换/换线路后下标可能不变，effect 不会重跑，
     // 导致新列表未滚动到选中集、焦点也留在已重建的旧请求器上。
-    LaunchedEffect(safeSelectedEpisodeIndex, displayedEpisodes, episodeSortReverse, touchMode) {
+    LaunchedEffect(safeSelectedEpisodeIndex, displayedEpisodes, episodeSortReverse, touchMode, leadingItemCount) {
         if (touchMode) return@LaunchedEffect
         withFrameNanos { }
-        // LazyVerticalGrid 里「选集/排序」标题行占一个 item，选集下标要 +1 才是网格 item 下标。
-        val targetItemIndex = safeSelectedEpisodeIndex + EPISODE_HEADER_ITEM_COUNT
+        // LazyVerticalGrid 里「选集/排序」标题行占一个 item；手机端头部信息再多占一个 item，
+        // 选集下标要加上这些前置项才是网格 item 下标。
+        val targetItemIndex = safeSelectedEpisodeIndex + leadingItemCount
         if (gridState.layoutInfo.visibleItemsInfo.none { it.index == targetItemIndex }) {
             gridState.scrollToItem(targetItemIndex)
         }
@@ -299,6 +388,11 @@ private fun EpisodeGrid(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = modifier.fillMaxSize(),
     ) {
+        header?.let { headerContent ->
+            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                headerContent()
+            }
+        }
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
