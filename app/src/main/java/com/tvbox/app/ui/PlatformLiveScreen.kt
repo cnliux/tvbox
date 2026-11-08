@@ -337,29 +337,18 @@ private fun PlatformLiveRoomsScreen(
     val site = state.platformLiveSelectedSite
     if (favoritesMode && state.platformLiveRooms.isEmpty()) {
         PageSurface { padding ->
-            Column(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center,
-            ) {
-                Text("还没有收藏的直播房间", style = MaterialTheme.typography.titleMedium)
-                state.platformLiveFavoriteError?.let { error ->
-                    Text(
-                        text = "收藏读取失败：$error",
-                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.error,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                PlatformLiveTextCard(
-                    title = "返回直播平台",
-                    subtitle = "在主播房间卡片上选择星星即可收藏",
-                    label = "收藏",
-                    onClick = actions::goBack,
-                    modifier = Modifier.padding(top = 20.dp).width(280.dp).focusRequester(emptyFavoriteFocusRequester),
-                )
-            }
+            // 收藏为空是一种正常空态，不再自绘「标题 + 卡片」，统一走 EmptyState；
+            // 遥控端初始焦点仍落在空态动作上（actionModifier），与改造前一致。
+            EmptyState(
+                title = "还没有收藏的直播房间",
+                subtitle = state.platformLiveFavoriteError
+                    ?.let { "收藏读取失败：$it" }
+                    ?: "在主播房间卡片上选择星星即可收藏",
+                actionLabel = "返回直播平台",
+                onAction = actions::goBack,
+                actionModifier = Modifier.focusRequester(emptyFavoriteFocusRequester),
+                modifier = Modifier.padding(padding),
+            )
         }
         return
     }
@@ -915,7 +904,7 @@ private fun PlatformLivePlayerScreen(
         mutableStateOf(PlaybackWatchdog())
     }
     // 手机"全屏"：按房间记忆裁剪铺满；未记忆时回退设置里的全局默认值。
-    val scaleContentKey = roomVideoScaleKey(room.site, room.id.toString())
+    val scaleContentKey = roomVideoScaleKey(room.site, room.id)
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
 
     DisposableEffect(player) {

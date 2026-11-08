@@ -367,6 +367,8 @@ fun EmptyState(
     subtitle: String? = null,
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
+    /** 动作按钮附加修饰符，供遥控端把初始焦点落在空态动作上。 */
+    actionModifier: Modifier = Modifier,
 ) {
     Column(
         modifier = modifier.fillMaxSize(),
@@ -392,7 +394,7 @@ fun EmptyState(
             Spacer(modifier = Modifier.height(20.dp))
             Button(
                 onClick = onAction,
-                modifier = Modifier.heightIn(min = 48.dp),
+                modifier = Modifier.heightIn(min = 48.dp).then(actionModifier),
             ) {
                 Text(actionLabel)
             }
