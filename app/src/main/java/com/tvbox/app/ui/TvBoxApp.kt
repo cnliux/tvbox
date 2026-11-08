@@ -140,9 +140,17 @@ fun TvBoxApp(
         actions.consumeSettingsSaveError()
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        val showNavigationRail = state.appSettings.theme == TvTheme.Cinema &&
+        // 导航层级由设备模式决定，而非主题：手机模式下即使选了影院主题也要走底部导航，
+        // 否则会套上电视端 76dp 侧边栏并退回电视焦点/触摸语义。
+        val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+        // 平台直播播放页在电视端同样是整页画面，侧边栏会把画面压窄 76dp 并遮挡控件。
+        val platformLivePlaying = state.screen == TvScreen.PlatformLive &&
+            state.platformLiveDestination == PlatformLiveDestination.Player
+        val showNavigationRail = !isMobile &&
+            state.appSettings.theme == TvTheme.Cinema &&
             state.screen != TvScreen.Player &&
-            state.screen != TvScreen.Live
+            state.screen != TvScreen.Live &&
+            !platformLivePlaying
         if (showNavigationRail) {
             Row(modifier = Modifier.fillMaxSize()) {
                 AppNavigationRail(
@@ -167,7 +175,6 @@ fun TvBoxApp(
                 }
             }
         } else {
-            val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
             if (isMobile) {
                 MobileNavWrapper(
                     state = state,
