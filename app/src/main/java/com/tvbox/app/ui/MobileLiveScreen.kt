@@ -69,6 +69,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -338,12 +339,13 @@ private fun MobileLiveListScreen(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
-                    .clickable { actions.openSettings() },
+                    .clickable(role = Role.Button) { actions.openSettings() }
+                    .semantics(mergeDescendants = true) { contentDescription = "设置" },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Settings,
-                    contentDescription = "设置",
+                    contentDescription = null,
                     tint = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.size(20.dp),
                 )
@@ -424,7 +426,9 @@ private fun MobileLiveListScreen(
                             .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(24.dp))
                             .background(LiveAccent)
-                            .clickable { if (hasError) actions.refreshLive() else actions.openSettings() }
+                            .clickable(role = Role.Button) {
+                                if (hasError) actions.refreshLive() else actions.openSettings()
+                            }
                             .padding(horizontal = 28.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -436,7 +440,7 @@ private fun MobileLiveListScreen(
                             modifier = Modifier
                                 .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(24.dp))
-                                .clickable { actions.refreshLive() }
+                                .clickable(role = Role.Button) { actions.refreshLive() }
                                 .padding(horizontal = 20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
@@ -500,7 +504,8 @@ private fun MobileLiveTabItem(
         modifier = Modifier
             .height(48.dp)
             .clip(RoundedCornerShape(6.dp))
-            .clickable(enabled = !selected, onClick = onClick),
+            .clickable(enabled = !selected, role = Role.Button, onClick = onClick)
+            .semantics { stateDescription = if (selected) "已选中" else "未选中" },
     ) {
         Text(
             text = label,
@@ -530,7 +535,8 @@ private fun MobileLiveFilterChip(
         modifier = Modifier
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { stateDescription = if (selected) "已选中" else "未选中" }
             .padding(horizontal = 2.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -620,6 +626,7 @@ private fun MobileLiveChannelRow(
                     .semantics {
                         contentDescription =
                             if (isFavorite) "取消收藏 ${channel.name}" else "收藏 ${channel.name}"
+                        stateDescription = if (isFavorite) "已收藏" else "未收藏"
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -1196,6 +1203,15 @@ private fun MobileLivePlayerScreen(
             ) {
                 itemsIndexed(epgPrograms) { index, program ->
                     val isCurrent = index == currentEpgIndex
+                    val minutes = (program.stopMs - program.startMs) / 60_000L
+                    // 整行合并成一条播报：时间 + 节目名 + 时长，当前节目补「正在播放」，
+                    // 避免读屏把三个文本节点逐条朗读、也避免听不出哪一条是当前节目。
+                    val epgLabel = buildString {
+                        append(formatMobileLiveClock(program.startMs)).append(' ')
+                        append(program.title)
+                        if (minutes > 0) append("，").append(minutes).append("分钟")
+                        if (isCurrent) append("，正在播放")
+                    }
                     Column {
                         if (index > 0) {
                             Box(
@@ -1209,6 +1225,7 @@ private fun MobileLivePlayerScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(if (isCurrent) LiveEpgCurrentBg else Color.Transparent)
+                                .semantics(mergeDescendants = true) { contentDescription = epgLabel }
                                 .padding(horizontal = 14.dp, vertical = 9.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -1228,11 +1245,11 @@ private fun MobileLivePlayerScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
-                            val minutes = (program.stopMs - program.startMs) / 60_000L
-                            if (minutes > 0) {
+                            val rowMinutes = minutes
+                            if (rowMinutes > 0) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "${minutes}分钟",
+                                    text = "${rowMinutes}分钟",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color.White.copy(alpha = 0.6f),
                                 )
@@ -1437,7 +1454,10 @@ private fun MobileLivePlayerSurface(
         if (channelBadgeVisible && !session.interrupted && !streamBlocked) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.align(Alignment.Center),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    // 红点符号会被读屏念成「黑色圆点」；徽标只播报频道名。
+                    .clearAndSetSemantics { contentDescription = channel.name },
             ) {
                 Text("●", color = LiveAccent, style = MaterialTheme.typography.labelSmall)
                 Spacer(modifier = Modifier.width(8.dp))

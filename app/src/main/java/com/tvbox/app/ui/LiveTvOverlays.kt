@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -49,13 +50,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
@@ -245,7 +250,7 @@ internal fun LiveTopBar(
                 Text(
                     text = "TV",
                     color = Color.White,
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Black,
                 )
             }
@@ -254,20 +259,30 @@ internal fun LiveTopBar(
             Spacer(Modifier.width(16.dp))
             LiveTopBarTab(label = "平台直播", selected = false, onClick = onPlatformLive)
             Spacer(Modifier.weight(1f))
-            Text(
-                text = if (favorite) "♥" else "♡",
-                color = if (favorite) LiveTvAccent else Color.White.copy(alpha = 0.7f),
-                fontSize = 15.sp,
+            // 收藏按钮：表情符号本身撑高不足 48dp，外层补足触摸热区并给读屏播报。
+            Box(
                 modifier = Modifier
+                    .size(48.dp)
                     .clip(CircleShape)
                     .liveTap(onToggleFavorite)
-                    .padding(8.dp),
-            )
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = if (favorite) "取消收藏当前频道" else "收藏当前频道"
+                        stateDescription = if (favorite) "已收藏" else "未收藏"
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (favorite) "♥" else "♡",
+                    color = if (favorite) LiveTvAccent else Color.White.copy(alpha = 0.7f),
+                    style = MaterialTheme.typography.titleSmall,
+                )
+            }
             Spacer(Modifier.width(4.dp))
             Text(
                 text = clockText,
                 color = Color.White.copy(alpha = 0.75f),
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.labelSmall,
                 fontFamily = FontFamily.Monospace,
             )
         }
@@ -282,14 +297,22 @@ private fun LiveTopBarTab(
 ) {
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
         modifier = Modifier
+            // 文字 + 下划线实际只有约 26dp 高，触摸模式补足 48dp 最小热区。
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(6.dp))
             .liveTap(onClick)
+            .semantics {
+                role = Role.Button
+                contentDescription = label
+                stateDescription = if (selected) "已选中" else "未选中"
+            }
             .padding(horizontal = 2.dp),
     ) {
         Text(
             text = label,
-            fontSize = 16.sp,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
             maxLines = 1,
@@ -303,25 +326,6 @@ private fun LiveTopBarTab(
                 .background(if (selected) LiveTvAccent else Color.Transparent),
         )
     }
-}
-
-/** 底部状态条按钮：半透明胶囊，仅响应触点/鼠标，不抢占遥控器焦点。 */
-@Composable
-internal fun LiveBottomBarButton(
-    text: String,
-    onClick: () -> Unit,
-) {
-    Text(
-        text = text,
-        color = Color.White.copy(alpha = 0.88f),
-        fontSize = 12.sp,
-        maxLines = 1,
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(Color.White.copy(alpha = 0.10f))
-            .liveTap(onClick)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-    )
 }
 
 /** 轻提示：半透明黑底居中偏下，1.5 秒自动消失。 */
@@ -340,7 +344,7 @@ internal fun LivePrompt(
         Text(
             text = message,
             color = Color.White,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Medium,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
@@ -371,7 +375,7 @@ internal fun LiveLoadingState(
             Text(
                 text = text,
                 color = Color.White.copy(alpha = 0.7f),
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

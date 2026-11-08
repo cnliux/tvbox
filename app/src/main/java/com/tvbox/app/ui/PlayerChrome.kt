@@ -87,6 +87,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -95,7 +96,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.coroutines.delay
@@ -509,8 +509,9 @@ private fun PlayerChromeTv(
                 }
                 if (capabilities.seek) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(formatPlayerTime(preview?.toLong() ?: data.positionMs), modifier = Modifier.width(66.dp),
-                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Color.White.copy(alpha = 0.8f))
+                        Text(formatPlayerTime(preview?.toLong() ?: data.positionMs), modifier = Modifier.widthIn(min = 66.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1, softWrap = false)
                         Slider(
                             value = preview ?: data.positionMs.toFloat().coerceIn(0f, data.durationMs.coerceAtLeast(1).toFloat()),
                             onValueChange = {
@@ -533,7 +534,7 @@ private fun PlayerChromeTv(
                                     drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                                 }
                             },
-                            modifier = Modifier.weight(1f).height(36.dp).padding(horizontal = 8.dp)
+                            modifier = Modifier.weight(1f).heightIn(min = 48.dp).padding(horizontal = 8.dp)
                                 .onFocusChanged { progressFocused = it.isFocused }
                                 .testTag("player_progress").onPreviewKeyEvent { event ->
                                 val delta = when (event.nativeKeyEvent.keyCode) {
@@ -557,8 +558,9 @@ private fun PlayerChromeTv(
                                 true
                             },
                         )
-                        Text(if (data.durationMs > 0) formatPlayerTime(data.durationMs) else "--:--", modifier = Modifier.width(66.dp),
-                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Color.White.copy(alpha = 0.8f))
+                        Text(if (data.durationMs > 0) formatPlayerTime(data.durationMs) else "--:--", modifier = Modifier.widthIn(min = 66.dp),
+                            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace), color = Color.White.copy(alpha = 0.8f),
+                            maxLines = 1, softWrap = false)
                     }
                 }
                 Row(
@@ -1516,7 +1518,7 @@ private fun PlayerChromeMobilePanel(
                                             Toast.makeText(context, "已复制：${item.label}", Toast.LENGTH_SHORT).show()
                                         },
                                     ) {
-                                        Text("复制", fontSize = 12.sp)
+                                        Text("复制", style = MaterialTheme.typography.labelSmall)
                                     }
                                 }
                                 Text(
@@ -1527,10 +1529,15 @@ private fun PlayerChromeMobilePanel(
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clickable {
+                                        // 地址本身就是可点击区域，原 top 4dp 内边距只有约 24dp 高，
+                                        // 补足到 48dp 热区并给读屏一个按钮角色与展开状态。
+                                        .clickable(role = Role.Button) {
                                             expandedLabel = if (expandedLabel == item.label) null else item.label
                                         }
-                                        .padding(top = 4.dp),
+                                        .semantics {
+                                            stateDescription = if (expandedLabel == item.label) "已展开" else "已收起"
+                                        }
+                                        .padding(vertical = 14.dp),
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
                                     color = Color.White.copy(alpha = 0.88f),
@@ -1718,7 +1725,7 @@ private fun MobileProgressRow(
                     drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                 }
             },
-            modifier = Modifier.weight(1f).height(40.dp),
+            modifier = Modifier.weight(1f).heightIn(min = 48.dp),
         )
         Text(
             text = if (durationMs > 0) formatPlayerTime(durationMs) else "--:--",
@@ -1778,7 +1785,8 @@ private fun MobileChip(
                     else -> Color.White.copy(alpha = 0.05f)
                 },
             )
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .semantics { stateDescription = if (selected) "已选中" else "未选中" },
         contentAlignment = Alignment.Center,
     ) {
         Text(

@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -49,6 +50,10 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -198,14 +203,14 @@ internal fun LiveChannelOverlayPanel(
                 Text(
                     text = "频道列表",
                     color = Color.White,
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
                     text = "确认键收起",
                     color = Color.White.copy(alpha = 0.4f),
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
                 )
             }
             Spacer(Modifier.height(8.dp))
@@ -240,9 +245,9 @@ internal fun LiveChannelOverlayPanel(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Text("📺", fontSize = 26.sp, color = Color.White.copy(alpha = 0.25f))
+                        Text("📺", style = MaterialTheme.typography.headlineSmall, color = Color.White.copy(alpha = 0.25f))
                         Spacer(Modifier.height(8.dp))
-                        Text("该分组暂无频道", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp)
+                        Text("该分组暂无频道", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)
                     }
                 } else {
                     LazyColumn(
@@ -268,10 +273,10 @@ internal fun LiveChannelOverlayPanel(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(36.dp)
+                    .heightIn(min = 36.dp)
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color.Black.copy(alpha = 0.5f))
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -299,7 +304,7 @@ private fun LiveGroupPill(
     Text(
         text = label,
         color = if (selected) Color.White else Color.White.copy(alpha = 0.65f),
-        fontSize = 11.sp,
+        style = MaterialTheme.typography.labelSmall,
         fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
@@ -312,7 +317,8 @@ private fun LiveGroupPill(
                 color = if (selected) LiveTvAccent else Color.Transparent,
                 shape = RoundedCornerShape(18.dp),
             )
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { stateDescription = if (selected) "已选中" else "未选中" }
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
@@ -335,10 +341,19 @@ private fun LiveOverlayChannelRow(
         animationSpec = tween(120),
         label = "live-row-scale",
     )
+    // 频道行内台标占位、名称、节目、星标、编号是多个语义节点；
+    // 合并成「频道名 + 编号 + 当前节目 + 是否正在播放」一条播报。
+    val rowLabel = buildString {
+        append(channel.name)
+        append("，编号 ").append(channel.number)
+        if (isPlaying) append("，正在播放")
+        if (!nowTitle.isNullOrBlank()) append("，正在播 ").append(nowTitle)
+        if (isFavorite) append("，已收藏")
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(44.dp)
+            .heightIn(min = 44.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(RoundedCornerShape(6.dp))
             .background(
@@ -349,6 +364,7 @@ private fun LiveOverlayChannelRow(
                 },
             )
             .clickable(onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = rowLabel }
             .padding(end = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -367,7 +383,7 @@ private fun LiveOverlayChannelRow(
             Text(
                 text = channel.name,
                 color = Color.White,
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.bodySmall,
                 fontWeight = if (isPlaying) FontWeight.Bold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -375,20 +391,20 @@ private fun LiveOverlayChannelRow(
             Text(
                 text = nowTitle ?: channel.groupName,
                 color = Color.White.copy(alpha = 0.38f),
-                fontSize = 9.sp,
+                style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Spacer(Modifier.width(6.dp))
         if (isFavorite) {
-            Text("★", color = Color(0xFFFFB300), fontSize = 11.sp)
+            Text("★", color = Color(0xFFFFB300), style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.width(4.dp))
         }
         Text(
             text = channel.number.toString(),
             color = Color.White.copy(alpha = 0.35f),
-            fontSize = 10.sp,
+            style = MaterialTheme.typography.labelSmall,
             fontFamily = FontFamily.Monospace,
             maxLines = 1,
         )
@@ -402,7 +418,7 @@ private fun LiveKeyHint(key: String, action: String) {
         Text(
             text = key,
             color = Color.White.copy(alpha = 0.85f),
-            fontSize = 9.sp,
+            style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             modifier = Modifier
                 .clip(RoundedCornerShape(3.dp))
@@ -413,7 +429,7 @@ private fun LiveKeyHint(key: String, action: String) {
         Text(
             text = action,
             color = Color.White.copy(alpha = 0.45f),
-            fontSize = 9.sp,
+            style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
         )
     }
@@ -525,7 +541,7 @@ internal fun LiveLineOverlay(
             Text(
                 text = "切换线路 · ${channel.name}",
                 color = Color.White,
-                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(10.dp))
@@ -538,6 +554,13 @@ internal fun LiveLineOverlay(
                     val isPlaying = index == state.liveLineIndex
                     val hasResult = state.liveLineLatencies.containsKey(line.url)
                     val latency = state.liveLineLatencies[line.url]
+                    // 线路行内名称、测速、首帧、播放状态各自成节点；合并为一条播报。
+                    val lineLabel = buildString {
+                        append(line.name)
+                        append("，").append(liveLineLatencyLabel(hasResult, latency, state.liveLineTesting))
+                        append("，首帧 ").append(formatFirstFrame(lineFirstFrameMs[line.url] ?: -1L))
+                        if (isPlaying) append("，播放中")
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -559,6 +582,7 @@ internal fun LiveLineOverlay(
                                 actions.selectLiveLine(index)
                                 onClose()
                             }
+                            .semantics(mergeDescendants = true) { contentDescription = lineLabel }
                             .padding(horizontal = 10.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -566,7 +590,7 @@ internal fun LiveLineOverlay(
                             Text(
                                 text = line.name,
                                 color = Color.White,
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -574,20 +598,20 @@ internal fun LiveLineOverlay(
                                 Text(
                                     text = liveLineLatencyLabel(hasResult, latency, state.liveLineTesting),
                                     color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
-                                    fontSize = 10.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontFamily = FontFamily.Monospace,
                                 )
                                 Text(
                                     text = " · 首帧 ${formatFirstFrame(lineFirstFrameMs[line.url] ?: -1L)}",
                                     color = Color.White.copy(alpha = 0.55f),
-                                    fontSize = 10.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                 )
                             }
                         }
                         if (isPlaying) {
                             Box(Modifier.size(4.dp).background(LiveTvAccent, CircleShape))
                             Spacer(Modifier.width(4.dp))
-                            Text("播放中", color = LiveTvAccent, fontSize = 10.sp)
+                            Text("播放中", color = LiveTvAccent, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }

@@ -47,6 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -171,7 +175,9 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
     }
     Icon(
         imageVector = icon,
-        contentDescription = screen.name,
+        // 底部导航项的可见标签已由 NavigationBarItem 的 label 提供；
+        // 图标再挂 contentDescription 会让读屏把枚举名（Home/History…）念出来。
+        contentDescription = null,
         tint = tint,
         modifier = Modifier.size(24.dp),
     )
@@ -229,12 +235,13 @@ private fun MobileTopBar(
                 modifier = Modifier
                     .size(48.dp)
                     .clip(RoundedCornerShape(24.dp))
-                    .clickable { actions.openSettings() },
+                    .clickable(role = Role.Button) { actions.openSettings() }
+                    .semantics(mergeDescendants = true) { contentDescription = "设置" },
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Settings,
-                    contentDescription = "设置",
+                    contentDescription = null,
                     tint = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.size(20.dp),
                 )
@@ -257,7 +264,10 @@ private fun MobileSourceDropdown(
             modifier = Modifier
                 .heightIn(min = 48.dp)
                 .clip(shape)
-                .clickable(enabled = lines.isNotEmpty()) { expanded = true },
+                .clickable(enabled = lines.isNotEmpty(), role = Role.Button) { expanded = true }
+                .semantics(mergeDescendants = true) {
+                    contentDescription = "视频源：${currentLine?.name ?: "未选择"}"
+                },
             shape = shape,
             color = Color(0xFF2C2C2C),
         ) {
@@ -317,6 +327,8 @@ private fun MobileSourceDropdown(
                             expanded = false
                             actions.updateHomeApiLine(line.id)
                         },
+                        // 选中项只靠 ✓ 前缀区分，读屏无法感知；补一条选中状态播报。
+                        modifier = Modifier.semantics { stateDescription = if (selected) "已选中" else "未选中" },
                     )
                 }
             }
@@ -335,7 +347,10 @@ private fun MobileSearchEntry(
         modifier = modifier
             .height(48.dp)
             .clip(shape)
-            .clickable { onOpenSearch() },
+            .clickable(role = Role.Button) { onOpenSearch() }
+            .semantics(mergeDescendants = true) {
+                contentDescription = if (query.isNotBlank()) "搜索：$query" else "搜索"
+            },
         shape = shape,
         color = Color(0xFF2C2C2C),
     ) {
@@ -345,7 +360,7 @@ private fun MobileSearchEntry(
         ) {
             Icon(
                 imageVector = Icons.Filled.Search,
-                contentDescription = "搜索",
+                contentDescription = null,
                 tint = Color.White.copy(alpha = 0.7f),
                 modifier = Modifier.size(16.dp),
             )

@@ -90,6 +90,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -864,7 +865,7 @@ private fun SettingsActionButton(
             )
             .clip(shape)
             .onFocusChanged { focused = enabled && (it.isFocused || it.hasFocus) }
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .focusable(enabled = enabled),
         shape = shape,
         color = when {
@@ -916,7 +917,14 @@ private fun HomeSourceDropdownTitle(
             modifier = Modifier
                 .clip(shape)
                 .onFocusChanged { focused = it.isFocused || it.hasFocus }
-                .clickable(enabled = lines.isNotEmpty()) { expanded = true }
+                .clickable(enabled = lines.isNotEmpty(), role = Role.Button) { expanded = true }
+                .semantics(mergeDescendants = true) {
+                    contentDescription = if (lines.isNotEmpty()) {
+                        "视频源：${currentLine?.name ?: "未选择"}"
+                    } else {
+                        "暂无可用视频源"
+                    }
+                }
                 .focusable(enabled = lines.isNotEmpty()),
             shape = shape,
             color = if (focused) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent,
@@ -1511,26 +1519,26 @@ private fun MobileHomeFeed(
                             item {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                ) {
-                                    if (state.loadingMore) {
-                                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                                    } else {
-                                        Button(onClick = actions::loadNextPage) { Text("加载更多") }
-                                    }
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                if (state.loadingMore) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                } else {
+                                    Button(onClick = actions::loadNextPage) { Text("加载更多") }
                                 }
                             }
-                        } else if (state.homeItemCount > 0) {
-                            item {
-                                Text(
-                                    text = "已经到底了",
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                    color = TvColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                )
-                            }
                         }
+                    } else if (state.homeItemCount > 0) {
+                        item {
+                            Text(
+                                text = "已经到底了",
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                color = TvColors.TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        }
+                    }
                     }
                 }
             }
@@ -1898,11 +1906,13 @@ private fun LiveSourceSetting(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             modifier = Modifier
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                .clickable {
+                                // 纯文字按钮原高度约 24dp，补足到 48dp 最小触摸热区。
+                                .heightIn(min = 48.dp)
+                                .clickable(role = Role.Button) {
                                     actions.clearLiveSourceDefaultIndex()
                                     defaultIndex = -1
-                                },
+                                }
+                                .padding(horizontal = 8.dp),
                         )
                     }
                 }
@@ -1932,7 +1942,6 @@ private fun LiveSourceSetting(
                                 onClick = {},
                                 enabled = false,
                                 selected = true,
-                                modifier = Modifier.height(36.dp),
                             )
                         } else {
                             SettingsActionButton(
@@ -1941,7 +1950,6 @@ private fun LiveSourceSetting(
                                     actions.setLiveSourceDefaultIndex(idx)
                                     defaultIndex = idx
                                 },
-                                modifier = Modifier.height(36.dp),
                             )
                         }
                     }
