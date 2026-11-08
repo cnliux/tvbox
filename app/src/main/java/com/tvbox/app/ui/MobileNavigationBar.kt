@@ -50,7 +50,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.material3.MaterialTheme
 import com.tvbox.app.domain.DeviceMode
 
 /**
@@ -131,7 +131,7 @@ fun MobileNavWrapper(
                             label = {
                                 Text(
                                     label,
-                                    fontSize = 12.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                     color = if (isSelected) selectedColor else Color.White.copy(alpha = 0.6f),
                                     maxLines = 1,
@@ -277,7 +277,7 @@ private fun MobileSourceDropdown(
                 Text(
                     text = currentLine?.name ?: "选择源",
                     color = Color.White,
-                    fontSize = 13.sp,
+                    style = MaterialTheme.typography.labelMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.widthIn(max = 150.dp),
@@ -353,7 +353,7 @@ private fun MobileSearchEntry(
             Text(
                 text = if (query.isNotBlank()) query else "搜索影片...",
                 color = if (query.isNotBlank()) Color.White else Color.White.copy(alpha = 0.4f),
-                fontSize = 13.sp,
+                style = MaterialTheme.typography.labelMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
