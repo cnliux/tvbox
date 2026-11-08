@@ -1,9 +1,9 @@
 {
-  "versionCode": 10348,
-  "versionName": "1.3.48",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.48/tvbox-v1.3.48.apk",
-  "apkSha256": "74e6e2066bc243f89fc5d764b0392918d456374e29056d9653ee1aa316622aa3",
-  "apkSize": 19804904,
+  "versionCode": 10349,
+  "versionName": "1.3.49",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.49/tvbox-v1.3.49.apk",
+  "apkSha256": "7715d573ce7f9f73120555426f92d06df2d58380365ba229a1dbbd7d81fbc343",
+  "apkSize": 19870472,
   "force": false,
   "changelog": []
 }
