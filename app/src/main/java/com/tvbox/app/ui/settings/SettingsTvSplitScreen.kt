@@ -52,6 +52,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.style.TextOverflow
@@ -260,7 +264,11 @@ private fun TvCategoryCard(category: TvSettingCategory, onClick: () -> Unit) {
             )
             .border(1.dp, category.gradientStart.copy(alpha = 0.25f), shape)
             .tvFocusScale(shape = shape)
-            .clickable(onClick = onClick)
+            .clickable(role = Role.Button, onClick = onClick)
+            // 图标、标题、副标题原本各自成节点，整卡合并成一条分类播报。
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${category.title}，${category.subtitle}"
+            }
             .focusable()
             .padding(16.dp)
     ) {
@@ -277,7 +285,7 @@ private fun TvCategoryCard(category: TvSettingCategory, onClick: () -> Unit) {
             ) {
                 Icon(
                     imageVector = category.icon,
-                    contentDescription = category.title,
+                    contentDescription = null,
                     tint = category.gradientStart,
                     modifier = Modifier.size(24.dp),
                 )
@@ -970,7 +978,8 @@ private fun <T> TvChoiceChips(
                         else TvColors.SurfaceRaised.copy(alpha = 0.6f)
                     )
                     .tvFocusScale(shape = shape)
-                    .clickable { onSelect(option) }
+                    .clickable(role = Role.Button) { onSelect(option) }
+                    .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
                     .focusable()
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
@@ -1006,7 +1015,14 @@ private fun TvFocusButton(
                 }
             )
             .tvFocusScale(shape = shape)
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(role = Role.Button, enabled = enabled, onClick = onClick)
+            .semantics {
+                stateDescription = when {
+                    !enabled -> "不可用"
+                    selected -> "已选中"
+                    else -> "未选中"
+                }
+            }
             .focusable(enabled = enabled)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {

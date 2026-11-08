@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -100,7 +101,7 @@ internal fun LiveEpgCard(
                 Text(
                     text = channel.name,
                     color = Color.White,
-                    fontSize = 18.sp,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -111,13 +112,13 @@ internal fun LiveEpgCard(
                     Text(
                         text = "直播中",
                         color = LiveTvAccent,
-                        fontSize = 9.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                     )
                     Text(
                         text = " · 线路${lineIndex + 1}/${channel.lines.size}",
                         color = Color.White.copy(alpha = 0.45f),
-                        fontSize = 9.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -132,7 +133,7 @@ internal fun LiveEpgCard(
                 modifier = Modifier.fillMaxWidth().height(84.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("暂无节目单", color = Color.White.copy(alpha = 0.4f), fontSize = 11.sp)
+                Text("暂无节目单", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)
             }
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
@@ -150,7 +151,7 @@ internal fun LiveEpgCard(
                         Text(
                             text = formatClock(row.startMs),
                             color = if (isCurrent) LiveTvAccent else Color.White.copy(alpha = 0.6f),
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
                             maxLines = 1,
                         )
@@ -158,7 +159,7 @@ internal fun LiveEpgCard(
                         Text(
                             text = row.title,
                             color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.7f),
-                            fontSize = 10.sp,
+                            style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -207,7 +208,7 @@ internal fun LiveChannelBadge(
         Text(
             text = channel.name,
             color = Color.White,
-            fontSize = 16.sp,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -215,7 +216,7 @@ internal fun LiveChannelBadge(
         Text(
             text = "${channel.groupName} · ${channel.number}/$channelCount · 线路 ${lineIndex + 1}/$lineCount",
             color = Color.White.copy(alpha = 0.6f),
-            fontSize = 11.sp,
+            style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

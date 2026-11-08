@@ -863,19 +863,19 @@ private fun LivePlayerScreen(
                 Text(
                     text = "直播中",
                     color = LiveTvAccent,
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     text = "线路 ${state.liveLineIndex + 1}/${currentChannel.lines.size}",
                     color = Color.White.copy(alpha = 0.55f),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelSmall,
                 )
                 if (currentLine.protocolHint.isNotBlank()) {
                     Text(
                         text = currentLine.protocolHint.uppercase(),
                         color = Color.White.copy(alpha = 0.4f),
-                        fontSize = 10.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         modifier = Modifier
                             .border(1.dp, Color.White.copy(alpha = 0.25f), RoundedCornerShape(3.dp))
                             .padding(horizontal = 5.dp, vertical = 1.dp),
@@ -948,13 +948,13 @@ private fun LivePlayerScreen(
                 Text(
                     text = channelNumberInput,
                     color = Color.White,
-                    fontSize = 48.sp,
+                    style = MaterialTheme.typography.displayMedium,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     text = if (numberMatches.isEmpty()) "无匹配频道" else "频道号",
                     color = Color.White.copy(alpha = 0.6f),
-                    fontSize = 12.sp,
+                    style = MaterialTheme.typography.labelSmall,
                 )
                 if (visibleNumberMatches.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
@@ -973,14 +973,14 @@ private fun LivePlayerScreen(
                             Text(
                                 text = match.number.toString(),
                                 color = if (highlighted) Color.White else Color.White.copy(alpha = 0.55f),
-                                fontSize = 12.sp,
+                                style = MaterialTheme.typography.labelSmall,
                                 fontFamily = FontFamily.Monospace,
                                 modifier = Modifier.width(40.dp),
                             )
                             Text(
                                 text = match.channel.name,
                                 color = if (highlighted) Color.White else Color.White.copy(alpha = 0.75f),
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontWeight = if (highlighted) FontWeight.Bold else FontWeight.Normal,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,

@@ -309,7 +309,7 @@ private fun MobileLiveListScreen(
                             Text(
                                 text = "✕",
                                 color = Color.White.copy(alpha = 0.5f),
-                                fontSize = 14.sp,
+                                style = MaterialTheme.typography.labelMedium,
                             )
                         }
                     }
@@ -329,7 +329,7 @@ private fun MobileLiveListScreen(
             ) {
                 Text(
                     text = "★",
-                    fontSize = 20.sp,
+                    style = MaterialTheme.typography.titleLarge,
                     color = if (favoritesOnly) LiveFavoriteGold else Color.White.copy(alpha = 0.6f),
                 )
             }
@@ -450,7 +450,7 @@ private fun MobileLiveListScreen(
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("📺", fontSize = 30.sp)
+                    Text("📺", style = MaterialTheme.typography.headlineMedium)
                     Spacer(modifier = Modifier.height(8.dp))
                     Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelMedium)
                     Spacer(modifier = Modifier.height(4.dp))
@@ -625,7 +625,7 @@ private fun MobileLiveChannelRow(
             ) {
                 Text(
                     text = "★",
-                    fontSize = 16.sp,
+                    style = MaterialTheme.typography.titleSmall,
                     color = if (isFavorite) LiveFavoriteGold else Color.White.copy(alpha = 0.45f),
                 )
             }
@@ -1439,11 +1439,11 @@ private fun MobileLivePlayerSurface(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.align(Alignment.Center),
             ) {
-                Text("●", color = LiveAccent, fontSize = 12.sp)
+                Text("●", color = LiveAccent, style = MaterialTheme.typography.labelSmall)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = channel.name,
-                    fontSize = 22.sp,
+                    style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = Color.White,
                     maxLines = 1,
@@ -1453,21 +1453,27 @@ private fun MobileLivePlayerSurface(
         }
 
         // 打断恢复：中央按钮 seekToDefaultPosition + play。
+        // 原文字撑高约 26dp，触摸热区不足；统一抬到 48dp 并补按钮角色。
         if (session.interrupted) {
-            Text(
-                text = "继续播放",
-                fontSize = 13.sp,
-                color = Color.White,
+            Box(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .clip(RoundedCornerShape(20.dp))
+                    .heightIn(min = 48.dp)
+                    .clip(RoundedCornerShape(24.dp))
                     .background(Color.White.copy(alpha = 0.18f))
-                    .clickable {
+                    .clickable(role = Role.Button) {
                         exoPlayer.seekToDefaultPosition()
                         session.play(exoPlayer)
                     }
-                    .padding(horizontal = 20.dp, vertical = 9.dp),
-            )
+                    .padding(horizontal = 20.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "继续播放",
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
         }
 
         controls()
@@ -1493,7 +1499,7 @@ private fun LiveBlockedAction(text: String, onClick: () -> Unit) {
         Text(
             text = text,
             color = Color.White,
-            fontSize = 13.sp,
+            style = MaterialTheme.typography.bodySmall,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
