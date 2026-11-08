@@ -47,4 +47,22 @@ class VideoScaleMemoryTest {
         assertTrue(episodeTwo != episodeThree)
         assertTrue(episodeTwo.contains("http").not())
     }
+
+    @Test
+    fun allPresetModesPersistAndRestore() {
+        VideoScaleMode.entries.forEach { mode ->
+            assertEquals(mode, VideoScaleMode.fromStorageKey(mode.storageKey))
+        }
+
+        val settings = AppSettings(videoScaleMode = VideoScaleMode.Fit)
+            .withContentVideoScaleMode(channelKey, VideoScaleMode.Ratio9_16)
+        assertEquals(VideoScaleMode.Ratio9_16, settings.resolveVideoScaleMode(channelKey))
+        assertEquals(VideoScaleMode.Fit, settings.resolveVideoScaleMode(roomKey))
+    }
+
+    @Test
+    fun unknownStoredModeFallsBackToFit() {
+        assertEquals(VideoScaleMode.Fit, VideoScaleMode.fromStorageKey("unknown"))
+        assertEquals(VideoScaleMode.Fit, VideoScaleMode.fromStorageKey(null))
+    }
 }

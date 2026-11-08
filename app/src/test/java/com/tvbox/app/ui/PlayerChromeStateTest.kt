@@ -145,4 +145,40 @@ class PlayerChromeStateTest {
             ),
         )
     }
+
+    @Test
+    fun portraitLiveKeepsOnlyFullscreen() {
+        val live = PlayerChromeCapabilities(
+            seek = false,
+            resize = true,
+            favorite = true,
+            orientation = true,
+            mute = true,
+            settings = true,
+            channel = true,
+            info = true,
+            url = true,
+        )
+        val portrait = live.forOrientation(portrait = true)
+        assertTrue(portrait.orientation)
+        assertTrue(portrait.portraitMinimal)
+        assertFalse(portrait.seek)
+        assertFalse(portrait.resize)
+        assertFalse(portrait.favorite)
+        assertFalse(portrait.mute)
+        assertFalse(portrait.settings)
+        assertFalse(portrait.channel)
+        assertFalse(portrait.info)
+        assertFalse(portrait.url)
+    }
+
+    @Test
+    fun landscapeAndPagesWithoutFullscreenKeepCapabilities() {
+        val live = PlayerChromeCapabilities(seek = false, orientation = true, channel = true)
+        assertEquals(live, live.forOrientation(portrait = false))
+
+        // 竖版但本页没有全屏入口（如手机点播）不裁剪，避免只剩返回按钮。
+        val vod = PlayerChromeCapabilities(seek = true, episodes = true, speed = true)
+        assertEquals(vod, vod.forOrientation(portrait = true))
+    }
 }

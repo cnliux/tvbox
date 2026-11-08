@@ -190,8 +190,19 @@ fun DeviceMode.resolveEffective(detected: DeviceMode): DeviceMode =
 fun AppSettings.effectiveMode(context: android.content.Context): DeviceMode =
     deviceMode.resolveEffective(DeviceMode.detectFromSystem(context))
 
-enum class VideoScaleMode(val storageKey: String, val displayName: String, val description: String) {
-    Fit("fit", "自适应", "保持原始比例并完整显示；影片与屏幕比例不同时可能留黑边。"),
+enum class VideoScaleMode(
+    val storageKey: String,
+    val displayName: String,
+    val description: String,
+    /** 固定显示宽高比；null 表示沿用视频原始比例。 */
+    val aspectRatio: Float? = null,
+) {
+    Fit("fit", "原始比例", "保持视频原始比例并完整显示；比例与屏幕不同时可能留黑边。"),
+    Ratio16_9("ratio_16_9", "16:9", "按 16:9 比例显示，画面缩放到该比例。", 16f / 9f),
+    Ratio4_3("ratio_4_3", "4:3", "按 4:3 比例显示，画面缩放到该比例。", 4f / 3f),
+    Ratio1_1("ratio_1_1", "1:1", "按 1:1 比例显示，画面缩放到该比例。", 1f),
+    Ratio21_9("ratio_21_9", "21:9", "按 21:9 比例显示，画面缩放到该比例。", 21f / 9f),
+    Ratio9_16("ratio_9_16", "9:16 竖版", "按 9:16 竖版比例显示，画面缩放到该比例。", 9f / 16f),
     Zoom("zoom", "裁剪铺满", "保持原始比例铺满屏幕；画面边缘可能被裁剪。"),
     Fill("fill", "拉伸铺满", "铺满屏幕并完整显示；人物和画面比例可能变形。"),
     ;

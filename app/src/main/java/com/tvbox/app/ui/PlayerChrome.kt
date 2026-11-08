@@ -3,6 +3,7 @@ package com.tvbox.app.ui
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.Configuration
 import android.view.KeyEvent as NativeKeyEvent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -317,7 +318,46 @@ internal data class PlayerChromeCapabilities(
     /** 点播视频的音轨/字幕选择；面板为空时由共享层给出明确提示。 */
     val audioTracks: Boolean = false,
     val subtitleTracks: Boolean = false,
+    /** 竖版精简：仅保留全屏与返回，其余控件不在竖版渲染。由 [forOrientation] 统一裁剪。 */
+    val portraitMinimal: Boolean = false,
 )
+
+/**
+ * 按屏幕方向裁剪控件能力：
+ * - 竖版且本页提供全屏入口时，只保留全屏（返回由触摸布局固定提供），其余按钮关闭；
+ * - 横屏与电视端保持页面注入的完整能力，避免键位/手势/按钮集合被竖版规则带偏。
+ *
+ * 页面仍注入完整能力，裁剪只发生在共享层，避免各页为竖版另写散装 if。
+ */
+internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerChromeCapabilities =
+    if (portrait && orientation) {
+        copy(
+            seek = false,
+            episodes = false,
+            sources = false,
+            speed = false,
+            resize = false,
+            skip = false,
+            cast = false,
+            castLabel = null,
+            lock = false,
+            favorite = false,
+            favoriteLabel = null,
+            favoriteSelected = false,
+            mute = false,
+            settings = false,
+            channel = false,
+            room = false,
+            lines = false,
+            info = false,
+            url = false,
+            audioTracks = false,
+            subtitleTracks = false,
+            portraitMinimal = true,
+        )
+    } else {
+        this
+    }
 
 /** 页面注入的语义动作：共享层只负责按键/触摸到这些回调的映射。 */
 internal data class PlayerChromeActions(
@@ -374,6 +414,10 @@ internal fun PlayerChrome(
     fade: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
+    val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
+    val effectiveCapabilities = remember(capabilities, portrait) {
+        capabilities.forOrientation(portrait)
+    }
     AnimatedVisibility(
         visible = state.visible,
         enter = if (fade) fadeIn(tween(150)) else EnterTransition.None,
@@ -383,7 +427,7 @@ internal fun PlayerChrome(
             PlayerChromeTouch(
                 state = state,
                 data = data,
-                capabilities = capabilities,
+                capabilities = effectiveCapabilities,
                 actions = actions,
                 episodeSortReverse = episodeSortReverse,
                 onSortReverse = onSortReverse,
@@ -398,7 +442,7 @@ internal fun PlayerChrome(
             PlayerChromeTv(
                 state = state,
                 data = data,
-                capabilities = capabilities,
+                capabilities = effectiveCapabilities,
                 actions = actions,
                 episodeSortReverse = episodeSortReverse,
                 onSortReverse = onSortReverse,
@@ -678,6 +722,10 @@ private fun PlayerChromeTouch(
                     }
                 }
             }
+        }
+        if (capabilities.portraitMinimal) {
+            // 竖版只保留顶部返回/全屏；底部进度、播放与面板入口全部隐藏，避免小画面里挤占全屏按钮。
+            return@Box
         }
         Surface(
             modifier = Modifier
@@ -1316,7 +1364,10 @@ private fun PlayerChromeMobilePanel(
                         )
                     }
                 }
-                PlayerPanel.Picture -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                PlayerPanel.Picture -> Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
                     VideoScaleMode.entries.forEach { mode ->
                         MobileChip(
                             text = mode.displayName,

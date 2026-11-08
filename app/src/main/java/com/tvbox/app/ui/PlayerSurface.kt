@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.VideoScaleMode
@@ -58,12 +59,13 @@ internal fun PlayerSurface(
                     if (showBuffering) PlayerView.SHOW_BUFFERING_ALWAYS
                     else PlayerView.SHOW_BUFFERING_NEVER,
                 )
+                applyVideoScaleMode(resizeMode)
                 configure(this)
             }
         },
         update = { view ->
             view.player = player
-            view.resizeMode = resizeMode.toPlayerResizeMode()
+            view.applyVideoScaleMode(resizeMode)
             view.setShowBuffering(
                 if (showBuffering) PlayerView.SHOW_BUFFERING_ALWAYS
                 else PlayerView.SHOW_BUFFERING_NEVER,
@@ -71,6 +73,18 @@ internal fun PlayerSurface(
         },
         modifier = modifier.fillMaxSize(),
     )
+}
+
+/**
+ * 画面比例即时生效：只改媒体视图的缩放模式与比例框，不重建播放器、不打断播放。
+ * 固定比例档位由 [VideoScaleMode.aspectRatio] 强制比例，并配合拉伸填满；
+ * 其它档位保持 `0f`（跟随视频原始比例）。
+ */
+@OptIn(UnstableApi::class)
+private fun PlayerView.applyVideoScaleMode(mode: VideoScaleMode) {
+    resizeMode = mode.toPlayerResizeMode()
+    findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
+        ?.setAspectRatio(mode.aspectRatio ?: 0f)
 }
 
 /** 播放状态表达：加载中 / 三类失败（取流失败、建源后未出帧、出帧后卡死）。 */
