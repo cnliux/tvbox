@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import com.tvbox.app.domain.AppUpdate
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -83,7 +84,7 @@ class DefaultAppUpdateRepository(
                 throw e
             } catch (e: Throwable) {
                 lastError = e
-                android.util.Log.w("TVBoxUpdate", "主备URL[${logSafeUrl(url)}]失败，尝试下一个: ${e.message}")
+                android.util.Log.w("TVBoxUpdate", "主备URL[${logSafeUrl(url)}]失败，尝试下一个: ${logSafeText(e.message)}")
             }
         }
         throw IOException("更新检查失败，所有源均不可用：${lastError?.message}")
@@ -152,7 +153,7 @@ class DefaultAppUpdateRepository(
                         .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                         .setDestinationUri(Uri.fromFile(target)))
                 } catch (error: Exception) {
-                    android.util.Log.w("TVBoxUpdate", "System downloader unavailable; using app download", error)
+                    android.util.Log.w("TVBoxUpdate", "System downloader unavailable; using app download: ${logSafeText(error.message)} (${error::class.simpleName})")
                     0L
                 }
                 PendingSystemDownload(id, target.absolutePath, UpdateManifestDto(
@@ -179,7 +180,7 @@ class DefaultAppUpdateRepository(
                         total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)).takeIf { it > 0 } ?: total
                     }
                 } catch (error: Exception) {
-                    android.util.Log.w("TVBoxUpdate", "Cannot observe system download; switching to app download", error)
+                    android.util.Log.w("TVBoxUpdate", "Cannot observe system download; switching to app download: ${logSafeText(error.message)} (${error::class.simpleName})")
                     // Separate paths prevent an old system job from writing into the fallback file.
                     task = task.copy(id = 0, appDownloader = true, filePath = "${task.filePath}.fallback.apk")
                     downloadMutex.withLock { saveTask(task) }
@@ -204,7 +205,7 @@ class DefaultAppUpdateRepository(
             // DownloadManager / foreground service outlives this UI observer.
             throw cancelled
         } catch (error: Throwable) {
-            android.util.Log.w("TVBoxUpdate", "Update download failed", error)
+            android.util.Log.w("TVBoxUpdate", "Update download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
             downloadMutex.withLock {
                 if (readTask()?.filePath == task.filePath) downloadPrefs.edit().remove("task").commit()
             }
@@ -222,7 +223,7 @@ class DefaultAppUpdateRepository(
             UpdateDownloadService.start(appContext, task.manifest.apkUrl, task.filePath,
                 task.manifest.apkSize, task.manifest.apkSha256)
         } catch (error: Exception) {
-            android.util.Log.w("TVBoxUpdate", "Unable to start app download service", error)
+            android.util.Log.w("TVBoxUpdate", "Unable to start app download service: ${logSafeText(error.message)}")
             throw IOException("无法启动应用下载服务，请返回应用后重试", error)
         }
         var lastProgress = Int.MIN_VALUE

@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import android.util.Log
+import com.tvbox.app.util.logSafeText
 import org.json.JSONObject
 import platformlive.FlvProxyHandle
 import platformlive.Platformlive
@@ -47,7 +48,7 @@ object FlvContinuityProxy {
             JSONObject(headers.toMap()).toString(),
         )
     }.getOrElse { error ->
-        Log.w(LOG_TAG, "【连续代理】启动失败，回退直连：${error.message}")
+        Log.w(LOG_TAG, "【连续代理】启动失败，回退直连：${logSafeText(error.message)}")
         null
     }
 }

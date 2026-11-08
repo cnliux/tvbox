@@ -13,6 +13,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tvbox.app.MainActivity
 import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.util.logSafeText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -117,7 +118,7 @@ class UpdateDownloadService : Service() {
                 if (states[path]?.error == null) states[path] = AppDownloadStatus(error = "下载已中断，请重试")
                 throw cancelled
             } catch (error: Exception) {
-                Log.e("TVBoxUpdate", "Fallback download failed", error)
+                Log.e("TVBoxUpdate", "Fallback download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
                 states[path] = AppDownloadStatus(error = error.message ?: "更新下载失败，请重试")
             } finally {
                 withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {

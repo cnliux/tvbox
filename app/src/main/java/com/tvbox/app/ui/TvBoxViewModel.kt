@@ -1885,7 +1885,7 @@ class TvBoxViewModel(
             android.util.Log.i(
                 VM_LIVE_LOG_TAG,
                 "【线路测速】完成 channel=${channel.name}, " +
-                    results.entries.joinToString { (url, ms) -> "${url.takeLast(18)}=${ms?.let { "${it}ms" } ?: "超时"}" },
+                    results.entries.joinToString { (url, ms) -> "${logSafeUrl(url)}=${ms?.let { "${it}ms" } ?: "超时"}" },
             )
             _state.update { it.copy(live = it.live.copy(lineLatencies = results.toMap(), lineTesting = false)) }
         }

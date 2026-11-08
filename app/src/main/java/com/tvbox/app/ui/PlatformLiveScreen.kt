@@ -96,6 +96,7 @@ import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvLayout
 import com.tvbox.app.util.logSafeHeaderNames
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.delay
 
@@ -925,8 +926,7 @@ private fun PlatformLivePlayerScreen(
                 override fun onPlayerError(error: PlaybackException) {
                     android.util.Log.e(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${error.message}, url=${logSafeUrl(playbackUrl)}, sourceUrl=${logSafeUrl(stream?.url)}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}",
-                        error
+                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${logSafeText(error.message)}, url=${logSafeUrl(playbackUrl)}, sourceUrl=${logSafeUrl(stream?.url)}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}"
                     )
                     if (!session.canPlay) return
                     // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
