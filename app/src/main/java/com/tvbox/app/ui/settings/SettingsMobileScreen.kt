@@ -65,6 +65,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -289,7 +293,11 @@ private fun CategoryCard(category: MobileSettingCategory, onClick: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .clip(RoundedCornerShape(18.dp))
-            .clickable(onClick = onClick),
+            .clickable(role = Role.Button, onClick = onClick)
+            // 卡片内图标、标题、说明原本是三个语义节点，合并成一条分类条目播报。
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${category.title}，${category.subtitle}"
+            },
         color = Color.Transparent,
     ) {
         Box(
@@ -1072,7 +1080,8 @@ private fun <T> ChoiceChips(
                         if (isSelected) TvColors.Accent.copy(alpha = 0.18f)
                         else TvColors.SurfaceRaised.copy(alpha = 0.6f)
                     )
-                    .clickable { onSelect(option) }
+                    .clickable(role = Role.Button) { onSelect(option) }
+                    .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
                     .padding(horizontal = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
