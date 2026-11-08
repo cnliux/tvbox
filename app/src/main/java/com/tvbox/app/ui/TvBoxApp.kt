@@ -700,11 +700,15 @@ private fun HistoryScreen(
                         enabled = state.historyItems.isNotEmpty(),
                         onClick = { confirmClearHistory = true },
                         shape = RoundedCornerShape(8.dp),
-                        modifier = if (isMobile) Modifier.height(36.dp) else Modifier,
+                        modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
                     ) {
                         Text("清空")
                     }
-                    Button(onClick = actions::goBack, shape = RoundedCornerShape(8.dp), modifier = if (isMobile) Modifier.height(36.dp) else Modifier) {
+                    Button(
+                        onClick = actions::goBack,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
+                    ) {
                         Text("返回")
                     }
                 }
