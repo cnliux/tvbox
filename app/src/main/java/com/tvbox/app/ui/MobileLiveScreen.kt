@@ -175,6 +175,8 @@ fun MobileLiveScreen(
     }
 
     val currentChannel = state.liveChannels.getOrNull(state.liveChannelIndex)
+    // 列表页筛选状态（搜索/分组/只看收藏）挂在本层，进出播放层不丢失。
+    val listFilters = remember { MobileLiveListFilters() }
     if (playerOpen && currentChannel != null) {
         MobileLivePlayerScreen(
             state = state,
@@ -190,6 +192,7 @@ fun MobileLiveScreen(
         MobileLiveListScreen(
             state = state,
             actions = actions,
+            filters = listFilters,
             onOpenPlatformLive = onOpenPlatformLive,
             onChannelClick = { index ->
                 actions.selectLiveChannel(index)
@@ -203,16 +206,25 @@ fun MobileLiveScreen(
 // A. 列表页
 // ---------------------------------------------------------------------------
 
+/** 列表页筛选状态容器：由 [MobileLiveScreen] 持有，避免进入播放层后丢失。 */
+private class MobileLiveListFilters {
+    val query = mutableStateOf("")
+    val selectedGroup = mutableStateOf<String?>(null) // null = 全部
+    val favoritesOnly = mutableStateOf(false)
+}
+
 @Composable
 private fun MobileLiveListScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
+    filters: MobileLiveListFilters,
     onOpenPlatformLive: () -> Unit,
     onChannelClick: (Int) -> Unit,
 ) {
-    var query by remember { mutableStateOf("") }
-    var selectedGroup by remember { mutableStateOf<String?>(null) } // null = 全部
-    var favoritesOnly by remember { mutableStateOf(false) }
+    // 筛选状态由上层持有：进入播放层时本组合被移除，若留在本层会随重组一起丢失。
+    var query by filters.query
+    var selectedGroup by filters.selectedGroup // null = 全部
+    var favoritesOnly by filters.favoritesOnly
     val context = LocalContext.current
     val channels = state.liveChannels
     val currentPlayingIndex = state.liveChannelIndex
