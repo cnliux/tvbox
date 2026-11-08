@@ -43,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -69,7 +70,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -267,7 +267,7 @@ private fun MobileLiveListScreen(
                             Text(
                                 text = "搜索频道/节目",
                                 color = Color.White.copy(alpha = 0.6f),
-                                fontSize = 13.sp,
+                                style = MaterialTheme.typography.labelMedium,
                                 maxLines = 1,
                             )
                         }
@@ -275,7 +275,7 @@ private fun MobileLiveListScreen(
                             value = query,
                             onValueChange = { query = it },
                             singleLine = true,
-                            textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+                            textStyle = MaterialTheme.typography.labelMedium.copy(color = Color.White),
                             cursorBrush = SolidColor(LiveAccent),
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -306,8 +306,7 @@ private fun MobileLiveListScreen(
                     .clip(CircleShape)
                     .clickable(role = Role.Button) { favoritesOnly = !favoritesOnly }
                     .semantics {
-                        contentDescription =
-                            if (favoritesOnly) "取消只看收藏频道" else "只看收藏频道"
+                        contentDescription = if (favoritesOnly) "取消只看收藏频道" else "只看收藏频道"
                     },
                 contentAlignment = Alignment.Center,
             ) {
@@ -377,7 +376,7 @@ private fun MobileLiveListScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     CircularProgressIndicator(color = LiveAccent, modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("正在加载...", color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+                    Text("正在加载...", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
                 }
             }
             state.liveError != null || channels.isEmpty() -> Box(
@@ -393,14 +392,13 @@ private fun MobileLiveListScreen(
                     Text(
                         text = if (hasError) "直播源加载失败" else "没有可用直播频道",
                         color = Color.White.copy(alpha = 0.9f),
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
+                        style = MaterialTheme.typography.titleSmall,
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
                         text = if (hasError) "请检查网络，或切换其他直播源后重试" else "可在设置中添加或恢复直播源",
                         color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 12.sp,
+                        style = MaterialTheme.typography.labelSmall,
                         textAlign = TextAlign.Center,
                     )
                     Spacer(modifier = Modifier.height(16.dp))
@@ -413,7 +411,7 @@ private fun MobileLiveListScreen(
                             .padding(horizontal = 28.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text(if (hasError) "重试" else "去设置", color = Color.White, fontSize = 13.sp)
+                        Text(if (hasError) "重试" else "去设置", color = Color.White, style = MaterialTheme.typography.labelMedium)
                     }
                     if (!hasError) {
                         Spacer(modifier = Modifier.height(2.dp))
@@ -425,7 +423,7 @@ private fun MobileLiveListScreen(
                                 .padding(horizontal = 20.dp),
                             contentAlignment = Alignment.Center,
                         ) {
-                            Text("刷新频道", color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
+                            Text("刷新频道", color = Color.White.copy(alpha = 0.7f), style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -437,9 +435,9 @@ private fun MobileLiveListScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("📺", fontSize = 30.sp)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                    Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelMedium)
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.6f), fontSize = 11.sp)
+                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
                 }
             }
             else -> LazyColumn(
@@ -488,7 +486,7 @@ private fun MobileLiveTabItem(
     ) {
         Text(
             text = label,
-            fontSize = 15.sp,
+            style = MaterialTheme.typography.titleSmall,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             color = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
         )
@@ -520,7 +518,7 @@ private fun MobileLiveFilterChip(
     ) {
         Text(
             text = text,
-            fontSize = 12.sp,
+            style = MaterialTheme.typography.labelSmall,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             color = if (selected) Color.White else Color.White.copy(alpha = 0.6f),
@@ -562,7 +560,7 @@ private fun MobileLiveChannelRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = channel.name,
-                fontSize = 14.sp,
+                style = MaterialTheme.typography.bodySmall,
                 color = Color.White,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -570,7 +568,7 @@ private fun MobileLiveChannelRow(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = nowTitle ?: channel.groupName,
-                fontSize = 11.sp,
+                style = MaterialTheme.typography.labelSmall,
                 color = Color.White.copy(alpha = 0.7f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -579,7 +577,7 @@ private fun MobileLiveChannelRow(
                 Spacer(modifier = Modifier.height(1.dp))
                 Text(
                     text = "接下来 $nextTitle",
-                    fontSize = 10.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.6f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -609,7 +607,7 @@ private fun MobileLiveChannelRow(
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "直播中",
-                    fontSize = 9.sp,
+                    style = MaterialTheme.typography.labelSmall,
                     color = Color.White,
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
