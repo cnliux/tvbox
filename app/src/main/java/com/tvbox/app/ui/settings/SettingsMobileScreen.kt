@@ -543,7 +543,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
-            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度，每格最小 160dp）",
+            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度，竖屏 3~4 列）",
             trailing = {
                 ChoiceChips(
                     options = listOf(0, 1, 2, 3, 4),

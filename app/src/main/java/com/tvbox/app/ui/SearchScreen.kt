@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
@@ -36,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -61,6 +63,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -71,8 +74,8 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.size
-import androidx.compose.ui.layout.ContentScale
 import coil.compose.AsyncImage
+import com.tvbox.app.ui.components.MediaCard
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
@@ -794,14 +797,14 @@ internal fun MobileSearchScreen(
         mutableStateOf(queryFieldValue(state.searchQuery))
     }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
-    val resultsListState = rememberLazyListState()
+    val gridState = rememberLazyGridState()
 
     LaunchedEffect(state.searchQuery) {
         if (fieldValue.text != state.searchQuery) {
             fieldValue = queryFieldValue(state.searchQuery)
         }
         // 换关键词后回到结果顶部，避免沿用上一批结果的滚动位置。
-        resultsListState.scrollToItem(0)
+        gridState.scrollToItem(0)
     }
 
     fun submit() {
@@ -812,9 +815,16 @@ internal fun MobileSearchScreen(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // 分块结果按内容缓存：多源搜索进度每次刷新不再于 composition 中重新分配整张列表。
-        val columns = if (maxWidth >= 560.dp) 3 else 2
-        val resultRows = remember(state.searchResults, columns) { state.searchResults.chunked(columns) }
+        // 使用 LazyVerticalGrid 替代行分块，支持自适应列数、更好的视觉密度和更流畅的滚动
+        val gridSpacing = 8.dp
+        val gridPadding = 8.dp
+        // 与首页信息流同一档密度：360~411dp 竖屏 3 列，宽屏自然增加列数。
+        val minCardWidth = 108.dp
+        val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
+            .toInt()
+            .coerceAtLeast(1)
+        val requested = state.appSettings.videoGridColumns
+        val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
         Column(modifier = Modifier.fillMaxSize()) {
             // 搜索框固定在顶部：改关键词不必先滚回列表顶部，符合手机端输入习惯。
             Surface(
@@ -859,101 +869,90 @@ internal fun MobileSearchScreen(
                     }
                 }
             }
-            LazyColumn(
-                state = resultsListState,
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(columns),
+                state = gridState,
+                contentPadding = PaddingValues(start = gridPadding, top = 8.dp, end = gridPadding, bottom = 24.dp),
+                horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f),
             ) {
-            when {
-                state.searchLoading && state.searchResults.isEmpty() -> {
-                    item {
-                        LoadingState(text = "正在搜索多个来源…", modifier = Modifier.fillMaxWidth().height(300.dp))
+                when {
+                    state.searchLoading && state.searchResults.isEmpty() -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            LoadingState(text = "正在搜索多个来源…", modifier = Modifier.fillMaxWidth().height(200.dp))
+                        }
                     }
-                }
 
-                state.searchError != null && state.searchResults.isEmpty() -> {
-                    item {
-                        ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.fillMaxWidth().height(300.dp))
+                    state.searchError != null && state.searchResults.isEmpty() -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.fillMaxWidth().height(200.dp))
+                        }
                     }
-                }
 
-                state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
-                    item {
-                        // 热门搜索：用标签流式排列
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp),
-                        ) {
-                            Text(
-                                "热门搜索",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color.White,
-                            )
-                            HotSearchChips(hotWords = hotWords, onWordClick = { word ->
-                                fieldValue = queryFieldValue(word)
-                                actions.updateSearchQuery(word)
-                                actions.submitSearch()
+                    state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            // 热门搜索：用标签流式排列
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    "热门搜索",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = Color.White,
+                                )
+                                HotSearchChips(hotWords = hotWords, onWordClick = { word ->
+                                    fieldValue = queryFieldValue(word)
+                                    actions.updateSearchQuery(word)
+                                    actions.submitSearch()
+                                })
+                            }
+                        }
+                    }
+
+                    state.searchResults.isEmpty() -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            SearchEmptyState(query = state.searchQuery)
+                        }
+                    }
+
+                    else -> {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            val progressText = if (state.searchTotalSources > 0) {
+                                "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
+                            } else null
+                            progressText?.let {
+                                Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                            }
+                            state.searchError?.let {
+                                Text(it, color = MaterialTheme.colorScheme.error,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                            }
+                            if (state.searchLoading && state.searchResults.isNotEmpty()) {
+                                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            }
+                        }
+                        items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                            SearchResultCardMobile(movie = movie, onClick = {
+                                actions.openDetail(movie.id, movie.apiLineId)
                             })
                         }
-                    }
-                }
-
-                state.searchResults.isEmpty() -> {
-                    item {
-                        SearchEmptyState(query = state.searchQuery)
-                    }
-                }
-
-                else -> {
-                    item {
-                        val progressText = if (state.searchTotalSources > 0) {
-                            "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
-                        } else null
-                        progressText?.let {
-                            Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
-                        }
-                        state.searchError?.let {
-                            Text(it, color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
-                        }
-                        if (state.searchLoading && state.searchResults.isNotEmpty()) {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                        }
-                    }
-                    // 卡片网格：按行懒加载
-                    // 行 key 由影片内容决定：列数变化或结果增量插入时，保存的滚动位置不会指向另一批影片。
-                    items(
-                        count = resultRows.size,
-                        key = { index -> resultRows[index].joinToString("|") { "${it.apiLineId}:${it.id}" } },
-                    ) { rowIndex ->
-                        val rowMovies = resultRows[rowIndex]
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            rowMovies.forEach { movie ->
-                                Box(modifier = Modifier.weight(1f)) {
-                                    SearchResultCardMobile(movie = movie, onClick = {
-                                        actions.openDetail(movie.id, movie.apiLineId)
-                                    })
-                                }
-                            }
-                            repeat(columns - rowMovies.size) {
-                                Spacer(modifier = Modifier.weight(1f))
+                        // 搜索结果随多源完成持续增量合并，没有分页；加载完成后补底部留白。
+                        if (!state.searchLoading) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Spacer(modifier = Modifier.height(16.dp))
                             }
                         }
                     }
-                    item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
-        } // LazyColumn
-        } // Column（固定搜索框 + 结果列表）
+        }
     }
 }
 
@@ -1000,32 +999,13 @@ private fun SearchResultCardMobile(
     movie: Movie,
     onClick: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(Color(0xFF1E1E1E))
-            .clickable(role = Role.Button, onClick = onClick)
-            // 卡片内海报、标题、来源、更新信息原本是多个语义节点，读屏会逐条朗读；
-            // 合并成一条「片名，来源，更新信息」，整卡按一个按钮播报。
-            .semantics(mergeDescendants = true) {
-                contentDescription = buildString {
-                    append(movie.name)
-                    if (movie.apiLineName.isNotBlank()) append("，来源 ").append(movie.apiLineName)
-                    if (movie.remarks.isNotBlank()) append("，").append(movie.remarks)
-                }
-            },
-    ) {
-        // 大尺寸海报
-        val imageLoader = rememberTvImageLoader()
-        // 封面可能因防盗链/过期加载失败，失败后与「无海报」同一兜底，避免留白。
-        var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(0.72f)
-                .background(Color(0xFF2A2A2A)),
-        ) {
+    // 复用 MediaCard 底座，统一圆角、间距、字号与触摸反馈
+    var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
+    MediaCard(
+        title = movie.name,
+        onClick = onClick,
+        badge = movie.remarks.takeIf { it.isNotBlank() },
+        cover = {
             if (movie.posterUrl.isNotBlank() && !posterFailed) {
                 AsyncImage(
                     model = movie.posterUrl,
@@ -1033,62 +1013,37 @@ private fun SearchResultCardMobile(
                     contentScale = ContentScale.Crop,
                     onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
-                    imageLoader = imageLoader,
+                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
                     text = "无海报",
-                    color = Color.White.copy(alpha = 0.5f),
-                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.align(Alignment.Center),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
                 )
             }
+        },
+        coverOverlay = {
             // 来源角标
             if (movie.apiLineName.isNotBlank()) {
                 Surface(
-                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp),
                     shape = RoundedCornerShape(4.dp),
                     color = Color(0xCC1ED760),
                 ) {
                     Text(
                         movie.apiLineName,
                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp),
-                        // 手机卡片角标下限对齐 14sp（labelMedium），避免窄列下 12sp 不可读。
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.labelSmall,
                         color = Color.Black,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            // 更新信息
-            if (movie.remarks.isNotBlank()) {
-                Text(
-                    text = movie.remarks,
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .background(Color(0xCC000000))
-                        .padding(horizontal = 6.dp, vertical = 3.dp),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                movie.name,
-                style = MaterialTheme.typography.titleSmall,
-                color = Color.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
+        },
+    )
 }

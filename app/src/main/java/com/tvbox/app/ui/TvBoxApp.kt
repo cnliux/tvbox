@@ -732,22 +732,36 @@ private fun HistoryScreen(
                 )
             } else {
                 val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
-                // 手机模式固定 2 列，避免 Adaptive 在窄屏下算出 1 列或间距过大导致布局异常。
-                val columns = if (isMobile) GridCells.Fixed(2) else GridCells.Adaptive(minSize = TvLayout.HistoryGridMinWidth)
-                LazyVerticalGrid(
-                    columns = columns,
-                    state = historyGrid,
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 0.dp, bottom = 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (isMobile) 12.dp else 22.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(state.historyItems, key = { "${it.apiLineId}:${it.movieId}" }) { item ->
-                        HistoryItemCard(item = item, onClick = {
-                            historyFocus.mark("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item))
-                            actions.resumeHistory(item, TvScreen.History)
-                        },
-                            modifier = historyFocus.modifier("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item)))
+                // 手机模式按宽度自适应 3~4 列（与首页信息流同一档密度）；
+                // 原先固定 2 列时一屏只能看到 4 张历史卡，续看命中率低。
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val hSpacing = if (isMobile) 8.dp else 18.dp
+                    val hSidePadding = if (isMobile) 8.dp else 12.dp
+                    val mobileColumns = if (isMobile) {
+                        ((maxWidth - hSidePadding * 2 + hSpacing) / (108.dp + hSpacing))
+                            .toInt()
+                            .coerceIn(2, 4)
+                    } else 0
+                    val columns = if (isMobile) {
+                        GridCells.Fixed(mobileColumns)
+                    } else {
+                        GridCells.Adaptive(minSize = TvLayout.HistoryGridMinWidth)
+                    }
+                    LazyVerticalGrid(
+                        columns = columns,
+                        state = historyGrid,
+                        contentPadding = PaddingValues(start = hSidePadding, end = hSidePadding, top = 0.dp, bottom = 24.dp),
+                        horizontalArrangement = Arrangement.spacedBy(hSpacing),
+                        verticalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 22.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(state.historyItems, key = { "${it.apiLineId}:${it.movieId}" }) { item ->
+                            HistoryItemCard(item = item, onClick = {
+                                historyFocus.mark("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item))
+                                actions.resumeHistory(item, TvScreen.History)
+                            },
+                                modifier = historyFocus.modifier("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item)))
+                        }
                     }
                 }
             }
@@ -1498,10 +1512,11 @@ private fun MobileHomeFeed(
                     color = TvColors.TextSecondary,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
                 )
-                val gridSpacing = 10.dp
-                val gridPadding = 10.dp
-                // 手机端每格最小宽度：保证 360dp 窄屏仍有 2 列，平板/大屏按宽度自然增加列数。
-                val minCardWidth = 160.dp
+                val gridSpacing = 8.dp
+                val gridPadding = 8.dp
+                // 手机端每格最小宽度：360~411dp 主流窄屏可放 3 列（列宽约 109~128dp），
+                // 480dp 以上自然升到 4 列；比原 160dp（同屏只有 2 列）信息密度明显提高。
+                val minCardWidth = 108.dp
                 BoxWithConstraints(modifier = Modifier.weight(1f)) {
                     val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
                         .toInt()
@@ -1511,9 +1526,9 @@ private fun MobileHomeFeed(
                     LazyVerticalGrid(
                         columns = GridCells.Fixed(columns),
                         state = movieGridState,
-                        contentPadding = PaddingValues(start = gridPadding, top = 8.dp, end = gridPadding, bottom = 24.dp),
+                        contentPadding = PaddingValues(start = gridPadding, top = 6.dp, end = gridPadding, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         if (state.isShowingDoubanHot) {
@@ -1533,29 +1548,29 @@ private fun MobileHomeFeed(
                             }
                         }
                         if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
-                            item {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                horizontalArrangement = Arrangement.Center,
-                            ) {
-                                if (state.loadingMore) {
-                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                                } else {
-                                    Button(onClick = actions::loadNextPage) { Text("加载更多") }
+                                    horizontalArrangement = Arrangement.Center,
+                                ) {
+                                    if (state.loadingMore) {
+                                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                    } else {
+                                        Button(onClick = actions::loadNextPage) { Text("加载更多") }
+                                    }
                                 }
                             }
+                        } else if (state.homeItemCount > 0) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Text(
+                                    text = "已经到底了",
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    color = TvColors.TextSecondary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                            }
                         }
-                    } else if (state.homeItemCount > 0) {
-                        item {
-                            Text(
-                                text = "已经到底了",
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                color = TvColors.TextSecondary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                            )
-                        }
-                    }
                     }
                 }
             }

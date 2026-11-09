@@ -483,7 +483,7 @@ private fun TvPlaybackDetail(
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
-            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度，每格最小 160dp）",
+            subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度自适应）",
             trailing = {
                 TvChoiceChips(
                     options = listOf(0, 3, 4, 5, 6),

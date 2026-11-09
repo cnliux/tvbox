@@ -469,6 +469,9 @@ fun CategoryPill(
 /** 点播海报卡与历史卡统一使用的封面宽高比。 */
 private const val MediaCardAspectRatio = 2f / 3f
 
+/** 手机竖屏模式下的更紧凑宽高比，让同屏显示更多行。 */
+private const val MediaCardAspectRatioMobile = 0.7f
+
 /** 角标与封面底部遮罩统一使用的半透明底色。 */
 private val MediaCardScrim = Color(0xCC080B0B)
 
@@ -557,7 +560,10 @@ fun MediaCard(
     ) {
         // 触摸模式按实测卡宽选字号档位：3–4 列窄卡用较小档并放开两行，2 列宽卡用较大档。
         // 全部取自 typography token，因此仍随设置里的字号缩放。
-        val narrowCard = maxWidth < 132.dp
+        // 手机模式下根据卡片宽度自适应选择更紧凑的宽高比
+        val narrowCard = maxWidth < 120.dp
+        val isMobilePortrait = touchMode && maxWidth < 400.dp
+        val aspectRatio = if (isMobilePortrait) MediaCardAspectRatioMobile else MediaCardAspectRatio
         val cardTitleStyle = when {
             !touchMode -> MaterialTheme.typography.titleSmall
             narrowCard -> MaterialTheme.typography.titleSmall
@@ -574,7 +580,7 @@ fun MediaCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(MediaCardAspectRatio)
+                    .aspectRatio(aspectRatio)
                     .background(TvColors.SurfaceRaised),
             ) {
                 cover()
@@ -598,7 +604,7 @@ fun MediaCard(
                         text = badge,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(8.dp),
+                            .padding(6.dp),
                     )
                 }
                 coverOverlay()
@@ -615,10 +621,10 @@ fun MediaCard(
             Text(
                 text = title,
                 modifier = Modifier.padding(
-                    start = 10.dp,
-                    top = 8.dp,
-                    end = 10.dp,
-                    bottom = if (subtitle.isNullOrBlank()) 10.dp else 2.dp,
+                    start = 8.dp,
+                    top = 6.dp,
+                    end = 8.dp,
+                    bottom = if (subtitle.isNullOrBlank()) 8.dp else 1.dp,
                 ),
                 style = cardTitleStyle,
                 // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
@@ -629,7 +635,7 @@ fun MediaCard(
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
-                    modifier = Modifier.padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
                     color = TvColors.TextSecondary,
                     style = cardSubtitleStyle,
                     maxLines = cardSubtitleLines,
