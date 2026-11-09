@@ -133,8 +133,12 @@ internal fun mimeFromContentType(contentType: String): String? {
 /** 按正文头部特征判定：文本 m3u8 / FLV 签名 / TS 同步字节 0x47。 */
 internal fun mimeFromBodyHead(buffer: ByteArray, length: Int): String {
     if (length <= 0) return LIVE_MIME_UNKNOWN
-    val text = String(buffer, 0, minOf(length, 64), Charsets.ISO_8859_1)
-    val trimmed = text.trimStart('﻿', ' ', '\t', '\r', '\n')
+    // 跳过 UTF-8/UTF-16/UTF-32 BOM（EF BB BF、FE FF、FF FE、00 00 FE FF、FF FE 00 00）。
+    var skip = 0
+    if (length >= 3 && buffer[0] == 0xEF.toByte() && buffer[1] == 0xBB.toByte() && buffer[2] == 0xBF.toByte()) skip = 3
+    val start = skip.coerceAtMost(minOf(3, length))
+    val text = String(buffer, start, minOf(length - start, 64 - start), Charsets.ISO_8859_1)
+    val trimmed = text.trimStart(' ', '\t', '\r', '\n')
     if (trimmed.startsWith("#EXTM3U")) return LIVE_MIME_M3U8
     if (length >= 3 && buffer[0] == 'F'.code.toByte() && buffer[1] == 'L'.code.toByte() && buffer[2] == 'V'.code.toByte()) {
         return LIVE_MIME_FLV
