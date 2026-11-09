@@ -381,11 +381,13 @@ private fun EpisodeGrid(
     }
 
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = TvLayout.EpisodeGridMinWidth),
+        // 触摸模式下选集按钮多为「第N集/HD」短文本，132dp 的 TV 档在竖屏只排 3 列太稀疏；
+        // 手机收紧到 92dp 可排 4~5 列，百集剧翻页深度明显下降。
+        columns = GridCells.Adaptive(minSize = if (touchMode) 92.dp else TvLayout.EpisodeGridMinWidth),
         state = gridState,
         contentPadding = PaddingValues(bottom = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 12.dp),
+        verticalArrangement = Arrangement.spacedBy(if (touchMode) 8.dp else 12.dp),
         modifier = modifier.fillMaxSize(),
     ) {
         header?.let { headerContent ->

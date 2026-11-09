@@ -558,10 +558,11 @@ fun MediaCard(
             }
             .then(if (touchMode) Modifier else Modifier.focusable()),
     ) {
-        // 触摸模式按实测卡宽选字号档位：3–4 列窄卡用较小档并放开两行，2 列宽卡用较大档。
-        // 全部取自 typography token，因此仍随设置里的字号缩放。
+        // 触摸模式按实测卡宽选字号档位：手机竖屏网格卡（约 108–130dp）与续看卡（140dp）
+        // 都走小字两行档，宽平板卡用较大档。全部取自 typography token，
+        // 因此仍随设置里的字号缩放。
         // 手机模式下根据卡片宽度自适应选择更紧凑的宽高比
-        val narrowCard = maxWidth < 120.dp
+        val narrowCard = maxWidth < 150.dp
         val isMobilePortrait = touchMode && maxWidth < 400.dp
         val aspectRatio = if (isMobilePortrait) MediaCardAspectRatioMobile else MediaCardAspectRatio
         val cardTitleStyle = when {

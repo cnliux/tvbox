@@ -1449,16 +1449,18 @@ private fun MobileHomeFeed(
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 )
                 LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 8.dp),
                 ) {
                     items(recent, key = { "${it.apiLineId}:${it.movieId}" }) { history ->
                         HistoryItemCard(
                             item = history,
                             onClick = { actions.resumeHistory(history, TvScreen.Home) },
-                            modifier = Modifier.width(200.dp),
+                            // 200dp 宽的续看卡在竖屏高约 286dp，一行只露两张还挤压海报区；
+                            // 收窄到 140dp 后同屏可见 3 张，且整行高度让位给主网格。
+                            modifier = Modifier.width(140.dp),
                         )
                     }
                 }
