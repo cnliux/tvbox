@@ -1397,7 +1397,8 @@ private fun MobileHomeFeed(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                // 与下方海报网格同用 8dp 左右内边距，窄屏下分类胶囊与第一列卡片左缘对齐。
+                .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             item {
                 CategoryPill(
@@ -1419,7 +1420,7 @@ private fun MobileHomeFeed(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
             ) {
                 item {
                     CategoryPill(
@@ -1446,7 +1447,7 @@ private fun MobileHomeFeed(
                 Text(
                     text = "继续观看",
                     style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
                 )
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1471,7 +1472,7 @@ private fun MobileHomeFeed(
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 4.dp),
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
                 color = TvColors.SurfaceRaised,
                 shape = RoundedCornerShape(6.dp),
             ) {
@@ -1512,7 +1513,7 @@ private fun MobileHomeFeed(
                     text = feedTitle,
                     style = MaterialTheme.typography.labelMedium,
                     color = TvColors.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                 )
                 val gridSpacing = 8.dp
                 val gridPadding = 8.dp

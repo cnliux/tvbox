@@ -892,11 +892,11 @@ internal fun MobileSearchScreen(
 
                     state.searchResults.isEmpty() && state.searchQuery.isBlank() -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            // 热门搜索：用标签流式排列
+                            // 热门搜索：用标签流式排列（横向不再二次缩进，与结果卡左缘对齐）
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(16.dp),
+                                    .padding(vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp),
                             ) {
                                 Text(
@@ -927,12 +927,12 @@ internal fun MobileSearchScreen(
                             progressText?.let {
                                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp))
                             }
                             state.searchError?.let {
                                 Text(it, color = MaterialTheme.colorScheme.error,
                                     style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                             }
                             if (state.searchLoading && state.searchResults.isNotEmpty()) {
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
