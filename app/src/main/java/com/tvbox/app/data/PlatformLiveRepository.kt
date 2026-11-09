@@ -170,11 +170,8 @@ class EmbeddedPlatformLiveRepository(
         PlatformLiveGoBridge.start(appContext)
     }
 
-    private fun bridgeErrorMessage(error: Throwable): String {
-        val raw = error.message?.trim().orEmpty()
-        if (raw.isBlank()) return "直播解析失败"
-        return raw.ifBlank { "直播解析失败" }
-    }
+    private fun bridgeErrorMessage(error: Throwable): String =
+        error.message?.trim().orEmpty().ifBlank { "直播解析失败" }
 }
 
 @Serializable
