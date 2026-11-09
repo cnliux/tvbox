@@ -107,6 +107,22 @@ class LiveSourceDryRunTest {
     }
 
     @Test
+    fun `m3u without group title is counted as missing group`() {
+        // M3U 兜底分组名是「未分组」（与 LiveParser 一致），不能沿用 TXT 的「电视直播」或旧的「直播」。
+        val raw = """
+            #EXTM3U
+            #EXTINF:-1 tvg-name="CCTV-1",CCTV-1
+            http://a.example.com/1.m3u8
+        """.trimIndent()
+
+        val result = dryRunLiveSource(raw)
+
+        assertEquals(1, result.channelCount)
+        assertEquals(1, result.channelsWithoutGroup)
+        assertTrue(result.warnings().any { it.contains("分组") })
+    }
+
+    @Test
     fun `headline carries the counts when the source is usable`() {
         val result = dryRunLiveSource("CCTV-1,http://a.example.com/1.m3u8")
         assertTrue(result.headline().contains("1 个频道"))

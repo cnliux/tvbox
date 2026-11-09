@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
 import android.content.res.Configuration
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -95,7 +96,8 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
-import com.tvbox.app.data.liveFavoriteKey
+import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
+import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
 import com.tvbox.app.domain.PlaybackWatchdog
@@ -242,7 +244,7 @@ private fun MobileLiveListScreen(
         channels.withIndex().filter { (_, channel) ->
             (selectedGroup == null || channel.groupName == selectedGroup) &&
                 (keyword.isEmpty() || channel.name.contains(keyword, ignoreCase = true)) &&
-                (!favoritesOnly || state.liveFavoriteKeys.contains(liveFavoriteKey(channel.groupName, channel.name)))
+                (!favoritesOnly || containsLiveFavorite(state.liveFavoriteKeys, channel.groupName, channel.name))
         }
     }
 
@@ -736,8 +738,17 @@ private fun MobileLivePlayerScreen(
     }
 
     val channels = state.liveChannels
-    val lineIndex = state.liveLineIndex.coerceIn(0, channel.lines.lastIndex)
-    val currentLine = channel.lines[lineIndex]
+    // 线路为空时 coerceIn(0, -1) 会抛异常；给出可重试的错误态，而不是闪退/黑屏。
+    val lineIndex = state.liveLineIndex.coerceIn(0, channel.lines.lastIndex.coerceAtLeast(0))
+    val currentLine = channel.lines.getOrNull(lineIndex)
+    if (currentLine == null) {
+        ErrorState(
+            message = "当前频道没有可播放的线路，请刷新或更换直播源",
+            onRetry = actions::refreshLive,
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
     val latestChannel = rememberUpdatedState(channel)
     val latestLineUrl = rememberUpdatedState(currentLine.url)
     val latestChannelLabel = rememberUpdatedState("${channel.groupName}/${channel.name}")
@@ -1044,7 +1055,8 @@ private fun MobileLivePlayerScreen(
     }
     val currentEpgIndex = epgPrograms.indexOfFirst { epgNowMs in it.startMs until it.stopMs }
     val epgListState = rememberLazyListState()
-    LaunchedEffect(epgPrograms) {
+    // 当前节目随 30 秒时钟变化：高亮换了，节目单也要跟着滚到新的节目行。
+    LaunchedEffect(epgPrograms, currentEpgIndex) {
         if (epgPrograms.isNotEmpty() && currentEpgIndex > 0) epgListState.scrollToItem(currentEpgIndex)
     }
 
@@ -1352,6 +1364,10 @@ private fun MobileLivePlayerSurface(
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
+    // 竖滑手势会直接改写 Window 亮度，退出页面必须恢复进入前的设置（与点播播放页一致）。
+    val initialScreenBrightness = remember(activity) {
+        activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
     // 手势提示（亮度/音量），1.2 秒后自动消失。
     var gesturePrompt by remember { mutableStateOf<String?>(null) }
     var gesturePromptNonce by remember { mutableIntStateOf(0) }
@@ -1418,8 +1434,11 @@ private fun MobileLivePlayerSurface(
         onLongPressStart = {},
         onLongPressEnd = {},
     )
-    DisposableEffect(touchHandler) {
-        onDispose { touchHandler.release() }
+    DisposableEffect(touchHandler, activity, initialScreenBrightness) {
+        onDispose {
+            touchHandler.release()
+            activity?.window?.restoreScreenBrightness(initialScreenBrightness)
+        }
     }
 
     Box(

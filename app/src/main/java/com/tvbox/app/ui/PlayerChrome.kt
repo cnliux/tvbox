@@ -765,9 +765,12 @@ private fun PlayerChromeTouch(
                     )
                 }
                 if (capabilities.seek) {
-                    MobileProgressRow(positionMs = data.positionMs, durationMs = data.durationMs, onSeek = {
-                        actions.onSeek(it); state.interaction++
-                    })
+                    MobileProgressRow(
+                        positionMs = data.positionMs,
+                        durationMs = data.durationMs,
+                        onScrubbing = { scrubbing -> state.scrubbing = scrubbing; state.interaction++ },
+                        onSeek = { actions.onSeek(it); state.interaction++ },
+                    )
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -970,7 +973,9 @@ private fun PlayerChromePanel(
     val selected = when (panel) {
         PlayerPanel.Episodes -> data.episodeIndex
         PlayerPanel.Sources -> orderedSources.indexOfFirst { it.index == data.sourceIndex }.coerceAtLeast(0)
-        PlayerPanel.Speeds -> playerSpeeds.indexOf(data.speed).coerceAtLeast(0)
+        // 偏好里可能存了非标准倍速（如 1.1f）：严格 indexOf 返回 -1 会被 coerceAtLeast(0)
+        // 误高亮到 0.75x。改为与手机版一致的容差匹配，找不到就返回 -1（不高亮任何档位）。
+        PlayerPanel.Speeds -> playerSpeeds.indexOfFirst { kotlin.math.abs(it - data.speed) < 0.01f }
         PlayerPanel.Picture -> VideoScaleMode.entries.indexOf(data.resizeMode)
         PlayerPanel.Audio -> data.audioTracks.indexOfFirst { it.selected }.coerceAtLeast(0)
         PlayerPanel.Subtitle -> subtitleOptions.indexOfFirst { it.selected }.coerceAtLeast(0)
@@ -986,7 +991,7 @@ private fun PlayerChromePanel(
     val grid = rememberLazyGridState()
     LaunchedEffect(panel, labels.size) {
         grid.scrollToItem(selected.coerceIn(0, labels.lastIndex.coerceAtLeast(0)))
-        pickerFocus.getOrNull(selected)?.requestFocus()
+        runCatching { pickerFocus.getOrNull(selected)?.requestFocus() }
     }
     Surface(modifier.fillMaxHeight(0.6f),
         color = Color(0xFA202020), contentColor = Color.White, shape = RoundedCornerShape(12.dp)) {
@@ -1622,7 +1627,7 @@ private fun SkipSettingsPanel(
     modifier: Modifier = Modifier,
 ) {
     val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { firstFocus.requestFocus() }
+    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
     Surface(modifier, color = Color(0xFA202020), contentColor = Color.White, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1691,6 +1696,7 @@ private fun formatSpeedLabel(speed: Float): String = speed.toString().trimEnd('0
 private fun MobileProgressRow(
     positionMs: Long,
     durationMs: Long,
+    onScrubbing: (Boolean) -> Unit,
     onSeek: (Long) -> Unit,
 ) {
     var preview by remember { mutableStateOf<Float?>(null) }
@@ -1706,10 +1712,12 @@ private fun MobileProgressRow(
         )
         Slider(
             value = (preview ?: positionMs.toFloat()).coerceIn(0f, maxValue),
-            onValueChange = { preview = it },
+            onValueChange = { preview = it; onScrubbing(true) },
             onValueChangeFinished = {
                 preview?.let { onSeek(it.toLong()) }
                 preview = null
+                // 与 TV 进度条一致：拖动期间暂停控件自动隐藏，松手才恢复计时。
+                onScrubbing(false)
             },
             valueRange = 0f..maxValue,
             enabled = durationMs > 0,

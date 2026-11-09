@@ -531,6 +531,9 @@ internal class PlayerTouchGestureHandler(
     }
 
     fun release() {
+        // 页面销毁时若长按仍在进行，必须回调 onLongPressEnd 恢复原倍速，
+        // 否则 2x 会一直保留，甚至被写进用户偏好。
+        cancelPendingGestures()
         handler.removeCallbacksAndMessages(null)
         state.longPressRunnable = null
         state.singleTapRunnable = null

@@ -71,7 +71,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
@@ -281,8 +283,12 @@ private fun UpdateDownloadCard(
 }
 
 /** 屏幕内 rememberSaveable 状态按「屏幕 + 设备模式」隔离，切换电视/手机布局时不复用另一套布局的滚动/输入状态。 */
-private fun screenSaveableKey(state: TvBoxUiState): String =
-    "${state.screen.name}-${state.effectiveDeviceMode.name}"
+private fun screenSaveableKey(state: TvBoxUiState): String {
+    // 详情页内点相关推荐跳到另一部影片时 screen 仍是 Detail，
+    // 必须把影片标识纳入 key，否则 SaveableStateProvider 会复用上一部影片的滚动与焦点状态。
+    val detailKey = state.detailMovie?.let { "${it.apiLineId}:${it.id}" }.orEmpty()
+    return "${state.screen.name}-${state.effectiveDeviceMode.name}-$detailKey"
+}
 
 @Composable
 private fun TvBoxScreen(
@@ -788,11 +794,20 @@ public fun RemoteManageDialog(
                     }
                 } else {
                     val qrBitmap = remember(configUrl) { createQrBitmap(configUrl, 320) }
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "远程管理二维码",
-                        modifier = Modifier.size(220.dp),
-                    )
+                    if (qrBitmap != null) {
+                        Image(
+                            bitmap = qrBitmap.asImageBitmap(),
+                            contentDescription = "远程管理二维码",
+                            modifier = Modifier.size(220.dp),
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier.size(220.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("二维码生成失败，请用下方网址访问")
+                        }
+                    }
                 }
                 Column(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -1336,8 +1351,14 @@ private fun MobileHomeFeed(
             savedContext = contextKey
         }
     }
-    // 触底加载更多
-    var canLoadMore by remember { mutableStateOf(false) }
+    // 触底加载更多：layoutInfo 每次滚动都变，不能直接当 effect key（会反复重启协程并写回 state）。
+    // derivedStateOf 只在布尔结果变化时通知下游，避免「滚动 → 重组 → effect 重跑 → 写 state」循环。
+    val canLoadMore by remember(movieGridState) {
+        derivedStateOf {
+            val info = movieGridState.layoutInfo
+            info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 1 } == true
+        }
+    }
     val hotItems = if (state.isShowingDoubanHot) {
         state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
     } else {
@@ -1345,10 +1366,6 @@ private fun MobileHomeFeed(
     }
     val hotCapReached = state.isShowingDoubanHot &&
         hotItems.size >= state.appSettings.homeHotContentCount
-    LaunchedEffect(movieGridState.layoutInfo) {
-        val info = movieGridState.layoutInfo
-        canLoadMore = info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 1 } == true
-    }
     LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore, hotCapReached) {
         if (canLoadMore && state.canLoadMore && !state.loadingMore && !hotCapReached) {
             actions.loadNextPage()
@@ -1613,7 +1630,11 @@ private fun Category.allChildrenLabel(): String {
     return "全部$baseName"
 }
 
-private fun createQrBitmap(content: String, size: Int): Bitmap {
+/**
+ * 生成二维码；超长/非法 URL 时 QRCodeWriter.encode 会抛 WriterException，
+ * 组合内抛异常会直接崩溃，这里降级为 null，由调用方展示空态。
+ */
+private fun createQrBitmap(content: String, size: Int): Bitmap? = runCatching {
     val matrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
     val pixels = IntArray(size * size)
     for (y in 0 until size) {
@@ -1625,8 +1646,8 @@ private fun createQrBitmap(content: String, size: Int): Bitmap {
             }
         }
     }
-    return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
-}
+    Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+}.getOrNull()
 
 
 // ===== Source Management Screens =====
@@ -1644,10 +1665,13 @@ private fun SourceManagerSetting(
     var importDraft by remember { mutableStateOf("") }
     var exportMessage by remember { mutableStateOf<String?>(null) }
 
-    fun exportToDownloads(fileName: String, content: String) {
+    fun exportToDownloads(fileName: String, content: () -> String) {
         scope.launch {
             try {
-                val location = TextFileExporter(context).save(fileName, content)
+                // 全量源序列化与写文件都移出主线程，源数量多时不会卡住点击反馈。
+                val location = withContext(Dispatchers.IO) {
+                    TextFileExporter(context).save(fileName, content())
+                }
                 exportMessage = "已导出到 $location"
             } catch (error: Exception) {
                 exportMessage = "导出失败：${error.message ?: error.toString()}"
@@ -1685,12 +1709,12 @@ private fun SourceManagerSetting(
             SettingsActionButton(
                 text = "导出 TVBox",
                 enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
-                onClick = { exportToDownloads("tvbox_sources.json", actions.sourceConfigTvboxJson()) },
+                onClick = { exportToDownloads("tvbox_sources.json") { actions.sourceConfigTvboxJson() } },
             )
             SettingsActionButton(
                 text = "导出 JSON",
                 enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
-                onClick = { exportToDownloads("sources.json", actions.sourceConfigSourcesJson()) },
+                onClick = { exportToDownloads("sources.json") { actions.sourceConfigSourcesJson() } },
             )
         }
         state.sourceManagerMessage?.let { msg ->

@@ -98,10 +98,20 @@ class DefaultMovieRepository(
         this.customApiLines = customApiLines
             .filter { it.id.isNotBlank() && it.name.isNotBlank() && it.baseUrls.isNotEmpty() }
             .distinctBy { it.id }
+        // 缓存 key 只含 line.id/page/type/keyword，不含 baseUrls：同名 id 改地址或
+        // 禁用/启用线路后必须清空，否则最长 30 分钟仍在返回旧源数据。
+        clearCaches()
     }
 
     override fun setDisabledLineIds(disabledIds: Set<String>) {
         this.disabledLineIds = disabledIds.filter { it.isNotBlank() }.toSet()
+        clearCaches()
+    }
+
+    private fun clearCaches() {
+        categoriesCache.clear()
+        moviesCache.clear()
+        detailsCache.clear()
     }
 
     override suspend fun testSpeed(apiLineId: String): Long? {
@@ -490,6 +500,11 @@ private class TimedLruCache<T>(
     @Synchronized
     fun put(key: String, value: T, expiresAtMs: Long) {
         entries[key] = TimedCacheEntry(value = value, expiresAtMs = expiresAtMs)
+    }
+
+    @Synchronized
+    fun clear() {
+        entries.clear()
     }
 }
 

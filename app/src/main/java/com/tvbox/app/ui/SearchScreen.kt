@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -793,11 +794,14 @@ internal fun MobileSearchScreen(
         mutableStateOf(queryFieldValue(state.searchQuery))
     }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
+    val resultsListState = rememberLazyListState()
 
     LaunchedEffect(state.searchQuery) {
         if (fieldValue.text != state.searchQuery) {
             fieldValue = queryFieldValue(state.searchQuery)
         }
+        // 换关键词后回到结果顶部，避免沿用上一批结果的滚动位置。
+        resultsListState.scrollToItem(0)
     }
 
     fun submit() {
@@ -807,62 +811,58 @@ internal fun MobileSearchScreen(
         actions.submitSearch()
     }
 
-    LaunchedEffect(Unit) {
-        // 清空搜索状态，确保返回时不残留
-    }
-    
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // 结果按行分组交给 LazyColumn 逐行复用，避免一次性组合全部搜索结果卡。
+        // 分块结果按内容缓存：多源搜索进度每次刷新不再于 composition 中重新分配整张列表。
         val columns = if (maxWidth >= 560.dp) 3 else 2
-        val resultRows = state.searchResults.chunked(columns)
-        // 内容区（搜索框可随列表一起滑动）
-        LazyColumn(modifier = Modifier.fillMaxSize()) {
-            item {
-                // 搜索输入区
-                Surface(
-                    color = Color(0xFF1E1E1E),
-                    shadowElevation = 2.dp,
+        val resultRows = remember(state.searchResults, columns) { state.searchResults.chunked(columns) }
+        Column(modifier = Modifier.fillMaxSize()) {
+            // 搜索框固定在顶部：改关键词不必先滚回列表顶部，符合手机端输入习惯。
+            Surface(
+                color = Color(0xFF1E1E1E),
+                shadowElevation = 2.dp,
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 64.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
+                    OutlinedTextField(
+                        value = fieldValue,
+                        onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 64.dp)
-                            .padding(horizontal = 12.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
+                            .weight(1f)
+                            .heightIn(min = 52.dp),
+                        singleLine = true,
+                        placeholder = { Text("搜索影片") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { submit() }),
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
+                        colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                            unfocusedContainerColor = Color(0xFF2A2A2A),
+                            focusedContainerColor = Color(0xFF2A2A2A),
+                            unfocusedTextColor = Color.White,
+                            focusedTextColor = Color.White,
+                            unfocusedBorderColor = Color(0xFF444444),
+                            focusedBorderColor = Color(0xFF1ED760),
+                        ),
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { submit() },
+                        enabled = !state.searchLoading,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.heightIn(min = 48.dp),
                     ) {
-                        OutlinedTextField(
-                            value = fieldValue,
-                            onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
-                            modifier = Modifier
-                                .weight(1f)
-                                .heightIn(min = 52.dp),
-                            singleLine = true,
-                            placeholder = { Text("搜索影片") },
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { submit() }),
-                            textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                                unfocusedContainerColor = Color(0xFF2A2A2A),
-                                focusedContainerColor = Color(0xFF2A2A2A),
-                                unfocusedTextColor = Color.White,
-                                focusedTextColor = Color.White,
-                                unfocusedBorderColor = Color(0xFF444444),
-                                focusedBorderColor = Color(0xFF1ED760),
-                            ),
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = { submit() },
-                            enabled = !state.searchLoading,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.heightIn(min = 48.dp),
-                        ) {
-                            Text(if (state.searchLoading) "搜索中…" else "搜索")
-                        }
+                        Text(if (state.searchLoading) "搜索中…" else "搜索")
                     }
                 }
             }
-
+            LazyColumn(
+                state = resultsListState,
+                modifier = Modifier.weight(1f),
+            ) {
             when {
                 state.searchLoading && state.searchResults.isEmpty() -> {
                     item {
@@ -925,7 +925,11 @@ internal fun MobileSearchScreen(
                         }
                     }
                     // 卡片网格：按行懒加载
-                    items(count = resultRows.size, key = { "search-row-$it" }) { rowIndex ->
+                    // 行 key 由影片内容决定：列数变化或结果增量插入时，保存的滚动位置不会指向另一批影片。
+                    items(
+                        count = resultRows.size,
+                        key = { index -> resultRows[index].joinToString("|") { "${it.apiLineId}:${it.id}" } },
+                    ) { rowIndex ->
                         val rowMovies = resultRows[rowIndex]
                         Row(
                             modifier = Modifier
@@ -948,7 +952,8 @@ internal fun MobileSearchScreen(
                     item { Spacer(modifier = Modifier.height(16.dp)) }
                 }
             }
-        }
+        } // LazyColumn
+        } // Column（固定搜索框 + 结果列表）
     }
 }
 

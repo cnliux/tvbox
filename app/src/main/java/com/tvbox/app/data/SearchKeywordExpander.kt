@@ -3,6 +3,7 @@ package com.tvbox.app.data
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.data.network.executeCancellable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -30,7 +31,7 @@ class DefaultSearchKeywordExpander(
         if (!isPinyinInitialQuery(normalized)) {
             return@withContext emptyList()
         }
-        runCatching {
+        try {
             val request = Request.Builder()
                 .url("$endpoint?word=$normalized&encodein=utf-8&encodeout=utf-8")
                 .header("User-Agent", MOBILE_USER_AGENT)
@@ -39,7 +40,12 @@ class DefaultSearchKeywordExpander(
                 val body = response.body.string().orEmpty()
                 extractTitleCandidates(parseSuggestionWords(body), limit = limit)
             }
-        }.getOrDefault(emptyList())
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            // 联想只是增强项，网络/解析失败时退回原始关键词搜索。
+            emptyList()
+        }
     }
 
     private companion object {

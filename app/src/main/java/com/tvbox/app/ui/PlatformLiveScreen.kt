@@ -128,7 +128,8 @@ private fun PlatformLiveSitesScreen(
     val firstCardFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
-        if (!touchMode) firstCardFocusRequester.requestFocus()
+        // runCatching：目标节点尚未进入组合时 requestFocus 会抛 IllegalStateException。
+        if (!touchMode) runCatching { firstCardFocusRequester.requestFocus() }
     }
     PlatformLiveBrowseSurface(
         title = "直播",
@@ -202,7 +203,7 @@ private fun PlatformLiveParentCategoriesScreen(
         // 触摸模式只恢复滚动位置，不主动聚焦，避免首张卡片常驻焦点框。
         gridState.scrollToItem(targetIndex)
         if (touchMode) return@LaunchedEffect
-        firstCardFocusRequester.requestFocus()
+        runCatching { firstCardFocusRequester.requestFocus() }
     }
     val site = state.platformLiveSelectedSite
     PlatformLiveBrowseSurface(
@@ -249,7 +250,7 @@ private fun PlatformLiveCategoriesScreen(
         // 触摸模式只恢复滚动位置，不主动聚焦。
         gridState.scrollToItem(targetIndex)
         if (touchMode) return@LaunchedEffect
-        firstCardFocusRequester.requestFocus()
+        runCatching { firstCardFocusRequester.requestFocus() }
     }
     PlatformLiveBrowseSurface(
         title = parentCategory?.name ?: site?.name ?: "直播分类",
@@ -323,8 +324,15 @@ private fun PlatformLiveRoomsScreen(
         state.platformLiveLoading,
         state.platformLiveLoadingMore,
         state.platformLiveError,
+        state.platformLiveLoadingMoreError,
         favoritesMode,
     ) {
+        if (state.platformLiveLoadingMoreError != null) {
+            // 分页失败时页码不推进，必须清空「已从此页发起过加载」的标记，
+            // 否则自动翻页永久停摆，只剩底部手动重试一个出口。
+            autoLoadFromPage = -1
+            return@LaunchedEffect
+        }
         if (favoritesMode || !nearListEnd) return@LaunchedEffect
         if (state.platformLiveLoading || state.platformLiveLoadingMore) return@LaunchedEffect
         if (state.platformLiveRoomPage >= state.platformLiveRoomPageCount) return@LaunchedEffect

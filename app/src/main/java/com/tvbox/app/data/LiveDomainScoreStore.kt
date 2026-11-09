@@ -15,6 +15,7 @@ import kotlinx.serialization.json.Json
  *
  * 用 SharedPreferences 单键存 JSON：条目上限 [LIVE_DOMAIN_MAX_ENTRIES]，体积可控；
  * 读取失败（旧格式/损坏）时返回空表，不阻塞播放。
+ * 所有 load / read-modify-write / clear 由同一把锁串行化，避免并发播放回调互相覆盖评分。
  */
 class LiveDomainScoreStore(context: Context) {
     // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
@@ -24,12 +25,13 @@ class LiveDomainScoreStore(context: Context) {
         encodeDefaults = true
     }
 
-    @Volatile
     private var cache: Map<String, LiveDomainScore>? = null
 
+    @Synchronized
     fun snapshot(): Map<String, LiveDomainScore> = cache ?: load()
 
     /** 记录一次播放结果；同步写内存缓存，磁盘写放到 IO 线程。 */
+    @Synchronized
     fun record(domain: String, success: Boolean, nowMs: Long = System.currentTimeMillis()) {
         if (domain.isBlank()) return
         val updated = updateLiveDomainScores(snapshot(), domain, success, nowMs)
@@ -37,6 +39,7 @@ class LiveDomainScoreStore(context: Context) {
         prefs.edit().putString(KEY_ENTRIES, json.encodeToString(updated.map { it.value.toStored() })).apply()
     }
 
+    @Synchronized
     fun clear() {
         cache = emptyMap()
         prefs.edit().remove(KEY_ENTRIES).apply()
@@ -44,6 +47,7 @@ class LiveDomainScoreStore(context: Context) {
 
     suspend fun loadAsync(): Map<String, LiveDomainScore> = withContext(Dispatchers.IO) { load() }
 
+    @Synchronized
     private fun load(): Map<String, LiveDomainScore> {
         val cached = cache
         if (cached != null) return cached

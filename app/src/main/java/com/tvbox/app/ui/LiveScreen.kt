@@ -157,8 +157,19 @@ private fun LivePlayerScreen(
 ) {
     KeepScreenOnWhileVisible()
     val channels = state.liveChannels
-    val currentChannel = channels[state.liveChannelIndex.coerceIn(0, channels.lastIndex)]
-    val currentLine = currentChannel.lines[state.liveLineIndex.coerceIn(0, currentChannel.lines.lastIndex)]
+    // 线路列表可能为空（异常源/状态恢复）：coerceIn(0, -1) 会直接抛异常导致播放页崩溃，
+    // 这里给出可操作的错误态而不是黑屏或闪退。
+    val currentChannel = channels.getOrNull(state.liveChannelIndex) ?: channels.lastOrNull()
+    val currentLine = currentChannel?.lines?.getOrNull(state.liveLineIndex)
+        ?: currentChannel?.lines?.firstOrNull()
+    if (currentChannel == null || currentLine == null) {
+        ErrorState(
+            message = "当前频道没有可播放的线路，请刷新或更换直播源",
+            onRetry = actions::refreshLive,
+            modifier = Modifier.fillMaxSize(),
+        )
+        return
+    }
     val latestLineUrl = rememberUpdatedState(currentLine.url)
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
@@ -324,12 +335,21 @@ private fun LivePlayerScreen(
         }
     }
 
-    // 返回键按浮层层级逐级收起：线路浮层 → 频道浮层 → 退出直播页；只注册一个处理器。
+    // 返回键按浮层层级逐级收起：播放地址浮层 → 线路浮层 → 频道浮层 → 退出直播页。
     PlayerChromeBackHandler(
         state = chrome,
         onExit = { actions.goBack() },
         dismissControls = false,
         extraDismiss = listOf(
+            {
+                if (showUrlOverlay) {
+                    showUrlOverlay = false
+                    if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+                    true
+                } else {
+                    false
+                }
+            },
             {
                 if (showLineControl) {
                     showLineControl = false
@@ -925,7 +945,8 @@ private fun LivePlayerScreen(
                     channelListVisible = false
                     previewChannel = null
                     bumpBars()
-                    showPrompt(channels[index].name)
+                    // 频道列表可能异步刷新变小，index 越界时只跳过提示，不影响已选频道。
+                    channels.getOrNull(index)?.name?.let(::showPrompt)
                     if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
                 },
                 onInteraction = ::keepChannelListVisibleWhileBrowsing,

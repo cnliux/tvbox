@@ -11,10 +11,21 @@ fun AppSettings.resolveVideoScaleMode(contentKey: String?): VideoScaleMode {
     return VideoScaleMode.entries.firstOrNull { it.storageKey == stored } ?: videoScaleMode
 }
 
+/** 覆盖表上限：每集/每频道手动切一次比例都会新增一条，不加约束会让 SharedPreferences 无限膨胀。 */
+private const val MAX_CONTENT_VIDEO_SCALE_ENTRIES = 200
+
 /** 把某个内容的画面比例写进覆盖表；纯函数，便于单测锁定"全局默认与单条覆盖不互相覆盖"。 */
 fun AppSettings.withContentVideoScaleMode(contentKey: String?, mode: VideoScaleMode): AppSettings {
     if (contentKey.isNullOrBlank()) return copy(videoScaleMode = mode)
-    return copy(contentVideoScaleModes = contentVideoScaleModes + (contentKey to mode.storageKey))
+    // 先删再插让「最近使用」落到末尾，再按上限淘汰最旧条目（近似 LRU）。
+    val updated = (contentVideoScaleModes - contentKey).toMutableMap()
+    updated[contentKey] = mode.storageKey
+    val trimmed = if (updated.size > MAX_CONTENT_VIDEO_SCALE_ENTRIES) {
+        updated.toList().takeLast(MAX_CONTENT_VIDEO_SCALE_ENTRIES).toMap()
+    } else {
+        updated
+    }
+    return copy(contentVideoScaleModes = trimmed)
 }
 
 /** 点播：按影片标识 + 集记忆（换源不改变影片标识，换集则各自记忆）。 */

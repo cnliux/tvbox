@@ -56,6 +56,8 @@ import com.tvbox.app.data.EpgRepository
 import com.tvbox.app.data.RemoteEpgRepository
 import com.tvbox.app.data.LiveFavoritesRepository
 import com.tvbox.app.data.liveFavoriteKey
+import com.tvbox.app.data.legacyLiveFavoriteKey
+import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.findEpgPrograms
 import com.tvbox.app.domain.Movie
@@ -77,9 +79,16 @@ import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.domain.toApiLines
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -89,6 +98,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+
+/** 导入订阅时单个直播源 dry-run 的最长等待，避免一条死链拖住整次导入。 */
+private const val LIVE_SOURCE_DRY_RUN_TIMEOUT_MS = 5_000L
 
 enum class TvScreen {
     Home,
@@ -347,6 +359,8 @@ class TvBoxViewModel(
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
+    /** 保存安装包的唯一在途任务：避免重复点击并行导出，取消时也能真正中止。 */
+    private var updateApkExportJob: Job? = null
     private var settingsWriteJob: Job? = null
 
     /** 取消旧 Job 并启动新协程（ViewModel 侧常用的“最新请求覆盖”模式）。 */
@@ -495,6 +509,8 @@ class TvBoxViewModel(
     fun updateHomeApiLine(apiLineId: String) {
         if (_state.value.apiLines.none { it.id == apiLineId }) return
         if (_state.value.selectedApiLineId == apiLineId) return
+        // 切源后旧的热播解析结果归属旧源，不能继续跳详情。
+        doubanHotResolveJob?.cancel()
         val settings = _state.value.appSettings.copy(homeApiLineId = apiLineId)
         saveSettings(settings)
         _state.update {
@@ -526,7 +542,8 @@ class TvBoxViewModel(
 
     fun loadNextPage() {
         val current = _state.value
-        if (!current.canLoadMore) return
+        // 与 UI 的触底 effect 双重保护：加载中/已到末页时不再发起重复请求。
+        if (!current.canLoadMore || current.loadingMore) return
         val nextPage = current.page + 1
         val now = System.currentTimeMillis()
         if (loadMoreRetryPage == nextPage && now - loadMoreRetryAtMs < HOME_LOAD_MORE_RETRY_COOLDOWN_MS) return
@@ -536,6 +553,8 @@ class TvBoxViewModel(
     }
 
     fun openHome() {
+        // 热播解析是「点卡片后异步搜片再跳详情」，用户已主动回首页时不能再被带回详情页。
+        doubanHotResolveJob?.cancel()
         _state.update {
             it.copy(
                 screen = TvScreen.Home,
@@ -557,15 +576,19 @@ class TvBoxViewModel(
     }
 
     private fun loadSearchHotWords(forceRefresh: Boolean = false) {
-        if (searchHotWordsJob?.isActive == true) return
-        searchHotWordsJob = viewModelScope.launch {
+        // 「换一批」必须取消旧请求并重新发起，而不是因为旧任务在途就被静默丢弃。
+        searchHotWordsJob = relaunch(searchHotWordsJob) {
             _state.update { it.copy(searchHotWordsLoading = true) }
-            val words = runCatching {
+            val words = try {
                 searchHotWordRepository.getHotWords(
                     forceRefresh = forceRefresh,
                     limit = _state.value.appSettings.hotWordCount,
                 )
-            }.getOrDefault(emptyList())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                emptyList()
+            }
             _state.update {
                 it.copy(
                     searchHotWords = words.ifEmpty { it.searchHotWords },
@@ -786,6 +809,8 @@ class TvBoxViewModel(
 
     fun cancelUpdateApkExport(message: String = "已取消保存，安装包仍保留") {
         val update = _state.value.update
+        updateApkExportJob?.cancel()
+        updateApkExportJob = null
         _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = message)) }
         val apkPath = update.downloadedApkPath
         // 仅撤销本次导出写入的“仅手动安装”标记：用户只是放弃保存，不改变后续自动安装行为。
@@ -796,15 +821,21 @@ class TvBoxViewModel(
     }
 
     fun saveUpdateApk(apkPath: String, destination: android.net.Uri?) {
+        // 重复点击或上一次导出尚在途时直接忽略，避免多个协程并行写文件、后结束的失败提示覆盖成功提示。
+        if (_state.value.update.exporting) return
         _state.update { it.copy(update = it.update.copy(exporting = true, exportMessage = null)) }
-        viewModelScope.launch {
+        updateApkExportJob?.cancel()
+        updateApkExportJob = viewModelScope.launch {
             try {
                 updateInstallStateJob?.join()
                 val location = appUpdateRepository.exportUpdateApk(apkPath, destination)
+                // 取消/换包后的迟到结果不得覆盖当前 UI 状态。
+                if (!_state.value.update.exporting || _state.value.update.downloadedApkPath != apkPath) return@launch
                 _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = "已保存：$location。请通过文件管理器打开安装")) }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
+                if (!_state.value.update.exporting) return@launch
                 android.util.Log.w("TVBoxUpdate", "Unable to export update APK", error)
                 _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = "保存失败：${error.userMessage()}")) }
             }
@@ -886,7 +917,6 @@ class TvBoxViewModel(
     fun openRemoteManageDialog() {
         closeRemoteManageDialog(stopOnly = true)
         val server = RemoteManageServer(
-            scope = viewModelScope,
             snapshot = ::buildRemoteManageSnapshot,
             onSubmit = ::handleRemoteManageRequest,
         )
@@ -1174,6 +1204,8 @@ class TvBoxViewModel(
     }
     
     fun clearSearch() {
+        // 清空结果的同时取消仍在流式返回的多源搜索，避免旧结果在返回首页后又写回状态。
+        searchJob?.cancel()
         _state.update {
             it.copy(
                 searchQuery = "",
@@ -1226,6 +1258,17 @@ class TvBoxViewModel(
                     }
                 if (movie != null) break
             }
+            // 异步搜片可能持续数秒：用户已按返回/切页/切源时，不能强行把页面拉回详情页。
+            ensureActive()
+            val latest = _state.value
+            if (latest.screen != TvScreen.Home || latest.selectedApiLineId != apiLineId ||
+                latest.resolvingDoubanHotId != item.doubanId
+            ) {
+                _state.update {
+                    if (it.resolvingDoubanHotId == item.doubanId) it.copy(resolvingDoubanHotId = null) else it
+                }
+                return@launch
+            }
             _state.update { it.copy(resolvingDoubanHotId = null) }
             if (movie == null) {
                 _state.update {
@@ -1272,6 +1315,9 @@ class TvBoxViewModel(
                         page = 1,
                         keyword = keyword,
                     ).collect { update ->
+                        // 多源搜索是流式的：关键词已改写或用户已离开搜索页时，
+                        // 旧请求的增量结果不得写回，否则会覆盖新搜索或返回后残留上一次数据。
+                        if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) return@collect
                         totalSources = maxOf(totalSources, update.totalSources)
                         keywordCompletedSources = update.completedSources
                         mergedResults = mergeSearchResults(mergedResults, update.movies)
@@ -1292,6 +1338,7 @@ class TvBoxViewModel(
                         break
                     }
                 }
+                if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) return@launch
                 _state.update {
                     it.copy(
                         searchLoading = false,
@@ -1320,7 +1367,8 @@ class TvBoxViewModel(
         detailSourceTestJob?.cancel()
         // 记录本次请求的影片与来源：详情加载失败时 detailMovie 仍为 null，
         // 「重试」需要靠它复现同一请求，否则只会拿默认源去查另一个源才有的影片。
-        lastDetailRequest = movieId to apiLineId
+        val requestKey = movieId to apiLineId
+        lastDetailRequest = requestKey
         val current = _state.value
         val returnScreen = when (current.screen) {
             TvScreen.Search -> TvScreen.Search
@@ -1354,6 +1402,8 @@ class TvBoxViewModel(
             var receivedPrimary = false
             try {
                 repository.getDetailProgressively(apiLineId = apiLineId, id = movieId).collect { update ->
+                    // 渐进补线的迟到结果只属于本次请求；换片/返回后不得覆盖新详情。
+                    if (lastDetailRequest != requestKey || _state.value.screen != TvScreen.Detail) return@collect
                     receivedPrimary = true
                     _state.update { state ->
                         val sourceIndex = if (state.detailMovie == null) {
@@ -2300,11 +2350,14 @@ class TvBoxViewModel(
      */
     fun toggleLiveFavorite(channel: LiveChannel) {
         val key = liveFavoriteKey(channel.groupName, channel.name)
+        val legacyKey = legacyLiveFavoriteKey(channel.groupName, channel.name)
         val repository = liveFavoritesRepository
         if (repository == null) {
             _state.update { state ->
                 val favorites = state.live.favoriteKeys.toMutableSet()
-                if (!favorites.remove(key)) favorites += key
+                val removedNew = favorites.remove(key)
+                val removedLegacy = favorites.remove(legacyKey)
+                if (!removedNew && !removedLegacy) favorites += key
                 state.copy(live = state.live.copy(favoriteKeys = favorites))
             }
             return
@@ -2322,9 +2375,9 @@ class TvBoxViewModel(
         }
     }
 
-    /** 某频道是否已收藏（按 `分组#频道名` 键）。 */
+    /** 某频道是否已收藏（兼容新旧收藏键）。 */
     fun isLiveFavorite(channel: LiveChannel): Boolean =
-        _state.value.live.favoriteKeys.contains(liveFavoriteKey(channel.groupName, channel.name))
+        containsLiveFavorite(_state.value.live.favoriteKeys, channel.groupName, channel.name)
 
     /** 某频道的完整节目单（已按开始时间升序）；未配置/未命中返回空列表。 */
     fun liveEpgPrograms(channel: LiveChannel): List<EpgProgram> =
@@ -2680,6 +2733,8 @@ class TvBoxViewModel(
     }
 
     fun goBack(): Boolean {
+        // 热播解析会在数秒后强制跳详情页，用户主动返回时必须撤销，避免「返回了又被拉回去」。
+        doubanHotResolveJob?.cancel()
         val current = _state.value
         return when (current.screen) {
             TvScreen.Player -> {
@@ -3246,86 +3301,97 @@ class TvBoxViewModel(
         if (_state.value.source.importing) return "正在导入上一份配置，请稍候再试。"
         _state.update { it.copy(source = it.source.copy(importing = true, importMessage = null)) }
         return try {
-            val configFetcher = SourceConfigFetcher()
-            val isUrl = text.startsWith("http://", ignoreCase = true) ||
-                text.startsWith("https://", ignoreCase = true)
-            val payload = if (isUrl) configFetcher.fetch(text) else text
-            val decoded = try {
-                SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
-            } catch (error: IllegalArgumentException) {
-                val message = "订阅解码失败：${error.message ?: "格式不合法"}"
-                _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
-                return message
-            }
-            val result = SourceConfigCodec.parseImport(decoded)
-            val imported = result.imported
-            if (result.error != null || imported == null) {
-                val message = result.error ?: "配置解析失败"
-                _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
-                return message
-            }
-            val current = _state.value
-            val existingUrls = current.appSettings.customVideoApiLines
-                .map { it.baseUrl.lowercase() }
-                .toSet()
-            val newLines = imported.lines.filter { it.baseUrl.lowercase() !in existingUrls }
-            val mergedCustom = (current.appSettings.customVideoApiLines + newLines)
-                .distinctBy { it.id }
-            val newLiveUrls = imported.liveUrls.filter { url ->
-                url !in current.appSettings.liveSourceUrls
-            }
-            // 导入前 dry-run：本地再解析一次直播源，把"能导入多少频道、哪些字段缺失"直接说出来，
-            // 避免格式错的源要等进到播放页才发现。只做本地结构校验，源不可达时静默跳过（不影响导入）。
-            val liveDryRuns: List<Pair<String, LiveSourceDryRun>> = newLiveUrls.mapNotNull { url ->
-                val body = try {
-                    configFetcher.fetch(url)
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
-                } ?: return@mapNotNull null
-                url to dryRunLiveSource(body)
-            }
-            val settings = current.appSettings.copy(
-                customVideoApiLines = mergedCustom,
-                liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
-            )
-            applySourceSettings(settings)
-            applyLiveSourceConfig(settings)
-            val ordered = availableApiLinesFor(settings)
-            val allLines = allApiLinesFor(settings)
-            saveSettings(settings)
-            val message = buildString {
-                val addedParts = mutableListOf<String>()
-                if (newLines.isNotEmpty()) addedParts += "新增 ${newLines.size} 个视频源"
-                if (newLiveUrls.isNotEmpty()) addedParts += "新增 ${newLiveUrls.size} 个直播源"
-                if (addedParts.isEmpty()) {
-                    append("导入完成：没有可新增的源")
-                } else {
-                    append(addedParts.joinToString("，"))
+            // 订阅下载、解码、解析与直播源 dry-run 都是阻塞/CPU 工作，统一放到 IO，
+            // 只在 _state.update 时回到 UI 侧（StateFlow 本身线程安全），避免大订阅导入卡住主线程。
+            withContext(Dispatchers.IO) {
+                val configFetcher = SourceConfigFetcher()
+                val isUrl = text.startsWith("http://", ignoreCase = true) ||
+                    text.startsWith("https://", ignoreCase = true)
+                val payload = if (isUrl) configFetcher.fetch(text) else text
+                val decoded = try {
+                    SubscriptionDecoder.decode(url = if (isUrl) text else "", payload)
+                } catch (error: IllegalArgumentException) {
+                    val message = "订阅解码失败：${error.message ?: "格式不合法"}"
+                    _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
+                    return@withContext message
                 }
-                if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
-                // 直播源校验摘要：每个源一行，失败的源给出具体原因。
-                liveDryRuns.forEach { (url, dryRun) ->
-                    append("\n· ")
-                    append(dryRun.headline())
-                    val warnings = dryRun.warnings()
-                    if (warnings.isNotEmpty()) {
-                        append("；")
-                        append(warnings.joinToString("，"))
-                    }
-                    if (!dryRun.ok) append("（${url.takeLast(32)}）")
+                val result = SourceConfigCodec.parseImport(decoded)
+                val imported = result.imported
+                if (result.error != null || imported == null) {
+                    val message = result.error ?: "配置解析失败"
+                    _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
+                    return@withContext message
                 }
-            }
-            _state.update {
-                it.copy(
-                    apiLines = ordered,
-                    allSourceLines = allLines,
-                    appSettings = settings,
-                    source = it.source.copy(importing = false, managerMessage = message),
+                val current = _state.value
+                val existingUrls = current.appSettings.customVideoApiLines
+                    .map { it.baseUrl.lowercase() }
+                    .toSet()
+                val newLines = imported.lines.filter { it.baseUrl.lowercase() !in existingUrls }
+                val mergedCustom = (current.appSettings.customVideoApiLines + newLines)
+                    .distinctBy { it.id }
+                val newLiveUrls = imported.liveUrls.filter { url ->
+                    url !in current.appSettings.liveSourceUrls
+                }
+                // 导入前 dry-run：本地再解析一次直播源，把"能导入多少频道、哪些字段缺失"直接说出来。
+                // 并发校验并给每个源单独超时，避免大量直播源串行请求拖慢导入、或一条死链拖住全部。
+                val liveDryRuns: List<Pair<String, LiveSourceDryRun>> = coroutineScope {
+                    newLiveUrls.map { url ->
+                        async {
+                            val body = try {
+                                withTimeout(LIVE_SOURCE_DRY_RUN_TIMEOUT_MS) { configFetcher.fetch(url) }
+                            } catch (timeout: TimeoutCancellationException) {
+                                // 单个源超时只跳过自己的摘要，不能取消整组 dry-run。
+                                null
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                null
+                            } ?: return@async null
+                            url to dryRunLiveSource(body)
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                val settings = current.appSettings.copy(
+                    customVideoApiLines = mergedCustom,
+                    liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
                 )
+                applySourceSettings(settings)
+                applyLiveSourceConfig(settings)
+                val ordered = availableApiLinesFor(settings)
+                val allLines = allApiLinesFor(settings)
+                saveSettings(settings)
+                val message = buildString {
+                    val addedParts = mutableListOf<String>()
+                    if (newLines.isNotEmpty()) addedParts += "新增 ${newLines.size} 个视频源"
+                    if (newLiveUrls.isNotEmpty()) addedParts += "新增 ${newLiveUrls.size} 个直播源"
+                    if (addedParts.isEmpty()) {
+                        append("导入完成：没有可新增的源")
+                    } else {
+                        append(addedParts.joinToString("，"))
+                    }
+                    if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
+                    // 直播源校验摘要：每个源一行，失败的源给出具体原因。
+                    liveDryRuns.forEach { (url, dryRun) ->
+                        append("\n· ")
+                        append(dryRun.headline())
+                        val warnings = dryRun.warnings()
+                        if (warnings.isNotEmpty()) {
+                            append("；")
+                            append(warnings.joinToString("，"))
+                        }
+                        if (!dryRun.ok) append("（${url.takeLast(32)}）")
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        apiLines = ordered,
+                        allSourceLines = allLines,
+                        appSettings = settings,
+                        source = it.source.copy(importing = false, managerMessage = message),
+                    )
+                }
+                message
             }
-            message
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
@@ -4105,7 +4171,8 @@ class TvBoxViewModel(
                             it.copy(platformLive = it.platformLive.copy(
                                 rooms = rooms,
                                 // 空页不推进页码：否则自动加载会连续把剩余页全部请求一遍。
-                                roomPage = if (result.rooms.isEmpty() && !reset) it.platformLive.roomPage else result.page,
+                                // 用「本次请求的页码」而不是服务端返回值，避免异常 page 造成跳页/重复请求。
+                                roomPage = if (result.rooms.isEmpty() && !reset) it.platformLive.roomPage else page,
                                 roomPageCount = result.pageCount,
                                 loading = false,
                                 loadingMore = false,
@@ -4116,6 +4183,8 @@ class TvBoxViewModel(
                     }
                 }
                 .onFailure { error ->
+                    // 切分类/返回时旧请求被取消，不能被当成失败写进错误态。
+                    if (error is CancellationException) throw error
                     _state.update {
                         if (it.platformLive.selectedCategory?.id != category.id) it else {
                             it.copy(platformLive = if (reset) {

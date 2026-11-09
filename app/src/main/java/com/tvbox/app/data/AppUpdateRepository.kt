@@ -165,7 +165,12 @@ class DefaultAppUpdateRepository(
         try {
             if (task.appDownloader) return@withContext downloadInApp(task, onProgress)
             var lastProgress = Int.MIN_VALUE
+            // 整体截止时间：状态长期停在 PENDING/PAUSED/RUNNING 时不能永久轮询。
+            val deadlineMs = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS
             while (true) {
+                if (System.currentTimeMillis() > deadlineMs) {
+                    throw IOException("更新下载超时，请检查网络后重试")
+                }
                 var status = DownloadManager.STATUS_PENDING
                 var reason = 0
                 var received = 0L
@@ -227,8 +232,23 @@ class DefaultAppUpdateRepository(
             throw IOException("无法启动应用下载服务，请返回应用后重试", error)
         }
         var lastProgress = Int.MIN_VALUE
+        val deadlineMs = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS
+        // 服务被系统杀死后进程内静态 states 会被清空，status 可能长期为 null。
+        // 连续 N 次拿不到状态就判定下载任务已失效，避免永久空转。
+        var consecutiveNullStatus = 0
         while (true) {
+            if (System.currentTimeMillis() > deadlineMs) {
+                throw IOException("更新下载超时，请检查网络后重试")
+            }
             val status = UpdateDownloadService.status(task.filePath)
+            if (status == null) {
+                consecutiveNullStatus++
+                if (consecutiveNullStatus >= MAX_NULL_STATUS_POLLS) {
+                    throw IOException("更新下载任务已失效，请重试")
+                }
+            } else {
+                consecutiveNullStatus = 0
+            }
             if (status?.error != null) throw IOException(status.error)
             if (status?.complete == true) {
                 verifyUpdateApk(apk, task.manifest.apkSize, task.manifest.apkSha256)
@@ -320,6 +340,12 @@ private val UPDATE_MANIFEST_URLS = listOf(
 )
 
 private const val USER_AGENT = "TVBox-Android"
+
+/** 单次更新下载的整体上限（20MB 级 APK 在弱网下留足余量），超时后走失败清理而不是永久轮询。 */
+private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
+
+/** downloadInApp 中连续拿不到 Service 状态的最大次数（每次间隔 750ms）。 */
+private const val MAX_NULL_STATUS_POLLS = 20
 
 @Serializable
 private data class PendingSystemDownload(

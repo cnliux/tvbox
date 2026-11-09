@@ -1,15 +1,14 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.BufferedReader
-import java.io.BufferedWriter
 import java.io.InputStreamReader
-import java.io.OutputStreamWriter
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.ServerSocket
@@ -72,20 +71,31 @@ data class RemoteManageRequest(
  * 支持视频源管理（导入/选择/屏蔽/删除/测速）、直播源、平台站点与屏蔽视频分类。
  */
 class RemoteManageServer(
-    private val scope: CoroutineScope,
     private val snapshot: () -> RemoteManageSnapshot,
     private val onSubmit: suspend (RemoteManageRequest) -> String?,
 ) {
+    @Volatile
     private var serverSocket: ServerSocket? = null
-    private var serverJob: Job? = null
     private val activeClients = AtomicInteger(0)
+
+    /**
+     * 服务私有的协程作用域：acceptLoop 与每个客户端都作为它的子协程。
+     * 不能复用外部传入的 viewModelScope —— 关闭远程管理对话框时 stop() 只该停掉本服务，
+     * 且外部 scope 仍存活会让在途 client 协程继续跑 15s 并调用 onSubmit 修改设置。
+     */
+    @Volatile
+    private var serverScope: CoroutineScope = newServerScope()
+
+    private fun newServerScope() = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun start(): RemoteManageSession = withContext(Dispatchers.IO) {
         stop()
         val socket = createServerSocket()
         serverSocket = socket
+        // stop() 取消了旧 scope，这里重建一个可复用的（CoroutineScope 取消后不能再次 launch）。
+        serverScope = newServerScope()
         val host = localIpv4Address()
-        serverJob = scope.launch(Dispatchers.IO) {
+        serverScope.launch {
             acceptLoop(socket)
         }
         RemoteManageSession(
@@ -96,21 +106,23 @@ class RemoteManageServer(
     }
 
     fun stop() {
-        serverJob?.cancel()
-        serverJob = null
+        // 先关 socket 让 accept() 立即抛异常退出循环，再取消整个私有作用域（含在途客户端）。
         runCatching { serverSocket?.close() }
         serverSocket = null
+        runCatching { serverScope.cancel() }
     }
 
     private suspend fun acceptLoop(socket: ServerSocket) {
-        while (scope.isActive && !socket.isClosed) {
+        val loopScope = serverScope
+        while (loopScope.isActive && !socket.isClosed) {
             val client = runCatching { socket.accept() }.getOrNull() ?: break
             if (activeClients.incrementAndGet() > MAX_CONCURRENT_CLIENTS) {
                 activeClients.decrementAndGet()
                 runCatching { client.close() }
                 continue
             }
-            scope.launch(Dispatchers.IO) {
+            // 作为 serverScope 的子协程：stop() 时会被一并取消，关闭对话框后不再改配置。
+            loopScope.launch {
                 try {
                     runCatching { handleClient(client) }
                 } finally {
@@ -186,31 +198,32 @@ class RemoteManageServer(
     }
 
     private fun writeHtmlResponse(socket: Socket, body: String, status: String = "200 OK") {
-        val bytes = body.toByteArray(StandardCharsets.UTF_8)
-        BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)).use { writer ->
-            writer.write("HTTP/1.1 $status\r\n")
-            writer.write("Content-Type: text/html; charset=utf-8\r\n")
-            writer.write("Content-Length: ${bytes.size}\r\n")
-            writer.write("Connection: close\r\n")
-            writer.write("\r\n")
-            writer.flush()
-            socket.getOutputStream().write(bytes)
-            socket.getOutputStream().flush()
-        }
+        writeHttpResponse(socket, status, "text/html; charset=utf-8", body.toByteArray(StandardCharsets.UTF_8))
     }
 
     private fun writeJsonResponse(socket: Socket, json: String) {
-        val bytes = json.toByteArray(StandardCharsets.UTF_8)
-        BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)).use { writer ->
-            writer.write("HTTP/1.1 200 OK\r\n")
-            writer.write("Content-Type: application/json; charset=utf-8\r\n")
-            writer.write("Content-Length: ${bytes.size}\r\n")
-            writer.write("Connection: close\r\n")
-            writer.write("\r\n")
-            writer.flush()
-            socket.getOutputStream().write(bytes)
-            socket.getOutputStream().flush()
-        }
+        writeHttpResponse(socket, "200 OK", "application/json; charset=utf-8", json.toByteArray(StandardCharsets.UTF_8))
+    }
+
+    /**
+     * 统一响应写出：头部与 body 走同一个输出流，且不能提前关闭它。
+     *
+     * 旧实现用 `BufferedWriter(...).use {}` 写头部，use 结束会级联关闭底层
+     * `socket.getOutputStream()`，随后再对该流写 body 会抛 "Stream closed" 或丢失响应体；
+     * 这里改为一次性写出并只 flush，不关闭（socket 由 handleClient 的 `client.use` 统一关闭）。
+     */
+    private fun writeHttpResponse(socket: Socket, status: String, contentType: String, body: ByteArray) {
+        val out = java.io.BufferedOutputStream(socket.getOutputStream())
+        val header = (
+            "HTTP/1.1 $status\r\n" +
+                "Content-Type: $contentType\r\n" +
+                "Content-Length: ${body.size}\r\n" +
+                "Connection: close\r\n" +
+                "\r\n"
+            ).toByteArray(StandardCharsets.UTF_8)
+        out.write(header)
+        out.write(body)
+        out.flush()
     }
 
     private fun blockedCategoriesJson(): String {
@@ -223,14 +236,18 @@ class RemoteManageServer(
     }
 
     private fun writeRedirect(socket: Socket, location: String) {
-        BufferedWriter(OutputStreamWriter(socket.getOutputStream(), StandardCharsets.UTF_8)).use { writer ->
-            writer.write("HTTP/1.1 303 See Other\r\n")
-            writer.write("Location: $location\r\n")
-            writer.write("Content-Length: 0\r\n")
-            writer.write("Connection: close\r\n")
-            writer.write("\r\n")
-            writer.flush()
-        }
+        // 同样不提前关闭底层输出流，交给 client.use 统一释放。
+        val out = java.io.BufferedOutputStream(socket.getOutputStream())
+        out.write(
+            (
+                "HTTP/1.1 303 See Other\r\n" +
+                    "Location: $location\r\n" +
+                    "Content-Length: 0\r\n" +
+                    "Connection: close\r\n" +
+                    "\r\n"
+                ).toByteArray(StandardCharsets.UTF_8),
+        )
+        out.flush()
     }
 
     private fun page(message: String?): String {

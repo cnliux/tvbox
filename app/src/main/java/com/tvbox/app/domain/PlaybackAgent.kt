@@ -162,12 +162,16 @@ class PlaybackAgent(
     ): PlaybackAgentDecision {
         val sources = movie.playSources
         if (sources.size <= 1) return PlaybackAgentDecision(nextSourceIndex = null)
-        val episode = sources.getOrNull(currentSourceIndex)?.episodes?.getOrNull(episodeIndex)
+        // 收敛下标：负数会让取模产生负索引，进而在 episodeIndexes[sourceIndex] 越界。
+        val safeCurrentIndex = currentSourceIndex.coerceIn(0, sources.lastIndex)
+        val episode = sources.getOrNull(safeCurrentIndex)?.episodes?.getOrNull(episodeIndex)
             ?: return PlaybackAgentDecision(nextSourceIndex = null)
         val episodeIndexes = sources.map { correspondingEpisodeIndex(it, episode.title, episodeIndex) }
 
-        val candidates = (1..sources.size)
-            .map { offset -> (currentSourceIndex + offset) % sources.size }
+        // 1 until size（而非 1..size）：offset 取到 size 时会绕回当前正在失败的线路，
+        // 导致 selectNextSource 又切回同一条死链触发无意义重播。
+        val candidates = (1 until sources.size)
+            .map { offset -> (safeCurrentIndex + offset) % sources.size }
             .filter { sourceIndex ->
                 sourceIndex !in blockedSourceIndexes &&
                     episodeIndexes[sourceIndex]?.let { sources[sourceIndex].episodes[it].url.isNotBlank() } == true

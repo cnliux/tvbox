@@ -2,6 +2,7 @@ package com.tvbox.app.data
 
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.CustomVideoApiLine
+import com.tvbox.app.domain.normalizeMacCmsApiUrl
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -59,14 +60,18 @@ object SourceConfigCodec {
     }
 
     fun exportTvbox(lines: List<ApiLine>, liveUrls: List<String>): String {
+        // 统一用 kotlinx.serialization 生成字符串字面量：手写 replace("\\\\","..")
+        // 只处理了反斜杠和引号，源名/URL 含换行、制表或控制字符时会导出非法 JSON，
+        // 再导入即解析失败。encodeToString 返回带引号的合法 JSON 字符串，直接拼接。
         val payload = buildString {
             append("{\n")
             append("  \"sites\": [\n")
             append(
                 lines.joinToString(",\n") { line ->
-                    val safeName = line.name.replace("\\", "\\\\").replace("\"", "\\\"")
-                    val safeUrl = (line.baseUrls.firstOrNull() ?: "").replace("\\", "\\\\").replace("\"", "\\\"")
-                    "    {\"key\": \"${line.id.replace('"', '_')}\", \"name\": \"$safeName\", \"type\": 1, \"api\": \"$safeUrl\", \"searchable\": 1, \"quickSearch\": 1, \"filterable\": 0}"
+                    val safeKey = json.encodeToString(line.id.replace('"', '_'))
+                    val safeName = json.encodeToString(line.name)
+                    val safeUrl = json.encodeToString(line.baseUrls.firstOrNull() ?: "")
+                    "    {\"key\": $safeKey, \"name\": $safeName, \"type\": 1, \"api\": $safeUrl, \"searchable\": 1, \"quickSearch\": 1, \"filterable\": 0}"
                 },
             )
             append("\n  ]")
@@ -74,8 +79,9 @@ object SourceConfigCodec {
                 append(",\n  \"lives\": [\n")
                 append(
                     liveUrls.joinToString(",\n") { url ->
-                        val safeUrl = url.replace("\\", "\\\\").replace("\"", "\\\"")
-                        "    {\"name\": \"直播\", \"type\": \"txt\", \"url\": \"$safeUrl\"}"
+                        val safeName = json.encodeToString("直播")
+                        val safeUrl = json.encodeToString(url)
+                        "    {\"name\": $safeName, \"type\": \"txt\", \"url\": $safeUrl}"
                     },
                 )
                 append("\n  ]")
@@ -203,15 +209,7 @@ object SourceConfigCodec {
      * 注意仅用于视频接口（`sites[].api`）——直播订阅是文件地址（.m3u/.txt/.json），
      * 绝不能走这里，否则会得到 `xxx.m3u/` 这种必然 404 的地址（见 [normalizeLiveUrl]）。
      */
-    private fun normalize(rawUrl: String): String? {
-        val trimmed = rawUrl.trim()
-        val http = trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true)
-        if (!http) return null
-        val withoutQuery = trimmed.substringBefore('?').substringBefore('#').trimEnd('/')
-        if (withoutQuery.length <= "http://".length) return null
-        return "$withoutQuery/"
-    }
+    private fun normalize(rawUrl: String): String? = normalizeMacCmsApiUrl(rawUrl)
 
     /**
      * 归一化直播订阅地址：只做 trim、去 query/fragment 与**去掉尾部斜杠**。

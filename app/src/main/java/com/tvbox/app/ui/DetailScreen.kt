@@ -389,11 +389,11 @@ private fun EpisodeGrid(
         modifier = modifier.fillMaxSize(),
     ) {
         header?.let { headerContent ->
-            item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            item(key = "detail-header", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                 headerContent()
             }
         }
-        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+        item(key = "episode-header", span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -405,7 +405,9 @@ private fun EpisodeGrid(
         }
         itemsIndexed(
             items = displayedEpisodes,
-            key = { index, episode -> "$index-${episode.url}" },
+            // key 只取剧集内容：正倒序切换不应让 LazyGrid 认为整批都是新 item，
+            // 否则滚动位置归零、焦点请求器重建。
+            key = { _, episode -> episode.url },
         ) { index, episode ->
             val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
             EpisodeButton(

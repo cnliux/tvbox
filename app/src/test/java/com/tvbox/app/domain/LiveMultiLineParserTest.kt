@@ -186,6 +186,22 @@ class LiveMultiLineParserTest {
     }
 
     @Test
+    fun splitsUrlBeforeDollarLinesOnOneTxtLine() {
+        // 真实源最常见格式：地址在前、`$` 后是线路元数据；同一行第 2..N 条线路不能被拼进前一条地址。
+        val channels = parseLiveChannels(
+            "央视一套,http://a.test/1.m3u8${'$'}LR•IPV4•29『线路1』," +
+                "http://b.test/2.m3u8${'$'}LR•IPV4•29『线路2』",
+        )
+
+        val channel = channels.single()
+        assertEquals(2, channel.lines.size)
+        assertEquals("http://a.test/1.m3u8", channel.lines[0].url)
+        assertEquals("线路1", channel.lines[0].name)
+        assertEquals("http://b.test/2.m3u8", channel.lines[1].url)
+        assertEquals("线路2", channel.lines[1].name)
+    }
+
+    @Test
     fun extGrpWithoutPendingChannelDoesNotBreakParsing() {
         val channels = parseLiveChannels(
             """

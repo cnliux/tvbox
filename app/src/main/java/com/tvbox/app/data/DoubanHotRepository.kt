@@ -9,6 +9,7 @@ import com.tvbox.app.data.network.parseNetworkPayload
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.PagedDoubanHotMovies
 import com.tvbox.app.domain.isBlockedContent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -63,7 +64,7 @@ class DefaultDoubanHotRepository(
             }
         }
 
-        runCatching {
+        try {
             val rawResponse = try {
                 client.executeCancellable(request.toOkHttpRequest(), NetworkRetryPolicy.IdempotentGet)
                     .use { response -> response.body.string() }
@@ -79,7 +80,10 @@ class DefaultDoubanHotRepository(
                 ),
             )
             parseNetworkPayload { parseDoubanHotPage(rawResponse, request) }
-        }.getOrElse { error ->
+        } catch (cancelled: CancellationException) {
+            // 页面退出/协程取消不是接口失败：不能写失败缓存，也不能转成 IOException 后继续降级。
+            throw cancelled
+        } catch (error: Throwable) {
             val message = error.message?.takeIf { it.isNotBlank() } ?: "豆瓣热播暂时不可用，请稍后重试"
             cache.put(
                 key = cacheKey,

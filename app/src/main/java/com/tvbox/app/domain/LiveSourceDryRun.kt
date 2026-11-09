@@ -48,7 +48,7 @@ data class LiveSourceDryRun(
 }
 
 private const val DRY_RUN_DEFAULT_GROUP_TXT = "电视直播"
-private const val DRY_RUN_DEFAULT_GROUP_M3U = "直播"
+private const val DRY_RUN_DEFAULT_GROUP_M3U = "未分组"
 
 /**
  * 对即将导入的直播源文本做结构校验。
@@ -73,7 +73,8 @@ fun dryRunLiveSource(raw: String): LiveSourceDryRun {
             format = if (isM3u) "M3U" else "TXT",
         )
     }
-    // TXT 源的兜底分组名由解析器写成"电视直播"，M3U 写"直播"；这里只统计"没有显式分组"的频道。
+    // 兜底分组名必须与 LiveParser 保持一致（TXT:"电视直播"、M3U:"未分组"），
+    // 否则 M3U 未写 group-title 的频道会被误算成"已分组"，导入摘要漏报。
     val fallbackGroup = if (isM3u) DRY_RUN_DEFAULT_GROUP_M3U else DRY_RUN_DEFAULT_GROUP_TXT
     val withoutGroup = channels.count { it.groupName.isBlank() || it.groupName == fallbackGroup }
     return LiveSourceDryRun(

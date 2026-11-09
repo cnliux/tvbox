@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -905,8 +906,20 @@ private fun TvSettingsRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = TvColors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-            Text(text = subtitle, color = TvColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = title,
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                color = TvColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Spacer(Modifier.width(16.dp))
         Box(contentAlignment = Alignment.CenterEnd) { trailing() }
@@ -938,8 +951,20 @@ private fun TvSecondsRow(
         }
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = TvColors.TextPrimary, style = MaterialTheme.typography.bodyLarge)
-            Text(text = subtitle, color = TvColors.TextSecondary, style = MaterialTheme.typography.bodySmall)
+            Text(
+                text = title,
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = subtitle,
+                color = TvColors.TextSecondary,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         TvFocusButton(text = "−5s", onClick = { onSecondsChange((seconds - 5).coerceAtLeast(0)) })
         Text(
@@ -981,6 +1006,8 @@ private fun <T> TvChoiceChips(
                     .clickable(role = Role.Button) { onSelect(option) }
                     .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
                     .focusable()
+                    // 与手机端一致：最小 48dp 触摸/遥控目标，大字号下不再被压成细条。
+                    .heightIn(min = 48.dp)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             ) {
                 Text(
@@ -1024,6 +1051,8 @@ private fun TvFocusButton(
                 }
             }
             .focusable(enabled = enabled)
+            // 与手机端一致：最小 48dp 触摸/遥控目标。
+            .heightIn(min = 48.dp)
             .padding(horizontal = 14.dp, vertical = 8.dp),
     ) {
         Text(

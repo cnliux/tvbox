@@ -29,6 +29,7 @@
         android:required="false" />
 
     <application
+        android:name=".TvBoxApplication"
         android:allowBackup="false"
         android:banner="@drawable/app_banner"
         android:icon="@mipmap/ic_launcher"

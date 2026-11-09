@@ -46,8 +46,10 @@ fun resolveLiveChannelNumberTarget(
     channels: List<LiveChannel>,
     input: String,
 ): Int {
-    val number = input.trim().toIntOrNull() ?: return -1
-    val exactIndex = channels.indexOfFirst { it.number == number }
+    val trimmed = input.trim()
+    // 用字符串比较做精确匹配：数字串长度可能超 Int 范围，toIntOrNull() 返回 null 时
+    // 旧实现直接 return -1，会跳过下面的前缀匹配兜底（输入 "999999999999" 即失效）。
+    val exactIndex = channels.indexOfFirst { it.number.toString() == trimmed }
     if (exactIndex >= 0) return exactIndex
-    return findLiveChannelsByNumberPrefix(channels, input.trim(), limit = 1).firstOrNull()?.index ?: -1
+    return findLiveChannelsByNumberPrefix(channels, trimmed, limit = 1).firstOrNull()?.index ?: -1
 }

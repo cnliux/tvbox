@@ -1,9 +1,17 @@
 package com.tvbox.app.domain
 
+// 预编译：correspondingEpisodeIndex 会对每条线路的每个剧集标题调用，逐次构造正则开销显著。
+private val EPISODE_NUMBER_REGEX =
+    Regex("^(?:第\\s*|EP(?:ISODE)?\\s*)?0*(\\d+)(?:\\s*[集话期])?$", RegexOption.IGNORE_CASE)
+
 fun correspondingEpisodeIndex(source: PlaySource, title: String, fallbackIndex: Int): Int? {
     val exact = source.episodes.indexOfFirst { it.title == title }
     if (exact >= 0) return exact
     val number = episodeNumber(title)
+    // 目标线路有编号剧集时，必须按编号精确对应；找不到同编号就返回 null（不换源），
+    // 不能退回 fallbackIndex —— 否则会串到完全不同的另一集（见 PlaybackRecoveryTest
+    // noCorrespondingEpisodeMeansNoAutomaticSwitch）。只有线路根本没有编号剧集时，
+    // 才按 fallbackIndex 做下标对应。
     if (number != null && source.episodes.any { episodeNumber(it.title) != null }) {
         return source.episodes.indexOfFirst { episodeNumber(it.title) == number }.takeIf { it >= 0 }
     }
@@ -36,5 +44,4 @@ fun resolveHistoryPosition(movie: Movie, item: WatchHistoryItem): Pair<Int, Int>
 }
 
 private fun episodeNumber(title: String): Int? =
-    Regex("^(?:第\\s*|EP(?:ISODE)?\\s*)?0*(\\d+)(?:\\s*[集话期])?$", RegexOption.IGNORE_CASE)
-        .matchEntire(title.trim())?.groupValues?.get(1)?.toIntOrNull()
+    EPISODE_NUMBER_REGEX.matchEntire(title.trim())?.groupValues?.get(1)?.toIntOrNull()

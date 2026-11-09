@@ -26,6 +26,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,8 +108,16 @@ fun PlayerScreen(
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
+    // 长按临时倍速必须跨重组保存：提示文案与 250ms 进度快照都会触发重组，
+    // 普通局部变量每次重组都被重新初始化成 1f，导致松手后原倍速丢失。
+    // 声明放在 Player.Listener 之前，监听器才能读到 active 标记、避免把瞬时 2x 写入偏好。
+    var longPressOriginalSpeed by remember { mutableFloatStateOf(1f) }
+    var longPressSpeedActive by remember { mutableStateOf(false) }
     val initialScreenBrightness = remember(activity) {
         activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
+    val initialRequestedOrientation = remember(activity) {
+        activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
     val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
@@ -188,7 +197,8 @@ fun PlayerScreen(
     LaunchedEffect(chrome.visible) {
         if (!chrome.visible) {
             androidx.compose.runtime.withFrameNanos { }
-            playerFocusRequester.requestFocus()
+            // 控件隐藏时目标节点可能尚未进入组合，requestFocus 需容错（与项目其余调用一致）。
+            runCatching { playerFocusRequester.requestFocus() }
         }
     }
     var videoDisplayMode by remember { mutableStateOf(VideoDisplayMode.Unknown) }
@@ -429,6 +439,8 @@ fun PlayerScreen(
             }
 
             override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+                // 长按 2x 是瞬时倍速，不能写进用户偏好；松手恢复时也不该重复落盘。
+                if (longPressSpeedActive) return
                 actions.updatePlaybackSpeed(playbackParameters.speed)
             }
 
@@ -512,10 +524,11 @@ fun PlayerScreen(
             activity.requestedOrientation = requested
         }
     }
-    DisposableEffect(activity, isTelevision) {
+    DisposableEffect(activity, initialRequestedOrientation, isTelevision) {
         onDispose {
-            activity?.requestedOrientation = if (isTelevision) ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            else ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            // 与直播/平台直播播放页一致：退出后恢复进入前的方向设置，
+            // 而不是把原本 UNSPECIFIED 或用户锁定的方向强制改成 PORTRAIT/LANDSCAPE。
+            activity?.requestedOrientation = initialRequestedOrientation
         }
     }
 
@@ -555,16 +568,22 @@ fun PlayerScreen(
         )
     }
 
-    // 首帧看门狗：可见时才计时，暂停/退后台不计入；超时后进入明确的"重试/下一线路"出口。
+    // 首帧看门狗 + 出帧后的卡死采样：可见时才计时，暂停/退后台不计入；超时后进入明确的"重试/下一线路"出口。
     LaunchedEffect(player, lifecycleOwner, movie.apiLineId, movie.id) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 delay(1_000L)
                 if (!isCurrentPlayback() || firstFrameFailure != null) continue
-                val failure = playbackWatchdog.checkFirstFrame(
-                    nowMs = System.currentTimeMillis(),
-                    playWhenReady = player.playWhenReady && !session.interrupted,
-                )
+                val now = System.currentTimeMillis()
+                val playIntent = player.playWhenReady && !session.interrupted
+                val failure = playbackWatchdog.checkFirstFrame(nowMs = now, playWhenReady = playIntent)
+                    // READY 但进度长时间不推进才是真正卡死；缓冲态交给 PlaybackBufferMonitor 处理，
+                    // 避免拖动进度条后的短暂缓冲被误判成卡死。
+                    ?: playbackWatchdog.onProgressSample(
+                        isPlaying = playIntent && player.playbackState == Player.STATE_READY,
+                        positionMs = player.currentPosition,
+                        nowMs = now,
+                    )
                 if (failure != null) firstFrameFailure = failure.kind
             }
         }
@@ -621,7 +640,6 @@ fun PlayerScreen(
         seekGesturePrompt = "2x 倍速播放"
         seekGesturePromptNonce++
     }
-    var longPressOriginalSpeed = 1f
     val togglePlaybackByGesture = {
         if (chrome.locked) {
             chrome.bump()
@@ -780,11 +798,13 @@ fun PlayerScreen(
             seekGesturePromptNonce++
         },
         onLongPressStart = {
-            longPressOriginalSpeed = player.playbackParameters.speed
+            if (!longPressSpeedActive) longPressOriginalSpeed = player.playbackParameters.speed
+            longPressSpeedActive = true
             player.setPlaybackSpeed(LONG_PRESS_PLAYBACK_SPEED)
             showLongPressSpeedPrompt()
         },
         onLongPressEnd = {
+            longPressSpeedActive = false
             player.setPlaybackSpeed(longPressOriginalSpeed)
             seekGesturePrompt = null
         },

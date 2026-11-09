@@ -499,7 +499,8 @@ internal fun LiveLineOverlay(
         // 浮层在场时注册局部返回处理器：它晚于页面级处理器加入 OnBackPressedDispatcher，
         // 返回键会优先进到这里收起浮层，不依赖浮层当前焦点落在哪个子节点。
         BackHandler { onClose() }
-        var pickedIndex by remember { mutableIntStateOf(state.liveLineIndex.coerceIn(0, channel.lines.lastIndex)) }
+        // 线路列表为空时 lastIndex = -1，coerceIn(0, -1) 会抛异常；钳到 0 后由空列表兜底。
+        var pickedIndex by remember { mutableIntStateOf(state.liveLineIndex.coerceIn(0, channel.lines.lastIndex.coerceAtLeast(0))) }
         Column(
             modifier = Modifier
                 .width(420.dp)

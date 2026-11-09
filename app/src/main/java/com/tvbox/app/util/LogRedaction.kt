@@ -42,8 +42,11 @@ internal fun logSafeText(raw: String?): String {
     }
 }
 
+// scheme 前缀加上界 `{0,31}`：无界 `*` 在「不含 :// 的长字母数字文本」上会逐起点
+// 扩到串尾再回退找 `:`，退化为 O(n²)（100KB 纯文本足以让主线程 ANR）。
+// 实际 URL scheme 不超过十余字符，31 的上界不影响任何真实地址。
 private val URL_IN_TEXT_PATTERN =
-    Regex("""[A-Za-z][A-Za-z0-9+.\-]*://[^\s"'<>，。；：、）】]+""")
+    Regex("""[A-Za-z][A-Za-z0-9+.\-]{0,31}://[^\s"'<>，。；：、）】]+""")
 
 private const val TRAILING_PUNCTUATION = ".,;:!?)]}>"
 

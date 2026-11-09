@@ -37,7 +37,7 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
 
         val name = cleanHtml(line.substring(0, commaIndex))
             .trim()
-            .replace(Regex("^\\d+(?=CCTV-)"), "")
+            .replace(CCTV_NUM_PREFIX_REGEX, "")
         val sourcePart = line.substring(commaIndex + 1).trim()
         if (name.isBlank()) return@forEach
 
@@ -77,8 +77,30 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
         }
 }
 
+// 预编译：TXT 逐行解析与 M3U 每条 EXTINF 都会用到，逐次构造正则会把大直播源解析退化成 CPU 密集任务。
+private val CCTV_NUM_PREFIX_REGEX = Regex("^\\d+(?=CCTV-)")
+
 /** M3U 头部可能出现的 EPG 属性名，按常见度依次尝试。 */
 private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-url", "epg")
+
+// 属性名是有限集合（tvg-name/group-title/tvg-logo/...），按名字缓存预编译正则，
+// 避免每条 EXTINF 为每个字段重新 Regex(...)。
+private val M3U_ATTRIBUTE_REGEX_CACHE = mutableMapOf<String, Regex>()
+private fun m3uAttributeRegex(name: String): Regex =
+    synchronized(M3U_ATTRIBUTE_REGEX_CACHE) {
+        M3U_ATTRIBUTE_REGEX_CACHE.getOrPut(name) {
+            Regex("(?:^|\\s)${Regex.escape(name)}=\\\"([^\\\"]*)\\\"", RegexOption.IGNORE_CASE)
+        }
+    }
+
+// EPG 头部属性允许 `=` 两侧空白（与 EXTINF 属性正则口径不同），单独缓存。
+private val M3U_EPG_ATTRIBUTE_REGEX_CACHE = mutableMapOf<String, Regex>()
+private fun m3uEpgAttributeRegex(name: String): Regex =
+    synchronized(M3U_EPG_ATTRIBUTE_REGEX_CACHE) {
+        M3U_EPG_ATTRIBUTE_REGEX_CACHE.getOrPut(name) {
+            Regex("(?:^|\\s)${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE)
+        }
+    }
 
 /**
  * 从 M3U 头部 `#EXTM3U` 行读取节目单地址（`url-tvg` / `x-tvg-url` / `tvg-url` 等）。
@@ -91,10 +113,7 @@ fun extractM3uEpgUrl(raw: String): String? {
         val trimmed = line.trim()
         if (!trimmed.startsWith("#EXTM3U", ignoreCase = true)) continue
         for (attribute in M3U_EPG_ATTRIBUTES) {
-            val match = Regex(
-                "(?:^|\\s)${Regex.escape(attribute)}\\s*=\\s*\"([^\"]+)\"",
-                RegexOption.IGNORE_CASE,
-            ).find(trimmed) ?: continue
+            val match = m3uEpgAttributeRegex(attribute).find(trimmed) ?: continue
             val value = match.groupValues[1]
                 .split(',')
                 .map { it.trim().trim('"') }
@@ -116,7 +135,9 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
         if (line.isBlank()) return@forEach
         when {
             line.startsWith("#EXTINF", ignoreCase = true) -> {
-                pendingChannel = line.toM3uChannelMetadata() ?: pendingChannel
+                // #EXTINF 开启一个新频道：解析失败必须清空，否则紧随的 URL 会挂到
+                // 上一个频道的元数据下（连续 EXTINF 时尤其容易串台）。
+                pendingChannel = line.toM3uChannelMetadata()
             }
             line.startsWith("#EXTGRP", ignoreCase = true) -> {
                 val grp = line.substringAfter(':', "").substringAfter('=').trim().trim('"')
@@ -195,8 +216,7 @@ private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
 }
 
 private fun String.extractM3uAttribute(name: String): String {
-    val match = Regex("(?:^|\\s)${Regex.escape(name)}=\\\"([^\\\"]*)\\\"", RegexOption.IGNORE_CASE)
-        .find(this)
+    val match = m3uAttributeRegex(name).find(this)
     return match?.groupValues?.getOrNull(1).orEmpty().trim()
 }
 
@@ -288,8 +308,11 @@ private fun splitTxtLineParts(sourcePart: String): List<String> {
 }
 
 private fun String.startsNewLinePart(): Boolean {
-    val candidate = if (contains('$')) substringAfter('$') else this
-    return candidate.isPlayableUrl()
+    // `$` 两侧都可能是地址：`地址$线路元数据`（真实源最常见）或 `线路名$地址`。
+    // 只检查 `$` 之后会把「同行多线路」的第 2..N 条线路拼接进前一条地址里。
+    val before = substringBefore('$').trim()
+    val after = if (contains('$')) substringAfter('$').trim() else ""
+    return before.isPlayableUrl() || after.isPlayableUrl()
 }
 
 private fun parseTxtLinePart(part: String, channelName: String): ParsedLiveChannelLine? {
@@ -305,13 +328,25 @@ private fun parseTxtLinePart(part: String, channelName: String): ParsedLiveChann
         )
     }
     if (part.contains('$')) {
-        val after = part.substringAfterLast('$').trim()
-        if (after.isPlayableUrl()) {
+        val afterLast = part.substringAfterLast('$').trim()
+        if (afterLast.isPlayableUrl()) {
             val lineName = part.substringBeforeLast('$').trim()
             return ParsedLiveChannelLine(
                 channelName = channelName,
                 lineName = normalizeLineName(lineName),
-                url = after,
+                url = afterLast,
+            )
+        }
+        // 与 startsNewLinePart 的口径对齐：它用第一个 `$` 判定「新线路开头」。
+        // 当地址本身含多个 `$`（如 `线路名$https://a/b?x=1$foo`）时，
+        // substringAfterLast 拿到的是尾部元数据而非 URL，旧逻辑会静默丢弃整条线路。
+        // 这里补一条兜底：第一个 `$` 之后若是可播放地址，就以它为准。
+        val afterFirst = part.substringAfter('$').trim()
+        if (afterFirst.isPlayableUrl()) {
+            return ParsedLiveChannelLine(
+                channelName = channelName,
+                lineName = normalizeLineName(part.substringBefore('$').trim()),
+                url = afterFirst,
             )
         }
     }
@@ -335,7 +370,10 @@ private fun normalizeLineName(metadata: String): String {
     }
 }
 
-private const val LIVE_LINE_METADATA_PREFIX = "LR•IPV4•29『线路"
+// 前缀只到 `『`：去掉后剩下的应是「线路N」整体。
+// 旧值含「『线路」，去前缀后只剩编号数字 "3"，startsWith("线路") 永远为假，
+// 命中 `first.startsWith(prefix) -> ""` 分支导致真实源线路名从未生效（退化成重新编号）。
+private const val LIVE_LINE_METADATA_PREFIX = "LR•IPV4•29『"
 
 /** TXT 源没有 `#genre#` 分组头（如内置的 iptv.txt）时的默认分组名。 */
 private const val DEFAULT_TXT_GROUP_NAME = "电视直播"

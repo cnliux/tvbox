@@ -3,10 +3,12 @@ package com.tvbox.app.domain
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.util.logSafeUrl
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
-import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
+import java.util.LinkedHashMap
 
 /**
  * 无扩展名直播地址的内容类型探测。
@@ -30,8 +32,27 @@ const val LIVE_MIME_M3U8 = "application/x-mpegURL"
 const val LIVE_MIME_FLV = "video/x-flv"
 const val LIVE_MIME_MP2T = "video/mp2t"
 
-// URL → MIME（仅缓存探测成功的判定结果），避免重连/切回时重复探测。
-private val probeCache = ConcurrentHashMap<String, String>()
+// (URL + 规范化 headers) → MIME（仅缓存探测成功的判定结果）。
+// 直播地址常带一次性 token，长期播放会让无上限缓存持续膨胀；这里用有界 LRU。
+// 同一 URL 换 Referer/UA 后可能返回不同内容，因此缓存 key 必须包含请求头。
+private const val LIVE_PROBE_CACHE_MAX_ENTRIES = 256
+private val probeCache = Collections.synchronizedMap(
+    object : LinkedHashMap<String, String>(LIVE_PROBE_CACHE_MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > LIVE_PROBE_CACHE_MAX_ENTRIES
+    },
+)
+
+private fun probeCacheKey(url: String, headers: Map<String, String>): String = buildString {
+    append(url)
+    if (headers.isNotEmpty()) {
+        append('|')
+        headers.entries
+            .filter { it.key.isNotBlank() && it.value.isNotBlank() }
+            .sortedBy { it.key.lowercase() }
+            .joinTo(this) { "${it.key.lowercase()}=${it.value}" }
+    }
+}
 
 /**
  * 返回该地址真实的 MIME（[LIVE_MIME_M3U8] / [LIVE_MIME_FLV] / [LIVE_MIME_MP2T]），
@@ -49,10 +70,20 @@ suspend fun probeLiveLineMimeType(
             return LIVE_MIME_UNKNOWN
         }
     }
-    probeCache[url]?.let { return it }
-    val probed = withContext(Dispatchers.IO) { runCatching { probeBlocking(url, headers) }.getOrDefault(LIVE_MIME_UNKNOWN) }
+    val cacheKey = probeCacheKey(url, headers)
+    probeCache[cacheKey]?.let { return it }
+    val probed = withContext(Dispatchers.IO) {
+        try {
+            probeBlocking(url, headers)
+        } catch (cancelled: CancellationException) {
+            // 切台/离页取消不能被当成「探测失败」继续走降级取流。
+            throw cancelled
+        } catch (_: Throwable) {
+            LIVE_MIME_UNKNOWN
+        }
+    }
     // 失败/无法判定不入缓存：避免一次网络抖动让该地址永久失去探测与黑屏修复机会。
-    if (probed != LIVE_MIME_UNKNOWN) probeCache[url] = probed
+    if (probed != LIVE_MIME_UNKNOWN) probeCache[cacheKey] = probed
     android.util.Log.i(
         LIVE_PROBE_LOG_TAG,
         "【类型探测】url=${logSafeUrl(url)} mime=${probed.ifBlank { "未知（沿用播放器判断）" }}",
@@ -131,7 +162,7 @@ suspend fun measureLiveLineLatencyMs(
 ): Long? {
     if (!url.startsWith("http", ignoreCase = true)) return null
     return withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val builder = Request.Builder()
                 .url(url)
                 .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
@@ -149,6 +180,12 @@ suspend fun measureLiveLineLatencyMs(
                     if (first < 0) null else System.currentTimeMillis() - startedAt
                 }
             }
-        }.getOrNull()
+        } catch (cancelled: CancellationException) {
+            // 切台/离页取消必须立即透传，不能像探测失败那样被吞成 null（与
+            // probeLiveLineMimeType 保持一致），否则测速协程会拖到短超时才结束。
+            throw cancelled
+        } catch (_: Throwable) {
+            null
+        }
     }
 }

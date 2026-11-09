@@ -1,8 +1,8 @@
 package com.tvbox.app.domain
 
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -19,9 +19,12 @@ object ConcurrentCollections {
     fun <T : Any> safeSet(initial: Set<T> = emptySet()): MutableSet<T> =
         ConcurrentHashMap.newKeySet<T>().also { initial.forEach { t -> it.add(t) } }
 
-    /** 带锁的 MutableList，适合有序迭代场景。 */
-    fun <T> synchronizedList(initial: List<T> = emptyList()): ArrayList<T> =
-        ArrayList(initial)
+    /**
+     * 真正带锁的 MutableList。注意迭代时仍需按 JDK 约定在同一实例上同步：
+     * `synchronized(list) { list.forEach { ... } }`。
+     */
+    fun <T> synchronizedList(initial: List<T> = emptyList()): MutableList<T> =
+        Collections.synchronizedList(ArrayList(initial))
 
     /** 线程安全的 Map，适合缓存与统计。 */
     fun <K, V> concurrentMap(): ConcurrentHashMap<K, V> = ConcurrentHashMap()
@@ -30,7 +33,7 @@ object ConcurrentCollections {
 /**
  * 指数退避重试工具。
  *
- * @param maxRetries 最大重试次数（不含首次尝试）
+ * @param maxRetries 最大重试次数（不含首次尝试）；总共最多尝试 [maxRetries] + 1 次
  * @param baseDelayMs 基础延迟毫秒
  * @param maxDelayMs 最大延迟上限
  * @param onRetry 每次重试前的回调（可记录日志）
@@ -42,17 +45,20 @@ suspend fun <T> exponentialRetry(
     onRetry: (attempt: Int, delayMs: Long, error: Throwable) -> Unit = { _, _, _ -> },
     block: suspend () -> T,
 ): T {
+    require(maxRetries >= 0) { "maxRetries 不能为负数" }
     var lastError: Throwable? = null
-    repeat(maxRetries) { attempt ->
+    repeat(maxRetries + 1) { attempt ->
         try {
             return block()
+        } catch (e: CancellationException) {
+            // 结构化并发：协程取消不是可重试错误，必须原样抛出，不能写进失败缓存或继续退避。
+            throw e
         } catch (e: Throwable) {
             lastError = e
-            val delayMs = (baseDelayMs * (1L shl attempt)).coerceAtMost(maxDelayMs)
+            if (attempt == maxRetries) return@repeat
+            val delayMs = (baseDelayMs * (1L shl attempt.coerceAtMost(30))).coerceAtMost(maxDelayMs)
             onRetry(attempt + 1, delayMs, e)
-            if (attempt < maxRetries - 1) {
-                withContext(Dispatchers.Default) { delay(delayMs) }
-            }
+            delay(delayMs)
         }
     }
     throw lastError ?: IllegalStateException("exponentialRetry completed without success")
