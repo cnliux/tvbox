@@ -25,9 +25,11 @@ class PlatformLivePlaybackLogicTest {
     }
 
     @Test
-    fun singleCandidateReturnsNull() {
+    fun singleCandidateReturnsCurrentIndexForSameLineRetry() {
+        // 单候选时不应返回 null（null = 强制重新解析），应返回当前下标让调用方走
+        // sameLineRetries 递增 + schedulePlatformLiveReResolve 的退避重解析路径。
         val stream = resolved(listOf(c("a")), 0)
-        assertNull(nextRotatedPlatformLiveCandidate(stream))
+        assertEquals(0, nextRotatedPlatformLiveCandidate(stream))
     }
 
     @Test
