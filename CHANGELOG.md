@@ -1,3 +1,15 @@
+## v1.0.3 - 2026-11-10
+
+历史内容清理 + 本地残留整理（无功能改动）：
+
+- **CHANGELOG 只保留 1.0 起点之后**：移除 66 个 1.0 之前的版本小节（v1.3.61 回溯至 v1.0.0-2026-06-06），其中大量条目存在 UTF-8 乱码；文件由 348 行精简至 24 行。
+- **README 去掉旧版本引用**：`update.json` 示例改用 1.0.x 真实值（versionCode/versionName/apkUrl/`apkSha256`/`apkSize`），发布流程示例的 `v1.3.27` 改为 `v1.0.3`，OTA 兼容说明改为「1.0.0 及之后版本可直接升级」。
+- **移除 AI 能力下线后的遗留配置**：`app/build.gradle.kts` 删除 `TVBOX_AI_API_KEY` 读取与 `BuildConfig.AI_API_KEY` 注入，以及随之失效、已无调用点的 `toBuildConfigString()`。v1.0.0 起已不含任何 AI / 智能推荐能力，这些字段是空壳。
+- **单测版本号归一**：`AppUpdateManifestTest`、`OtaCdnTest`、`BatchStateTest`、`PlaybackParserTest` 中 1.2.0 / 1.3.5x 的用例数据改为 1.0.x，并替换掉指向已删除 Release 的 URL。
+- **本地残留清理**：删除根目录第 62–69 轮遗留的 28 个一次性临时文件（构建日志、提交信息草稿、CI 运行记录、`verify62.ps1` 等脚本）；`.gitignore` 补 `.workbuddy/` 与 `platform_live_go/flv_proxy_diag_test.go`（本地联网诊断测试，与已忽略的 `zz_debug_test.go` 同类）。
+- 验证：`testDebugUnitTest` + `assembleDebug` BUILD SUCCESSFUL，76 个测试类 / 495 例全绿（0 失败 0 错误 0 跳过）。
+- 不含任何 AI / 智能推荐 / 大模型能力。
+
 ## v1.0.2 - 2026-11-10
 
 OTA 更新下载弱网兜底 + 仓库过程文档清洗：
