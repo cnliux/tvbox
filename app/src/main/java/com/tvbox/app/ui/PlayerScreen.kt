@@ -54,6 +54,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
+import com.tvbox.app.domain.appendPlaybackErrorHint
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlaybackAttemptTracker
 import com.tvbox.app.domain.correspondingEpisodeIndex
@@ -372,8 +373,12 @@ fun PlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 if (player.playerError != error) return
-                // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示。
-                val message = playbackErrorMessage(error.errorCode)
+                // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示；
+                // 能分级时追加可操作的自愈建议（重试 / 换线路 / 换来源）。
+                val message = appendPlaybackErrorHint(
+                    playbackErrorMessage(error.errorCode),
+                    error.message,
+                )
                 handlePlaybackIssue(
                     PlaybackIssueType.Error,
                     "播放管家：当前线路播放失败",

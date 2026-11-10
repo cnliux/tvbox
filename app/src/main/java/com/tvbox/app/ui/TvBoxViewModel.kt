@@ -33,6 +33,9 @@ import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
+import com.tvbox.app.domain.HomeFeedPageState
+import com.tvbox.app.domain.canLoadMoreHomeFeed
+import com.tvbox.app.domain.resolveResumePosition
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.effectiveMode
 import com.tvbox.app.domain.withContentVideoScaleMode
@@ -281,7 +284,11 @@ data class TvBoxUiState(
     val platformLiveStream: ResolvedPlatformLiveStream? get() = platformLive.stream
 
     val canLoadMore: Boolean
-        get() = page < pageCount && !homeLoading && !loadingMore
+        // 复用 domain 分页判定：服务端未返回总页数（pageCount<=0）时仍允许试探下一页，
+        // 避免列表被锁死；加载中的门控仍留在 UI 侧，语义与原来一致。
+        get() = canLoadMoreHomeFeed(
+            HomeFeedPageState(page = page, pageCount = pageCount, itemCount = homeItemCount)
+        ) && !homeLoading && !loadingMore
 
     val isShowingDoubanHot: Boolean
         get() = homeFeedMode == HomeFeedMode.DoubanHot && !doubanHotFallbackActive
@@ -1576,7 +1583,15 @@ class TvBoxViewModel(
                         detailMovie = movie, detailLoading = false, detailError = null,
                         selectedSourceIndex = sourceIndex, selectedEpisodeIndex = episodeIndex,
                         playerSourceIndex = sourceIndex, playerEpisodeIndex = episodeIndex,
-                        playerStartPositionMs = item.positionMs.coerceAtLeast(0L),
+                        // 备用线路补齐时新片长可能更短：按历史时长 98% 钳制，
+                        // 避免 seek 紧贴片尾直接触发「自动跳下一集」。
+                        playerStartPositionMs = resolveResumePosition(
+                            savedPositionMs = item.positionMs,
+                            playerPositionMs = 0L,
+                            durationMs = item.durationMs,
+                            isPrepared = false,
+                            sourceChanged = true,
+                        ).positionMs,
                         playerPlayWhenReady = true, screen = TvScreen.Player,
                     )
                 }
@@ -2744,7 +2759,14 @@ class TvBoxViewModel(
             episodeIndex = current.playerEpisodeIndex,
             episodeTitle = episode.title,
             episodeUrl = episode.url,
-            positionMs = positionMs.coerceAtLeast(0L),
+            // 回写前把进度钳制到本集片长，避免退出时记下超过片长的无效位置。
+            positionMs = resolveResumePosition(
+                savedPositionMs = positionMs,
+                playerPositionMs = 0L,
+                durationMs = durationMs,
+                isPrepared = false,
+                sourceChanged = false,
+            ).positionMs,
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtEpochMs = System.currentTimeMillis(),
         )

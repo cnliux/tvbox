@@ -113,6 +113,7 @@ import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
+import com.tvbox.app.ui.components.GuidedEmptyState
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
@@ -1753,10 +1754,10 @@ private fun SourceManagerSetting(
         Spacer(modifier = Modifier.height(10.dp))
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.allSourceLines.isEmpty()) {
-                Text(
-                    text = "暂无可管理的视频源",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
+                // 统一三态组件：空态带引导文案，TV 遥控器可直接聚焦后续导入按钮。
+                GuidedEmptyState(
+                    title = "暂无可管理的视频源",
+                    hint = "在上方导入订阅地址或 JSON 文件后，即可管理源顺序与屏蔽状态",
                 )
             }
             state.allSourceLines.forEach { line ->

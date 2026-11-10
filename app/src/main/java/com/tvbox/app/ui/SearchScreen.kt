@@ -79,6 +79,8 @@ import com.tvbox.app.ui.components.MediaCard
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
+import com.tvbox.app.domain.activeSearchProgressText
+import com.tvbox.app.domain.completedSearchProgressText
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
@@ -591,9 +593,11 @@ private fun SearchResultsPanel(
     resultsFocus: FocusRequester,
     modifier: Modifier = Modifier,
 ) {
-    val progress = state.searchTotalSources.takeIf { it > 0 }?.let { total ->
-        "已完成 ${state.searchCompletedSources}/$total 条线路 · 找到 ${state.searchResults.size} 个结果"
-    }
+    val progress = completedSearchProgressText(
+        completedSources = state.searchCompletedSources,
+        totalSources = state.searchTotalSources,
+        resultCount = state.searchResults.size,
+    ).takeIf { it.isNotEmpty() }
 
     Column(modifier = modifier) {
         Row(
@@ -921,9 +925,11 @@ internal fun MobileSearchScreen(
 
                     else -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            val progressText = if (state.searchTotalSources > 0) {
-                                "正在搜索 ${state.searchTotalSources} 个来源（已完成 ${state.searchCompletedSources}，找到 ${state.searchResults.size} 条结果）"
-                            } else null
+                            val progressText = activeSearchProgressText(
+                                completedSources = state.searchCompletedSources,
+                                totalSources = state.searchTotalSources,
+                                resultCount = state.searchResults.size,
+                            ).takeIf { it.isNotEmpty() }
                             progressText?.let {
                                 Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     style = MaterialTheme.typography.bodySmall,
