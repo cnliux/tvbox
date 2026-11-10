@@ -163,3 +163,253 @@ func TestFlvProxySpliceTimestamps(t *testing.T) {
 		t.Fatal("同一时刻的音视频标签应被接受")
 	}
 }
+
+// ───────────────────── 关键帧解析与重连衔接（修复重复画面） ─────────────────────
+
+type testFrame struct {
+	ts        int64
+	video     bool
+	audio     bool
+	keyframe  bool // 仅 video 有效
+	seqHeader bool // 仅 video 有效：AVC 序列头（AVCPacketType=0）
+}
+
+// writeTestFLVEx 输出一段“上游会话”，可指定每个标签的类型、是否关键帧、是否序列头。
+func writeTestFLVEx(writer io.Writer, frames []testFrame) {
+	_, _ = writer.Write([]byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
+	for _, f := range frames {
+		var tagType byte
+		var data []byte
+		switch {
+		case f.video:
+			tagType = flvTagTypeVideo
+			frameType := byte(1)
+			if !f.keyframe {
+				frameType = 2
+			}
+			avcPacketType := byte(1)
+			if f.seqHeader {
+				avcPacketType = 0
+			}
+			data = []byte{(frameType << 4) | flvVideoCodecAVC, avcPacketType, 0, 0}
+		case f.audio:
+			tagType = flvTagTypeAudio
+			data = []byte{0xA0, 0, 0}
+		default:
+			continue
+		}
+		size := len(data)
+		header := []byte{
+			tagType, byte(size >> 16), byte(size >> 8), byte(size),
+			byte(f.ts >> 16), byte(f.ts >> 8), byte(f.ts), byte(f.ts >> 24),
+			0, 0, 0,
+		}
+		_, _ = writer.Write(header)
+		_, _ = writer.Write(data)
+		prev := uint32(flvProxyTagHeaderSize + size)
+		_, _ = writer.Write([]byte{byte(prev >> 24), byte(prev >> 16), byte(prev >> 8), byte(prev)})
+	}
+}
+
+type frameInfo struct {
+	ts        int64
+	video     bool
+	audio     bool
+	keyframe  bool
+}
+
+// readTestFLVTagsEx 读取代理输出，返回每个标签的类型与时间戳（用于精确断言）。
+func readTestFLVTagsEx(reader io.Reader, limit int) ([]frameInfo, error) {
+	header := make([]byte, flvProxyHeaderSize+flvProxyPrevTagSizeLen)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		return nil, err
+	}
+	out := make([]frameInfo, 0, limit)
+	for len(out) < limit {
+		th := make([]byte, flvProxyTagHeaderSize)
+		if _, err := io.ReadFull(reader, th); err != nil {
+			return out, err
+		}
+		size := int(th[1])<<16 | int(th[2])<<8 | int(th[3])
+		ts := int64(th[4])<<16 | int64(th[5])<<8 | int64(th[6]) | int64(th[7])<<24
+		data := make([]byte, size)
+		if _, err := io.ReadFull(reader, data); err != nil {
+			return out, err
+		}
+		if _, err := io.ReadFull(reader, make([]byte, flvProxyPrevTagSizeLen)); err != nil {
+			return out, err
+		}
+		tagType := th[0] & 0x1f
+		fi := frameInfo{ts: ts}
+		switch tagType {
+		case flvTagTypeVideo:
+			fi.video = true
+			fi.keyframe = isVideoKeyframe(data)
+		case flvTagTypeAudio:
+			fi.audio = true
+		}
+		out = append(out, fi)
+	}
+	return out, nil
+}
+
+// 验证：上游关流后重连，新流时间戳从 0 重新开始且以非关键帧/序列头开头时，
+// 代理输出严格单调递增、续段首帧严格接续上一段末帧（无回退/重复画面），
+// 且前导非关键视频帧被丢弃、AVC 序列头与关键帧被保留。
+func TestFlvProxyReconnectNoRollback(t *testing.T) {
+	var reqCount int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&reqCount, 1)
+		w.Header().Set("Content-Type", "video/x-flv")
+		w.WriteHeader(http.StatusOK)
+		switch {
+		case n == 1:
+			writeTestFLVEx(w, []testFrame{
+				{ts: 0, video: true, keyframe: true},
+				{ts: 33, video: true, keyframe: true},
+				{ts: 66, video: true, keyframe: true},
+			})
+		default:
+			writeTestFLVEx(w, []testFrame{
+				{ts: 0, video: true, keyframe: false}, // 重连瞬间前导非关键帧：应丢弃
+				{ts: 0, video: true, keyframe: true, seqHeader: true}, // AVC 序列头：应保留
+				{ts: 0, audio: true},
+				{ts: 33, video: true, keyframe: true}, // 首个可解码关键帧：应转发并解除等待
+				{ts: 66, video: true, keyframe: false},
+				{ts: 66, audio: true},
+			})
+		}
+	}))
+	defer upstream.Close()
+
+	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
+	service := &Service{byID: map[string]Adapter{"fake": adapter}}
+	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	if err != nil {
+		t.Fatalf("newFlvProxy: %v", err)
+	}
+	defer proxy.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.url, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("连接本地代理失败：%v", err)
+	}
+	defer response.Body.Close()
+
+	frames, err := readTestFLVTagsEx(response.Body, 8) // 上段 3 + 续段转发 5（丢弃 1）
+	if err != nil && len(frames) < 8 {
+		t.Fatalf("读取代理输出失败：%v（已读 %d，统计=%s）", err, len(frames), proxy.statsJSON())
+	}
+
+	// 1) 全局非递减（允许同刻音视频并存）。
+	for i := 1; i < len(frames); i++ {
+		if frames[i].ts < frames[i-1].ts {
+			t.Fatalf("时间戳回退：第 %d 帧 %d < 第 %d 帧 %d", i, frames[i].ts, i-1, frames[i-1].ts)
+		}
+	}
+
+	// 2) 续段首帧严格接续上一段末帧：无回退、无重复画面。
+	seg1 := frames[:3]
+	seg2 := frames[3:]
+	seg1Max := seg1[len(seg1)-1].ts
+	seg2Min := seg2[0].ts
+	if seg2Min <= seg1Max {
+		t.Fatalf("续段首帧 %d 未严格接续上一段末帧 %d（出现回退/重复画面）", seg2Min, seg1Max)
+	}
+	for _, f := range seg2 {
+		if f.ts <= seg1Max {
+			t.Fatalf("续段存在回退/重复帧 ts=%d（上一段末帧=%d）", f.ts, seg1Max)
+		}
+	}
+
+	// 3) 关键帧对齐：续段视频帧应为 3（序列头 + 关键帧 + 非关键），前导非关键帧被丢弃。
+	var seg2Video int
+	for _, f := range seg2 {
+		if f.video {
+			seg2Video++
+		}
+	}
+	if seg2Video != 3 {
+		t.Fatalf("续段视频帧数=%d，期望 3（前导非关键帧应被丢弃）", seg2Video)
+	}
+
+	if got := atomic.LoadInt64(&reqCount); got < 2 {
+		t.Fatalf("上游关流后应重新拉流，实际请求次数=%d", got)
+	}
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(proxy.statsJSON()), &stats); err == nil {
+		if reconnect, _ := stats["reconnects"].(float64); reconnect < 1 {
+			t.Fatalf("统计未记录续流次数：%v", stats)
+		}
+	}
+}
+
+// 验证：首段（无连续性）即使以非关键帧开头也应一并转发，不应等待关键帧。
+func TestFlvProxyFirstSegmentForwardsLeadingNonKeyframe(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "video/x-flv")
+		w.WriteHeader(http.StatusOK)
+		writeTestFLVEx(w, []testFrame{
+			{ts: 0, video: true, keyframe: false},
+			{ts: 33, video: true, keyframe: true},
+		})
+	}))
+	defer upstream.Close()
+	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
+	service := &Service{byID: map[string]Adapter{"fake": adapter}}
+	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	if err != nil {
+		t.Fatalf("newFlvProxy: %v", err)
+	}
+	defer proxy.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.url, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("连接本地代理失败：%v", err)
+	}
+	defer response.Body.Close()
+
+	frames, err := readTestFLVTagsEx(response.Body, 2)
+	if err != nil || len(frames) < 2 {
+		t.Fatalf("读取代理输出失败：%v（已读 %d）", err, len(frames))
+	}
+	var video int
+	for _, f := range frames {
+		if f.video {
+			video++
+		}
+	}
+	if video != 2 {
+		t.Fatalf("首段应将前导非关键帧与关键帧一并转发，实际视频帧数=%d", video)
+	}
+}
+
+// 验证关键帧 / 序列头解析辅助函数。
+func TestFlvProxyKeyframeHelpers(t *testing.T) {
+	// AVC 序列头：codec=7，AVCPacketType=0
+	if !isAvcSequenceHeader([]byte{(1 << 4) | flvVideoCodecAVC, 0, 0}) {
+		t.Fatal("AVC 序列头未识别")
+	}
+	if isVideoKeyframe([]byte{(1 << 4) | flvVideoCodecAVC, 0, 0}) {
+		t.Fatal("序列头不应判为关键帧")
+	}
+	// AVC 关键帧：codec=7，AVCPacketType=1，frameType=1
+	if !isVideoKeyframe([]byte{(1 << 4) | flvVideoCodecAVC, 1, 0}) {
+		t.Fatal("AVC 关键帧未识别")
+	}
+	// AVC 非关键帧：frameType=2
+	if isVideoKeyframe([]byte{(2 << 4) | flvVideoCodecAVC, 1, 0}) {
+		t.Fatal("AVC 非关键帧不应判为关键帧")
+	}
+	// 过短数据应安全返回 false
+	if isVideoKeyframe([]byte{0x17}) || isAvcSequenceHeader([]byte{0x17}) {
+		t.Fatal("过短数据应返回 false")
+	}
+}
+

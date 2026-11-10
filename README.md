@@ -165,7 +165,7 @@ TVBOX_AI_API_KEY=你的测试密钥
 - 默认使用内置 Go 解析库（`platform_live_go`，经 `gomobile bind` 打包为 `libgojni.so`），安装即可用，无需部署服务端。
 - Go 解析库同时提供分享口令/短链解析：`ResolveLinkJson(text, siteHint)`；独立服务端对应 `GET /v1/live/resolve-link?text=<分享链接>&site=<可选平台>`，只访问已登记的平台域名（含重定向逐跳校验），避免被当作任意 URL 代理。
 - 发布版只打包 `arm64-v8a` 原生库（`Release` 不再包含 armv7/x86），并对原生库做符号剥离以控制体积。
-- 虎牙连续播放：虎牙 CDN 对单次 HTTP-FLV 拉流有约 2 分钟会话上限（实测 120~137 秒被服务端正常关闭）。App 内置 Go 侧本机代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`），播放器只连 `127.0.0.1` 的一条永不结束的 FLV；上游被关闭时代理立即重新解析拿新签名续拉，并把新一段时间戳接在上一帧之后（丢弃回退帧）。实测连续 400 秒、3 次服务端关流均无 ENDED、无换线路。
+- 虎牙连续播放：虎牙 CDN 对单次 HTTP-FLV 拉流有约 2 分钟会话上限（实测 120~137 秒被服务端正常关闭）。App 内置 Go 侧本机代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`），播放器只连 `127.0.0.1` 的一条永不结束的 FLV；上游被关闭时代理立即重新解析拿新签名续拉，并把新一段时间戳接在上一帧之后（丢弃回退帧）。**重连后会在续段等待首个关键帧再衔接**（保留 AVC 序列头、丢弃关键帧前导的非关键视频帧），避免播放器因缺关键帧停在上一帧/花屏造成的“重复画面”。实测连续 400 秒、3 次服务端关流均无 ENDED、无换线路。
 - 本地模拟器调试：执行 `.\gradlew.bat assembleDebug -PtvboxEmulatorAbis=true`，会额外生成 `x86`/`x86_64` 原生库（gomobile 同时产出 `android/amd64`、`android/386`）。该开关不影响 Release 产物。
 - 如需回到远程解析模式，可恢复 `RemotePlatformLiveRepository` 并自行注入服务地址构建参数。
 

@@ -38,6 +38,12 @@ const (
 	flvProxyResolveRetry = 1500 * time.Millisecond
 	flvProxyMaxTagSize   = 8 << 20
 	flvProxyMaxFailures  = 2
+
+	// FLV Tag 类型（tagHeader[0] & 0x1f）。
+	flvTagTypeAudio = 8
+	flvTagTypeVideo = 9
+	// FLV 视频标签：codecID = data[0] & 0x0f，7 表示 AVC(H.264)。
+	flvVideoCodecAVC = 7
 )
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
@@ -379,6 +385,12 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 	p.upstreamSessions++
 	p.statsMu.Unlock()
 
+	// 续段（已存在上一帧）时，等待首个关键帧后再开始转发：上游重连瞬间新流常以
+	// 非关键帧开头，或重连瞬间重发了一段缓冲内容。直接转发这些无法独立解码的帧
+	// 会导致播放器缺关键帧，只能停在上帧 / 花屏，表现为“重复画面”。等到关键帧
+	// （含其前的 AVC 序列头）再衔接，保证解码干净、时间轴严格顺延。
+	awaitKeyframe := p.hasLastTs()
+
 	var offset int64
 	var haveBase bool
 	for {
@@ -403,8 +415,21 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			return newError("上游 FLV 尾部读取失败：%s", err.Error())
 		}
 
+		tagType := tagHeader[0] & 0x1f
+		if awaitKeyframe && tagType == flvTagTypeVideo {
+			if isAvcSequenceHeader(data) {
+				// AVC 序列头（SPS/PPS）解码必需，必须保留，但仍等待关键帧。
+			} else if isVideoKeyframe(data) {
+				awaitKeyframe = false
+			} else {
+				// 关键帧到达前的非关键视频帧：无法独立解码，丢弃，避免花屏/重复画面。
+				continue
+			}
+		}
+
 		adjusted := sourceTs
 		if !haveBase {
+			// 偏移锚定到「首个被转发的帧」：前导被丢弃的非关键帧不会污染基准。
 			adjusted = p.spliceBase(sourceTs)
 			offset = adjusted - sourceTs
 			haveBase = true
@@ -412,13 +437,46 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			adjusted = sourceTs + offset
 		}
 		if !p.acceptTs(adjusted) {
-			// 时间戳回退（上一段已经输出过同一位置），丢弃该帧。
+			// 时间戳回退（重连瞬间重复数据或上游非单调）：丢弃该帧。
 			continue
 		}
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
 			return err
 		}
 	}
+}
+
+// hasLastTs 返回是否已记录上一帧时间戳（用于判断当前是否处于“续段”）。
+func (p *flvProxy) hasLastTs() bool {
+	p.tsMu.Lock()
+	defer p.tsMu.Unlock()
+	return p.haveLast
+}
+
+// isAvcSequenceHeader 判断 FLV 视频标签是否为 AVC 序列头（AVCPacketType=0），
+// 内含 SPS/PPS，是后续关键帧解码的前提，衔接时不可丢弃。
+func isAvcSequenceHeader(data []byte) bool {
+	if len(data) < 2 {
+		return false
+	}
+	if (data[0] & 0x0f) != flvVideoCodecAVC {
+		return false
+	}
+	return data[1] == 0
+}
+
+// isVideoKeyframe 判断 FLV 视频标签是否为可随机接入的关键帧（AVC NALU 关键帧）。
+// 非 AVC 编码时以 frameType==1 作为关键帧判据。
+func isVideoKeyframe(data []byte) bool {
+	if len(data) < 2 {
+		return false
+	}
+	frameType := data[0] >> 4
+	if (data[0] & 0x0f) == flvVideoCodecAVC {
+		// AVC：AVCPacketType==1（NALU）且 frameType==1（关键帧）。
+		return data[1] == 1 && frameType == 1
+	}
+	return frameType == 1
 }
 
 // spliceBase 计算新一段首帧的输出时间戳：首段沿用原值，续段接在上一帧之后。
