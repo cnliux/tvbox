@@ -1,3 +1,9 @@
+## v1.3.59 - 2026-11-10
+
+- 质量护栏（第 308–313 轮）：为 6 个此前零单测的纯逻辑 domain 文件补齐 JVM 单测共 30 例——`PlaybackSelection`（选集定位：精确标题 / 按编号精确对应 / 源无编号时按下标回退）、`resolveHistoryPosition`（历史续播：集地址优先反查、下标回退、越界回到主线路首集）、`PlaybackInterruptionPolicy`（前台 + 已请求播放才允许播放、离开前台即中断、后台请求被拒、暂停不标记中断）、`WatchHistory`（进度百分比边界保护、续看排序 / 去重 / 看完过滤 / 数量上限）、`LiveChannelListRuntime`（分组折叠 / 可见计数 / 方向键跳过折叠组 / 三种空态引导）、`PlayerController`（快进快退越界钳制、倍速范围钳制、播放暂停翻转、默认常量）。全程不引入任何 AI / 智能推荐 / 大模型能力。
+- 真实接入（第 314–315 轮）：把第 281–290 轮已落地、却仍「只暴露未渲染」的 OTA 多 CDN 下载线路状态行与启动各阶段耗时时间线，真实挂进手机设置「关于」分组——`OtaCdnStatusSection` 展示每条候选线路名与本地健康度（不含 URL），`StartupTimelineSection` 展示到可交互总耗时与分阶段 ms。关闭了台账第八章「CDN 状态行与启动时间线尚未挂到设置页 UI」的缺口。
+- 验证：`testDebugUnitTest` 与 `assembleDebug` 通过，76 个测试类 / 493 例全绿（0 失败 0 错误）。本版收口第 308–315 轮，台账累计 70–315 共 246 轮，继续向 400 轮推进（不含 AI）。
+
 ## v1.3.58 - 2026-11-10
 
 - 修复「手机版设置仍有一部分未显示」：第 261–270 轮做好的设置当前值摘要（`SettingsSummaryFactory` / `SettingsSummary` / `SettingsIa`）与状态组件（`SettingsComponents.SettingsStatusSummary` / `ScanConfigBadge`）此前只停留在可编译的 domain 层，手机设置页从未渲染——`SettingsStatusSummary` 与 `ScanConfigBadge` 是零引用的死代码，ViewModel 的 `settingsSummary` 也只暴露没显示。手机 landing 页「当前配置」卡片原本只硬编码视频源 / 直播源 / 设备 3 项，其余 9 项配置值不可见。

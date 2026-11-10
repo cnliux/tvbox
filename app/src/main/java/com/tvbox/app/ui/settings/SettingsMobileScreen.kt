@@ -75,7 +75,9 @@ import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.CdnStatusRow
 import com.tvbox.app.domain.QuantitySettings
+import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
@@ -972,7 +974,86 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 modifier = Modifier.padding(start = 64.dp, top = 4.dp, end = 14.dp, bottom = 12.dp),
             )
         }
+    OtaCdnStatusSection(actions = actions)
+    StartupTimelineSection(actions = actions)
     }
+}
+
+// 第 314–315 轮 · OTA 下载线路状态与启动耗时接入「关于」分组
+@Composable
+private fun OtaCdnStatusSection(actions: TvBoxViewModel) {
+    val rows = remember(actions) { actions.cdnStatusRows() }
+    SettingsGroup {
+        SettingsRow(
+            icon = Icons.Default.Build,
+            title = "下载线路状态",
+            subtitle = if (rows.isEmpty()) "暂无数据，检查更新后生成" else "${rows.size} 条候选线路",
+            trailing = {},
+        )
+        if (rows.isNotEmpty()) {
+            DividerInGroup()
+            rows.forEachIndexed { index, row ->
+                SettingsRow(
+                    icon = Icons.Default.Build,
+                    title = row.label,
+                    subtitle = row.status,
+                    trailing = {
+                        if (row.selected) {
+                            Text(
+                                "当前",
+                                color = TvColors.Accent,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
+                    },
+                )
+                if (index < rows.lastIndex) DividerInGroup()
+            }
+        }
+    }
+}
+
+@Composable
+private fun StartupTimelineSection(actions: TvBoxViewModel) {
+    val total = actions.startupTotalDurationMs
+    val phases = actions.startupPhaseDurationsMs
+    SettingsGroup {
+        SettingsRow(
+            icon = Icons.Default.Info,
+            title = "启动总耗时",
+            subtitle = total?.let { "到可交互 ${it}ms" } ?: "尚未采集",
+            trailing = {},
+        )
+        if (phases.isNotEmpty()) {
+            DividerInGroup()
+            val order = listOf(
+                StartupPhase.ProcessStart,
+                StartupPhase.ApplicationInit,
+                StartupPhase.FirstFrame,
+                StartupPhase.Interactive,
+                StartupPhase.Idle,
+            )
+            order.forEachIndexed { index, phase ->
+                phases[phase]?.let { ms ->
+                    SettingsRow(
+                        icon = Icons.Default.Info,
+                        title = startupPhaseLabel(phase),
+                        subtitle = "${ms}ms",
+                        trailing = {},
+                    )
+                    if (index < order.size - 1) DividerInGroup()
+                }
+            }
+        }
+    }
+}
+
+private fun startupPhaseLabel(phase: StartupPhase): String = when (phase) {
+    StartupPhase.ProcessStart -> "进程启动"
+    StartupPhase.ApplicationInit -> "Application 初始化"
+    StartupPhase.FirstFrame -> "首帧"
+    StartupPhase.Interactive -> "可交互"
+    StartupPhase.Idle -> "空闲"
 }
 
 // ─────────────────────────── 通用组件 ───────────────────────────
