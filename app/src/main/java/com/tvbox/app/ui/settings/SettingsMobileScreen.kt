@@ -138,6 +138,7 @@ fun SettingsMobileScreen(
             if (category == null) {
                 SettingsMobileLanding(
                     state = state,
+                    actions = actions,
                     onCategoryClick = { selectedCategory = it },
                 )
             } else {
@@ -160,6 +161,7 @@ fun SettingsMobileScreen(
 @Composable
 private fun SettingsMobileLanding(
     state: TvBoxUiState,
+    actions: TvBoxViewModel,
     onCategoryClick: (MobileSettingCategory) -> Unit,
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -191,6 +193,7 @@ private fun SettingsMobileLanding(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item { SettingsHeroCard(state = state) }
+            item { SettingsConfigStatusStrip(actions = actions) }
             item { SettingsCategoryGrid(onCategoryClick = onCategoryClick) }
             item {
                 Text(
@@ -267,6 +270,37 @@ private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/**
+ * 当前配置明细（第 301–305 轮）：把 domain 层已经算好的设置摘要真正渲染出来。
+ * 此前 `buildSettingsPageSummary` / `SettingsStatusSummary` 只是可编译的纯数据，手机端从未显示，
+ * 导致「当前配置」卡片只硬编码了视频源/直播源/设备三项，其余配置值不可见。
+ * 这里统一以两列状态条展示全部条目，避免两处各写一套文案。
+ */
+@Composable
+private fun SettingsConfigStatusStrip(actions: TvBoxViewModel) {
+    val entries = actions.settingsSummary.groups.flatMap { it.entries }
+    if (entries.isEmpty()) return
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = TvColors.Surface,
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(modifier = Modifier.padding(vertical = 12.dp, horizontal = 14.dp)) {
+            Text(
+                text = "当前配置明细",
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.height(10.dp))
+            SettingsStatusSummary(
+                items = entries.map { it.label to it.valueSummary.ifBlank { "未设置" } },
+                twoColumns = true,
+            )
+        }
     }
 }
 
@@ -744,14 +778,26 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             icon = Icons.AutoMirrored.Filled.List,
             title = "视频源",
             subtitle = state.selectedApiLine?.name ?: "未配置",
-            trailing = { TextButton(onClick = actions::openVideoSourceManager) { Text("管理", color = TvColors.Accent) } },
+            trailing = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ScanConfigBadge(scanState = ScanConfigState.of(state.appSettings.customVideoApiLines.isNotEmpty()))
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = actions::openVideoSourceManager) { Text("管理", color = TvColors.Accent) }
+                }
+            },
         )
         DividerInGroup()
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
             title = "IPTV 直播源",
             subtitle = "${state.appSettings.liveSourceUrls.count { it.isNotEmpty() }} 条已配置",
-            trailing = { TextButton(onClick = actions::openLiveSourceManager) { Text("管理", color = TvColors.Accent) } },
+            trailing = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ScanConfigBadge(scanState = ScanConfigState.of(state.appSettings.liveSourceUrls.any { it.isNotBlank() }))
+                    Spacer(Modifier.width(6.dp))
+                    TextButton(onClick = actions::openLiveSourceManager) { Text("管理", color = TvColors.Accent) }
+                }
+            },
         )
         DividerInGroup()
         SettingsRow(

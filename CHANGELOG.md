@@ -1,3 +1,9 @@
+## v1.3.58 - 2026-11-10
+
+- 修复「手机版设置仍有一部分未显示」：第 261–270 轮做好的设置当前值摘要（`SettingsSummaryFactory` / `SettingsSummary` / `SettingsIa`）与状态组件（`SettingsComponents.SettingsStatusSummary` / `ScanConfigBadge`）此前只停留在可编译的 domain 层，手机设置页从未渲染——`SettingsStatusSummary` 与 `ScanConfigBadge` 是零引用的死代码，ViewModel 的 `settingsSummary` 也只暴露没显示。手机 landing 页「当前配置」卡片原本只硬编码视频源 / 直播源 / 设备 3 项，其余 9 项配置值不可见。
+- 手机设置接入：landing 页新增「当前配置明细」卡片，使用 `SettingsStatusSummary` 以两列状态条渲染全部 12 项当前值（主题、字号、倍速、画面比例、跳过片头片尾、视频接口、直播源、内容过滤、设备模式、启动检查更新、EPG、播放管家自动换线）；`SourcesDetail` 的视频源 / IPTV 直播源行接入 `ScanConfigBadge`，显示「内置 / 用户配置」状态。两个此前零引用的组件首次被真正使用，消除死代码。
+- 验证：`testDebugUnitTest` 与 `assembleDebug` 通过，70 个测试类 / 463 例全绿（0 失败 0 错误）；UI 胶水层靠编译 + 既有 `SettingsSummaryFactoryTest`（12 条目 / 5 分组契约）锁定数据契约；窄屏两列换行、徽标与「管理」按钮同排不挤压等视觉细节留真机走查。本版收口第 301–307 轮，台账 70–307 共 238 轮。
+
 ## v1.3.57 - 2026-11-10
 
 - 组件统一：`RetryableError` / `GuidedEmptyState` 改为委托全站既有 `ErrorState` / `EmptyState`，消除两套并行三态视觉；首页影片列表加载态改用骨架屏、错误态改用统一可重试组件；影院主题**手机竖屏**接入 `CinemaHeroBanner`，电视端仍用原 `FeaturedMovieHero`。
