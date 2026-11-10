@@ -100,11 +100,11 @@ https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.js
 
 ```json
 {
-  "versionCode": 20002,
-  "versionName": "1.0.2",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.2/juhe-video-v1.0.2.apk",
-  "apkSha256": "e6eebc4aad9f6258bf65a9038e0b1a7a3407831ec6ef496f88625b68170ac53d",
-  "apkSize": 19988896,
+  "versionCode": 20003,
+  "versionName": "1.0.3",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.3/juhe-video-v1.0.3.apk",
+  "apkSha256": "82b0f737ecba13ca3fd58113049c2470dfdc31247c06df9aab1f0cbbe5a74da2",
+  "apkSize": 19988892,
   "force": false,
   "changelog": [
     "手机版源管理改为页内管理：设置页移除网页远程管理入口，改为在页内导入配置与增删源。",
