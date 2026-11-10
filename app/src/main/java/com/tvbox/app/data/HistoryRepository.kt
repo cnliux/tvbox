@@ -13,14 +13,8 @@ import kotlinx.serialization.json.Json
 /** 观看历史默认保留条数；可由 AppSettings.historyMaxItems 覆盖。 */
 const val MAX_HISTORY_ITEMS = 100
 
-interface HistoryRepository {
-    suspend fun getHistory(): List<WatchHistoryItem>
-    suspend fun saveProgress(
-        item: WatchHistoryItem,
-        maxItems: Int = MAX_HISTORY_ITEMS,
-    ): List<WatchHistoryItem>
-    suspend fun clearHistory(): List<WatchHistoryItem>
-}
+// 契约已迁移到 domain；保留同包别名，确保既有 import 与 public API 不变。
+typealias HistoryRepository = com.tvbox.app.domain.HistoryRepository
 
 class SharedHistoryRepository(context: Context) : HistoryRepository {
     private val appContext = context.applicationContext

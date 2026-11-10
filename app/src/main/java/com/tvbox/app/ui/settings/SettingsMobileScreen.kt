@@ -272,17 +272,29 @@ private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier
 
 @Composable
 private fun SettingsCategoryGrid(onCategoryClick: (MobileSettingCategory) -> Unit) {
-    LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(420.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        userScrollEnabled = false,
-    ) {
-        items(MobileSettingCategory.entries) { category ->
-            CategoryCard(category = category, onClick = { onCategoryClick(category) })
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        // 手机竖屏按宽度自适应列数：最小 150dp/格，360dp~411dp 竖屏可放 2~3 列，宽屏自然增加。
+        // TV 端走 SettingsTvSplitScreen，不经过此函数。
+        val gridSpacing = 12.dp
+        val gridPadding = 16.dp
+        val minCardWidth = 150.dp
+        val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
+            .toInt()
+            .coerceAtLeast(1)
+        val columns = capacity.coerceIn(2, 4)
+        val cardHeight = 160.dp
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(columns),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(cardHeight * columns.coerceAtLeast(2) / 2 + gridSpacing * (columns.coerceAtLeast(2) / 2 - 1) + gridPadding * 2),
+            horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+            verticalArrangement = Arrangement.spacedBy(gridSpacing),
+            userScrollEnabled = false,
+        ) {
+            items(MobileSettingCategory.entries) { category ->
+                CategoryCard(category = category, onClick = { onCategoryClick(category) })
+            }
         }
     }
 }

@@ -21,37 +21,8 @@ private const val LIVE_SOURCE_TAG = "TVBoxLiveSource"
 /** 单个直播订阅的最大读取量：误填成目录页或超大文件时避免整份文本进入内存。 */
 internal const val LIVE_SOURCE_MAX_BYTES = 20L * 1024L * 1024L
 
-interface LiveRepository {
-    suspend fun getChannels(): List<LiveChannel>
-
-    /**
-     * 更新电视直播源配置。
-     *
-     * @param customUrls 用户添加的自定义 M3U/TXT 源地址；内部会归一化、去空、去重，
-     *   [sourceUrls] 返回的就是这份最终列表，展示与选源共用同一套下标。
-     * @param defaultGroup 解析成功后，默认将频道分组名改为该值（避免"电视直播"兜底名）。
-     * @param defaultIndex 默认源在原始 customUrls 中的下标（-1 表示无默认）；
-     *   按 URL 值重映射到最终列表，重复/空白项被移除后仍指向同一个订阅。
-     */
-    fun setSourceConfig(customUrls: List<String>, defaultGroup: String, defaultIndex: Int)
-
-    /**
-     * 选择仅加载某一个订阅地址（直播页订阅切换）。
-     *
-     * @param index [sourceUrls] 中的下标；-1 表示按默认源优先**逐个回退**尝试全部订阅
-     *   （首个解析出频道的源生效，不做跨源合并，避免不同订阅的频道号互相污染）。
-     */
-    fun setSourceSelection(index: Int) {}
-
-    /** 当前配置的订阅地址列表，供直播页展示订阅切换入口。 */
-    val sourceUrls: List<String> get() = emptyList()
-
-    /**
-     * 最近一次成功解析的源内置 EPG 地址（M3U 头部 `url-tvg` / `x-tvg-url` 等）。
-     * null 表示该源未声明节目单，调用方保持用户已配置的 EPG 不变。
-     */
-    val bundledEpgUrl: String? get() = null
-}
+// 契约已迁移到 domain；保留同包别名，确保既有 import 与 public API 不变。
+typealias LiveRepository = com.tvbox.app.domain.LiveRepository
 
 class DefaultLiveRepository : LiveRepository {
     private var customSourceUrls: List<String> = emptyList()

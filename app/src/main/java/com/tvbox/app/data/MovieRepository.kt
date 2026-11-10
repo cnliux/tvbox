@@ -24,43 +24,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
-data class MultiSourceSearchUpdate(
-    val movies: List<Movie>,
-    val completedSources: Int,
-    val totalSources: Int,
-)
-
-data class MovieDetailUpdate(
-    val movie: Movie,
-    val completedSources: Int,
-    val totalSources: Int,
-)
-
-interface MovieRepository {
-    val apiLines: List<ApiLine>
-    val allApiLines: List<ApiLine>
-    fun updateCustomApiLines(customApiLines: List<ApiLine>)
-    fun setDisabledLineIds(disabledIds: Set<String>)
-    /** 设置多源搜索/详情同时请求的源数量。 */
-    fun setMaxParallelSourceRequests(value: Int) {}
-    suspend fun testSpeed(apiLineId: String): Long?
-    suspend fun getCategories(apiLineId: String): List<Category>
-    suspend fun getMovies(apiLineId: String, page: Int, typeId: Int? = null, keyword: String? = null): PagedMovies
-    suspend fun getMoviesByTypeIds(apiLineId: String, page: Int, typeIds: List<Int>): PagedMovies
-    suspend fun getDetail(apiLineId: String, id: Int): Movie?
-    suspend fun getResumeDetail(apiLineId: String, id: Int): Movie? = getDetail(apiLineId, id)
-
-    fun searchProgressively(apiLineId: String, page: Int, keyword: String): Flow<MultiSourceSearchUpdate> = flow {
-        val result = getMovies(apiLineId = apiLineId, page = page, keyword = keyword)
-        emit(MultiSourceSearchUpdate(result.movies, completedSources = 1, totalSources = 1))
-    }
-
-    fun getDetailProgressively(apiLineId: String, id: Int): Flow<MovieDetailUpdate> = flow {
-        getDetail(apiLineId = apiLineId, id = id)?.let { movie ->
-            emit(MovieDetailUpdate(movie, completedSources = 1, totalSources = 1))
-        }
-    }
-}
+// 契约已迁移到 domain；保留同包别名，确保既有 import 与 public API 不变。
+typealias MultiSourceSearchUpdate = com.tvbox.app.domain.MultiSourceSearchUpdate
+typealias MovieDetailUpdate = com.tvbox.app.domain.MovieDetailUpdate
+typealias MovieRepository = com.tvbox.app.domain.MovieRepository
 
 class DefaultMovieRepository(
     private val apiFactory: (String) -> MacCmsApi = MacCmsNetwork::api,
@@ -261,7 +228,12 @@ class DefaultMovieRepository(
                         completedMovies[line.id] = result
                         trySend(
                             MultiSourceSearchUpdate(
-                                movies = mergeMovies(lines, completedMovies),
+                                movies = mergeSearchMovies(
+                                    lines = lines,
+                                    moviesByLine = completedMovies,
+                                    keyword = keyword,
+                                    healthScore = sourceHealth::score,
+                                ),
                                 completedSources = completedSources,
                                 totalSources = lines.size,
                             ),
@@ -414,6 +386,26 @@ class DefaultMovieRepository(
             .filter { it.isLetterOrDigit() }
     }
 
+    /** 片名/关键词归一化：仅保留字母数字并小写，用于相关度比对。 */
+    private fun normalizeSearchName(title: String): String = normalizeTitle(title)
+
+    /**
+     * 片名与搜索关键词的相关度分（0~100）：
+     * 精确等于 > 前缀匹配 > 包含匹配 > 不相关。
+     * 分数用于「准确率优先」排序，让真正命中关键词的片子排在最前。
+     */
+    private fun scoreNameRelevance(movieName: String, keyword: String): Int {
+        val name = normalizeSearchName(movieName)
+        val query = normalizeSearchName(keyword)
+        if (query.isEmpty()) return 0
+        return when {
+            name == query -> 100
+            name.startsWith(query) -> 70
+            name.contains(query) -> 40
+            else -> 0
+        }
+    }
+
     private suspend fun loadMovies(
         line: ApiLine,
         page: Int,
@@ -461,14 +453,44 @@ class DefaultMovieRepository(
         }
     }
 
-    private fun mergeMovies(lines: List<ApiLine>, moviesByLine: Map<String, List<Movie>>): List<Movie> {
+    /**
+     * 合并多源搜索结果，并按「准确率优先」排序：
+     * 1. 相关度分（关键词对片名：精确 > 前缀 > 包含）降序 —— 这是「准确率优先显示」的核心；
+     * 2. 源健康分（成功次数/失败冷却/平均延迟）降序 —— 高可信源的同类结果排前；
+     * 3. 源优先级（主源在前）升序 —— 作为并列时的稳定兜底。
+     *
+     * 去重时保留相关度分最高的一条，而不是「哪个源先返回就留谁」。
+     */
+    private fun mergeSearchMovies(
+        lines: List<ApiLine>,
+        moviesByLine: Map<String, List<Movie>>,
+        keyword: String,
+        healthScore: (String) -> Long,
+    ): List<Movie> {
         val priorityById = lines.mapIndexed { index, line -> line.id to index }.toMap()
-        return moviesByLine
-            .values
-            .flatten()
-            .sortedBy { priorityById[it.apiLineId] ?: Int.MAX_VALUE }
-            .distinctBy { "${normalizeTitle(it.name)}:${it.year.trim()}" }
+        val query = normalizeTitle(keyword)
+        val bestByKey = HashMap<String, Movie>()
+        val bestScore = HashMap<String, Int>()
+        moviesByLine.values.forEach { list ->
+            list.forEach { movie ->
+                val key = "${normalizeTitle(movie.name)}:${movie.year.trim()}"
+                val relevance = scoreNameRelevance(movie.name, query)
+                if (relevance > (bestScore[key] ?: -1)) {
+                    bestScore[key] = relevance
+                    bestByKey[key] = movie
+                }
+            }
+        }
+        return bestByKey.values
+            .sortedWith(
+                compareByDescending<Movie> { relevanceOf(it, query) }
+                    .thenByDescending { healthScore(it.apiLineId) }
+                    .thenBy { priorityById[it.apiLineId] ?: Int.MAX_VALUE },
+            )
     }
+
+    /** 片名与关键词的相关度分，去重时已记录在 bestScore，排序时复算以保证一致。 */
+    private fun relevanceOf(movie: Movie, query: String): Int = scoreNameRelevance(movie.name, query)
 
     private companion object {
         const val MAX_PARALLEL_SOURCE_REQUESTS = 3

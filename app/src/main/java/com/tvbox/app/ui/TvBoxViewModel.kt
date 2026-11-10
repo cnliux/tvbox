@@ -1305,45 +1305,51 @@ class TvBoxViewModel(
                 )
                     .ifEmpty { listOf(query) }
                     .distinct()
-                var completedBase = 0
                 var totalSources = 0
                 var mergedResults: List<Movie> = emptyList()
-                for (keyword in keywords) {
-                    var keywordCompletedSources = 0
-                    repository.searchProgressively(
-                        apiLineId = _state.value.selectedApiLineId,
-                        page = 1,
-                        keyword = keyword,
-                    ).collect { update ->
-                        // 多源搜索是流式的：关键词已改写或用户已离开搜索页时，
-                        // 旧请求的增量结果不得写回，否则会覆盖新搜索或返回后残留上一次数据。
-                        if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) return@collect
-                        totalSources = maxOf(totalSources, update.totalSources)
-                        keywordCompletedSources = update.completedSources
-                        mergedResults = mergeSearchResults(mergedResults, update.movies)
-                        _state.update {
-                            it.copy(
-                                searchResults = mergedResults,
-                                searchCompletedSources = completedBase + update.completedSources,
-                                searchTotalSources = maxOf(
-                                    totalSources * keywords.size,
-                                    completedBase + update.completedSources,
-                                ),
-                            )
+                // 多候选关键词并行搜索：拼音首字母可能扩展出多个候选中文片名，
+                // 全量并发缩短总延迟；首个（可信度最高）候选一旦产出结果即忽略其余，
+                // 避免低可信候选的结果反过来稀释/延后主结果。
+                val foundResults = BooleanArray(keywords.size)
+                coroutineScope {
+                    keywords.forEachIndexed { index, keyword ->
+                        launch {
+                            repository.searchProgressively(
+                                apiLineId = _state.value.selectedApiLineId,
+                                page = 1,
+                                keyword = keyword,
+                            ).collect { update ->
+                                // 多源搜索是流式的：关键词已改写或用户已离开搜索页时，
+                                // 旧请求的增量结果不得写回，否则会覆盖新搜索或返回后残留上一次数据。
+                                if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) {
+                                    return@collect
+                                }
+                                // 主候选已出结果后，较低可信候选的增量不再并入，避免稀释主结果。
+                                if (foundResults[0] && index > 0) {
+                                    return@collect
+                                }
+                                totalSources = maxOf(totalSources, update.totalSources)
+                                if (update.movies.isNotEmpty() && index == 0) {
+                                    foundResults[0] = true
+                                }
+                                mergedResults = mergeSearchResults(mergedResults, update.movies)
+                                _state.update {
+                                    it.copy(
+                                        searchResults = mergedResults,
+                                        searchCompletedSources = update.completedSources,
+                                        searchTotalSources = maxOf(totalSources, update.completedSources),
+                                    )
+                                }
+                            }
                         }
-                    }
-                    completedBase += totalSources.takeIf { it > 0 } ?: keywordCompletedSources
-                    // 候选片名通常按可信度排序，首个候选已有结果时无需继续扩大搜索。
-                    if (mergedResults.isNotEmpty()) {
-                        break
                     }
                 }
                 if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) return@launch
                 _state.update {
                     it.copy(
                         searchLoading = false,
-                        searchCompletedSources = completedBase,
-                        searchTotalSources = completedBase,
+                        searchCompletedSources = totalSources,
+                        searchTotalSources = totalSources,
                         // 零结果是正常空态，不是请求错误；错误分支只保留网络/解析失败。
                         searchError = null,
                     )
