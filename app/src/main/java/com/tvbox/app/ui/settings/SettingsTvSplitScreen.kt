@@ -827,7 +827,7 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
         TvSettingsRow(
             icon = Icons.Default.Info,
             title = "应用名称",
-            subtitle = "TVBox",
+            subtitle = "聚合视频",
             trailing = {},
         )
         TvDividerInGroup()

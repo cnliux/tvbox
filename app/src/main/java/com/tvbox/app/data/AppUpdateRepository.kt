@@ -217,11 +217,11 @@ class DefaultAppUpdateRepository(
             ?.let { File(it, "updates") } ?: File(appContext.cacheDir, "updates")
         if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建更新下载目录")
         val suffix = if (attemptIndex == 0) "" else "-cdn$attemptIndex"
-        val target = File(directory, "TVBox-${update.versionCode}-${System.currentTimeMillis()}$suffix.apk")
+        val target = File(directory, "JuheVideo-${update.versionCode}-${System.currentTimeMillis()}$suffix.apk")
         val id = try {
             val availableManager = downloadManager ?: throw IOException("系统下载组件不可用")
             availableManager.enqueue(DownloadManager.Request(Uri.parse(candidate.url))
-                .setTitle("TVBox ${update.versionName}")
+                .setTitle("聚合视频 ${update.versionName}")
                 .setDescription("应用更新正在后台下载")
                 .setMimeType("application/vnd.android.package-archive")
                 .addRequestHeader("User-Agent", USER_AGENT)
@@ -372,7 +372,7 @@ class DefaultAppUpdateRepository(
         val source = File(apkPath)
         verifyUpdateApk(source, task.manifest.apkSize, task.manifest.apkSha256)
         val version = task.manifest.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
-        UpdateApkExporter(appContext).save(source, destination, "TVBox-v$version.apk")
+        UpdateApkExporter(appContext).save(source, destination, "JuheVideo-v$version.apk")
     }
 
     private fun readTask(): PendingSystemDownload? {

@@ -258,7 +258,7 @@ class RemoteManageServer(
             <head>
               <meta charset="utf-8" />
               <meta name="viewport" content="width=device-width, initial-scale=1" />
-              <title>TVBox 远程管理</title>
+              <title>聚合视频 远程管理</title>
               <style>
                 body { margin: 0; font-family: sans-serif; background: #10141f; color: #f5f7fb; }
                 main { max-width: 720px; margin: 0 auto; padding: 22px 16px 48px; }
@@ -292,7 +292,7 @@ class RemoteManageServer(
             </head>
             <body>
               <main>
-                <h1>TVBox 远程管理</h1>
+                <h1>聚合视频 远程管理</h1>
                 <p>同一局域网内直接访问，无需 token。修改会立即同步到电视并保存。</p>
                 ${message?.takeIf { it.isNotBlank() }?.let { "<div class=\"message\">${it.htmlEscape()}</div>" }.orEmpty()}
 
@@ -368,7 +368,7 @@ class RemoteManageServer(
                   }}
                 </section>
 
-                <footer>TVBox 局域网远程管理 · 无需 token</footer>
+                <footer>聚合视频 局域网远程管理 · 无需 token</footer>
               </main>
             </body>
             </html>

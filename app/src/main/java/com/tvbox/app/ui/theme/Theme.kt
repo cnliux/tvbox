@@ -165,19 +165,22 @@ private fun colorScheme(tokens: TvColorTokens): ColorScheme = darkColorScheme(
 )
 
 private val TvTypography = Typography(
-    displaySmall = TextStyle(fontSize = 44.sp, fontWeight = FontWeight.Medium),
-    headlineLarge = TextStyle(fontSize = 34.sp, fontWeight = FontWeight.Medium),
-    headlineMedium = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Medium),
-    headlineSmall = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Medium),
-    titleLarge = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Medium),
-    titleMedium = TextStyle(fontSize = 18.sp, fontWeight = FontWeight.Medium),
-    titleSmall = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 18.sp),
-    bodyMedium = TextStyle(fontSize = 16.sp),
-    bodySmall = TextStyle(fontSize = 14.sp),
-    labelLarge = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 14.sp),
-    labelSmall = TextStyle(fontSize = 12.sp),
+    // 每个样式必须显式指定 lineHeight：Typography() 的具名参数是整体替换而非合并默认值，
+    // 只写 fontSize 会让 lineHeight 保持 Unspecified——下游一旦做 lineHeight.toDp() 等换算
+    // 就会抛 IllegalStateException（v1.3.60 启动崩溃的根因）。行高取保守的 ~1.15-1.25 倍字号。
+    displaySmall = TextStyle(fontSize = 44.sp, lineHeight = 52.sp, fontWeight = FontWeight.Medium),
+    headlineLarge = TextStyle(fontSize = 34.sp, lineHeight = 42.sp, fontWeight = FontWeight.Medium),
+    headlineMedium = TextStyle(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Medium),
+    headlineSmall = TextStyle(fontSize = 24.sp, lineHeight = 32.sp, fontWeight = FontWeight.Medium),
+    titleLarge = TextStyle(fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.Medium),
+    titleMedium = TextStyle(fontSize = 18.sp, lineHeight = 24.sp, fontWeight = FontWeight.Medium),
+    titleSmall = TextStyle(fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
+    bodyLarge = TextStyle(fontSize = 18.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 16.sp, lineHeight = 22.sp),
+    bodySmall = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+    labelLarge = TextStyle(fontSize = 16.sp, lineHeight = 20.sp, fontWeight = FontWeight.Medium),
+    labelMedium = TextStyle(fontSize = 14.sp, lineHeight = 18.sp),
+    labelSmall = TextStyle(fontSize = 12.sp, lineHeight = 16.sp),
 )
 
 private fun Typography.scaled(multiplier: Float): Typography = copy(
@@ -201,6 +204,7 @@ private fun Typography.scaled(multiplier: Float): Typography = copy(
 internal fun TextStyle.scaled(multiplier: Float): TextStyle = copy(
     fontSize = fontSize.scaled(multiplier),
     letterSpacing = letterSpacing.scaled(multiplier),
+    lineHeight = lineHeight.scaled(multiplier),
 )
 
 private fun TextUnit.scaled(multiplier: Float): TextUnit =

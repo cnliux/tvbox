@@ -73,7 +73,7 @@ jobs:
       - name: Stage release artifacts
         run: |
           VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
-          APK_NAME="tvbox-v${VERSION_NAME}.apk"
+          APK_NAME="juhe-video-v${VERSION_NAME}.apk"
           mkdir -p dist
           mv app/build/outputs/apk/release/${APK_NAME} dist/${APK_NAME}
           # 只保留带版本号的 APK，删除任何无版本号的构建产物。
@@ -143,9 +143,9 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          name: TVBox ${{ github.ref_name }}
+          name: 聚合视频 ${{ github.ref_name }}
           body: |
-            TVBox 手机/电视合集版 ${{ github.ref_name }}。
+            聚合视频 手机/电视合集版 ${{ github.ref_name }}。
 
             - 不内置任何点播视频接口与电视直播源，视频源与直播源均需自行导入
             - 平台直播站点（斗鱼/虎牙等）可管控

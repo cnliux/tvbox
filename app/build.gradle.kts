@@ -49,8 +49,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.3.61"
-val TVBOX_VERSION_CODE = 10361
+val TVBOX_VERSION_NAME = "1.0.0"
+val TVBOX_VERSION_CODE = 20000
 
 android {
     namespace = "com.tvbox.app"
@@ -183,13 +183,13 @@ android {
     }
 }
 
-// Release APK 统一命名为带版本号的 tvbox-v<versionName>.apk，避免无版本号的 app-release.apk。
+// Release APK 统一命名为带版本号的 juhe-video-v<versionName>.apk，避免无版本号的 app-release.apk。
 // 使用 AGP 8+ 的 androidComponents API（applicationVariants 在新版 AGP 的 Kotlin DSL 中已不可用）。
 androidComponents {
     onVariants { variant ->
         if (variant.buildType == "release") {
             variant.outputs.forEach { output ->
-                output.outputFileName.set("tvbox-v${TVBOX_VERSION_NAME}.apk")
+                output.outputFileName.set("juhe-video-v${TVBOX_VERSION_NAME}.apk")
             }
         }
     }

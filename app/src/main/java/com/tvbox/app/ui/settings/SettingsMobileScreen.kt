@@ -199,7 +199,7 @@ private fun SettingsMobileLanding(
             item { SettingsCategoryGrid(onCategoryClick = onCategoryClick) }
             item {
                 Text(
-                    text = "TVBox v${BuildConfig.VERSION_NAME} · GPLv3 · 仅供技术研究使用",
+                    text = "聚合视频 v${BuildConfig.VERSION_NAME} · GPLv3 · 仅供技术研究使用",
                     color = TvColors.TextTertiary,
                     style = MaterialTheme.typography.labelSmall,
                     modifier = Modifier.fillMaxWidth(),
@@ -950,7 +950,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
 @Composable
 private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     SettingsGroup {
-        InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "TVBox")
+        InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "聚合视频")
         DividerInGroup()
         InfoRow(icon = Icons.Default.Info, title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME}")
         DividerInGroup()

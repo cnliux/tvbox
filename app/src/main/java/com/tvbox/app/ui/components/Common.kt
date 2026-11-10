@@ -54,12 +54,16 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -477,6 +481,16 @@ private const val MediaCardAspectRatioMobile = 0.7f
 private val MediaCardScrim = Color(0xCC080B0B)
 
 /**
+ * 取样式可用于布局换算的行高：优先用显式 lineHeight；未指定时按字号推导 ~1.25 倍，
+ * 保证结果是合法的 Sp（TextUnit.toDp() 只接受 Sp，Unspecified 会直接抛异常导致启动崩溃）。
+ */
+private fun TextStyle.effectiveLineHeight(): TextUnit = when {
+    lineHeight.isSpecified -> lineHeight
+    fontSize.isSpecified -> fontSize * 1.25f
+    else -> TextUnit(16f, TextUnitType.Sp)
+}
+
+/**
  * 点播海报卡与历史卡的共用底座。
  *
  * 统一圆角、封面宽高比与裁切、标题/副标题字号与间距、角标样式、焦点缩放与描边。
@@ -581,13 +595,14 @@ fun MediaCard(
         // 窄卡（手机网格 / 续看卡）文字区固定高度：标题与副标题各按「行高 × 最大行数」预留空间，
         // 这样无论片名是 1 行还是 2 行，整卡总高都一致，网格同行卡片不再因文字长短而参差变形。
         // 高度随字号设置（typography 已含缩放）用 density 换算，避免在「超大」字号下截断。
+        // 防御：lineHeight 未指定（Unspecified）时禁止进入 toDp()——TextUnit.toDp() 对非 Sp
+        // 类型会直接抛 IllegalStateException（v1.3.60 启动崩溃根因），必须先回退到字号推导行高。
         val density = LocalDensity.current
-        // Material3 命名样式（titleSmall / labelMedium / bodySmall）均显式指定了 lineHeight，直接取用即可。
         val titleTextHeight = with(density) {
-            (cardTitleStyle.lineHeight * cardTitleLines).toDp()
+            (cardTitleStyle.effectiveLineHeight() * cardTitleLines).toDp()
         }
         val subtitleTextHeight = with(density) {
-            (cardSubtitleStyle.lineHeight * cardSubtitleLines).toDp()
+            (cardSubtitleStyle.effectiveLineHeight() * cardSubtitleLines).toDp()
         }
         val fixTextBlock = touchMode && narrowCard
         Column(modifier = Modifier.fillMaxWidth()) {

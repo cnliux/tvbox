@@ -1,3 +1,14 @@
+## v1.0.0 - 2026-11-10（全新版本起点，应用更名为「聚合视频」）
+
+紧急修复 v1.3.60/v1.3.61 启动崩溃 + 品牌更名为聚合视频：
+
+- **修复启动崩溃（根因不在删除 Hero，Hero 删除本身干净无残留）**：v1.3.60 给 `MediaCard` 窄卡文字区加固定高度时，对 typography 的 `lineHeight` 直接 `toDp()`；而自定义 `TvTypography` 只设置了 `fontSize` 未设 `lineHeight`（M3 Typography 具名参数是整体替换，不是合并默认值），`lineHeight` 为 `Unspecified`，`TextUnit.toDp()` 对非 Sp 类型直接抛 `IllegalStateException`——手机首页渲染第一张窄卡即崩溃，表现为「APK 无法启动」。单测不渲染 Compose 故未拦截。
+  - `Theme.kt`：全部 13 个 typography 样式显式补齐 `lineHeight`（保守 ~1.15-1.25 倍字号），字号缩放 `scaled()` 同步缩放 lineHeight。
+  - `Common.kt`：新增 `effectiveLineHeight()` 防御回退（lineHeight 未指定时按字号 ×1.25 推导），保证进入 `toDp()` 的永远是合法 Sp。
+- **更名为「聚合视频」**：启动器名称（`app_name`）、手机/TV 设置「关于」页应用名、OTA 更新通知标题、远程管理页标题、GitHub Release 名称与描述、Release APK 文件名（`juhe-video-v*.apk`）、README 全部更名。包名 `com.tvbox.app` 与数据结构不变，老版本可直接 OTA 升级（`versionCode=20000` > 10361）。
+- 版本号重置为全新起点 `1.0.0`（versionCode 20000），删除此前全部历史 tag 与 Release。
+- 不含任何 AI / 智能推荐 / 大模型能力。
+
 ## v1.3.61 - 2026-11-10
 
 虎牙 FLV 代理重连关键帧对齐（修复“重复画面”）：
