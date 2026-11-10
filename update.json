@@ -1,14 +1,14 @@
 {
-  "versionCode": 10355,
-  "versionName": "1.3.55",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.55/tvbox-v1.3.55.apk",
-  "apkSha256": "9623effb89a0be16dde49b5106088aabd4667755ccf3ae2d30ce3e800f633ca0",
+  "versionCode": 10356,
+  "versionName": "1.3.56",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.3.56/tvbox-v1.3.56.apk",
+  "apkSha256": "dff1bc0fbc188cdd6ab530864b88df8ac4dada67db4aac58a607d28dc376564b",
   "apkSize": 19919640,
   "force": false,
   "changelog": [],
   "apkMirrors": [
-    "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.55/tvbox-v1.3.55.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.3.55/tvbox-v1.3.55.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.3.55/tvbox-v1.3.55.apk"
+    "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.56/tvbox-v1.3.56.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.3.56/tvbox-v1.3.56.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.3.56/tvbox-v1.3.56.apk"
   ]
 }
