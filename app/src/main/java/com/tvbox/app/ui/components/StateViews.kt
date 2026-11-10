@@ -51,24 +51,18 @@ fun SkeletonGrid(
     }
 }
 
+/**
+ * 可重试错误与引导空态直接委托给全站既有的 `ErrorState` / `EmptyState`：
+ * 两套视觉不再并行维护，TV 焦点态、动效与字号缩放都沿用既有实现。
+ * 骨架屏（`SkeletonGrid`）是本批新增能力，保持自绘。
+ */
 @Composable
 fun RetryableError(
     message: String,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            text = message,
-            style = MaterialTheme.typography.bodyLarge,
-            textAlign = TextAlign.Center,
-        )
-        Button(onClick = onRetry) { Text("重试") }
-    }
+    ErrorState(message = message, onRetry = onRetry, modifier = modifier)
 }
 
 @Composable
@@ -79,15 +73,11 @@ fun GuidedEmptyState(
     onAction: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier.padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(text = title, style = MaterialTheme.typography.titleLarge, textAlign = TextAlign.Center)
-        Text(text = hint, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-        if (actionLabel != null && onAction != null) {
-            Button(onClick = onAction) { Text(actionLabel) }
-        }
-    }
+    EmptyState(
+        title = title,
+        subtitle = hint,
+        actionLabel = actionLabel,
+        onAction = onAction,
+        modifier = modifier,
+    )
 }

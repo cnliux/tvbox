@@ -1,3 +1,12 @@
+## v1.3.57 - 2026-11-10
+
+- 组件统一：`RetryableError` / `GuidedEmptyState` 改为委托全站既有 `ErrorState` / `EmptyState`，消除两套并行三态视觉；首页影片列表加载态改用骨架屏、错误态改用统一可重试组件；影院主题**手机竖屏**接入 `CinemaHeroBanner`，电视端仍用原 `FeaturedMovieHero`。
+- 真实接入：设置页当前值摘要（12 条）由 `SettingsSummaryFactory` 从本机配置装配并在 ViewModel 暴露；清空历史二次确认文案统一由 domain 给出；平台直播进入房间时写入「上次观看」本机记忆并暴露标签与在播角标 TTL；OTA 新增 `cdnStatusRows()` 接口与实现，ViewModel 暴露线路状态行；启动阶段时间线打点 API 落地（只记录，不改变启动任务顺序）。
+- 去重与纠偏：发现 `DefaultMovieRepository.prioritizedLines` 已有等价的源健康度冷却过滤，因此没有再叠加第二套 fan-out 门控，避免规则漂移；`StateViews` 与既有三态组件改为委托而非并存。
+- 质量护栏：新增 `tools/verify_guardrails.sh`，19 项静态核对（遥控器键位、设备模式、三种源导入与扫码、凭据自检、update.json 既有字段、可选 `apkMirrors`、Release 仅 arm64、gomobile 16KB 页对齐链接参数）全部通过。
+- 回归：新增 16 例 JVM 单测，`testDebugUnitTest` 与 `assembleDebug` 通过，共 70 个测试类 / 463 例全绿（0 失败 0 错误）。本版收口第 251–300 轮，台账 70–300 共 231 轮全部完成。
+- 真机待走查：手机竖屏 Hero 占位与焦点、骨架屏高度、平台直播「一键回到上次观看」入口、设置页 CDN 状态行与启动时间线的 UI 展示，详见 `docs/质量护栏核对.md`。
+
 ## v1.3.56 - 2026-11-10
 
 - 真实接入（本版重点）：把 131 轮收口时仍为零引用的状态层挂进调用点——首页分页判定复用 `canLoadMoreHomeFeed`（服务端未给总页数时不再锁死列表）；历史续播与进度回写按片长钳制（避免 seek 贴片尾触发自动下一集）；搜索两处进度文案收敛为 domain 纯函数并钳制「已完成数 ≤ 总数」；播放错误提示在错误码文案后追加可操作的自愈建议；源管理空态改用统一引导空态组件。

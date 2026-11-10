@@ -16,7 +16,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import com.tvbox.app.domain.AppUpdate
+import com.tvbox.app.domain.CdnStatusRow
 import com.tvbox.app.domain.OtaCdnAttempt
+import com.tvbox.app.domain.buildCdnStatusRows
 import com.tvbox.app.domain.OtaCdnCandidate
 import com.tvbox.app.domain.OtaCdnFailureKind
 import com.tvbox.app.domain.OtaCdnHealth
@@ -56,6 +58,9 @@ interface AppUpdateRepository {
     /** 用户放弃保存安装包时撤销“仅手动安装”标记，恢复后续自动安装行为。 */
     suspend fun clearManualInstall(apkPath: String) {}
     suspend fun exportUpdateApk(apkPath: String, destination: Uri?): String = throw IOException("暂不支持保存安装包")
+
+    /** 设置页 OTA 线路状态行；默认实现返回空，不影响未接入 OTA 的占位仓库。 */
+    fun cdnStatusRows(nowMs: Long = System.currentTimeMillis()): List<CdnStatusRow> = emptyList()
 }
 
 class DefaultAppUpdateRepository(
@@ -408,6 +413,18 @@ class DefaultAppUpdateRepository(
     private fun recordCdnFailure(id: String) {
         val current = readCdnHealth()[id] ?: OtaCdnHealth()
         writeCdnHealth(id, current.afterFailure(System.currentTimeMillis()))
+    }
+
+    /** 设置页展示线路名、最近成功耗时与手动选择标记，不暴露完整 URL。 */
+    override fun cdnStatusRows(nowMs: Long): List<CdnStatusRow> {
+        val health = readCdnHealth()
+        val preference = decodeCdnPreference(cdnPrefs.getString("preference", null))
+        return buildCdnStatusRows(
+            candidates = rankOtaCdnCandidates(buildOtaManifestCandidates(), health, nowMs),
+            health = health,
+            preference = preference,
+            nowMs = nowMs,
+        )
     }
 
     /** 健康度排序 + 设置页的手动线路选择（默认 Auto，行为与排序结果一致）。 */

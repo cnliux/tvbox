@@ -103,6 +103,8 @@ import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.TvFontScale
+import com.tvbox.app.domain.DangerousAction
+import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
@@ -114,6 +116,9 @@ import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.GuidedEmptyState
+import com.tvbox.app.ui.components.CinemaHeroBanner
+import com.tvbox.app.ui.components.RetryableError
+import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
@@ -497,13 +502,25 @@ private fun HomeScreen(
                     )
                     if (cinemaTheme && !state.isShowingDoubanHot) {
                         state.movies.firstOrNull()?.let { featuredMovie ->
-                            FeaturedMovieHero(
-                                movie = featuredMovie,
-                                onOpen = { actions.openDetail(featuredMovie.id) },
-                                // 大字号下「今日热播 + 标题 + 信息 + 按钮」总高会超过 190dp 被裁切，
-                                // 上限随字体缩放同比放宽（正常 190 / 大 224 / 超大 258）。
-                                maxHeight = 190.dp * state.appSettings.fontScale.typographyScale,
-                            )
+                            if (state.effectiveDeviceMode == DeviceMode.Mobile) {
+                                // 手机竖屏用统一 Hero 组件的竖屏布局；两个按钮顺序固定，遥控器/触屏落点一致。
+                                CinemaHeroBanner(
+                                    title = featuredMovie.name,
+                                    rating = "",
+                                    description = featuredMovie.description,
+                                    onPlay = { actions.openDetail(featuredMovie.id) },
+                                    onDetail = { actions.openDetail(featuredMovie.id) },
+                                    portrait = true,
+                                )
+                            } else {
+                                FeaturedMovieHero(
+                                    movie = featuredMovie,
+                                    onOpen = { actions.openDetail(featuredMovie.id) },
+                                    // 大字号下「今日热播 + 标题 + 信息 + 按钮」总高会超过 190dp 被裁切，
+                                    // 上限随字体缩放同比放宽（正常 190 / 大 224 / 超大 258）。
+                                    maxHeight = 190.dp * state.appSettings.fontScale.typographyScale,
+                                )
+                            }
                             Spacer(modifier = Modifier.height(TvDimens.SectionGap))
                         }
                     }
@@ -663,7 +680,8 @@ private fun HistoryScreen(
             AlertDialog(
                 onDismissRequest = { confirmClearHistory = false },
                 title = { Text("清空历史") },
-                text = { Text("确定要清空全部观看历史吗？清空后无法从历史页继续播放。") },
+                // 危险操作文案统一由 domain 提供，明确「无法恢复」的具体后果。
+                text = { Text(dangerousActionConfirmation(DangerousAction.ClearHistory)) },
                 confirmButton = {
                     Button(
                         onClick = {
@@ -1497,9 +1515,9 @@ private fun MobileHomeFeed(
         }
         // 影片列表
         when {
-            state.homeLoading -> LoadingState(text = "正在加载影片", modifier = Modifier.weight(1f))
-            state.homeError != null -> ErrorState(
-                message = state.homeError,
+            state.homeLoading -> SkeletonGrid(modifier = Modifier.weight(1f).fillMaxWidth())
+            state.homeError != null -> RetryableError(
+                message = state.homeError.orEmpty(),
                 onRetry = { actions.refreshHome(forceRefresh = true) },
                 modifier = Modifier.weight(1f),
             )

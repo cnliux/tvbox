@@ -3,6 +3,7 @@ package com.tvbox.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
+import com.tvbox.app.data.PlatformLiveMemoryStore
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.AppUpdateRepository
 import com.tvbox.app.data.DefaultMovieRepository
@@ -33,6 +34,14 @@ import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
+import com.tvbox.app.domain.CdnStatusRow
+import com.tvbox.app.domain.SettingsPageSummary
+import com.tvbox.app.domain.buildSettingsPageSummary
+import com.tvbox.app.domain.settingsEntriesFrom
+import com.tvbox.app.domain.StartupPhase
+import com.tvbox.app.domain.StartupTimeline
+import com.tvbox.app.domain.lastWatchedLabel
+import com.tvbox.app.domain.phaseDurations
 import com.tvbox.app.domain.HomeFeedPageState
 import com.tvbox.app.domain.canLoadMoreHomeFeed
 import com.tvbox.app.domain.resolveResumePosition
@@ -325,9 +334,45 @@ class TvBoxViewModel(
     private val liveFavoritesRepository: LiveFavoritesRepository? = null,
     /** 直播线路按域名的成功/失败评分；用于同类源较多时优先选"最近确实能播"的域名。 */
     private val liveDomainScores: LiveDomainScoreStore? = null,
+    /** 平台直播「上次观看」本机记忆；null 时按 Application Context 懒创建，便于 JVM 单测。 */
+    private val platformLiveMemoryStore: PlatformLiveMemoryStore? = null,
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvBoxUiState())
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
+
+    /** 设置页当前值摘要（第 261–270 轮）：UI 可直接渲染，无需进入子页。 */
+    val settingsSummary: SettingsPageSummary
+        get() = buildSettingsPageSummary(settingsEntriesFrom(_state.value.appSettings))
+
+    /** 平台直播「上次观看」标签（第 271–280 轮）。 */
+    val lastWatchedPlatformLabel: String
+        get() = lastWatchedLabel(runCatching { platformLiveMemory.load() }.getOrNull())
+
+    /** 进入房间时记住房间标识；站点/分类由调用方补齐，避免依赖易变的 UI 模型字段。 */
+    fun rememberPlatformLiveMemory(roomId: String, site: String = "", categoryId: String = "") {
+        runCatching { platformLiveMemory.save(site, categoryId, roomId) }
+    }
+
+    /** OTA 线路状态行（第 281–290 轮）：只含线路名与计数，不含完整 URL。 */
+    fun cdnStatusRows(nowMs: Long = System.currentTimeMillis()): List<CdnStatusRow> =
+        appUpdateRepository.cdnStatusRows(nowMs)
+
+    private var startupTimeline = StartupTimeline()
+
+    /** 启动阶段打点（第 281–290 轮）：只记录时间线，不改变任何启动任务顺序。 */
+    fun recordStartupPhase(phase: StartupPhase, atMs: Long = System.currentTimeMillis()) {
+        startupTimeline = startupTimeline.record(phase, atMs)
+    }
+
+    val startupTotalDurationMs: Long?
+        get() = com.tvbox.app.domain.startupTotalMs(startupTimeline)
+
+    val startupPhaseDurationsMs: Map<StartupPhase, Long>
+        get() = startupTimeline.phaseDurations()
+
+    private val platformLiveMemory by lazy {
+        platformLiveMemoryStore ?: PlatformLiveMemoryStore(appContext)
+    }
 
     private var homeJob: Job? = null
     private var categoriesJob: Job? = null
@@ -393,6 +438,7 @@ class TvBoxViewModel(
     private val playbackAgent = PlaybackAgent()
 
     init {
+        recordStartupPhase(StartupPhase.ApplicationInit)
         restorePendingUpdateDownload()
         val defaultApiLineId = repository.apiLines.firstOrNull()?.id.orEmpty()
         _state.update {
@@ -2245,6 +2291,7 @@ class TvBoxViewModel(
     fun openPlatformLiveRoom(room: PlatformLiveRoom) {
         val index = _state.value.platformLive.rooms.indexOfFirst { it.id == room.id }
         if (index < 0) return
+        rememberPlatformLiveMemory(roomId = room.id)
         _state.update {
             it.copy(
                 screen = TvScreen.PlatformLive,
