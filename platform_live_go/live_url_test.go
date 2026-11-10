@@ -72,7 +72,7 @@ func TestExtractHTMLRedirect(t *testing.T) {
 }
 
 func TestResolveLinkCanonicalMissevanLink(t *testing.T) {
-	service := NewService(2, 0, nil)
+	service := NewService(2, 0, nil, "")
 	target, err := service.ResolveLink("复制这条信息 https://fm.missevan.com/live/123456 打开猫耳", "")
 	if err != nil {
 		t.Fatalf("ResolveLink error: %v", err)
@@ -86,7 +86,7 @@ func TestResolveLinkCanonicalMissevanLink(t *testing.T) {
 }
 
 func TestResolveLinkShortLinkUsesExpandedURL(t *testing.T) {
-	service := NewService(2, 0, nil)
+	service := NewService(2, 0, nil, "")
 	expanded := ""
 	target, err := service.resolveLink("https://b23.tv/abcdef", "", func(raw string) (string, error) {
 		expanded = raw
@@ -104,7 +104,7 @@ func TestResolveLinkShortLinkUsesExpandedURL(t *testing.T) {
 }
 
 func TestResolveLinkShortLinkRejectsUnsupportedRedirect(t *testing.T) {
-	service := NewService(2, 0, nil)
+	service := NewService(2, 0, nil, "")
 	_, err := service.resolveLink("https://b23.tv/abcdef", "", func(raw string) (string, error) {
 		return "http://127.0.0.1/admin", nil
 	})
@@ -114,7 +114,7 @@ func TestResolveLinkShortLinkRejectsUnsupportedRedirect(t *testing.T) {
 }
 
 func TestResolveLinkWithSiteHintAcceptsBareRoomID(t *testing.T) {
-	service := NewService(2, 0, nil)
+	service := NewService(2, 0, nil, "")
 	target, err := service.resolveLink(" 36252 ", "douyu", nil)
 	if err != nil {
 		t.Fatalf("resolveLink error: %v", err)
@@ -125,7 +125,7 @@ func TestResolveLinkWithSiteHintAcceptsBareRoomID(t *testing.T) {
 }
 
 func TestResolveLinkWithoutHintRejectsBareRoomID(t *testing.T) {
-	service := NewService(2, 0, nil)
+	service := NewService(2, 0, nil, "")
 	if _, err := service.resolveLink("36252", "", nil); err == nil {
 		t.Fatalf("expected ambiguous bare room id error")
 	}

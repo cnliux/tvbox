@@ -17,7 +17,7 @@ func TestLiveHuyaProxyContinuity(t *testing.T) {
 		t.Skip("未设置 TVBOX_LIVE_PROXY_E2E，跳过真机联网验证")
 	}
 	duration := 6 * time.Minute
-	service := NewService(8, 0, nil)
+	service := NewService(8, 0, nil, "")
 	proxy, err := newFlvProxy(service, "huya", "30682679", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)

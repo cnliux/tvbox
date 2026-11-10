@@ -31,17 +31,38 @@ object PlatformLiveGoBridge {
             try {
                 val signScript = appContext.assets.open(SIGN_ASSET_NAME)
                     .use { stream -> stream.readBytes().toString(Charsets.UTF_8) }
-                    .removePrefix("﻿")
+                    .removePrefix("\uFEFF")
                 val catalogJson = appContext.assets.open(CATALOG_ASSET_NAME)
                     .use { stream -> stream.readBytes().toString(Charsets.UTF_8) }
-                    .removePrefix("﻿")
-                platformlive.Platformlive.init(signScript, catalogJson, CACHE_SECONDS.toLong(), REQUEST_TIMEOUT_SECONDS.toLong())
+                    .removePrefix("\uFEFF")
+                // 根据设备类型选择 clientType：电视/盒子用 tv UA 避免风控，手机用 mobile，PC 浏览器模式用 web
+                val clientType = resolveClientType(appContext)
+                platformlive.Platformlive.init(signScript, catalogJson, CACHE_SECONDS.toLong(), REQUEST_TIMEOUT_SECONDS.toLong(), clientType)
             } catch (error: Throwable) {
                 throw IOException(bridgeErrorMessage(error), error)
             }
             started.set(true)
         }
     }
+
+    /**
+     * 检测运行设备类型并返回对应的 clientType 字符串。
+     * 判定逻辑与 AppSettings.DeviceMode.detectFromSystem 保持一致：
+     * Leanback/无触摸大屏 → tv；有触摸 + 小屏 → mobile；其余默认 web。
+     */
+    private fun resolveClientType(context: Context): String = runCatching {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        val isLeanback = uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
+            context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+        val hasTouch = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN)
+        val screenWidthDp = context.resources.configuration.screenWidthDp
+        when {
+            isLeanback -> "tv"
+            !hasTouch || screenWidthDp >= 720 -> "tv"
+            screenWidthDp < 600 -> "mobile"
+            else -> "web"
+        }
+    }.getOrElse { "web" }
 
     private fun bridgeErrorMessage(error: Throwable): String {
         val raw = error.message?.trim().orEmpty()

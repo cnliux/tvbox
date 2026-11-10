@@ -49,7 +49,8 @@ var (
 //
 // signScript 为 douyin_sign.js 原始文本（包含 Node 包装段也可以，内部会裁剪）；
 // catalogJSON 为频道目录 JSON 数组文本；缓存与超时单位为秒。
-func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSeconds int) error {
+// clientType 为运行端类型："web"=PC/桌面, "mobile"=手机, "tv"=Android TV；空值默认为 "web"。
+func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSeconds int, clientType string) error {
 	bridgeLock.Lock()
 	defer bridgeLock.Unlock()
 	if bridgeHasInit {
@@ -62,7 +63,7 @@ func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSecond
 			return "", newError("频道目录不存在")
 		}
 		return catalogJSON, nil
-	})
+	}, clientType)
 	if _, err := service.Catalog(); err != nil {
 		// Python 侧 catalog 解析失败会在 channels_json 调用时抛错；
 		// 这里同样延迟到调用期触发，但记录解析结果状态。

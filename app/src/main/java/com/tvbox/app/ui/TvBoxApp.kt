@@ -2002,7 +2002,7 @@ private fun LiveSourceSetting(
                             SettingsActionButton(
                                 text = "设为默认",
                                 onClick = {
-                                    actions.setLiveSourceDefaultIndex(idx)
+                                    actions.setLiveSourceDefaultIndexFromDraft(urlsText, idx)
                                     defaultIndex = idx
                                 },
                             )

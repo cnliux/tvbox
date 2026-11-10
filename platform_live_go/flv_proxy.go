@@ -22,6 +22,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,13 @@ const (
 	flvTagTypeVideo = 9
 	// FLV 视频标签：codecID = data[0] & 0x0f，7 表示 AVC(H.264)。
 	flvVideoCodecAVC = 7
+	// 续流时判断「上游重连带回了旧缓冲」的阈值：首关键帧比上一段末尾早于此值
+	// 则认为上游有 N 秒回退，进入 skipReplay 模式丢弃旧帧。
+	// 虎牙实测回退量通常在 0~2s，设为 2000ms 可覆盖绝大多数回放场景；
+	// 超过此值的超大回退说明 CDN 问题严重，应放弃整段重新解析。
+	flvProxyBacktrackThresholdMs = int64(2000)
+	// 发生大回溯后，最多等待 N ms 的新内容仍未出现则放弃本段。
+	flvProxySkipAbortMs = int64(8000)
 )
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
@@ -134,6 +142,10 @@ type flvProxy struct {
 	bytesWritten      int64
 	lastSessionMs     int64
 	lastError         string
+	// 诊断字段（仅 TVBOX_LIVE_PROXY_DIAG=1 时输出）：每次重连的回溯量列表
+	diagEnabled bool
+	diagLastTs  []int64 // 最近每段起始的 lastTs（重连前）
+	diagSrcTs   []int64 // 对应段的源首帧 sourceTs
 }
 
 func newFlvProxy(service *Service, site, roomID string, candidateIndex int, initialURL string, initialHeaders map[string]string) (*flvProxy, error) {
@@ -185,6 +197,7 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 	go func() {
 		_ = proxy.server.Serve(listener)
 	}()
+	proxy.diagEnabled = os.Getenv("TVBOX_LIVE_PROXY_DIAG") != ""
 	go proxy.run()
 	return proxy, nil
 }
@@ -393,6 +406,11 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 
 	var offset int64
 	var haveBase bool
+	// skipReplay 模式：上游首关键帧比上一段末尾早超过阈值，认定 CDN 带回了旧缓冲，
+	// 进入此模式后丢弃 adjustedTs < skipUntilTs 的帧直到追上直播线。
+	var skipReplay    bool
+	var skipUntilTs   int64
+	var skipAbortTime time.Time
 	for {
 		tagHeader := make([]byte, flvProxyTagHeaderSize)
 		if _, err := io.ReadFull(reader, tagHeader); err != nil {
@@ -416,11 +434,13 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		}
 
 		tagType := tagHeader[0] & 0x1f
+		switchedFromAwait := false
 		if awaitKeyframe && tagType == flvTagTypeVideo {
 			if isAvcSequenceHeader(data) {
 				// AVC 序列头（SPS/PPS）解码必需，必须保留，但仍等待关键帧。
 			} else if isVideoKeyframe(data) {
 				awaitKeyframe = false
+				switchedFromAwait = true // 刚进入关键帧，立刻检查是否回溯
 			} else {
 				// 关键帧到达前的非关键视频帧：无法独立解码，丢弃，避免花屏/重复画面。
 				continue
@@ -429,15 +449,49 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 
 		adjusted := sourceTs
 		if !haveBase {
-			// 偏移锚定到「首个被转发的帧」：前导被丢弃的非关键帧不会污染基准。
+			prefixLastTs := p.lastTs // 捕获 lastTs（spliceBase 不写 tsMu，此处安全读锁内值）
 			adjusted = p.spliceBase(sourceTs)
 			offset = adjusted - sourceTs
 			haveBase = true
+			// 诊断日志
+			if p.diagEnabled {
+				backtrackMs := prefixLastTs - sourceTs
+				p.statsMu.Lock()
+				p.diagLastTs = append(p.diagLastTs, prefixLastTs)
+				p.diagSrcTs = append(p.diagSrcTs, sourceTs)
+				if len(p.diagLastTs) > 20 {
+					p.diagLastTs = p.diagLastTs[len(p.diagLastTs)-20:]
+					p.diagSrcTs = p.diagSrcTs[len(p.diagSrcTs)-20:]
+				}
+				p.statsMu.Unlock()
+				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d backtrackMs=%d\n",
+					p.upstreamSessions, prefixLastTs, sourceTs, backtrackMs)
+			}
+			// 首次关键帧出现后判断：是否 CDN 带回旧缓冲？
+			if switchedFromAwait && prefixLastTs > 0 && sourceTs < prefixLastTs-flvProxyBacktrackThresholdMs {
+				skipReplay = true
+				skipUntilTs = prefixLastTs
+				skipAbortTime = time.Now().Add(time.Duration(flvProxySkipAbortMs) * time.Millisecond)
+				fmt.Printf("[HUYA-SKIP] session=%d backtrack=%dms skipUntil=%d abortIn=%dms\n",
+					p.upstreamSessions, prefixLastTs-sourceTs, prefixLastTs, flvProxySkipAbortMs)
+			}
 		} else {
 			adjusted = sourceTs + offset
 		}
+		// 跳过回放：adjustedTs 未追上 prefixLastTs 说明还在回放旧内容
+		if skipReplay {
+			if adjusted < skipUntilTs {
+				continue // 丢弃旧缓冲帧
+			}
+			if time.Since(skipAbortTime) > 0 {
+				fmt.Printf("[HUYA-SKIP] session=%d 超时%dms无新内容，放弃本段\n", p.upstreamSessions, flvProxySkipAbortMs)
+				return newError("上游回溯回放过长，放弃本段重新解析")
+			}
+			// 刚越过阈值打印一次确认切回正常
+			fmt.Printf("[HUYA-SKIP] session=%d 切回直播线 adjusted=%d skipUntil=%d\n",
+				p.upstreamSessions, adjusted, skipUntilTs)
+		}
 		if !p.acceptTs(adjusted) {
-			// 时间戳回退（重连瞬间重复数据或上游非单调）：丢弃该帧。
 			continue
 		}
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
@@ -584,6 +638,17 @@ func (p *flvProxy) statsJSON() string {
 		"bytesWritten":      p.bytesWritten,
 		"lastSessionMs":     p.lastSessionMs,
 		"lastError":         p.lastError,
+	}
+	if p.diagEnabled && len(p.diagLastTs) > 0 {
+		// 汇总最近20次重连的回溯量分布
+		type entry struct{ lastTs, srcTs int64 }
+		var entries []entry
+		n := len(p.diagLastTs)
+		for i := 0; i < n; i++ {
+			idx := len(p.diagLastTs) - n + i
+			entries = append(entries, entry{p.diagLastTs[idx], p.diagSrcTs[idx]})
+		}
+		payload["diagReconnects"] = entries
 	}
 	p.statsMu.Unlock()
 	data, err := json.Marshal(payload)

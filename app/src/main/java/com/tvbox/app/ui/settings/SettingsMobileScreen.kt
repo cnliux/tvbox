@@ -195,7 +195,6 @@ private fun SettingsMobileLanding(
             verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
             item { SettingsHeroCard(state = state) }
-            item { SettingsConfigStatusStrip(actions = actions) }
             item { SettingsCategoryGrid(onCategoryClick = onCategoryClick) }
             item {
                 Text(
@@ -275,36 +274,6 @@ private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier
     }
 }
 
-/**
- * 当前配置明细（第 301–305 轮）：把 domain 层已经算好的设置摘要真正渲染出来。
- * 此前 `buildSettingsPageSummary` / `SettingsStatusSummary` 只是可编译的纯数据，手机端从未显示，
- * 导致「当前配置」卡片只硬编码了视频源/直播源/设备三项，其余配置值不可见。
- * 这里统一以两列状态条展示全部条目，避免两处各写一套文案。
- */
-@Composable
-private fun SettingsConfigStatusStrip(actions: TvBoxViewModel) {
-    val entries = actions.settingsSummary.groups.flatMap { it.entries }
-    if (entries.isEmpty()) return
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = TvColors.Surface,
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(modifier = Modifier.padding(vertical = 12.dp, horizontal = 14.dp)) {
-            Text(
-                text = "当前配置明细",
-                color = TvColors.TextPrimary,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(10.dp))
-            SettingsStatusSummary(
-                items = entries.map { it.label to it.valueSummary.ifBlank { "未设置" } },
-                twoColumns = true,
-            )
-        }
-    }
-}
 
 @Composable
 private fun SettingsCategoryGrid(onCategoryClick: (MobileSettingCategory) -> Unit) {

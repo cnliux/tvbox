@@ -29,6 +29,8 @@ type Service struct {
 	adapters []Adapter
 	byID     map[string]Adapter
 
+	clientType string // "web"/"mobile"/"tv"，影响抖音等平台的 UA 与请求参数
+
 	catalogMu               sync.Mutex
 	catalogProvider         func() (string, error)
 	catalogParsed           bool
@@ -37,11 +39,16 @@ type Service struct {
 }
 
 // NewService 构建全部平台 adapter（顺序与 Python dict 插入序一致）。
-func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func() (string, error)) *Service {
+// clientType: "web"=PC网页/桌面, "mobile"=手机, "tv"=Android TV；空值默认为 "web"。
+func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func() (string, error), clientType string) *Service {
+	if clientType == "" {
+		clientType = "web"
+	}
 	service := &Service{
-		cache:           newStreamCache(cacheSeconds),
+		cache:        newStreamCache(cacheSeconds),
 		catalogProvider: catalogProvider,
-		byID:            map[string]Adapter{},
+		clientType:   clientType,
+		byID:         map[string]Adapter{},
 	}
 	huyaCookie := os.Getenv("TVBOX_PLATFORM_LIVE_HUYA_COOKIE")
 	bilibiliCookie := os.Getenv("TVBOX_PLATFORM_LIVE_BILIBILI_COOKIE")
@@ -52,7 +59,7 @@ func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func()
 		newDouyuAdapter(timeoutSeconds),
 		newHuyaResolver(timeoutSeconds, huyaCookie),
 		newBilibiliResolver(timeoutSeconds, bilibiliCookie),
-		newDouyinResolver(timeoutSeconds, douyinCookie),
+		newDouyinResolver(timeoutSeconds, douyinCookie, clientType),
 		newKuaishouResolver(timeoutSeconds, kuaishouCookie, kuaishouKww),
 		newCCResolver(timeoutSeconds),
 		newMissevanResolver(timeoutSeconds),

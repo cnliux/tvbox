@@ -42,7 +42,7 @@ func main() {
 		}
 		return string(data), nil
 	}
-	service := platformlive.NewService(int64(*timeoutSeconds), int64(*cacheSeconds), catalogProvider)
+	service := platformlive.NewService(int64(*timeoutSeconds), int64(*cacheSeconds), catalogProvider, "")
 	setLiveService(service)
 
 	mux := http.NewServeMux()

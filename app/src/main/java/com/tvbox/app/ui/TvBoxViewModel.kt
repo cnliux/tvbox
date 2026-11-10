@@ -3557,6 +3557,32 @@ class TvBoxViewModel(
         if (_state.value.screen == TvScreen.Live) refreshLive()
     }
 
+    /**
+     * 从用户当前编辑区设默认直播源（不要求该 URL 已持久化）：
+     * 把 [defaultIndex] 应用到「当前 URL 文本」对应的归一化列表，并连同现有其他字段一起保存。
+     * 若 defaultIndex 越界或为空则忽略；仅当 effective 下标相比当前已保存值发生变化时才触发刷新。
+     */
+    fun setLiveSourceDefaultIndexFromDraft(urlsText: String, defaultIndex: Int) {
+        val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+        if (urls.isEmpty()) return
+        val normalizedUrls = urls.distinct()
+        val effectiveIdx = if (defaultIndex in normalizedUrls.indices) defaultIndex else -1
+        val current = _state.value
+        val currentSavedUrls = current.appSettings.liveSourceUrls
+        val currentDefault = current.appSettings.liveSourceDefaultIndex
+        // 若当前编辑区内容与已保存的 URL 完全一致且 defaultIndex 无变化，跳过重复写入。
+        if (normalizedUrls == currentSavedUrls && effectiveIdx == currentDefault) return
+        val settings = current.appSettings.copy(
+            liveSourceUrls = normalizedUrls,
+            liveSourceDefaultGroup = current.appSettings.liveSourceDefaultGroup,
+            liveSourceDefaultIndex = effectiveIdx,
+        )
+        _state.update { it.copy(appSettings = settings) }
+        saveSettings(settings)
+        applyLiveSourceConfig(settings)
+        if (_state.value.screen == TvScreen.Live) refreshLive()
+    }
+
     /** 清除电视直播默认源。 */
     fun clearLiveSourceDefaultIndex() {
         val current = _state.value
