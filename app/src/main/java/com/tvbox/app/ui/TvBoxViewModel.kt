@@ -235,6 +235,7 @@ data class TvBoxUiState(
     val updateExporting: Boolean get() = update.exporting
     val updateExportMessage: String? get() = update.exportMessage
     val updateError: String? get() = update.error
+    val updateCardDismissed: Boolean get() = update.cardDismissed
 
     val sourceLatencies: Map<String, Long?> get() = source.latencies
     val sourceTesting: Boolean get() = source.testing
@@ -761,6 +762,7 @@ class TvBoxViewModel(
                                     downloadProgress = null,
                                     downloadedApkPath = null,
                                     error = null,
+                                    cardDismissed = false,
                                 ),
                             )
                         }
@@ -785,6 +787,29 @@ class TvBoxViewModel(
         _state.update { it.copy(update = it.update.copy(dialogVisible = false, error = null)) }
     }
 
+    /**
+     * 用户主动取消更新下载：终止底层下载 Job、清理系统/服务侧任务并隐藏悬浮卡片。
+     * 与 [startUpdateDownload] 的静默换 Job 不同，这里是显式用户取消，卡片不保留。
+     */
+    fun cancelUpdateDownload() {
+        val job = updateDownloadJob
+        updateDownloadJob = null
+        job?.cancel()
+        _state.update {
+            it.copy(update = it.update.copy(
+                downloading = false, downloadProgress = null,
+                autoInstallPath = null, awaitingInstallPermission = false,
+                error = null, cardDismissed = true,
+            ))
+        }
+        viewModelScope.launch { runCatching { appUpdateRepository.cancelDownload() } }
+    }
+
+    /** 关闭下载悬浮卡片（失败/提示态），不终止底层任务；返回键在卡片可见时也走这里。 */
+    fun dismissUpdateCard() {
+        _state.update { it.copy(update = it.update.copy(cardDismissed = true)) }
+    }
+
     fun startUpdateDownload() {
         val update = _state.value.update.availableUpdate ?: return
         if (_state.value.update.downloading) return
@@ -794,7 +819,7 @@ class TvBoxViewModel(
                 dialogVisible = false, downloading = true,
                 downloadProgress = 0, downloadedApkPath = null,
                 autoInstallPath = null, awaitingInstallPermission = false, error = null,
-                exporting = false, exportMessage = null,
+                exporting = false, exportMessage = null, cardDismissed = false,
             ))
         }
         updateDownloadJob = viewModelScope.launch {

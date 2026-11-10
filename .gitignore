@@ -28,7 +28,11 @@ app/libs/
 LOCAL_DEV.md
 STABILITY_REPORT.md
 devLog/
+# 过程文档（代码审查、缺陷修复报告、改造台账、方案计划）只留本地，不入版本库；
+# 仓库内文档只保留 README.md、CHANGELOG.md 与 platform_live_server/*.md。
 docs/
+.docs/
+plan/
 tools/*
 !tools/bind-platform-live.sh
 !tools/bind-platform-live.ps1

@@ -142,6 +142,10 @@ class OtaCdnTest {
             classifyOtaDownloadFailure(IOException("更新下载失败：HTTP 404")),
         )
         assertEquals(
+            OtaCdnFailureKind.RetryOnAnotherCdn,
+            classifyOtaDownloadFailure(IOException("更新下载长时间无进展，请检查网络后重试")),
+        )
+        assertEquals(
             OtaCdnFailureKind.Fatal,
             classifyOtaDownloadFailure(IOException("设备存储空间不足，请清理后重试")),
         )
@@ -163,6 +167,28 @@ class OtaCdnTest {
         assertEquals(1_000L, otaCdnRetryDelayMs(2))
         assertEquals(2_000L, otaCdnRetryDelayMs(3))
         assertEquals(2_000L, otaCdnRetryDelayMs(20))
+    }
+
+    @Test
+    fun stalledDetectionCoversZeroProgressAndFrozenBytes() {
+        // 刚开始下载（0 字节）也受停滞阈值约束：PENDING/RUNNING 假死不再等 15 分钟整体截止。
+        assertTrue(isOtaDownloadStalled(0L, 0L, 0L, DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS))
+        assertFalse(isOtaDownloadStalled(0L, 0L, 0L, DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS - 1))
+        // 字节有推进：即使超过阈值也不算停滞。
+        assertFalse(isOtaDownloadStalled(1_024L, 0L, 0L, DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS * 10))
+        // 中途冻结：字节数不再变化且超过阈值。
+        assertTrue(isOtaDownloadStalled(
+            4_096L,
+            4_096L,
+            1_000L,
+            1_000L + DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS,
+        ))
+        assertFalse(isOtaDownloadStalled(
+            4_096L,
+            4_096L,
+            1_000L,
+            1_000L + DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS - 1,
+        ))
     }
 
     @Test
@@ -210,5 +236,13 @@ class OtaCdnTest {
         assertTrue(text.contains("安装包校验未通过"))
         assertFalse(text.contains("github.com"))
         assertEquals("更新下载失败，请检查网络后重试", summarizeOtaCdnFailures(emptyList()))
+    }
+
+    @Test
+    fun summaryMentionsNoProgressWhenLinesStalled() {
+        val attempts = listOf(OtaCdnAttempt("官方源", "更新下载长时间无进展，请检查网络后重试"))
+        val text = summarizeOtaCdnFailures(attempts)
+        assertTrue(text.contains("下载长时间无进展"))
+        assertFalse(text.contains("github.com"))
     }
 }

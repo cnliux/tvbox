@@ -3,6 +3,7 @@ package com.tvbox.app.ui
 import android.view.KeyEvent as AndroidKeyEvent
 import android.graphics.Bitmap
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -73,6 +74,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.runtime.setValue
@@ -219,11 +221,16 @@ fun TvBoxApp(
             onInstall = onInstallUpdate,
             onOpenSettings = onOpenUpdateSettings,
             onSaveApk = onSaveUpdateApk,
+            onCancelDownload = actions::cancelUpdateDownload,
+            onDismiss = actions::dismissUpdateCard,
             modifier = Modifier.align(Alignment.TopEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
         )
     }
 }
+
+/** 卡片“下载停滞提示”的等待时长：进度停在 0/未知超过该时间即提示用户可取消重试。 */
+private const val DOWNLOAD_STALLED_HINT_DELAY_MS = 10_000L
 
 @Composable
 private fun UpdateDownloadCard(
@@ -232,10 +239,33 @@ private fun UpdateDownloadCard(
     onInstall: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onSaveApk: (String) -> Unit,
+    onCancelDownload: () -> Unit,
+    onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val update = state.availableUpdate ?: return
-    if (state.updateDialogVisible || (!state.updateDownloading && state.updateDownloadedApkPath == null && state.updateError == null)) return
+    val downloading = state.updateDownloading
+    val downloadedApkPath = state.updateDownloadedApkPath
+    val errorCardVisible = !downloading && downloadedApkPath == null && state.updateError != null
+    if (state.updateDialogVisible || state.updateCardDismissed ||
+        (!downloading && downloadedApkPath == null && state.updateError == null)
+    ) return
+    // 弱网兜底：进度长期停在 0/未知时提示可取消；此时返回键 = 取消下载。
+    // 正常推进时不拦截返回键，让系统返回继续用于页面导航。
+    var downloadStalled by remember { mutableStateOf(false) }
+    LaunchedEffect(downloading, state.updateDownloadProgress) {
+        downloadStalled = false
+        if (downloading && (state.updateDownloadProgress == null || state.updateDownloadProgress == 0)) {
+            delay(DOWNLOAD_STALLED_HINT_DELAY_MS)
+            downloadStalled = true
+        }
+    }
+    if (downloading && downloadStalled) {
+        BackHandler { onCancelDownload() }
+    } else if (errorCardVisible) {
+        // 失败卡片：返回键只关闭卡片，不打断用户在底层页面的返回导航。
+        BackHandler { onDismiss() }
+    }
     Surface(
         modifier = modifier.width(240.dp), shape = RoundedCornerShape(14.dp),
         color = Color(0xEE151C19), contentColor = Color.White,
@@ -244,16 +274,32 @@ private fun UpdateDownloadCard(
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("更新 ${update.versionName}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
-                if (state.updateDownloading) Text(state.updateDownloadProgress?.let { "$it%" } ?: "下载中",
+                if (downloading) Text(state.updateDownloadProgress?.let { "$it%" } ?: "下载中",
                     style = MaterialTheme.typography.labelMedium, color = Color(0xFF7AE2BA))
+                // 下载中 X = 取消下载；失败态 X = 关闭卡片。完成后保留安装入口，不提供关闭。
+                if (downloading || errorCardVisible) {
+                    IconButton(onClick = if (downloading) onCancelDownload else onDismiss) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = if (downloading) "取消下载" else "关闭",
+                            tint = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
             }
-            if (state.updateDownloading) {
+            if (downloading) {
                 val progress = state.updateDownloadProgress
                 if (progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 else LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth(),
                     color = Color(0xFF7AE2BA), trackColor = Color.White.copy(alpha = 0.15f))
                 Text("可继续使用，完成后打开安装界面", style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.65f))
+                if (downloadStalled) {
+                    Text("网络较慢，长时间无进展，可取消后重试", style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFFFFC46B))
+                }
+                TextButton(onClick = onCancelDownload) { Text("取消下载", color = Color.White) }
             } else {
                 val downloadedApkPath = state.updateDownloadedApkPath
                 if (downloadedApkPath != null) {

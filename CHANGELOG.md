@@ -1,3 +1,15 @@
+## v1.0.2 - 2026-11-10
+
+OTA 更新下载弱网兜底 + 仓库过程文档清洗：
+
+- **更新清单单源超时**：`AppUpdateRepository.checkForUpdate` 给每个清单源加 10 秒整体 `withTimeout`，慢 CDN 快速失败并切下一条，启动检查不再被单个挂起连接长时间拖住；超时按线路失败记账并降权。
+- **下载假死快速失败**：新增 domain 纯函数 `isOtaDownloadStalled`（阈值 `DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS` = 90 秒），已收字节持续无变化即判定线路假死、切换下一条线路，不再干等 15 分钟整体截止；0 字节长期 PENDING/RUNNING 的任务同样被截断。系统 `DownloadManager` 与应用内下载服务两条路径都接入。
+- **用户可取消下载**：新增 `AppUpdateRepository.cancelDownload`（终止系统下载任务、清理各线路半成品与持久化任务记录）与 `UpdateDownloadService` 的 `ACTION_CANCEL` 分支；`TvBoxViewModel.cancelUpdateDownload` / `dismissUpdateCard` 配合 `UpdateUiState.cardDismissed`，悬浮卡片下载中 X 即取消、失败态 X 只关卡片不打断返回导航。
+- **弱网提示**：进度停在 0/未知超过 10 秒时卡片提示「网络较慢，长时间无进展，可取消后重试」，此时返回键映射为取消下载；正常推进时不拦截返回键。
+- **失败归类**：`summarizeOtaCdnFailures` 增加「下载长时间无进展」归类，多线路失败汇总不再一律报超时。
+- **仓库过程文档清洗**：`.docs/`、`docs/`、`plan/` 下的代码审查、缺陷修复报告、改造台账与方案计划全部移出版本库（本地保留），`.gitignore` 补 `docs/`、`.docs/`、`plan/` 规则；仓库文档只保留 `README.md`、`CHANGELOG.md`、`platform_live_server/*.md`，README 增加「仓库文档约定」并去掉失效的文档/图片引用。
+- 不含任何 AI / 智能推荐 / 大模型能力。
+
 ## v1.0.0 - 2026-11-10（全新版本起点，应用更名为「聚合视频」）
 
 紧急修复 v1.3.60/v1.3.61 启动崩溃 + 品牌更名为聚合视频：

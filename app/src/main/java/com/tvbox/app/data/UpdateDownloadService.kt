@@ -53,6 +53,15 @@ class UpdateDownloadService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_CANCEL) {
+            // 用户在应用内取消下载：停掉进行中的任务并结束前台服务；
+            // 服务未在运行时该分支也是无害的空操作（启动后立即停止）。
+            job?.cancel()
+            activePath = null
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         val path = intent?.getStringExtra("path")
         val url = intent?.getStringExtra("url")
         if (path == null || url == null) { stopSelf(startId); return START_NOT_STICKY }
@@ -173,6 +182,7 @@ class UpdateDownloadService : Service() {
     companion object {
         private const val CHANNEL = "tvbox_update_download"
         private const val NOTIFICATION_ID = 10311
+        private const val ACTION_CANCEL = "com.tvbox.app.action.CANCEL_UPDATE_DOWNLOAD"
         private val states = ConcurrentHashMap<String, AppDownloadStatus>()
         internal fun status(path: String): AppDownloadStatus? = states[path]
         internal fun start(context: Context, url: String, path: String, size: Long, sha: String) {
@@ -185,6 +195,13 @@ class UpdateDownloadService : Service() {
             }
             ContextCompat.startForegroundService(context, Intent(context, UpdateDownloadService::class.java)
                 .putExtra("url", url).putExtra("path", path).putExtra("size", size).putExtra("sha", sha))
+        }
+
+        /** 请求停止当前更新下载；服务未运行或后台启动受限时静默忽略。 */
+        internal fun cancel(context: Context) {
+            runCatching {
+                context.startService(Intent(context, UpdateDownloadService::class.java).setAction(ACTION_CANCEL))
+            }
         }
     }
 }

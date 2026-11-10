@@ -2,13 +2,13 @@
 
 聚合视频（原 TVBox）是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。合集版根据设备类型自动适配：电视端强调遥控器操作，手机端提供触屏与竖屏布局，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.0.0`（`versionCode=20000`，全新版本起点）。合集版统一为手机/电视单包，R8 full mode + 资源压缩；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
+当前源码版本为 `1.0.2`（`versionCode=20002`）。合集版统一为手机/电视单包，R8 full mode + 资源压缩；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
-## 界面预览
+## 仓库文档约定
 
-![TVBox 首页界面预览](docs/screenshots/home-preview.png)
+版本库内只保留 `README.md`、`CHANGELOG.md` 与 `platform_live_server/*.md`。代码审查、缺陷修复报告、改造台账、方案计划等过程文档只在本地保留，不入库（见 `.gitignore` 的 `docs/`、`.docs/`、`plan/`、`devLog/` 规则）。
 
 ## 功能特性
 
@@ -216,10 +216,10 @@ apksigner verify --print-certs app\build\outputs\apk\release\app-release.apk
 > 发布包只由 GitHub Actions 构建（`Release` 仅含 `arm64-v8a`）。本地只改代码、跑 Debug 与测试。
 
 1. 更新 `app/build.gradle.kts` 的 `versionCode` / `versionName`，同步 CHANGELOG、README；`update.json` 先保持上一版本，等 CI 发布完成后再一次性更新。
-2. 仅暂存本次发布涉及的主工程代码及文档；如开发日志含无关修改，使用分段暂存。
+2. 仅暂存本次发布涉及的主工程代码及文档；如开发日志含无关修改，使用分段暂存。过程文档被 `.gitignore` 排除，不要用 `git add -f` 强行入库。
 
 ```powershell
-git add CHANGELOG.md README.md docs\slim-optimization-report.md app\build.gradle.kts app\src\main app\src\test app\src\debug tools\bind-platform-live.ps1 tools\bind-platform-live.sh .github\workflows\release.yml gradle.properties gradle\libs.versions.toml app\proguard-rules.pro
+git add CHANGELOG.md README.md app\build.gradle.kts app\src\main app\src\test tools\bind-platform-live.ps1 tools\bind-platform-live.sh .github\workflows\release.yml gradle.properties gradle\libs.versions.toml app\proguard-rules.pro
 git commit -m "Release v1.3.27"
 git push origin main
 git tag -a v1.3.27 -m "TVBox v1.3.27"

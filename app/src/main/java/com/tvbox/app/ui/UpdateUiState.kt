@@ -15,4 +15,6 @@ data class UpdateUiState(
     val exporting: Boolean = false,
     val exportMessage: String? = null,
     val error: String? = null,
+    /** 用户主动关闭/取消后隐藏下载悬浮卡片；重新发起下载或重新检查更新时复位。 */
+    val cardDismissed: Boolean = false,
 )

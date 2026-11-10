@@ -27,6 +27,9 @@ const val DEFAULT_OTA_CDN_COOLDOWN_MS = 6L * 60L * 60L * 1000L
 /** CDN 切换的最大退避间隔。 */
 const val MAX_OTA_CDN_RETRY_DELAY_MS = 2_000L
 
+/** 下载进度停滞判定阈值：已收字节持续无变化超过该时长视为线路假死，快速失败并切换下一条线路。 */
+const val DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS = 90_000L
+
 data class OtaCdnCandidate(
     /** 稳定标识，用于本机健康度持久化；不要用完整 URL 当 key。 */
     val id: String,
@@ -210,6 +213,20 @@ fun classifyOtaDownloadFailure(error: Throwable): OtaCdnFailureKind {
 fun otaCdnRetryDelayMs(attemptIndex: Int): Long =
     longArrayOf(250L, 500L, 1_000L, MAX_OTA_CDN_RETRY_DELAY_MS)[attemptIndex.coerceIn(0, 3)]
 
+/**
+ * 下载假死判定（纯函数）：本轮采样 [received] 与上次采样 [lastReceived] 相同，
+ * 且距上次字节变化（[lastChangeMs]）已超过 [timeoutMs]。
+ * 任务刚开始（尚未收到字节）时 lastReceived 传 0、lastChangeMs 传任务开始时间即可，
+ * 让长期停在 0 字节的 PENDING/RUNNING 任务也能被快速判定，而不是等整体截止时间。
+ */
+fun isOtaDownloadStalled(
+    received: Long,
+    lastReceived: Long,
+    lastChangeMs: Long,
+    nowMs: Long,
+    timeoutMs: Long = DEFAULT_OTA_DOWNLOAD_STALL_TIMEOUT_MS,
+): Boolean = received == lastReceived && nowMs - lastChangeMs >= timeoutMs
+
 data class OtaCdnAttempt(
     val label: String,
     val message: String?,
@@ -249,6 +266,7 @@ fun summarizeOtaCdnFailures(attempts: List<OtaCdnAttempt>): String {
     val reason = when {
         messages.any { it.contains("校验失败", ignoreCase = true) } -> "，安装包校验未通过"
         messages.any { it.contains("空间不足", ignoreCase = true) } -> "，存储空间不足"
+        messages.any { it.contains("无进展", ignoreCase = true) } -> "，下载长时间无进展"
         messages.any { it.contains("超时", ignoreCase = true) } -> "，下载超时"
         else -> ""
     }

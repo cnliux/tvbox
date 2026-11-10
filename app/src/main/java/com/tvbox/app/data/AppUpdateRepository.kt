@@ -11,9 +11,11 @@ import com.tvbox.app.data.network.NetworkRetryPolicy
 import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.data.network.parseNetworkPayload
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
 import com.tvbox.app.domain.AppUpdate
 import com.tvbox.app.domain.CdnStatusRow
@@ -32,6 +34,7 @@ import com.tvbox.app.domain.buildOtaManifestCandidates
 import com.tvbox.app.domain.classifyOtaDownloadFailure
 import com.tvbox.app.domain.decodeOtaCdnHealth
 import com.tvbox.app.domain.encodeOtaCdnHealth
+import com.tvbox.app.domain.isOtaDownloadStalled
 import com.tvbox.app.domain.otaCdnRetryDelayMs
 import com.tvbox.app.domain.rankOtaCdnCandidates
 import com.tvbox.app.domain.summarizeOtaCdnFailures
@@ -48,6 +51,8 @@ import java.io.IOException
 interface AppUpdateRepository {
     suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate?
     suspend fun downloadUpdate(update: AppUpdate, onProgress: (Int) -> Unit): File
+    /** 用户主动取消下载：终止底层任务并清理半成品；无进行中的任务时为无害空操作。 */
+    suspend fun cancelDownload() {}
     suspend fun pendingDownload(): AppUpdate? = null
     suspend fun shouldAutoInstall(apkPath: String): Boolean = true
     suspend fun isAwaitingInstallPermission(apkPath: String): Boolean = false
@@ -93,8 +98,11 @@ class DefaultAppUpdateRepository(
                 .build()
             try {
                 val raw = try {
-                    client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
-                        .use { response -> response.body.string() }
+                    // 单源整体超时：慢 CDN 快速失败切下一个，避免启动检查被单个挂起连接长时间拖住。
+                    withTimeout(MANIFEST_CHECK_TIMEOUT_MS) {
+                        client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
+                            .use { response -> response.body.string() }
+                    }
                 } catch (error: NetworkException.Http) {
                     throw IOException("更新检查失败：${error.statusCode}", error)
                 }
@@ -107,6 +115,10 @@ class DefaultAppUpdateRepository(
                 }
                 recordCdnSuccess(candidate.id, System.currentTimeMillis() - startedAtMs)
                 return@withContext parsed
+            } catch (e: TimeoutCancellationException) {
+                lastError = e
+                recordCdnFailure(candidate.id)
+                android.util.Log.w("TVBoxUpdate", "更新清单源[${candidate.label}]超时，尝试下一个: ${logSafeText(e.message)}")
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -207,6 +219,23 @@ class DefaultAppUpdateRepository(
         throw IOException(summarizeOtaCdnFailures(attempts))
     }
 
+    /**
+     * 用户主动取消下载：终止系统下载任务与各线路半成品文件、清除持久化任务记录，
+     * 并通知应用内下载服务停止；无进行中的任务时为无害空操作。
+     */
+    override suspend fun cancelDownload() = withContext(Dispatchers.IO) {
+        val task = readTask()
+        downloadMutex.withLock { downloadPrefs.edit().remove("task").commit() }
+        if (task != null) {
+            if (task.id > 0) runCatching { downloadManager?.remove(task.id) }
+            runCatching { File(task.filePath).delete() }
+            runCatching { File("${task.filePath}.part").delete() }
+            runCatching { File("${task.filePath}.fallback.apk").delete() }
+        }
+        UpdateDownloadService.cancel(appContext)
+        Unit
+    }
+
     /** 为某条 CDN 创建独立的下载任务；不同线路使用不同目标文件，避免失败文件互相污染。 */
     private suspend fun prepareTask(
         update: AppUpdate,
@@ -251,8 +280,13 @@ class DefaultAppUpdateRepository(
         try {
             if (currentTask.appDownloader) return downloadInApp(currentTask, onProgress)
             var lastProgress = Int.MIN_VALUE
+            // 假死兜底：字节数持续无变化（含始终为 0）超过阈值即快速失败并切换下一条线路，
+            // 不必等 15 分钟整体截止；status 长期停在 PENDING/RUNNING 的假死在这里被截断。
+            var lastReceived = 0L
+            val startedAtMs = System.currentTimeMillis()
+            var lastReceivedChangeAtMs = startedAtMs
             // 整体截止时间：状态长期停在 PENDING/PAUSED/RUNNING 时不能永久轮询。
-            val deadlineMs = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS
+            val deadlineMs = startedAtMs + DOWNLOAD_TIMEOUT_MS
             while (true) {
                 if (System.currentTimeMillis() > deadlineMs) {
                     throw IOException("更新下载超时，请检查网络后重试")
@@ -280,6 +314,14 @@ class DefaultAppUpdateRepository(
                 if (status == DownloadManager.STATUS_FAILED) {
                     throw IOException(if (reason == DownloadManager.ERROR_INSUFFICIENT_SPACE) "设备存储空间不足，请清理后重试"
                         else "更新下载失败（系统错误 $reason），请重试")
+                }
+                val nowMs = System.currentTimeMillis()
+                if (received != lastReceived) {
+                    lastReceived = received
+                    lastReceivedChangeAtMs = nowMs
+                }
+                if (isOtaDownloadStalled(received, lastReceived, lastReceivedChangeAtMs, nowMs)) {
+                    throw IOException("更新下载长时间无进展，请检查网络后重试")
                 }
                 val progress = if (total > 0) ((received * 100) / total).toInt().coerceIn(0, 99) else -1
                 if (lastProgress != progress) { onProgress(progress); lastProgress = progress }
@@ -319,7 +361,12 @@ class DefaultAppUpdateRepository(
             throw IOException("无法启动应用下载服务，请返回应用后重试", error)
         }
         var lastProgress = Int.MIN_VALUE
-        val deadlineMs = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS
+        // 假死兜底：服务侧 readTimeout 能截断死连接，这里再防一层
+        // “服务存活但字节持续不动”的情况（含始终为 0）。
+        var lastReceived = 0L
+        val startedAtMs = System.currentTimeMillis()
+        var lastReceivedChangeAtMs = startedAtMs
+        val deadlineMs = startedAtMs + DOWNLOAD_TIMEOUT_MS
         // 服务被系统杀死后进程内静态 states 会被清空，status 可能长期为 null。
         // 连续 N 次拿不到状态就判定下载任务已失效，避免永久空转。
         var consecutiveNullStatus = 0
@@ -341,6 +388,15 @@ class DefaultAppUpdateRepository(
                 verifyUpdateApk(apk, task.manifest.apkSize, task.manifest.apkSha256)
                 onProgress(100)
                 return apk
+            }
+            val nowMs = System.currentTimeMillis()
+            val received = status?.received ?: 0L
+            if (received != lastReceived) {
+                lastReceived = received
+                lastReceivedChangeAtMs = nowMs
+            }
+            if (isOtaDownloadStalled(received, lastReceived, lastReceivedChangeAtMs, nowMs)) {
+                throw IOException("更新下载长时间无进展，请检查网络后重试")
             }
             val total = status?.total?.takeIf { it > 0 } ?: task.manifest.apkSize
             val progress = if (total > 0) (((status?.received ?: 0) * 100) / total).toInt().coerceIn(0, 99) else -1
@@ -474,6 +530,9 @@ private const val USER_AGENT = "TVBox-Android"
 
 /** 单次更新下载的整体上限（20MB 级 APK 在弱网下留足余量），超时后走失败清理而不是永久轮询。 */
 private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
+
+/** 单个更新清单源的整体超时：慢 CDN 快速失败并切换下一个，不让启动检查长时间挂起。 */
+private const val MANIFEST_CHECK_TIMEOUT_MS = 10_000L
 
 /** downloadInApp 中连续拿不到 Service 状态的最大次数（每次间隔 750ms）。 */
 private const val MAX_NULL_STATUS_POLLS = 20
