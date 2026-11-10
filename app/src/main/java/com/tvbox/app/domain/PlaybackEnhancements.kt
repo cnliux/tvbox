@@ -45,6 +45,12 @@ fun resolveSeekStep(
     )
 }
 
+/** 遥控器长按连发时，把「按住时长」直接换算成毫秒步长，供 UI 层调用。 */
+fun seekStepMsForHold(
+    holdDurationMs: Long,
+    tiers: List<SeekTier> = DEFAULT_SEEK_TIERS,
+): Long = resolveSeekStep(holdDurationMs, tiers).stepSeconds * 1_000L
+
 // ---------------------------------------------------------------- 跳过片头/片尾
 
 /** 默认关闭，不改变既有用户体验；具体持久化由设置层负责。 */

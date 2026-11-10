@@ -109,15 +109,23 @@ jobs:
           SIZE=$(stat -c%s "$APK_PATH")
           VERSION_CODE=$(grep -oP 'TVBOX_VERSION_CODE\s*=\s*\K\d+' app/build.gradle.kts)
           VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          APK_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/${APK_NAME}"
+          # update.json 既有 8 个字段结构不变；apkMirrors 是可选的多 CDN 镜像列表，
+          # 老客户端 ignoreUnknownKeys 会忽略它，新客户端优先于内置派生 CDN 使用。
           cat > update.json <<ENDJSON
           {
             "versionCode": $VERSION_CODE,
             "versionName": "$VERSION_NAME",
-            "apkUrl": "https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/${APK_NAME}",
+            "apkUrl": "$APK_URL",
             "apkSha256": "$SHA256",
             "apkSize": $SIZE,
             "force": false,
-            "changelog": []
+            "changelog": [],
+            "apkMirrors": [
+              "https://ghfast.top/$APK_URL",
+              "https://gh-proxy.com/$APK_URL",
+              "https://ghproxy.net/$APK_URL"
+            ]
           }
           ENDJSON
           git config user.name "GitHub Actions"

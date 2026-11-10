@@ -16,8 +16,24 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 import com.tvbox.app.domain.AppUpdate
+import com.tvbox.app.domain.OtaCdnAttempt
+import com.tvbox.app.domain.OtaCdnCandidate
+import com.tvbox.app.domain.OtaCdnFailureKind
+import com.tvbox.app.domain.OtaCdnHealth
+import com.tvbox.app.domain.OtaDownloadProgressGate
+import com.tvbox.app.domain.afterFailure
+import com.tvbox.app.domain.afterSuccess
+import com.tvbox.app.domain.applyCdnPreference
+import com.tvbox.app.domain.decodeCdnPreference
+import com.tvbox.app.domain.buildOtaApkCandidates
+import com.tvbox.app.domain.buildOtaManifestCandidates
+import com.tvbox.app.domain.classifyOtaDownloadFailure
+import com.tvbox.app.domain.decodeOtaCdnHealth
+import com.tvbox.app.domain.encodeOtaCdnHealth
+import com.tvbox.app.domain.otaCdnRetryDelayMs
+import com.tvbox.app.domain.rankOtaCdnCandidates
+import com.tvbox.app.domain.summarizeOtaCdnFailures
 import com.tvbox.app.util.logSafeText
-import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
@@ -48,6 +64,8 @@ class DefaultAppUpdateRepository(
     private val appContext = context.applicationContext
     // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
     private val downloadPrefs by lazy { appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE) }
+    // OTA 多 CDN 健康度：只记录线路标识与计数/耗时，不存 URL、不写日志。
+    private val cdnPrefs by lazy { appContext.getSharedPreferences("ota_cdn_health", Context.MODE_PRIVATE) }
     private val downloadMutex = Mutex()
     private val downloadManager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
     private val json = Json {
@@ -59,10 +77,12 @@ class DefaultAppUpdateRepository(
         .build()
 
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = withContext(Dispatchers.IO) {
+        val candidates = orderedCandidates(buildOtaManifestCandidates())
         var lastError: Throwable? = null
-        for (url in UPDATE_MANIFEST_URLS) {
+        for (candidate in candidates) {
+            val startedAtMs = System.currentTimeMillis()
             val request = Request.Builder()
-                .url(url)
+                .url(candidate.url)
                 .header("Cache-Control", "no-cache")
                 .header("User-Agent", USER_AGENT)
                 .build()
@@ -73,21 +93,24 @@ class DefaultAppUpdateRepository(
                 } catch (error: NetworkException.Http) {
                     throw IOException("更新检查失败：${error.statusCode}", error)
                 }
-                return@withContext parseNetworkPayload {
+                val parsed = parseNetworkPayload {
                     parseAppUpdateManifest(
                         raw = raw,
                         currentVersionCode = currentVersionCode,
                         json = json,
                     )
                 }
+                recordCdnSuccess(candidate.id, System.currentTimeMillis() - startedAtMs)
+                return@withContext parsed
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
                 lastError = e
-                android.util.Log.w("TVBoxUpdate", "主备URL[${logSafeUrl(url)}]失败，尝试下一个: ${logSafeText(e.message)}")
+                recordCdnFailure(candidate.id)
+                android.util.Log.w("TVBoxUpdate", "更新清单源[${candidate.label}]失败，尝试下一个: ${logSafeText(e.message)}")
             }
         }
-        throw IOException("更新检查失败，所有源均不可用：${lastError?.message}")
+        throw IOException("更新检查失败，已尝试 ${candidates.size} 个 CDN：${lastError?.message}")
     }
 
     override suspend fun pendingDownload(): AppUpdate? = withContext(Dispatchers.IO) {
@@ -131,39 +154,97 @@ class DefaultAppUpdateRepository(
         Unit
     }
 
+    /**
+     * 下载更新包：优先复用未完成的后台任务（保持原有断点续传语义），
+     * 否则按健康度排序依次尝试多个 CDN 候选。单条线路失败只影响该线路，
+     * 空间不足 / 目录不可写 / 用户取消等不可通过换线路解决的错误立即上抛。
+     */
     override suspend fun downloadUpdate(update: AppUpdate, onProgress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
-        val manager = downloadManager
-        var task = downloadMutex.withLock {
-            val existing = readTask()
-            if (existing != null && existing.manifest.versionCode == update.versionCode &&
-                existing.manifest.apkUrl == update.apkUrl && existing.manifest.apkSha256 == update.apkSha256) existing
-            else {
-                if (update.apkUrl.isBlank()) throw IOException("安装包地址为空")
-                val directory = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-                    ?.let { File(it, "updates") } ?: File(appContext.cacheDir, "updates")
-                if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建更新下载目录")
-                val target = File(directory, "TVBox-${update.versionCode}-${System.currentTimeMillis()}.apk")
-                val id = try {
-                    val availableManager = manager ?: throw IOException("系统下载组件不可用")
-                    availableManager.enqueue(DownloadManager.Request(Uri.parse(update.apkUrl))
-                        .setTitle("TVBox ${update.versionName}")
-                        .setDescription("应用更新正在后台下载")
-                        .setMimeType("application/vnd.android.package-archive")
-                        .addRequestHeader("User-Agent", USER_AGENT)
-                        .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        .setDestinationUri(Uri.fromFile(target)))
-                } catch (error: Exception) {
-                    android.util.Log.w("TVBoxUpdate", "System downloader unavailable; using app download: ${logSafeText(error.message)} (${error::class.simpleName})")
-                    0L
+        // 跨 CDN 切换时新线路从 0% 重新计数，闸门保证 UI 进度单调且 100% 只发一次。
+        val progressGate = OtaDownloadProgressGate(onProgress)
+        val resumed = downloadMutex.withLock {
+            readTask()?.takeIf { matchesPendingTask(it, update) }
+        }
+        if (resumed != null) return@withContext runDownloadTask(resumed, update, progressGate::onProgress)
+
+        if (update.apkUrl.isBlank()) throw IOException("安装包地址为空")
+        val candidates = orderedCandidates(buildOtaApkCandidates(update.apkUrl, update.apkMirrors))
+        if (candidates.isEmpty()) throw IOException("安装包地址为空")
+
+        val attempts = mutableListOf<OtaCdnAttempt>()
+        for ((index, candidate) in candidates.withIndex()) {
+            if (index > 0) {
+                delay(otaCdnRetryDelayMs(index - 1))
+                progressGate.onProgress(0)
+            }
+            val startedAtMs = System.currentTimeMillis()
+            val task = prepareTask(update, candidate, index)
+            try {
+                val apk = runDownloadTask(task, update, progressGate::onProgress)
+                recordCdnSuccess(candidate.id, System.currentTimeMillis() - startedAtMs)
+                return@withContext apk
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                recordCdnFailure(candidate.id)
+                attempts += OtaCdnAttempt(candidate.label, error.message)
+                android.util.Log.w(
+                    "TVBoxUpdate",
+                    "CDN[${candidate.label}]下载失败: ${logSafeText(error.message)} (${error::class.simpleName})",
+                )
+                if (classifyOtaDownloadFailure(error) == OtaCdnFailureKind.Fatal) throw error
+                if (index == candidates.lastIndex) {
+                    if (attempts.size > 1) throw IOException(summarizeOtaCdnFailures(attempts), error)
+                    throw error
                 }
-                PendingSystemDownload(id, target.absolutePath, UpdateManifestDto(
-                    update.versionCode, update.versionName, update.apkUrl, update.apkSha256,
-                    update.apkSize, update.force, update.changelog,
-                ), appDownloader = id == 0L).also(::saveTask)
             }
         }
+        throw IOException(summarizeOtaCdnFailures(attempts))
+    }
+
+    /** 为某条 CDN 创建独立的下载任务；不同线路使用不同目标文件，避免失败文件互相污染。 */
+    private suspend fun prepareTask(
+        update: AppUpdate,
+        candidate: OtaCdnCandidate,
+        attemptIndex: Int,
+    ): PendingSystemDownload = downloadMutex.withLock {
+        val directory = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?.let { File(it, "updates") } ?: File(appContext.cacheDir, "updates")
+        if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建更新下载目录")
+        val suffix = if (attemptIndex == 0) "" else "-cdn$attemptIndex"
+        val target = File(directory, "TVBox-${update.versionCode}-${System.currentTimeMillis()}$suffix.apk")
+        val id = try {
+            val availableManager = downloadManager ?: throw IOException("系统下载组件不可用")
+            availableManager.enqueue(DownloadManager.Request(Uri.parse(candidate.url))
+                .setTitle("TVBox ${update.versionName}")
+                .setDescription("应用更新正在后台下载")
+                .setMimeType("application/vnd.android.package-archive")
+                .addRequestHeader("User-Agent", USER_AGENT)
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationUri(Uri.fromFile(target)))
+        } catch (error: Exception) {
+            android.util.Log.w("TVBoxUpdate", "System downloader unavailable; using app download: ${logSafeText(error.message)} (${error::class.simpleName})")
+            0L
+        }
+        PendingSystemDownload(
+            id = id,
+            filePath = target.absolutePath,
+            manifest = update.toManifestDto(),
+            appDownloader = id == 0L,
+            activeUrl = candidate.url,
+            cdnId = candidate.id,
+        ).also(::saveTask)
+    }
+
+    /** 执行单条线路的下载与校验；失败时清理该线路的任务（含系统下载任务）。 */
+    private suspend fun runDownloadTask(
+        task: PendingSystemDownload,
+        update: AppUpdate,
+        onProgress: (Int) -> Unit,
+    ): File {
+        var currentTask = task
         try {
-            if (task.appDownloader) return@withContext downloadInApp(task, onProgress)
+            if (currentTask.appDownloader) return downloadInApp(currentTask, onProgress)
             var lastProgress = Int.MIN_VALUE
             // 整体截止时间：状态长期停在 PENDING/PAUSED/RUNNING 时不能永久轮询。
             val deadlineMs = System.currentTimeMillis() + DOWNLOAD_TIMEOUT_MS
@@ -176,8 +257,8 @@ class DefaultAppUpdateRepository(
                 var received = 0L
                 var total = update.apkSize
                 try {
-                    val availableManager = manager ?: throw IOException("系统下载组件不可用")
-                    availableManager.query(DownloadManager.Query().setFilterById(task.id)).use { cursor ->
+                    val availableManager = downloadManager ?: throw IOException("系统下载组件不可用")
+                    availableManager.query(DownloadManager.Query().setFilterById(currentTask.id)).use { cursor ->
                         if (cursor == null || !cursor.moveToFirst()) throw IOException("系统下载任务已失效")
                         status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
                         reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
@@ -187,9 +268,9 @@ class DefaultAppUpdateRepository(
                 } catch (error: Exception) {
                     android.util.Log.w("TVBoxUpdate", "Cannot observe system download; switching to app download: ${logSafeText(error.message)} (${error::class.simpleName})")
                     // Separate paths prevent an old system job from writing into the fallback file.
-                    task = task.copy(id = 0, appDownloader = true, filePath = "${task.filePath}.fallback.apk")
-                    downloadMutex.withLock { saveTask(task) }
-                    return@withContext downloadInApp(task, onProgress)
+                    currentTask = currentTask.copy(id = 0, appDownloader = true, filePath = "${currentTask.filePath}.fallback.apk")
+                    downloadMutex.withLock { saveTask(currentTask) }
+                    return downloadInApp(currentTask, onProgress)
                 }
                 if (status == DownloadManager.STATUS_FAILED) {
                     throw IOException(if (reason == DownloadManager.ERROR_INSUFFICIENT_SPACE) "设备存储空间不足，请清理后重试"
@@ -198,10 +279,10 @@ class DefaultAppUpdateRepository(
                 val progress = if (total > 0) ((received * 100) / total).toInt().coerceIn(0, 99) else -1
                 if (lastProgress != progress) { onProgress(progress); lastProgress = progress }
                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
-                    val apk = File(task.filePath)
+                    val apk = File(currentTask.filePath)
                     verifyUpdateApk(apk, update.apkSize, update.apkSha256)
                     onProgress(100)
-                    return@withContext apk
+                    return apk
                 }
                 delay(750)
             }
@@ -212,8 +293,9 @@ class DefaultAppUpdateRepository(
         } catch (error: Throwable) {
             android.util.Log.w("TVBoxUpdate", "Update download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
             downloadMutex.withLock {
-                if (readTask()?.filePath == task.filePath) downloadPrefs.edit().remove("task").commit()
+                if (readTask()?.filePath == currentTask.filePath) downloadPrefs.edit().remove("task").commit()
             }
+            if (currentTask.id > 0) runCatching { downloadManager?.remove(currentTask.id) }
             throw error
         }
     }
@@ -225,7 +307,7 @@ class DefaultAppUpdateRepository(
             return apk
         }
         try {
-            UpdateDownloadService.start(appContext, task.manifest.apkUrl, task.filePath,
+            UpdateDownloadService.start(appContext, task.downloadUrl, task.filePath,
                 task.manifest.apkSize, task.manifest.apkSha256)
         } catch (error: Exception) {
             android.util.Log.w("TVBoxUpdate", "Unable to start app download service: ${logSafeText(error.message)}")
@@ -299,6 +381,41 @@ class DefaultAppUpdateRepository(
         }
     }
 
+    private fun matchesPendingTask(task: PendingSystemDownload, update: AppUpdate): Boolean =
+        task.manifest.versionCode == update.versionCode &&
+            task.manifest.apkUrl == update.apkUrl &&
+            task.manifest.apkSha256 == update.apkSha256
+
+    // ------------------------------------------------------------ CDN 健康度（本机，仅计数与耗时）
+
+    private fun readCdnHealth(): Map<String, OtaCdnHealth> = cdnPrefs.all
+        .mapNotNull { (key, value) ->
+            if (!key.startsWith(CDN_HEALTH_KEY_PREFIX) || value !is String) null
+            else key.removePrefix(CDN_HEALTH_KEY_PREFIX) to decodeOtaCdnHealth(value)
+        }
+        .toMap()
+
+    private fun writeCdnHealth(id: String, health: OtaCdnHealth) {
+        if (id.isBlank()) return
+        cdnPrefs.edit().putString(CDN_HEALTH_KEY_PREFIX + id, encodeOtaCdnHealth(health)).apply()
+    }
+
+    private fun recordCdnSuccess(id: String, elapsedMs: Long) {
+        val current = readCdnHealth()[id] ?: OtaCdnHealth()
+        writeCdnHealth(id, current.afterSuccess(System.currentTimeMillis(), elapsedMs))
+    }
+
+    private fun recordCdnFailure(id: String) {
+        val current = readCdnHealth()[id] ?: OtaCdnHealth()
+        writeCdnHealth(id, current.afterFailure(System.currentTimeMillis()))
+    }
+
+    /** 健康度排序 + 设置页的手动线路选择（默认 Auto，行为与排序结果一致）。 */
+    private fun orderedCandidates(candidates: List<OtaCdnCandidate>): List<OtaCdnCandidate> =
+        applyCdnPreference(
+            rankOtaCdnCandidates(candidates, readCdnHealth(), System.currentTimeMillis()),
+            decodeCdnPreference(cdnPrefs.getString("preference", null)),
+        )
 }
 
 internal fun parseAppUpdateManifest(
@@ -306,7 +423,7 @@ internal fun parseAppUpdateManifest(
     currentVersionCode: Long,
     json: Json = Json { ignoreUnknownKeys = true },
 ): AppUpdate? {
-    val dto = json.decodeFromString<UpdateManifestDto>(raw.trimStart('\uFEFF'))
+    val dto = json.decodeFromString<UpdateManifestDto>(raw.trimStart('\uFEFF').trim())
     if (dto.versionCode <= currentVersionCode) return null
     return AppUpdate(
         versionCode = dto.versionCode,
@@ -316,6 +433,10 @@ internal fun parseAppUpdateManifest(
         apkSize = dto.apkSize.coerceAtLeast(0L),
         force = dto.force,
         changelog = dto.changelog.map { it.trim() }.filter { it.isNotBlank() },
+        // 可选字段：只保留 HTTPS 镜像，非法/HTTP 项静默忽略，老清单为空列表。
+        apkMirrors = dto.apkMirrors.map { it.trim() }
+            .filter { it.startsWith("https://", ignoreCase = true) }
+            .distinct(),
     )
 }
 
@@ -328,15 +449,8 @@ private data class UpdateManifestDto(
     @SerialName("apkSize") val apkSize: Long = 0,
     @SerialName("force") val force: Boolean = false,
     @SerialName("changelog") val changelog: List<String> = emptyList(),
-)
-
-/**
- * 更新清单候选 URL 列表：主源优先，失败时自动尝试备用源。
- * 主源（ghfast.top）国内访问稳定；备用源直连 GitHub，主源故障时作为兜底。
- */
-private val UPDATE_MANIFEST_URLS = listOf(
-    "https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json",
-    "https://raw.githubusercontent.com/cnliux/tvbox/main/update.json",
+    /** 可选多 CDN 镜像；既有 8 个字段结构不变，老客户端 ignoreUnknownKeys 会忽略它。 */
+    @SerialName("apkMirrors") val apkMirrors: List<String> = emptyList(),
 )
 
 private const val USER_AGENT = "TVBox-Android"
@@ -347,6 +461,8 @@ private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
 /** downloadInApp 中连续拿不到 Service 状态的最大次数（每次间隔 750ms）。 */
 private const val MAX_NULL_STATUS_POLLS = 20
 
+private const val CDN_HEALTH_KEY_PREFIX = "cdn_"
+
 @Serializable
 private data class PendingSystemDownload(
     val id: Long,
@@ -356,8 +472,25 @@ private data class PendingSystemDownload(
     val awaitingInstallPermission: Boolean = false,
     val appDownloader: Boolean = false,
     val manualInstallOnly: Boolean = false,
+    /** 当前实际下载线路；旧版本持久化的任务没有该字段，回退到清单 apkUrl。 */
+    val activeUrl: String = "",
+    val cdnId: String = "",
 )
 
+private val PendingSystemDownload.downloadUrl: String
+    get() = activeUrl.ifBlank { manifest.apkUrl }
+
 private fun UpdateManifestDto.toDomain() = AppUpdate(
-    versionCode, versionName, apkUrl, apkSha256, apkSize, force, changelog,
+    versionCode, versionName, apkUrl, apkSha256, apkSize, force, changelog, apkMirrors,
+)
+
+private fun AppUpdate.toManifestDto() = UpdateManifestDto(
+    versionCode = versionCode,
+    versionName = versionName,
+    apkUrl = apkUrl,
+    apkSha256 = apkSha256,
+    apkSize = apkSize,
+    force = force,
+    changelog = changelog,
+    apkMirrors = apkMirrors,
 )

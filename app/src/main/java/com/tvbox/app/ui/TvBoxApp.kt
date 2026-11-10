@@ -2436,7 +2436,8 @@ private fun BlockedVideoCategorySetting(
                 style = MaterialTheme.typography.bodySmall,
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(availableCategories) { category ->
+                // 稳定 key：分类名唯一，避免父 State 变化时整行重做组合。
+                items(availableCategories, key = { it }) { category ->
                     SettingsActionButton(
                         text = category,
                         onClick = { actions.addBlockedVideoCategory(category) },

@@ -116,4 +116,24 @@ class PlaybackEnhancementsTest {
         assertEquals(PlaybackErrorKind.Unknown, decision.kind)
         assertEquals(PlaybackErrorAction.ShowMessage, decision.action)
     }
+
+    @Test
+    fun singleRemotePressKeepsOriginalTenSecondStep() {
+        assertEquals(10_000L, seekStepMsForHold(0L))
+        assertEquals(10_000L, seekStepMsForHold(200L))
+        assertEquals(10_000L, seekStepMsForHold(1_499L))
+    }
+
+    @Test
+    fun longPressStepAcceleratesWithHoldDuration() {
+        assertEquals(30_000L, seekStepMsForHold(1_500L))
+        assertEquals(30_000L, seekStepMsForHold(3_499L))
+        assertEquals(60_000L, seekStepMsForHold(3_500L))
+    }
+
+    @Test
+    fun highestTierStaysCappedAndNegativeHoldIsTreatedAsZero() {
+        assertEquals(60_000L, seekStepMsForHold(60_000L))
+        assertEquals(10_000L, seekStepMsForHold(-500L))
+    }
 }

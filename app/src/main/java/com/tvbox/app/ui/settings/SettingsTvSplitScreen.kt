@@ -178,7 +178,7 @@ private fun TvSettingsLanding(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     userScrollEnabled = false,
                 ) {
-                    items(TvSettingCategory.entries) { category ->
+                    items(TvSettingCategory.entries, key = { it.name }) { category ->
                         TvCategoryCard(category = category, onClick = { onCategoryClick(category) })
                     }
                 }

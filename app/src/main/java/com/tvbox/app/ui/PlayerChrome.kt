@@ -1029,7 +1029,7 @@ private fun PlayerChromePanel(
             } else {
                 LazyVerticalGrid(GridCells.Adaptive(130.dp), state = grid,
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    itemsIndexed(labels) { index, label ->
+                    itemsIndexed(labels, key = { index, label -> "$index-$label" }) { index, label ->
                         val realIndex = if (panel == PlayerPanel.Sources) orderedSources[index].index else index
                         val enabled = when (panel) {
                             PlayerPanel.Sources -> data.sourceEnabled.getOrNull(realIndex) ?: true
@@ -1342,7 +1342,7 @@ private fun PlayerChromeMobilePanel(
                             }
                         }
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(epList.size) { index ->
+                            items(epList.size, key = { it }) { index ->
                                 val realIndex = if (episodeSortReverse) data.episodes.lastIndex - index else index
                                 MobileChip(
                                     text = "${realIndex + 1}. ${epList[index]}",
@@ -1354,7 +1354,7 @@ private fun PlayerChromeMobilePanel(
                     }
                 }
                 PlayerPanel.Sources -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(data.sources.size) { index ->
+                    items(data.sources.size, key = { it }) { index ->
                         MobileChip(
                             text = data.sources[index].name,
                             selected = index == data.sourceIndex,

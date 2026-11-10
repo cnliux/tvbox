@@ -16,6 +16,7 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.tvbox.app.domain.seekStepMsForHold
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
@@ -72,7 +73,7 @@ internal class PlayerSeekKeyMap(
                 when (event.type) {
                     KeyEventType.KeyDown -> if (remote.shouldHandleSeek(native.eventTime, native.repeatCount)) {
                         remote.seekChanged = true
-                        callbacks.onSeekBy(-REMOTE_SEEK_STEP_MS)
+                        callbacks.onSeekBy(-remote.currentSeekStepMs(native.eventTime))
                     }
                     KeyEventType.KeyUp -> {
                         if (remote.seekChanged) callbacks.onFinishSeek()
@@ -87,7 +88,7 @@ internal class PlayerSeekKeyMap(
                 when (event.type) {
                     KeyEventType.KeyDown -> if (remote.shouldHandleSeek(native.eventTime, native.repeatCount)) {
                         remote.seekChanged = true
-                        callbacks.onSeekBy(REMOTE_SEEK_STEP_MS)
+                        callbacks.onSeekBy(remote.currentSeekStepMs(native.eventTime))
                     }
                     KeyEventType.KeyUp -> {
                         if (remote.seekChanged) callbacks.onFinishSeek()
@@ -602,7 +603,13 @@ private class PlayerRemoteKeyState {
     var lastSeekEventTimeMs: Long = Long.MIN_VALUE
     var seekChanged: Boolean = false
 
+    /** 本轮长按的起始时刻；每次按下（repeatCount == 0）重新计时。 */
+    private var seekStartEventTimeMs: Long = Long.MIN_VALUE
+
     fun shouldHandleSeek(eventTimeMs: Long, repeatCount: Int): Boolean {
+        if (repeatCount == 0) {
+            seekStartEventTimeMs = eventTimeMs
+        }
         if (
             repeatCount == 0 ||
             lastSeekEventTimeMs == Long.MIN_VALUE ||
@@ -614,8 +621,22 @@ private class PlayerRemoteKeyState {
         return false
     }
 
+    /**
+     * 按住越久步进越大（10s → 30s → 60s）。单次按下时 held≈0，仍是原有 10 秒语义；
+     * 档位判定在 domain 层的纯函数里，可被 JVM 单测覆盖。
+     */
+    fun currentSeekStepMs(eventTimeMs: Long): Long {
+        val held = if (seekStartEventTimeMs == Long.MIN_VALUE) {
+            0L
+        } else {
+            (eventTimeMs - seekStartEventTimeMs).coerceAtLeast(0L)
+        }
+        return seekStepMsForHold(held)
+    }
+
     fun resetSeek() {
         lastSeekEventTimeMs = Long.MIN_VALUE
+        seekStartEventTimeMs = Long.MIN_VALUE
         seekChanged = false
     }
 }
@@ -655,7 +676,8 @@ internal fun Window.restoreScreenBrightness(brightness: Float) {
 }
 
 internal const val DOUBLE_TAP_SEEK_MS = 10_000L
-internal const val REMOTE_SEEK_STEP_MS = 10_000L
+// 遥控器首档步进 10 秒由 domain 的 DEFAULT_SEEK_TIERS 定义，
+// 长按加速度换算见 PlayerRemoteKeyState.currentSeekStepMs，避免两处常量漂移。
 private const val REMOTE_SEEK_REPEAT_INTERVAL_MS = 150L
 internal const val MIN_SCREEN_BRIGHTNESS = 0.01f
 internal const val DEFAULT_SCREEN_BRIGHTNESS = 0.5f

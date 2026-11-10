@@ -29,3 +29,17 @@
     void set*(...);
     *** get*();
 }
+
+# ── 第 82 轮评估结论（本轮只评估，不改规则）────────────────────────────
+# 现状：`-keep class com.tvbox.app.ui.** { *; }` 是全量 keep，覆盖所有 Composable、
+#   ViewModel 与状态类，R8 无法对 ui 包做类合并 / 内联 / 字段裁剪，是剩余体积空间里
+#   最明确的一项；同时被 androidx.profileinstaller 的 Baseline Profile 链路依赖，
+#   直接删除会让 profile 中的类签名在 Release 里找不到，首帧与滚动性能可能回退。
+# 可收紧路径（本地只跑 assembleDebug / testDebugUnitTest，Release 由 CI 验证）：
+#   1. 收窄为仅保留 Composable 入口与 profileinstaller 标记类，而不是整个 ui 包；
+#   2. 用 apkanalyzer dex packages 对比前后 dex 体积与类数；
+#   3. 重新采集 Baseline Profile，确认标记类仍可解析；
+#   4. 由 release.yml 的 arm64-v8a Release 构建验证后再合并规则变更。
+# 风险：Compose 编译器生成的 Composer / remember 相关类或反射入口被裁掉时，
+#   表现为线上首屏崩溃；因此本轮不改规则，避免把未验证的收紧带进发布。
+

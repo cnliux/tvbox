@@ -9,6 +9,7 @@ import com.tvbox.app.domain.PagedMovies
 import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.fanOutIncrementally
+import com.tvbox.app.domain.splitSearchTimeoutBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -211,10 +212,17 @@ class DefaultMovieRepository(
             }
         }
         val completedMovies = mutableMapOf<String, List<Movie>>()
+        // 第 100/141 轮：按来源优先级分配单源超时预算，主源拿满额，备用源递减；
+        // 不加权时（列表为空）fan-out 工具会退回统一超时，行为不变。
+        val timeouts = splitSearchTimeoutBudget(
+            weights = lines.indices.map { index -> (100 - index * 20).coerceAtLeast(20) },
+            baseTimeoutMs = SEARCH_TIMEOUT_MS,
+        )
         fanOutIncrementally(
             tasks = tasks,
             maxParallel = maxParallelSourceRequests,
             perSourceTimeoutMs = SEARCH_TIMEOUT_MS,
+            timeoutForSource = { index -> timeouts.getOrElse(index) { SEARCH_TIMEOUT_MS } },
         ).collect { update ->
             val line = lines[update.sourceIndex]
             val movies = update.value

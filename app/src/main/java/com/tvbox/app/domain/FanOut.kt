@@ -46,6 +46,11 @@ fun <T : Any> fanOutIncrementally(
     tasks: List<FanOutTask<T>>,
     maxParallel: Int = 3,
     perSourceTimeoutMs: Long = 4_000L,
+    /**
+     * 可选的按来源索引分配超时预算（第 100/141 轮：高权重来源给更长预算）。
+     * 不传时退化为统一 [perSourceTimeoutMs]，既有调用点语义不变。
+     */
+    timeoutForSource: ((Int) -> Long)? = null,
 ): Flow<FanOutUpdate<T>> = channelFlow {
     require(maxParallel > 0) { "maxParallel must be positive" }
     require(perSourceTimeoutMs > 0) { "perSourceTimeoutMs must be positive" }
@@ -56,9 +61,10 @@ fun <T : Any> fanOutIncrementally(
     val semaphore = Semaphore(maxParallel)
     tasks.forEachIndexed { index, task ->
         launch {
+            val sourceTimeoutMs = (timeoutForSource?.invoke(index) ?: perSourceTimeoutMs).coerceAtLeast(1L)
             val value: T? = semaphore.withPermit {
                 try {
-                    withTimeoutOrNull(perSourceTimeoutMs) { task.fetch() }
+                    withTimeoutOrNull(sourceTimeoutMs) { task.fetch() }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {

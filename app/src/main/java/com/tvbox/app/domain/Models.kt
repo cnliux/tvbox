@@ -192,4 +192,10 @@ data class AppUpdate(
     val apkSize: Long,
     val force: Boolean,
     val changelog: List<String>,
+    /**
+     * 更新清单中**可选**的多 CDN 镜像地址（`apkMirrors`）。
+     * 老版本 update.json 没有该字段时为空列表，客户端会从 apkUrl 派生 CDN 候选；
+     * 既有 8 个字段的语义与结构保持不变。
+     */
+    val apkMirrors: List<String> = emptyList(),
 )

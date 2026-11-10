@@ -49,6 +49,12 @@ import com.tvbox.app.domain.rankLiveLineIndicesByDomain
 import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.AutoSwitchGate
+import com.tvbox.app.domain.AutoSwitchThrottleState
+import com.tvbox.app.domain.StartupTask
+import com.tvbox.app.domain.startupDeferralMs
+import com.tvbox.app.domain.gateAutoSwitch
+import com.tvbox.app.domain.resetAutoSwitchThrottle
 import com.tvbox.app.domain.mergeMoviesBySourceAndId
 import com.tvbox.app.domain.nextRotatedPlatformLiveCandidate
 import com.tvbox.app.domain.resolveEffectiveEpgUrl
@@ -345,6 +351,8 @@ class TvBoxViewModel(
     private var platformLiveSameLineRetries = 0
     // 电视直播：缓冲/卡死类失败在当前线路上的原地重连次数。
     private var liveStallRetries = 0
+    /** 自动换线的退避状态；用户主动切线路 / 切频道时清零。 */
+    private var autoSwitchThrottle = AutoSwitchThrottleState()
     // 电视直播：记录最近一次"所有线路均失败"的频道号，避免重复提示。
     private var lastExhaustedChannelNumber: Int? = null
     // 电视直播：最近一次已记入成功评分的域名（同一域名连续就绪不重复累加）。
@@ -420,10 +428,23 @@ class TvBoxViewModel(
             }
             loadHistory()
             refreshHome()
-            if (normalizedSettings.checkUpdatesOnStartup) {
+            // 首屏必需项完成后，把 OTA 检查与直播 EPG 延后到首帧后 / idle，
+            // 避免与首页取数竞争协程与网络；分级策略由 domain 纯函数定义并可单测。
+            launchDeferredStartupTasks(normalizedSettings.checkUpdatesOnStartup)
+        }
+    }
+
+    /** 非首屏必需的启动任务：各自独立协程，失败或超时都不会拖住首页。 */
+    private fun launchDeferredStartupTasks(checkUpdatesOnStartup: Boolean) {
+        viewModelScope.launch {
+            delay(startupDeferralMs(StartupTask.LiveEpg))
+            loadLiveEpg()
+        }
+        if (checkUpdatesOnStartup) {
+            viewModelScope.launch {
+                delay(startupDeferralMs(StartupTask.OtaCheck))
                 checkForAppUpdate()
             }
-            loadLiveEpg()
         }
     }
 
@@ -1661,6 +1682,7 @@ class TvBoxViewModel(
 
     fun playNextLiveChannel() {
         lastExhaustedChannelNumber = null
+        autoSwitchThrottle = resetAutoSwitchThrottle()
         _state.update { state ->
             val channels = state.live.channels
             if (channels.isEmpty()) return@update state
@@ -1679,6 +1701,7 @@ class TvBoxViewModel(
 
     fun playPreviousLiveChannel() {
         lastExhaustedChannelNumber = null
+        autoSwitchThrottle = resetAutoSwitchThrottle()
         _state.update { state ->
             val channels = state.live.channels
             if (channels.isEmpty()) return@update state
@@ -1883,6 +1906,7 @@ class TvBoxViewModel(
         val lines = channel.lines
         if (lines.size <= 1) return false
         liveStallRetries = 0
+        autoSwitchThrottle = resetAutoSwitchThrottle()
         val newIndex = (state.live.lineIndex + 1) % lines.size
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${logSafeUrl(lines[newIndex].url)}")
         _state.update {
@@ -1899,6 +1923,7 @@ class TvBoxViewModel(
         val lines = channel.lines
         if (lines.size <= 1) return false
         liveStallRetries = 0
+        autoSwitchThrottle = resetAutoSwitchThrottle()
         val previousIndex = if (state.live.lineIndex <= 0) lines.lastIndex else state.live.lineIndex - 1
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${logSafeUrl(lines[previousIndex].url)}")
         _state.update {
@@ -1962,6 +1987,7 @@ class TvBoxViewModel(
         if (lineIndex !in channel.lines.indices) return
         if (lineIndex == state.live.lineIndex) return
         liveStallRetries = 0
+        autoSwitchThrottle = resetAutoSwitchThrottle()
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${logSafeUrl(channel.lines[lineIndex].url)}")
         _state.update { it.copy(live = it.live.copy(lineIndex = lineIndex)) }
         liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
@@ -1992,6 +2018,18 @@ class TvBoxViewModel(
             }
         }
         liveStallRetries = 0
+        // 抖动抑制：播放器连续报错时，退避窗口内不再连切线路，只原地重连；
+        // 仍返回 true 让播放页继续尝试，避免误触发「所有线路不可用」的阻断态。
+        val autoSwitchGate = gateAutoSwitch(autoSwitchThrottle, System.currentTimeMillis())
+        if (autoSwitchGate is AutoSwitchGate.Defer) {
+            android.util.Log.i(
+                VM_LIVE_LOG_TAG,
+                "【自动容错】退避窗口内暂不切线路，${autoSwitchGate.retryAfterMs}ms 后可再切，先原地重连",
+            )
+            _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
+            return true
+        }
+        autoSwitchThrottle = (autoSwitchGate as AutoSwitchGate.Allow).nextState
         // 域名评分：本次失败先记到当前线路的域名上，下次进台排序时会被压低。
         recordLiveLineFailure(state)
         val nextIndex = state.live.lineIndex + 1

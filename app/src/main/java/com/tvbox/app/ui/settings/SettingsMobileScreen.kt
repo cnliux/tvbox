@@ -292,7 +292,7 @@ private fun SettingsCategoryGrid(onCategoryClick: (MobileSettingCategory) -> Uni
             verticalArrangement = Arrangement.spacedBy(gridSpacing),
             userScrollEnabled = false,
         ) {
-            items(MobileSettingCategory.entries) { category ->
+            items(MobileSettingCategory.entries, key = { it.name }) { category ->
                 CategoryCard(category = category, onClick = { onCategoryClick(category) })
             }
         }
