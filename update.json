@@ -1,14 +1,14 @@
 {
-  "versionCode": 20000,
-  "versionName": "1.0.0",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk",
-  "apkSha256": "b9a02e07a8eba5129f03aafdad2132402eb3c5e3e6bb49c40b6d9658b5b3210b",
-  "apkSize": 19920924,
+  "versionCode": 20001,
+  "versionName": "1.0.1",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.1/juhe-video-v1.0.1.apk",
+  "apkSha256": "e458d5880dc8e0f5d6162aac84db5ccb47bdc33e30fb5fd9db0383eca640d4ad",
+  "apkSize": 19988896,
   "force": false,
   "changelog": [],
   "apkMirrors": [
-    "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk"
+    "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.0.1/juhe-video-v1.0.1.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.1/juhe-video-v1.0.1.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.1/juhe-video-v1.0.1.apk"
   ]
 }
