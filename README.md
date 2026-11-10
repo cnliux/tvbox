@@ -100,11 +100,11 @@ https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.js
 
 ```json
 {
-  "versionCode": 10323,
-  "versionName": "1.3.23",
-  "apkUrl": "https://ghfast.top/https://github.com/cnliux/tvbox/releases/download/v1.3.23/app-release.apk",
-  "apkSha256": "401bf8d4e76ec188056e73a4690ff4bb7f5ff68715523f3cdbd804beb8d06138",
-  "apkSize": 50886726,
+  "versionCode": 20002,
+  "versionName": "1.0.2",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.2/juhe-video-v1.0.2.apk",
+  "apkSha256": "e6eebc4aad9f6258bf65a9038e0b1a7a3407831ec6ef496f88625b68170ac53d",
+  "apkSize": 19988896,
   "force": false,
   "changelog": [
     "手机版源管理改为页内管理：设置页移除网页远程管理入口，改为在页内导入配置与增删源。",
@@ -118,7 +118,7 @@ https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.js
 说明：
 
 - `versionCode` 必须大于当前应用版本，才会提示更新。
-- v1.3.23 可通过 1.3.16 及之后版本的 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
+- 1.0.0 及之后版本可直接通过 OTA 提示更新，也可手动下载 APK 覆盖安装，保留本机数据。
 - 手机用户请到“设置 → 设备模式”选择手机模式；默认电视模式用于避免盒子播放短剧时切成竖屏。
 - 已下载的 APK 可从小窗选择“保存安装包”。系统没有文件选择器时保存到下载目录的 `TVBox` 文件夹；Android 9 需存储授权，手动安装仍受系统权限限制。
 - 旧版若无法在线更新，可从 Release 页面下载 APK 手动覆盖安装。
@@ -220,10 +220,10 @@ apksigner verify --print-certs app\build\outputs\apk\release\app-release.apk
 
 ```powershell
 git add CHANGELOG.md README.md app\build.gradle.kts app\src\main app\src\test tools\bind-platform-live.ps1 tools\bind-platform-live.sh .github\workflows\release.yml gradle.properties gradle\libs.versions.toml app\proguard-rules.pro
-git commit -m "Release v1.3.27"
+git commit -m "chore(release): 发布 v1.0.3"
 git push origin main
-git tag -a v1.3.27 -m "TVBox v1.3.27"
-git push origin v1.3.27
+git tag -a v1.0.3 -m "聚合视频 v1.0.3"
+git push origin v1.0.3
 ```
 
 3. tag 推送后，GitHub Actions 自动构建并发布 `app-release.apk`（`arm64-v8a`）。

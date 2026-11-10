@@ -96,23 +96,23 @@ class PlaybackParserTest {
         val update = parseAppUpdateManifest(
             raw = """
             {
-              "versionCode": 10200,
-              "versionName": "1.2.0",
-              "apkUrl": "https://github.com/example/TVBox-v1.2.0.apk",
+              "versionCode": 20000,
+              "versionName": "1.0.0",
+              "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk",
               "apkSha256": "abc123",
               "apkSize": 4454653,
               "force": false,
               "changelog": ["新增 OTA 更新", "优化首页焦点"]
             }
             """.trimIndent(),
-            currentVersionCode = 10100,
+            currentVersionCode = 19999,
         )
 
         assertNotNull(update)
         val parsedUpdate = update!!
-        assertEquals(10200, parsedUpdate.versionCode)
-        assertEquals("1.2.0", parsedUpdate.versionName)
-        assertEquals("https://github.com/example/TVBox-v1.2.0.apk", parsedUpdate.apkUrl)
+        assertEquals(20000, parsedUpdate.versionCode)
+        assertEquals("1.0.0", parsedUpdate.versionName)
+        assertEquals("https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk", parsedUpdate.apkUrl)
         assertEquals("abc123", parsedUpdate.apkSha256)
         assertEquals(4454653, parsedUpdate.apkSize)
         assertEquals(listOf("新增 OTA 更新", "优化首页焦点"), parsedUpdate.changelog)
@@ -123,12 +123,12 @@ class PlaybackParserTest {
         val update = parseAppUpdateManifest(
             raw = """
             {
-              "versionCode": 10200,
-              "versionName": "1.2.0",
-              "apkUrl": "https://github.com/example/TVBox-v1.2.0.apk"
+              "versionCode": 20000,
+              "versionName": "1.0.0",
+              "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.0/juhe-video-v1.0.0.apk"
             }
             """.trimIndent(),
-            currentVersionCode = 10200,
+            currentVersionCode = 20000,
         )
 
         assertNull(update)
@@ -139,16 +139,16 @@ class PlaybackParserTest {
         val update = parseAppUpdateManifest(
             raw = "\uFEFF" + """
             {
-              "versionCode": 10201,
-              "versionName": "1.2.1",
-              "apkUrl": "https://github.com/example/TVBox-v1.2.1.apk"
+              "versionCode": 20001,
+              "versionName": "1.0.1",
+              "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.1/juhe-video-v1.0.1.apk"
             }
             """.trimIndent(),
-            currentVersionCode = 10200,
+            currentVersionCode = 20000,
         )
 
         assertNotNull(update)
-        assertEquals(10201, update!!.versionCode)
+        assertEquals(20001, update!!.versionCode)
     }
 
     @Test

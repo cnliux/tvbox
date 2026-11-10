@@ -596,7 +596,7 @@ fun MediaCard(
         // 这样无论片名是 1 行还是 2 行，整卡总高都一致，网格同行卡片不再因文字长短而参差变形。
         // 高度随字号设置（typography 已含缩放）用 density 换算，避免在「超大」字号下截断。
         // 防御：lineHeight 未指定（Unspecified）时禁止进入 toDp()——TextUnit.toDp() 对非 Sp
-        // 类型会直接抛 IllegalStateException（v1.3.60 启动崩溃根因），必须先回退到字号推导行高。
+        // 类型会直接抛 IllegalStateException（历史上一次启动崩溃的根因），必须先回退到字号推导行高。
         val density = LocalDensity.current
         val titleTextHeight = with(density) {
             (cardTitleStyle.effectiveLineHeight() * cardTitleLines).toDp()

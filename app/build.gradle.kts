@@ -24,16 +24,10 @@ fun configProperty(name: String): String {
         ?: ""
 }
 
-fun String.toBuildConfigString(): String {
-    val escaped = replace("\\", "\\\\").replace("\"", "\\\"")
-    return "\"$escaped\""
-}
-
 val releaseStoreFile = configProperty("TVBOX_RELEASE_STORE_FILE")
 val releaseStorePassword = configProperty("TVBOX_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = configProperty("TVBOX_RELEASE_KEY_ALIAS")
 val releaseKeyPassword = configProperty("TVBOX_RELEASE_KEY_PASSWORD")
-val aiApiKey = configProperty("TVBOX_AI_API_KEY")
 // 仅本地调试需要 x86 模拟器包：-PtvboxEmulatorAbis=true
 // 会给 Debug 追加 x86/x86_64，并让 gomobile bind 一并产出对应 ABI；Release 永远只有 arm64-v8a。
 val emulatorAbisEnabled = listOf(
@@ -62,7 +56,6 @@ android {
         targetSdk = 36
         versionCode = TVBOX_VERSION_CODE
         versionName = TVBOX_VERSION_NAME
-        buildConfigField("String", "AI_API_KEY", aiApiKey.toBuildConfigString())
         // ABI 按构建类型分别配置：Release 只发 arm64-v8a，Debug 可选本机 x86。
     }
 

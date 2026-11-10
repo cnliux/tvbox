@@ -64,7 +64,7 @@ class BatchStateTest {
         val pref = CdnPreference(CdnSelectionMode.Manual, "ghfast.top")
         assertEquals(pref, decodeCdnPreference(encodeCdnPreference(pref)))
         val candidates = buildOtaApkCandidates(
-            "https://github.com/cnliux/tvbox/releases/download/v1.3.55/tvbox-v1.3.55.apk",
+            "https://github.com/cnliux/tvbox/releases/download/v1.0.2/juhe-video-v1.0.2.apk",
         )
         assertEquals("ghfast.top", applyCdnPreference(candidates, pref).first().id)
         assertEquals(

@@ -167,7 +167,7 @@ private fun colorScheme(tokens: TvColorTokens): ColorScheme = darkColorScheme(
 private val TvTypography = Typography(
     // 每个样式必须显式指定 lineHeight：Typography() 的具名参数是整体替换而非合并默认值，
     // 只写 fontSize 会让 lineHeight 保持 Unspecified——下游一旦做 lineHeight.toDp() 等换算
-    // 就会抛 IllegalStateException（v1.3.60 启动崩溃的根因）。行高取保守的 ~1.15-1.25 倍字号。
+    // 就会抛 IllegalStateException（历史上一次启动崩溃的根因）。行高取保守的 ~1.15-1.25 倍字号。
     displaySmall = TextStyle(fontSize = 44.sp, lineHeight = 52.sp, fontWeight = FontWeight.Medium),
     headlineLarge = TextStyle(fontSize = 34.sp, lineHeight = 42.sp, fontWeight = FontWeight.Medium),
     headlineMedium = TextStyle(fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Medium),

@@ -10,7 +10,7 @@ import java.io.IOException
 class OtaCdnTest {
 
     private val releaseUrl =
-        "https://github.com/cnliux/tvbox/releases/download/v1.3.54/tvbox-v1.3.54.apk"
+        "https://github.com/cnliux/tvbox/releases/download/v1.0.2/juhe-video-v1.0.2.apk"
 
     @Test
     fun apkCandidatesKeepOfficialSourceFirstAndDeriveProxies() {
