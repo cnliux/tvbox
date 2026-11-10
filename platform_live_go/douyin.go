@@ -726,7 +726,8 @@ func (r *douyinResolver) getRoomDataByHTML(webRid string) (map[string]interface{
 	}
 	state, ok := parsed["state"].(map[string]interface{})
 	if !ok {
-		return nil, newError("抖音直播间状态数据异常")
+		// 新格式：数据直接在顶层（无外层 state 包装）
+		state = parsed
 	}
 	return state, nil
 }
@@ -760,15 +761,15 @@ func (r *douyinResolver) nestedRoom(data map[string]interface{}) map[string]inte
 	if info == nil {
 		info = map[string]interface{}{}
 	}
-	room, ok := info["room"].(map[string]interface{})
-	if ok {
+	// 兼容新旧格式：旧格式有 info["room"]，新格式房间数据直接在 info 中。
+	if room, ok := info["room"].(map[string]interface{}); ok && len(room) > 0 {
 		return room
 	}
-	return map[string]interface{}{}
+	return info
 }
 
 func (r *douyinResolver) status(room map[string]interface{}) int {
-	for _, key := range []string{"status", "live_status", "room_status"} {
+	for _, key := range []string{"status", "live_status", "room_status", "liveStatus"} {
 		v := room[key]
 		if m, ok := v.(map[string]interface{}); ok {
 			if s, ok := m["status"].(float64); ok {
@@ -780,6 +781,15 @@ func (r *douyinResolver) status(room map[string]interface{}) int {
 		}
 		if f, ok := v.(float64); ok {
 			return int(f)
+		}
+		// 新格式：liveStatus 以字符串形式存在（如 "normal" 表示未开播，"live"/"ing" 表示直播中）
+		if s, ok := v.(string); ok {
+			switch strings.ToLower(s) {
+			case "live", "ing", "broadcasting":
+				return 2
+			case "normal", "closed", "end", "offline", "stopped":
+				return 4
+			}
 		}
 	}
 	return 0
