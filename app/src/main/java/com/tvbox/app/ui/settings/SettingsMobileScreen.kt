@@ -311,35 +311,39 @@ private fun SettingsCategoryGrid(onCategoryClick: (MobileSettingCategory) -> Uni
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         // 手机竖屏按宽度自适应列数：最小 150dp/格，360dp~411dp 竖屏可放 2~3 列，宽屏自然增加。
         // TV 端走 SettingsTvSplitScreen，不经过此函数。
+        // 修复（遮挡）：原先写死网格高度 + userScrollEnabled=false，当分类数超过估算行数时，
+        // 多余卡片被直接裁切（看不到、也划不动）。改为内容自适应的 FlowRow，按列数自动换行，
+        // 所有分类卡片完整显示，不再依赖手算高度。
         val gridSpacing = 12.dp
-        val gridPadding = 16.dp
         val minCardWidth = 150.dp
-        val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
+        val capacity = ((maxWidth + gridSpacing) / (minCardWidth + gridSpacing))
             .toInt()
             .coerceAtLeast(1)
         val columns = capacity.coerceIn(2, 4)
-        val cardHeight = 160.dp
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(columns),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(cardHeight * columns.coerceAtLeast(2) / 2 + gridSpacing * (columns.coerceAtLeast(2) / 2 - 1) + gridPadding * 2),
+        val cardWidth = (maxWidth - gridSpacing * (columns - 1)) / columns
+        FlowRow(
+            modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(gridSpacing),
             verticalArrangement = Arrangement.spacedBy(gridSpacing),
-            userScrollEnabled = false,
+            maxItemsInEachRow = columns,
         ) {
-            items(MobileSettingCategory.entries, key = { it.name }) { category ->
-                CategoryCard(category = category, onClick = { onCategoryClick(category) })
+            MobileSettingCategory.entries.forEach { category ->
+                CategoryCard(
+                    category = category,
+                    onClick = { onCategoryClick(category) },
+                    modifier = Modifier
+                        .width(cardWidth)
+                        .heightIn(min = 150.dp),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun CategoryCard(category: MobileSettingCategory, onClick: () -> Unit) {
+private fun CategoryCard(category: MobileSettingCategory, onClick: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .clip(RoundedCornerShape(18.dp))
             .clickable(role = Role.Button, onClick = onClick)
             // 卡片内图标、标题、说明原本是三个语义节点，合并成一条分类条目播报。

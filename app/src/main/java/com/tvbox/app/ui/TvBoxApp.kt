@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -116,7 +117,6 @@ import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.GuidedEmptyState
-import com.tvbox.app.ui.components.CinemaHeroBanner
 import com.tvbox.app.ui.components.RetryableError
 import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.HistoryItemCard
@@ -502,17 +502,9 @@ private fun HomeScreen(
                     )
                     if (cinemaTheme && !state.isShowingDoubanHot) {
                         state.movies.firstOrNull()?.let { featuredMovie ->
-                            if (state.effectiveDeviceMode == DeviceMode.Mobile) {
-                                // 手机竖屏用统一 Hero 组件的竖屏布局；两个按钮顺序固定，遥控器/触屏落点一致。
-                                CinemaHeroBanner(
-                                    title = featuredMovie.name,
-                                    rating = "",
-                                    description = featuredMovie.description,
-                                    onPlay = { actions.openDetail(featuredMovie.id) },
-                                    onDetail = { actions.openDetail(featuredMovie.id) },
-                                    portrait = true,
-                                )
-                            } else {
+                            // 手机首页不再展示 Hero 横幅：竖屏下 Hero 占位过高、易与信息流挤压，
+                            // 且长简介会撑变形。直接进分类标签 + 信息流，首屏更紧凑。电视端仍保留 FeaturedMovieHero。
+                            if (state.effectiveDeviceMode != DeviceMode.Mobile) {
                                 FeaturedMovieHero(
                                     movie = featuredMovie,
                                     onOpen = { actions.openDetail(featuredMovie.id) },
@@ -520,8 +512,8 @@ private fun HomeScreen(
                                     // 上限随字体缩放同比放宽（正常 190 / 大 224 / 超大 258）。
                                     maxHeight = 190.dp * state.appSettings.fontScale.typographyScale,
                                 )
+                                Spacer(modifier = Modifier.height(TvDimens.SectionGap))
                             }
-                            Spacer(modifier = Modifier.height(TvDimens.SectionGap))
                         }
                     }
                     HomeCategoryRows(
@@ -702,7 +694,9 @@ private fun HistoryScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .windowInsetsPadding(WindowInsets.safeDrawing)
+                // 修复顶部遮挡：历史页此前用 safeDrawing，在部分机型/主题下状态栏 inset 未生效，
+                // 导致「历史」标题被状态栏压住。改用与设置页 TopAppBar 一致的 statusBars 显式吸收。
+                .windowInsetsPadding(WindowInsets.statusBars)
                 .padding(padding),
         ) {
             val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
@@ -769,7 +763,7 @@ private fun HistoryScreen(
                     LazyVerticalGrid(
                         columns = columns,
                         state = historyGrid,
-                        contentPadding = PaddingValues(start = hSidePadding, end = hSidePadding, top = 0.dp, bottom = 24.dp),
+                        contentPadding = PaddingValues(start = hSidePadding, end = hSidePadding, top = 8.dp, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(hSpacing),
                         verticalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 22.dp),
                         modifier = Modifier.fillMaxSize(),

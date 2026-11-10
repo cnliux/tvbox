@@ -1060,13 +1060,11 @@ private fun MobileLivePlayerScreen(
         if (epgPrograms.isNotEmpty() && currentEpgIndex > 0) epgListState.scrollToItem(currentEpgIndex)
     }
 
-    // 相关频道：同组优先，不足补全局邻近。
-    val relatedChannels = remember(channel, channels, state.appSettings.relatedChannelCount) {
-        val selfIndex = channels.indexOfFirst { it.number == channel.number }
-        val indexed = channels.withIndex().filter { it.index != selfIndex }
-        val sameGroup = indexed.filter { it.value.groupName == channel.groupName }
-        val others = indexed.filter { it.value.groupName != channel.groupName }
-        (sameGroup + others).take(state.appSettings.relatedChannelCount)
+    // 相关频道：展示当前频道所属分组的全部频道。
+    // 修复：原先按 relatedChannelCount 截断并混入其他分组频道，导致「该分类的所有信息」显示不全且掺杂他组；
+    // 现在只取同组频道（排除自身），横向 LazyRow 可滚动浏览全部分类成员。
+    val relatedChannels = remember(channel, channels) {
+        channels.filter { it.number != channel.number && it.groupName == channel.groupName }
     }
 
     Column(
@@ -1291,16 +1289,16 @@ private fun MobileLivePlayerScreen(
             contentPadding = PaddingValues(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(relatedChannels, key = { it.value.number }) { pair ->
-                val related = pair.value
+            items(relatedChannels, key = { it.number }) { related ->
                 // 提前取「正在播」用于整卡合并播报，避免读屏逐个朗读名称与节目。
                 val relatedNow = actions.liveEpgNow(related)?.title
+                val relatedIndex = channels.indexOf(related)
                 Column(
                     modifier = Modifier
                         .width(100.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(LiveCard)
-                        .clickable(role = Role.Button) { onChannelPicked(pair.index, related.number) }
+                        .clickable(role = Role.Button) { onChannelPicked(relatedIndex, related.number) }
                         .semantics(mergeDescendants = true) {
                             contentDescription = if (relatedNow.isNullOrBlank()) {
                                 related.name

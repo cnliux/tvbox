@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -577,6 +578,18 @@ fun MediaCard(
             else -> MaterialTheme.typography.bodySmall
         }
         val cardSubtitleLines = if (touchMode && narrowCard) 2 else 1
+        // 窄卡（手机网格 / 续看卡）文字区固定高度：标题与副标题各按「行高 × 最大行数」预留空间，
+        // 这样无论片名是 1 行还是 2 行，整卡总高都一致，网格同行卡片不再因文字长短而参差变形。
+        // 高度随字号设置（typography 已含缩放）用 density 换算，避免在「超大」字号下截断。
+        val density = LocalDensity.current
+        // Material3 命名样式（titleSmall / labelMedium / bodySmall）均显式指定了 lineHeight，直接取用即可。
+        val titleTextHeight = with(density) {
+            (cardTitleStyle.lineHeight * cardTitleLines).toDp()
+        }
+        val subtitleTextHeight = with(density) {
+            (cardSubtitleStyle.lineHeight * cardSubtitleLines).toDp()
+        }
+        val fixTextBlock = touchMode && narrowCard
         Column(modifier = Modifier.fillMaxWidth()) {
             Box(
                 modifier = Modifier
@@ -619,29 +632,64 @@ fun MediaCard(
                     trackColor = TvColors.SurfaceRaised,
                 )
             }
-            Text(
-                text = title,
-                modifier = Modifier.padding(
-                    start = 8.dp,
-                    top = 6.dp,
-                    end = 8.dp,
-                    bottom = if (subtitle.isNullOrBlank()) 8.dp else 1.dp,
-                ),
-                style = cardTitleStyle,
-                // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = cardTitleLines,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!subtitle.isNullOrBlank()) {
+            if (fixTextBlock) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(titleTextHeight + 6.dp)
+                        .padding(start = 8.dp, top = 6.dp, end = 8.dp),
+                ) {
+                    Text(
+                        text = title,
+                        style = cardTitleStyle,
+                        // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = cardTitleLines,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            } else {
                 Text(
-                    text = subtitle,
-                    modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
-                    color = TvColors.TextSecondary,
-                    style = cardSubtitleStyle,
-                    maxLines = cardSubtitleLines,
+                    text = title,
+                    modifier = Modifier.padding(
+                        start = 8.dp,
+                        top = 6.dp,
+                        end = 8.dp,
+                        bottom = if (subtitle.isNullOrBlank()) 8.dp else 1.dp,
+                    ),
+                    style = cardTitleStyle,
+                    // 手机版深色卡片上必须显式前景色，否则 edge-to-edge 下默认内容色偏暗、片名几乎不可见。
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = cardTitleLines,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (!subtitle.isNullOrBlank()) {
+                if (fixTextBlock) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(subtitleTextHeight + 8.dp)
+                            .padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                    ) {
+                        Text(
+                            text = subtitle,
+                            color = TvColors.TextSecondary,
+                            style = cardSubtitleStyle,
+                            maxLines = cardSubtitleLines,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                } else {
+                    Text(
+                        text = subtitle,
+                        modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 8.dp),
+                        color = TvColors.TextSecondary,
+                        style = cardSubtitleStyle,
+                        maxLines = cardSubtitleLines,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
         }
     }
