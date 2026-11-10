@@ -15,24 +15,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.IOException
 
-interface PlatformLiveRepository {
-    suspend fun getChannels(): List<PlatformLiveChannel>
-    suspend fun getSites(): List<PlatformLiveSite>
-    suspend fun getCategoryTree(site: String): PlatformLiveCategoryTree
-    suspend fun getRooms(site: String, categoryId: String, page: Int): PlatformLiveRoomsPage
-    suspend fun resolve(room: PlatformLiveRoom, forceRefresh: Boolean = false): ResolvedPlatformLiveStream
-}
-
-data class PlatformLiveRoomsPage(
-    val page: Int,
-    val pageCount: Int,
-    val rooms: List<PlatformLiveRoom>,
-)
-
-data class PlatformLiveCategoryTree(
-    val parentCategories: List<PlatformLiveParentCategory>,
-    val categories: List<PlatformLiveCategory>,
-)
+// 契约与分页/分类树模型已迁移到 domain；保留同包别名，确保既有 import 与 public API 不变。
+typealias PlatformLiveRepository = com.tvbox.app.domain.PlatformLiveRepository
+typealias PlatformLiveRoomsPage = com.tvbox.app.domain.PlatformLiveRoomsPage
+typealias PlatformLiveCategoryTree = com.tvbox.app.domain.PlatformLiveCategoryTree
 
 /**
  * APK 内置的平台直播解析器。

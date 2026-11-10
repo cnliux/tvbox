@@ -220,9 +220,20 @@ fun TVBoxTheme(
 ) {
     val tokens = if (theme == TvTheme.Cinema) CinemaTokens else DefaultTokens
     val typography = TvTypography.scaled(fontScale.typographyScale)
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // 系统「减少动效」关闭时，焦点缩放与过渡一并关闭，但保留描边保证遥控器可见。
+    val reduceMotion = androidx.compose.runtime.remember {
+        android.provider.Settings.Global.getFloat(
+            context.contentResolver,
+            android.provider.Settings.Global.ANIMATOR_DURATION_SCALE,
+            1f,
+        ) == 0f
+    }
+    val focusTokens = focusTokensFor(theme, reduceMotion)
     androidx.compose.runtime.CompositionLocalProvider(
         LocalTvColors provides tokens,
         LocalTvLayout provides layoutTokens(fontScale),
+        LocalTvFocus provides focusTokens,
     ) {
         MaterialTheme(
             colorScheme = colorScheme(tokens),

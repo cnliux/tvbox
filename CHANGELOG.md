@@ -1,3 +1,11 @@
+## v1.3.54 - 2026-11-10
+
+- 架构分层：豆瓣热播 `DoubanHotRepository`、平台直播 `PlatformLiveRepository` 及分类/分页模型迁到 `domain`，`data` 层保留同名 typealias，既有 import 与 public API 不变；domain 编排层现在只依赖契约。
+- 并发规整：多源搜索的并发骨架收编到统一 `fanOutIncrementally`，限流、单源超时、失败隔离、先到先发与取消传播由 domain 工具统一负责；累积结果改为串行收集，进度帧不再因缓冲丢弃，`CancellationException` 仍原样上抛。
+- 缺陷修复：多源搜索去重时同相关度影片改用源优先级决胜，修掉「主来源优先」随 `HashMap` 迭代顺序/并发完成时序漂移的问题。
+- 新增可复用纯逻辑层（默认不改变既有交互）：按来源权重分配单源超时与增量去重、首页信息流与直播取流 useCase 编排骨架、直播换线三态判定与指数退避、订阅导入分类诊断与 JSON 条目校验预览、TV 焦点/动效令牌（遵循系统「减少动效」）。
+- 回归：本版新增 28 例 JVM 单测，`testDebugUnitTest` 与 `assembleDebug` 全部通过，共 47 个测试类 / 317 例全绿。
+
 ## v1.3.53 - 2026-11-10
 
 - 架构分层：仓库契约（`MovieRepository` / `HistoryRepository` / `LiveRepository` 与增量结果模型）统一迁到 `domain`，`data` 层保留同名 typealias，既有 import 与 public API 不变；新增 `plan/改造任务清单与仓库现状核对.md` 记录后续改造批次。

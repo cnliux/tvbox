@@ -23,21 +23,9 @@ import okhttp3.Request
 import java.io.IOException
 import kotlin.math.ceil
 
-interface DoubanHotRepository {
-    suspend fun getRecentHot(
-        page: Int,
-        forceRefresh: Boolean = false,
-        category: DoubanHotCategory = DoubanHotCategory.Tv,
-        pageSize: Int = DOUBAN_PAGE_SIZE,
-    ): PagedDoubanHotMovies
-}
-
-enum class DoubanHotCategory(
-    val category: String,
-    val type: String,
-) {
-    Tv(category = "tv", type = "tv"),
-}
+// 契约与分类枚举已迁移到 domain；保留同包别名，确保既有 import 与 public API 不变。
+typealias DoubanHotRepository = com.tvbox.app.domain.DoubanHotRepository
+typealias DoubanHotCategory = com.tvbox.app.domain.DoubanHotCategory
 
 class DefaultDoubanHotRepository(
     private val cache: DoubanHotCache = InMemoryDoubanHotCache(),
@@ -245,7 +233,8 @@ internal const val DOUBAN_USER_AGENT =
 internal const val DOUBAN_REFERER = "https://movie.douban.com/tv/"
 private const val DOUBAN_ORIGIN = "https://movie.douban.com"
 private const val DOUBAN_ENDPOINT = "https://m.douban.com/rexxar/api/v2/subject/recent_hot/tv"
-private const val DOUBAN_PAGE_SIZE = 20
+// 与 domain 契约的默认页大小共用同一常量，避免两处数值漂移。
+private const val DOUBAN_PAGE_SIZE = com.tvbox.app.domain.DoubanHotRepository.DEFAULT_PAGE_SIZE
 private const val MINUTE_MS = 60_000L
 private const val SUCCESS_CACHE_TTL_MS = 20L * 60L * MINUTE_MS
 private const val FAILURE_CACHE_TTL_MS = 6L * MINUTE_MS

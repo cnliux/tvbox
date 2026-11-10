@@ -3,10 +3,12 @@ package com.tvbox.app.data
 import android.util.Log
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
+import com.tvbox.app.domain.FanOutTask
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PagedMovies
 import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.QuantitySettings
+import com.tvbox.app.domain.fanOutIncrementally
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -14,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.sync.Mutex
@@ -188,59 +191,51 @@ class DefaultMovieRepository(
             return@channelFlow
         }
 
-        val semaphore = Semaphore(maxParallelSourceRequests)
-        val updatesMutex = Mutex()
-        val completedMovies = mutableMapOf<String, List<Movie>>()
-        var completedSources = 0
-
-        coroutineScope {
-            lines.map { line ->
-                async {
-                    val startedAtMs = nowMs()
-                    var completedNormally = true
-                    val result = try {
-                        semaphore.withPermit {
-                            withTimeoutOrNull(SEARCH_TIMEOUT_MS) {
-                                // 同上：并行搜索的网络读取必须在 IO 线程执行。
-                                withContext(Dispatchers.IO) {
-                                    loadMovies(line = line, page = requestedPage, keyword = keyword).movies
-                                }
-                            } ?: run {
-                                completedNormally = false
-                                sourceHealth.recordFailure(line.id)
-                                emptyList()
-                            }
-                        }
-                    } catch (error: CancellationException) {
-                        throw error
-                    } catch (error: Throwable) {
-                        completedNormally = false
-                        sourceHealth.recordFailure(line.id)
-                        Log.d(TAG, "search source failed: lineId=${line.id}, type=${error::class.simpleName}")
-                        emptyList()
-                    }
-                    if (completedNormally) {
-                        sourceHealth.recordSuccess(line.id, nowMs() - startedAtMs)
-                    }
-
-                    updatesMutex.withLock {
-                        completedSources += 1
-                        completedMovies[line.id] = result
-                        trySend(
-                            MultiSourceSearchUpdate(
-                                movies = mergeSearchMovies(
-                                    lines = lines,
-                                    moviesByLine = completedMovies,
-                                    keyword = keyword,
-                                    healthScore = sourceHealth::score,
-                                ),
-                                completedSources = completedSources,
-                                totalSources = lines.size,
-                            ),
-                        )
-                    }
+        // 并发骨架统一交给 domain 的 fan-out 工具：限流 / 单源超时 / 失败隔离 /
+        // 先到先发 / 取消传播。这里只保留「取数 + 健康度记账 + 按源累积合并」的业务语义。
+        val tasks: List<FanOutTask<List<Movie>>> = lines.map { line ->
+            FanOutTask {
+                val startedAtMs = nowMs()
+                try {
+                    withContext(Dispatchers.IO) {
+                        loadMovies(line = line, page = requestedPage, keyword = keyword).movies
+                    }.also { sourceHealth.recordSuccess(line.id, nowMs() - startedAtMs) }
+                } catch (error: CancellationException) {
+                    // 页面退出 / 发起新搜索导致的取消必须原样上抛，不能被当成源失败。
+                    throw error
+                } catch (error: Throwable) {
+                    sourceHealth.recordFailure(line.id)
+                    Log.d(TAG, "search source failed: lineId=${line.id}, type=${error::class.simpleName}")
+                    emptyList<Movie>()
                 }
-            }.awaitAll()
+            }
+        }
+        val completedMovies = mutableMapOf<String, List<Movie>>()
+        fanOutIncrementally(
+            tasks = tasks,
+            maxParallel = maxParallelSourceRequests,
+            perSourceTimeoutMs = SEARCH_TIMEOUT_MS,
+        ).collect { update ->
+            val line = lines[update.sourceIndex]
+            val movies = update.value
+            if (movies == null) {
+                // 工具把「单源超时」折叠成 null，按失败记账，保证进度仍能走到终点。
+                sourceHealth.recordFailure(line.id)
+            }
+            // collect 在单一协程上串行执行，累积状态无需 Mutex 保护。
+            completedMovies[line.id] = movies.orEmpty()
+            send(
+                MultiSourceSearchUpdate(
+                    movies = mergeSearchMovies(
+                        lines = lines,
+                        moviesByLine = completedMovies,
+                        keyword = keyword,
+                        healthScore = sourceHealth::score,
+                    ),
+                    completedSources = update.completedSources,
+                    totalSources = update.totalSources,
+                ),
+            )
         }
     }
 
@@ -475,7 +470,19 @@ class DefaultMovieRepository(
             list.forEach { movie ->
                 val key = "${normalizeTitle(movie.name)}:${movie.year.trim()}"
                 val relevance = scoreNameRelevance(movie.name, query)
-                if (relevance > (bestScore[key] ?: -1)) {
+                val existing = bestByKey[key]
+                // 同相关度时按源优先级决胜：主来源固定排在备选来源之前。
+                // 不能依赖 moviesByLine 的迭代顺序（HashMap 无序），否则同名影片
+                // 可能保留备选源那一条，导致「主来源优先」随并发完成时序抖动。
+                val preferred = when {
+                    existing == null -> true
+                    relevance > (bestScore[key] ?: -1) -> true
+                    relevance == (bestScore[key] ?: -1) ->
+                        (priorityById[movie.apiLineId] ?: Int.MAX_VALUE) <
+                            (priorityById[existing.apiLineId] ?: Int.MAX_VALUE)
+                    else -> false
+                }
+                if (preferred) {
                     bestScore[key] = relevance
                     bestByKey[key] = movie
                 }

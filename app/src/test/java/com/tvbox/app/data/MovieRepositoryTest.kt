@@ -201,6 +201,54 @@ class MovieRepositoryTest {
         assertEquals(listOf("primary", "backup", "extra"), updates.last().movie.playSources.map { it.lineId })
     }
 
+    @Test
+    fun progressiveSearchKeepsOtherSourcesWhenOneThrows() = runBlocking {
+        val primary = line("primary")
+        val broken = line("broken")
+        val repository = repository(listOf(primary, broken), mapOf(
+            primary.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                response(vod(1, "可用源影片"))
+            },
+            broken.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                throw java.io.IOException("simulated source failure")
+            },
+        ))
+
+        val updates = repository.searchProgressively("primary", page = 1, keyword = "影片").toList()
+        val finalUpdate = updates.last()
+
+        assertEquals(2, finalUpdate.completedSources)
+        assertEquals(2, finalUpdate.totalSources)
+        assertEquals(listOf("可用源影片"), finalUpdate.movies.map { it.name })
+    }
+
+    @Test
+    fun progressiveSearchCancellationReachesFanOutTasks() = runBlocking {
+        val released = AtomicInteger(0)
+        val primary = line("primary")
+        val repository = repository(listOf(primary), mapOf(
+            primary.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                try {
+                    delay(60_000)
+                    response()
+                } finally {
+                    released.incrementAndGet()
+                }
+            },
+        ))
+
+        var cancelled = false
+        try {
+            withTimeout(80) { repository.searchProgressively("primary", page = 1, keyword = "取消").toList() }
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        delay(30)
+
+        assertTrue(cancelled)
+        assertEquals(1, released.get())
+    }
+
     private fun repository(
         lines: List<ApiLine>,
         apiByBaseUrl: Map<String, MacCmsApi>,
