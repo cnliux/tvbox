@@ -199,8 +199,9 @@ private fun SettingsMobileLanding(
             item {
                 Text(
                     text = "聚合视频 v${BuildConfig.VERSION_NAME} · GPLv3 · 仅供技术研究使用",
-                    color = TvColors.TextTertiary,
-                    style = MaterialTheme.typography.labelSmall,
+                    // 原先是 labelSmall + TextTertiary，手机上又小又暗，几乎读不出来。
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -262,14 +263,12 @@ private fun SettingsHeroCard(state: TvBoxUiState) {
 @Composable
 private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier) {
     Column(modifier = modifier) {
-        Text(text = label, color = TvColors.TextTertiary, style = MaterialTheme.typography.labelSmall)
+        Text(text = label, color = TvColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
         Text(
             text = value,
             color = TvColors.TextPrimary,
             style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -362,10 +361,8 @@ private fun CategoryCard(category: MobileSettingCategory, onClick: () -> Unit, m
                     )
                     Text(
                         text = category.subtitle,
-                        color = TvColors.TextTertiary,
+                        color = TvColors.TextSecondary,
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -454,6 +451,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             icon = Icons.Default.Settings,
             title = "设备模式",
             subtitle = state.appSettings.deviceMode.summaryLabel(detectedMode),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = DeviceMode.entries,
@@ -468,6 +466,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             icon = Icons.Default.Build,
             title = "界面主题",
             subtitle = state.appSettings.theme.displayName,
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = TvTheme.entries,
@@ -482,6 +481,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             icon = Icons.Default.Build,
             title = "字体大小",
             subtitle = state.appSettings.fontScale.displayName,
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = TvFontScale.entries,
@@ -537,6 +537,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             icon = Icons.Default.PlayArrow,
             title = "视频缩放",
             subtitle = state.appSettings.videoScaleMode.displayName,
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = VideoScaleMode.entries,
@@ -551,6 +552,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             icon = Icons.Default.PlayArrow,
             title = "解码策略",
             subtitle = state.appSettings.decoderStrategy.description,
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = DecoderStrategy.entries,
@@ -565,6 +567,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
             subtitle = if (state.appSettings.videoGridColumns > 0) "每行 ${state.appSettings.videoGridColumns} 个" else "自动（按屏幕宽度，竖屏 3~4 列）",
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = listOf(0, 1, 2, 3, 4),
@@ -583,6 +586,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 QuantitySettings.HomeHotContentCount,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.HomeHotContentCount.choices,
@@ -599,6 +603,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             icon = Icons.Default.PlayArrow,
             title = "直播卡片数量",
             subtitle = if (state.appSettings.platformLiveGridColumns > 0) "每行 ${state.appSettings.platformLiveGridColumns} 个" else "自动（按设备类型）",
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = listOf(0, 4, 5, 6, 7, 8),
@@ -611,12 +616,51 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
+            title = "首页海报数量",
+            subtitle = if (state.appSettings.homePosterCount > 0) "最多 ${state.appSettings.homePosterCount} 个" else "不限制（按分页全部展示）",
+            stackedTrailing = true,
+            trailing = {
+                ChoiceChips(
+                    options = listOf(0) + QuantitySettings.HomePosterCount.choices,
+                    selected = state.appSettings.homePosterCount,
+                    label = {
+                        if (it == 0) "不限制"
+                        else if (it == QuantitySettings.HomePosterCount.default) "默认"
+                        else "$it"
+                    },
+                    onSelect = actions::updateHomePosterCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "直播海报数量",
+            subtitle = if (state.appSettings.platformLivePosterCount > 0) "最多 ${state.appSettings.platformLivePosterCount} 个" else "不限制（按分页全部展示）",
+            stackedTrailing = true,
+            trailing = {
+                ChoiceChips(
+                    options = listOf(0) + QuantitySettings.PlatformLivePosterCount.choices,
+                    selected = state.appSettings.platformLivePosterCount,
+                    label = {
+                        if (it == 0) "不限制"
+                        else if (it == QuantitySettings.PlatformLivePosterCount.default) "默认"
+                        else "$it"
+                    },
+                    onSelect = actions::updatePlatformLivePosterCount,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
             title = "继续观看数量",
             subtitle = quantitySummary(
                 state.appSettings.continueWatchingCount,
                 QuantitySettings.ContinueWatchingCount,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.ContinueWatchingCount.choices,
@@ -637,6 +681,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 QuantitySettings.EpgCardRows,
                 unit = " 条",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.EpgCardRows.choices,
@@ -655,6 +700,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 QuantitySettings.LiveNumberMatchRows,
                 unit = " 行",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.LiveNumberMatchRows.choices,
@@ -673,6 +719,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 QuantitySettings.LiveNumberSearchLimit,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.LiveNumberSearchLimit.choices,
@@ -693,6 +740,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 QuantitySettings.RelatedChannelCount,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.RelatedChannelCount.choices,
@@ -808,6 +856,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.HistoryMaxItems,
                 unit = " 条",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.HistoryMaxItems.choices,
@@ -826,6 +875,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.HotWordCount,
                 unit = " 条",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.HotWordCount.choices,
@@ -844,6 +894,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.SearchSuggestionCount,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.SearchSuggestionCount.choices,
@@ -864,6 +915,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.DoubanHotPageSize,
                 unit = " 条",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.DoubanHotPageSize.choices,
@@ -882,6 +934,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.DoubanHotFallbackLines,
                 unit = " 路",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.DoubanHotFallbackLines.choices,
@@ -902,6 +955,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 QuantitySettings.MaxParallelSourceRequests,
                 unit = " 个",
             ),
+            stackedTrailing = true,
             trailing = {
                 ChoiceChips(
                     options = QuantitySettings.MaxParallelSourceRequests.choices,
@@ -1057,14 +1111,21 @@ private fun SettingsRow(
     title: String,
     subtitle: String,
     trailing: @Composable () -> Unit,
+    stackedTrailing: Boolean = false,
 ) {
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-        // 窄屏时给 trailing 最多占一半宽度，剩余空间留给标题，选项 chips 在自身区域内换行。
-        val trailingMaxWidth = if (maxWidth < 480.dp) maxWidth * 0.52f else 320.dp
+    // 修复（手机端文字被遮挡 / 无法显示）：原先标题与右侧控件横向并排，trailing 被限制在
+    // 52% 宽度内，标题又强制单行省略；超大字号下文字被压成窄条，选项 chips 在窄条里
+    // 反复换行，出现互相覆盖、只剩半个字、说明文字被截掉等问题。
+    // 现在标题与说明始终占满整行并自然换行；宽控件（选项组）独占下方一整行，
+    // 开关 / 按钮等窄控件仍留在右侧，但不再挤压文字区。
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(
@@ -1082,19 +1143,28 @@ private fun SettingsRow(
                     text = title,
                     color = TvColors.TextPrimary,
                     style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
-                Text(
-                    text = subtitle,
-                    color = TvColors.TextSecondary,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        color = TvColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
-            Spacer(Modifier.width(8.dp))
-            Box(modifier = Modifier.widthIn(max = trailingMaxWidth)) {
+            if (!stackedTrailing) {
+                Spacer(Modifier.width(8.dp))
+                Box(modifier = Modifier.widthIn(max = 180.dp)) {
+                    trailing()
+                }
+            }
+        }
+        if (stackedTrailing) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 50.dp),
+            ) {
                 trailing()
             }
         }
@@ -1135,15 +1205,11 @@ private fun SkipSecondsRow(
                     text = title,
                     color = TvColors.TextPrimary,
                     style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = subtitle,
                     color = TvColors.TextSecondary,
                     style = MaterialTheme.typography.bodySmall,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
             Text(
@@ -1175,35 +1241,36 @@ private fun <T> ChoiceChips(
     label: (T) -> String,
     onSelect: (T) -> Unit,
 ) {
-    // 窄屏或大字号下自动换行，避免选项被挤出屏幕右侧。
+    // 修复：选项文字不再强制单行省略（大字号下会被截成「强…」「9:1…」），
+    // 未选中项颜色由 TextSecondary 提亮，避免深色底上辨识不清。
+    // 选项组独占一整行后，FlowRow 有完整宽度，一般只需一行即可排下。
     FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         options.forEach { option ->
             val isSelected = option == selected
             Box(
                 modifier = Modifier
-                    // 44dp 低于建议的最小触摸目标，统一抬到 48dp。
+                    // 48dp 是手机端建议的最小触摸目标。
                     .heightIn(min = 48.dp)
-                    .widthIn(max = 240.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .widthIn(min = 48.dp, max = 240.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(
-                        if (isSelected) TvColors.Accent.copy(alpha = 0.18f)
-                        else TvColors.SurfaceRaised.copy(alpha = 0.6f)
+                        if (isSelected) TvColors.Accent.copy(alpha = 0.22f)
+                        else TvColors.SurfaceRaised.copy(alpha = 0.75f)
                     )
                     .clickable(role = Role.Button) { onSelect(option) }
                     .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
-                    .padding(horizontal = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = label(option),
-                    color = if (isSelected) TvColors.Accent else TvColors.TextSecondary,
-                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isSelected) TvColors.Accent else TvColors.TextPrimary.copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.bodySmall,
                     fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
             }
         }

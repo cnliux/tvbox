@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net"
 	"net/http"
@@ -45,13 +46,20 @@ const (
 	flvTagTypeVideo = 9
 	// FLV 视频标签：codecID = data[0] & 0x0f，7 表示 AVC(H.264)。
 	flvVideoCodecAVC = 7
-	// 续流时判断「上游重连带回了旧缓冲」的阈值：首关键帧比上一段末尾早于此值
-	// 则认为上游有 N 秒回退，进入 skipReplay 模式丢弃旧帧。
-	// 虎牙实测回退量通常在 0~2s，设为 2000ms 可覆盖绝大多数回放场景；
-	// 超过此值的超大回退说明 CDN 问题严重，应放弃整段重新解析。
-	flvProxyBacktrackThresholdMs = int64(2000)
-	// 发生大回溯后，最多等待 N ms 的新内容仍未出现则放弃本段。
-	flvProxySkipAbortMs = int64(8000)
+	// 重连回放去重窗口：只保留最近 N 毫秒已转发帧的内容指纹。
+	// 不能用时间戳判断回放：新流时间戳从 0 重启，代理又会把输出时间戳强制顺延，
+	// 输出时间轴始终严格单调，回放帧在时间轴上完全看不出来。
+	// 真实「虎牙·一起看」房间实测回放缓冲长达 6.08 秒（旧窗口 5 秒会漏掉最早一段），
+	// 放宽到 12 秒留足余量，内存仍恒定（约 400~700 条记录）。
+	flvProxyReplayWindowMs = int64(12000)
+	// 续段的指纹去重必须贯穿整个会话：真实 CDN 既会「先给一个全新关键帧、
+	// 再跟上几秒旧缓冲」，也会在会话中途（尤其短会话重连风暴时）零散重发旧帧。
+	// 只保护开头一段会在后续漏掉（实测 330 帧 / 5.16 秒）。这里只保留一个很大的
+	// 硬上限防止异常流不退出，正常 120 秒会话（约 3600 帧）不会触及。
+	flvProxyReplayGuardMaxFrames = 7200
+	// 同地址快速续拉最多连续 N 次，之后强制重新解析并退避，避免 CDN 短会话
+	// 时在同地址上每秒重连多次（PC 侧曾观测到 200 秒 51 次会话）。
+	flvProxyMaxFastReconnectStreak = 3
 )
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
@@ -132,6 +140,12 @@ type flvProxy struct {
 	tsMu     sync.Mutex
 	haveLast bool
 	lastTs   int64
+
+	// 最近已转发帧的内容指纹，用于重连时识别并丢弃 CDN 带回的旧缓冲（回放）。
+	// 只存指纹不存帧体，按输出时间戳淘汰窗口外记录。
+	recentMu   sync.Mutex
+	recent     map[uint64]int64
+	recentList []flvReplayEntry
 
 	statsMu           sync.Mutex
 	startedAt         time.Time
@@ -295,14 +309,34 @@ func (p *flvProxy) streamLoop() {
 	candidateIndex := p.candidateIndex
 	failures := 0
 	useInitial := p.initialURL != ""
+	// CDN 关闭的是「本次连接」，播放地址与签名往往仍然有效。正常关流后先用同一地址
+	// 立即续拉一次，避免每次重连都完整重跑平台解析（斗鱼要重新拉签名 JS、用 goja
+	// 执行、逐个 CDN 取流，耗时数秒，播放器缓冲耗尽就表现为可见的断流重连）。
+	// 只有快速续拉失败（签名过期 / 403）才回退到原来的重新解析路径。
+	var fastReconnectCandidate *LiveStreamCandidate
+	var fastReconnectHeaders map[string]string
+	fastReconnectStreak := 0
 	for p.hasClient() && p.ctx.Err() == nil {
 		var candidate LiveStreamCandidate
 		var headers map[string]string
-		if useInitial {
+		fastReconnect := false
+		switch {
+		case useInitial:
 			candidate = LiveStreamCandidate{CDN: "本地首段", URL: p.initialURL, Protocol: "flv"}
 			headers = p.initialHeaders
 			useInitial = false
-		} else {
+		case fastReconnectCandidate != nil && fastReconnectStreak < flvProxyMaxFastReconnectStreak:
+			candidate = *fastReconnectCandidate
+			headers = fastReconnectHeaders
+			fastReconnectCandidate = nil
+			fastReconnect = true
+			fastReconnectStreak++
+		default:
+			// 走到重新解析（含连续快速续拉达到上限）时清零并丢弃旧候选，
+			// 本轮一定使用重新解析出来的地址。
+			fastReconnectStreak = 0
+			fastReconnectCandidate = nil
+			fastReconnectHeaders = nil
 			stream, err := p.resolve()
 			if err != nil {
 				p.setLastError(err.Error())
@@ -326,13 +360,30 @@ func (p *flvProxy) streamLoop() {
 			headers = stream.Headers
 		}
 
+		beforeTags := p.tagCount()
 		err := p.pull(candidate, headers)
 		if p.ctx.Err() != nil {
 			return
 		}
 		if err == nil {
-			// 服务端正常关流（虎牙约 2 分钟一次）：立刻重新解析拿新签名续拉。
 			p.bumpReconnect()
+			// 只有本段确实推送过数据才允许「同地址快速续拉」；空流立即 EOF 时
+			// 必须重新解析，否则会在无效地址上空转。
+			if p.tagCount() > beforeTags {
+				fastReconnectCandidate = &candidate
+				fastReconnectHeaders = headers
+			}
+			continue
+		}
+		if fastReconnect {
+			// 同地址快速续拉失败：签名过期或被 CDN 拒绝。不计入硬失败次数，
+			// 直接进入下一轮重新解析拿新签名，避免误触发「切换候选线路」。
+			fastReconnectStreak = 0
+			select {
+			case <-p.ctx.Done():
+				return
+			case <-time.After(flvProxyRetryDelay):
+			}
 			continue
 		}
 		p.setLastError(err.Error())
@@ -398,19 +449,24 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 	p.upstreamSessions++
 	p.statsMu.Unlock()
 
-	// 续段（已存在上一帧）时，等待首个关键帧后再开始转发：上游重连瞬间新流常以
-	// 非关键帧开头，或重连瞬间重发了一段缓冲内容。直接转发这些无法独立解码的帧
-	// 会导致播放器缺关键帧，只能停在上帧 / 花屏，表现为“重复画面”。等到关键帧
-	// （含其前的 AVC 序列头）再衔接，保证解码干净、时间轴严格顺延。
-	awaitKeyframe := p.hasLastTs()
+	// 续段（已存在上一帧）需要丢弃回放：重连后 CDN 会带回上一段末尾的缓冲，
+	// 而新流时间戳从 0 重启、代理又把输出时间戳强制顺延，时间轴上完全看不出回放，
+	// 只能按「帧内容指纹」识别并丢弃已转发过的帧。
+	// 真实「一起看」流是「先给一个全新关键帧，再跟 6 秒旧缓冲」：若一见到新关键帧
+	// 就解除去重，旧缓冲会整段被转发。因此把「等未见过的首关键帧（解码前提）」与
+	// 「指纹去重保护期」拆成两个独立状态，保护期内对每一帧都做指纹检查。
+	isContinuation := p.hasLastTs()
+	dropReplay := isContinuation
+	guardActive := isContinuation
+	guardFrames := 0
 
 	var offset int64
 	var haveBase bool
-	// skipReplay 模式：上游首关键帧比上一段末尾早超过阈值，认定 CDN 带回了旧缓冲，
-	// 进入此模式后丢弃 adjustedTs < skipUntilTs 的帧直到追上直播线。
-	var skipReplay    bool
-	var skipUntilTs   int64
-	var skipAbortTime time.Time
+	// 被丢弃的回放帧在源时间轴上占了几毫秒：转发新内容时必须扣掉，
+	// 否则输出时间轴会撕出与回放等长的空洞（播放器表现为卡住几秒）。
+	var droppedSourceMs int64
+	var prevSourceTs int64
+	var havePrevSourceTs bool
 	for {
 		tagHeader := make([]byte, flvProxyTagHeaderSize)
 		if _, err := io.ReadFull(reader, tagHeader); err != nil {
@@ -434,28 +490,60 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		}
 
 		tagType := tagHeader[0] & 0x1f
-		switchedFromAwait := false
-		if awaitKeyframe && tagType == flvTagTypeVideo {
-			if isAvcSequenceHeader(data) {
-				// AVC 序列头（SPS/PPS）解码必需，必须保留，但仍等待关键帧。
-			} else if isVideoKeyframe(data) {
-				awaitKeyframe = false
-				switchedFromAwait = true // 刚进入关键帧，立刻检查是否回溯
-			} else {
-				// 关键帧到达前的非关键视频帧：无法独立解码，丢弃，避免花屏/重复画面。
+		isSeq := tagType == flvTagTypeVideo && isAvcSequenceHeader(data)
+		isKey := tagType == flvTagTypeVideo && isVideoKeyframe(data)
+		fp := flvFrameFingerprint(tagType, data)
+		replayed := guardActive && !isSeq && p.isReplayedFrame(fp)
+		// 被丢弃帧所占的源时间要从后续输出里扣掉（音视频同 ts 时 delta=0，自然跳过）。
+		if havePrevSourceTs && sourceTs > prevSourceTs && replayed {
+			droppedSourceMs += sourceTs - prevSourceTs
+		}
+		prevSourceTs = sourceTs
+		havePrevSourceTs = true
+
+		// 1) 指纹去重贯穿整个续段：对每一帧（含音频、含新关键帧之后）都检查，
+		//    命中即丢弃。AVC 序列头是解码参数、内容可能与上一段完全相同，单独放行。
+		if guardActive && !isSeq {
+			guardFrames++
+			if replayed {
 				continue
+			}
+			if guardFrames >= flvProxyReplayGuardMaxFrames {
+				guardActive = false
+			}
+		}
+
+		if dropReplay {
+			// 2) AVC 序列头：编码参数变化时才转发一次（解码前提）。用受控时间戳，
+			//    不让它成为 spliceBase 锚点，避免时间轴上撕出回放长度的空洞。
+			if isSeq {
+				ts := p.controlledTs()
+				if !p.acceptTs(ts) {
+					continue
+				}
+				if err := p.writeTag(tagHeader, data, ts); err != nil {
+					return err
+				}
+				p.rememberFrame(fp, ts)
+				continue
+			}
+			// 3) 未见过的视频帧仍须等关键帧才能独立解码。
+			if tagType == flvTagTypeVideo && !isKey {
+				continue
+			}
+			// 4) 未转发过的关键帧 = 真正追上直播线，解除回放丢弃。
+			if isKey {
+				dropReplay = false
 			}
 		}
 
 		adjusted := sourceTs
 		if !haveBase {
-			prefixLastTs := p.lastTs // 捕获 lastTs（spliceBase 不写 tsMu，此处安全读锁内值）
+			prefixLastTs := p.lastTs
 			adjusted = p.spliceBase(sourceTs)
 			offset = adjusted - sourceTs
 			haveBase = true
-			// 诊断日志
 			if p.diagEnabled {
-				backtrackMs := prefixLastTs - sourceTs
 				p.statsMu.Lock()
 				p.diagLastTs = append(p.diagLastTs, prefixLastTs)
 				p.diagSrcTs = append(p.diagSrcTs, sourceTs)
@@ -464,32 +552,19 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 					p.diagSrcTs = p.diagSrcTs[len(p.diagSrcTs)-20:]
 				}
 				p.statsMu.Unlock()
-				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d backtrackMs=%d\n",
-					p.upstreamSessions, prefixLastTs, sourceTs, backtrackMs)
-			}
-			// 首次关键帧出现后判断：是否 CDN 带回旧缓冲？
-			if switchedFromAwait && prefixLastTs > 0 && sourceTs < prefixLastTs-flvProxyBacktrackThresholdMs {
-				skipReplay = true
-				skipUntilTs = prefixLastTs
-				skipAbortTime = time.Now().Add(time.Duration(flvProxySkipAbortMs) * time.Millisecond)
-				fmt.Printf("[HUYA-SKIP] session=%d backtrack=%dms skipUntil=%d abortIn=%dms\n",
-					p.upstreamSessions, prefixLastTs-sourceTs, prefixLastTs, flvProxySkipAbortMs)
+				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d\n",
+					p.upstreamSessions, prefixLastTs, sourceTs)
 			}
 		} else {
-			adjusted = sourceTs + offset
+			adjusted = sourceTs - droppedSourceMs + offset
 		}
-		// 跳过回放：adjustedTs 未追上 prefixLastTs 说明还在回放旧内容
-		if skipReplay {
-			if adjusted < skipUntilTs {
-				continue // 丢弃旧缓冲帧
+		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差；
+		// 兜底保证输出严格不回退（acceptTs 只允许相等，这里保证至少 +1ms）。
+		// 仅续段启用：首段没有「上一帧」，不能把首帧 0 抬成 1。
+		if isContinuation {
+			if minimum := p.controlledTs(); adjusted < minimum {
+				adjusted = minimum
 			}
-			if time.Since(skipAbortTime) > 0 {
-				fmt.Printf("[HUYA-SKIP] session=%d 超时%dms无新内容，放弃本段\n", p.upstreamSessions, flvProxySkipAbortMs)
-				return newError("上游回溯回放过长，放弃本段重新解析")
-			}
-			// 刚越过阈值打印一次确认切回正常
-			fmt.Printf("[HUYA-SKIP] session=%d 切回直播线 adjusted=%d skipUntil=%d\n",
-				p.upstreamSessions, adjusted, skipUntilTs)
 		}
 		if !p.acceptTs(adjusted) {
 			continue
@@ -497,6 +572,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
 			return err
 		}
+		p.rememberFrame(fp, adjusted)
 	}
 }
 
@@ -505,6 +581,59 @@ func (p *flvProxy) hasLastTs() bool {
 	p.tsMu.Lock()
 	defer p.tsMu.Unlock()
 	return p.haveLast
+}
+
+// flvReplayEntry 记录一帧的指纹与输出时间戳，用于按窗口淘汰。
+type flvReplayEntry struct {
+	fp uint64
+	ts int64
+}
+
+// flvFrameFingerprint 用 tag 类型 + 帧体做 FNV-1a 指纹；tag 类型参与哈希，
+// 避免音视频帧恰好同内容时互相误判。
+func flvFrameFingerprint(tagType byte, data []byte) uint64 {
+	h := fnv.New64a()
+	var typeByte [1]byte
+	typeByte[0] = tagType
+	_, _ = h.Write(typeByte[:])
+	_, _ = h.Write(data)
+	return h.Sum64()
+}
+
+// rememberFrame 登记一帧已转发，并淘汰回放窗口外的旧记录。
+func (p *flvProxy) rememberFrame(fp uint64, ts int64) {
+	p.recentMu.Lock()
+	defer p.recentMu.Unlock()
+	if p.recent == nil {
+		p.recent = make(map[uint64]int64)
+	}
+	p.recent[fp] = ts
+	p.recentList = append(p.recentList, flvReplayEntry{fp: fp, ts: ts})
+	cutoff := ts - flvProxyReplayWindowMs
+	for len(p.recentList) > 0 && p.recentList[0].ts < cutoff {
+		entry := p.recentList[0]
+		// 同一指纹若在窗口内被更新过，保留较新的那条记录。
+		if p.recent[entry.fp] <= entry.ts {
+			delete(p.recent, entry.fp)
+		}
+		p.recentList = p.recentList[1:]
+	}
+}
+
+// isReplayedFrame 判断该帧是否已在窗口内转发过（即 CDN 重连带回的旧缓冲）。
+func (p *flvProxy) isReplayedFrame(fp uint64) bool {
+	p.recentMu.Lock()
+	defer p.recentMu.Unlock()
+	_, ok := p.recent[fp]
+	return ok
+}
+
+// controlledTs 给「重连后编码参数变化的 AVC 序列头」一个受控时间戳：
+// 不能让它成为 spliceBase 锚点，否则被丢弃的回放长度会撕成时间轴上的空洞。
+func (p *flvProxy) controlledTs() int64 {
+	p.tsMu.Lock()
+	defer p.tsMu.Unlock()
+	return p.lastTs + 1
 }
 
 // isAvcSequenceHeader 判断 FLV 视频标签是否为 AVC 序列头（AVCPacketType=0），
@@ -609,6 +738,13 @@ func (p *flvProxy) recordSession(startedAt time.Time) {
 	p.statsMu.Lock()
 	p.lastSessionMs = time.Since(startedAt).Milliseconds()
 	p.statsMu.Unlock()
+}
+
+// tagCount 返回已写给播放器的标签总数，用于判断一段上游是否真的推过数据。
+func (p *flvProxy) tagCount() int64 {
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	return p.tagsWritten
 }
 
 func (p *flvProxy) bumpReconnect() {

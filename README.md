@@ -2,7 +2,7 @@
 
 聚合视频（原 TVBox）是一个面向 Android TV / 电视盒子 / 手机的影视播放应用，使用 Kotlin、Jetpack Compose 和 Media3 ExoPlayer 构建。合集版根据设备类型自动适配：电视端强调遥控器操作，手机端提供触屏与竖屏布局，支持影视分类、搜索、详情、m3u8 播放、观看历史、电视直播和 OTA 更新。
 
-当前源码版本为 `1.0.3`（`versionCode=20003`）。合集版统一为手机/电视单包，R8 full mode + 资源压缩；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
+当前源码版本为 `1.0.5`（`versionCode=20005`）。合集版统一为手机/电视单包，R8 full mode + 资源压缩；Release 原生库只保留 `arm64-v8a`（不再发布 armv7 与 x86），本机模拟器调试可临时开启 x86 Debug 包。
 
 > 请确保使用的影视与直播接口具备合法授权。本项目仅提供客户端能力，不内置或托管影视内容。
 
@@ -20,7 +20,8 @@
 - 搜索与详情：关键词搜索最多三条来源并行，结果增量去重显示；重新进入搜索页时光标位于旧关键词末尾，可用遥控器退格删除。详情页优先显示主来源，后台补齐播放源和选集。
 - AI 找片：支持文字、应用内语音识别、快捷推荐词和“换一批”，可在设置页用手机扫码配置大模型、模型名和 API Key。
 - 播放器：基于 Media3 ExoPlayer，仅使用其视频解码与画面窗口；TVBox 自行处理遥控器快退/快进、切集、倍速、播放暂停、自动跳下一集和手机播放手势。
-- 画面比例：点播操作栏“画面”支持自适应、裁剪铺满和拉伸铺满，本机记忆并实时生效；播放页隐藏系统栏，退出后恢复。
+- 画面比例：播放操作栏“画面”支持自适应、裁剪铺满、拉伸铺满与固定比例（16:9 / 4:3 / 1:1 / 21:9 / 9:16）。固定比例档位在目标比例框内保持视频原始比例（居中留黑边），四种比例真正生效且互不混淆；本机记忆并实时生效，覆盖电视直播、手机直播与点播四个播放页；播放页隐藏系统栏，退出后恢复。
+- 显示数量设置：设置页可分别配置“首页海报数量”与“直播海报数量”（默认中等 36，可选“不限制”至 120 / 200，参数可自由最大化）；同时“多源搜索并发数”上限放宽到 12、默认 6，避免多源搜索只返回前几个源的内容。
 - 设备模式：设置提供“电视模式”和“手机模式”，默认电视模式，本机保存并优先于系统识别；电视短剧保持横屏，手机模式保留点播转屏和普通直播手机布局。
 - 观看历史：记录影片、封面、播放线路、集数、播放进度和更新时间；首页显示最近六部未看完的“继续观看”，原来源优先续播，备用线路后台补齐。
 - 返回定位：首页、搜索和历史页面恢复滚动位置与影片焦点；“继续观看”卡片可用方向上返回顶部导航。
@@ -165,7 +166,7 @@ TVBOX_AI_API_KEY=你的测试密钥
 - 默认使用内置 Go 解析库（`platform_live_go`，经 `gomobile bind` 打包为 `libgojni.so`），安装即可用，无需部署服务端。
 - Go 解析库同时提供分享口令/短链解析：`ResolveLinkJson(text, siteHint)`；独立服务端对应 `GET /v1/live/resolve-link?text=<分享链接>&site=<可选平台>`，只访问已登记的平台域名（含重定向逐跳校验），避免被当作任意 URL 代理。
 - 发布版只打包 `arm64-v8a` 原生库（`Release` 不再包含 armv7/x86），并对原生库做符号剥离以控制体积。
-- 虎牙连续播放：虎牙 CDN 对单次 HTTP-FLV 拉流有约 2 分钟会话上限（实测 120~137 秒被服务端正常关闭）。App 内置 Go 侧本机代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`），播放器只连 `127.0.0.1` 的一条永不结束的 FLV；上游被关闭时代理立即重新解析拿新签名续拉，并把新一段时间戳接在上一帧之后（丢弃回退帧）。**重连后会在续段等待首个关键帧再衔接**（保留 AVC 序列头、丢弃关键帧前导的非关键视频帧），避免播放器因缺关键帧停在上一帧/花屏造成的“重复画面”。实测连续 400 秒、3 次服务端关流均无 ENDED、无换线路。
+- 虎牙 / 斗鱼连续播放：虎牙 CDN 对单次 HTTP-FLV 拉流有约 2 分钟会话上限（实测 120~137 秒被服务端正常关闭）。App 内置 Go 侧本机代理（`platform_live_go/flv_proxy.go` + `FlvContinuityProxy.kt`），播放器只连 `127.0.0.1` 的一条永不结束的 FLV；上游被关闭时代理续拉，并把新一段时间戳接在上一帧之后（丢弃回退帧）。重连时做三件事：① 保留 AVC 序列头、等到「没见过的关键帧」再衔接，避免缺关键帧停在上一帧 / 花屏；② 按 FLV tag 内容指纹（FNV-1a）维护最近 5 秒已转发帧窗口，丢弃 CDN 重连带回的旧缓冲，消除 1~2 秒**重复画面**（时间轴本身是单调的，只能按帧内容判断）；③ 正常关流先复用同地址快速续拉（斗鱼重新跑签名 JS 开销大），403 / 签名过期再回退重新解析，避免可见断流。检测方法、实测数据与 AAR 重绑定流程见 `platform_live_go/FLV_CONTINUITY_VALIDATION.md`。实测连续 400 秒、3 次服务端关流均无 ENDED、无换线路。
 - 本地模拟器调试：执行 `.\gradlew.bat assembleDebug -PtvboxEmulatorAbis=true`，会额外生成 `x86`/`x86_64` 原生库（gomobile 同时产出 `android/amd64`、`android/386`）。该开关不影响 Release 产物。
 - 如需回到远程解析模式，可恢复 `RemotePlatformLiveRepository` 并自行注入服务地址构建参数。
 
@@ -220,10 +221,10 @@ apksigner verify --print-certs app\build\outputs\apk\release\app-release.apk
 
 ```powershell
 git add CHANGELOG.md README.md app\build.gradle.kts app\src\main app\src\test tools\bind-platform-live.ps1 tools\bind-platform-live.sh .github\workflows\release.yml gradle.properties gradle\libs.versions.toml app\proguard-rules.pro
-git commit -m "chore(release): 发布 v1.0.3"
+git commit -m "chore(release): 发布 v1.0.4"
 git push origin main
-git tag -a v1.0.3 -m "聚合视频 v1.0.3"
-git push origin v1.0.3
+git tag -a v1.0.4 -m "聚合视频 v1.0.4"
+git push origin v1.0.4
 ```
 
 3. tag 推送后，GitHub Actions 自动构建并发布 `app-release.apk`（`arm64-v8a`）。

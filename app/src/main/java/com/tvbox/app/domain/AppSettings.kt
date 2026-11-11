@@ -69,6 +69,10 @@ data class AppSettings(
     val historyMaxItems: Int = QuantitySettings.HistoryMaxItems.default,
     /** 多源搜索/详情同时请求的源数量。 */
     val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
+    /** 首页“正在热播”海报卡片显示上限；0 表示不限制（按分页全部展示）。 */
+    val homePosterCount: Int = QuantitySettings.HomePosterCount.default,
+    /** 平台直播房间/分类海报卡片显示上限；0 表示不限制（按分页全部展示）。 */
+    val platformLivePosterCount: Int = QuantitySettings.PlatformLivePosterCount.default,
     /** 解码器策略：默认硬解优先、失败自动回落；也可强制只选硬件解码器。 */
     val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
 )
@@ -132,7 +136,9 @@ object QuantitySettings {
     val DoubanHotPageSize = QuantitySetting(20, 5, 40, listOf(10, 15, 20, 25, 30, 40))
     val DoubanHotFallbackLines = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
     val HistoryMaxItems = QuantitySetting(100, 20, 500, listOf(50, 100, 200, 300, 500))
-    val MaxParallelSourceRequests = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 6, 8))
+    val MaxParallelSourceRequests = QuantitySetting(6, 1, 12, listOf(2, 3, 4, 6, 8, 10, 12))
+    val HomePosterCount = QuantitySetting(36, 6, 200, listOf(12, 18, 24, 36, 48, 72, 120))
+    val PlatformLivePosterCount = QuantitySetting(36, 6, 300, listOf(12, 18, 24, 36, 48, 72, 120, 200))
 }
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

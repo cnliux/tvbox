@@ -21,13 +21,15 @@ import com.tvbox.app.domain.VideoScaleMode
 @androidx.annotation.OptIn(UnstableApi::class)
 internal fun VideoScaleMode.toPlayerResizeMode(): Int = when (this) {
     VideoScaleMode.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-    // 固定比例档位：内容拉伸填满强制比例框，真正改变画面缩放而非只改容器。
+    // 固定比例档位：由 AspectRatioFrameLayout.setAspectRatio 把画面框约束到目标比例（居中留黑边），
+    // 再用 FIT 在框内保持视频原始比例，避免非同比例源被拉伸变形。
+    // 旧实现误用 RESIZE_MODE_FILL：会把 4:3 等源直接拉满 16:9 框，导致比例“看起来没变 / 变形”。
     VideoScaleMode.Ratio16_9,
     VideoScaleMode.Ratio4_3,
     VideoScaleMode.Ratio1_1,
     VideoScaleMode.Ratio21_9,
     VideoScaleMode.Ratio9_16,
-    -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+    -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     VideoScaleMode.Zoom -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
     VideoScaleMode.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
 }

@@ -138,10 +138,10 @@ class MovieRepositoryTest {
     }
 
     @Test
-    fun progressiveSearchLimitsConcurrentSourceRequestsToThree() = runBlocking {
+    fun progressiveSearchLimitsConcurrentSourceRequestsToCap() = runBlocking {
         val activeRequests = AtomicInteger(0)
         val maximumConcurrentRequests = AtomicInteger(0)
-        val lines = (1..5).map { line("source-$it") }
+        val lines = (1..9).map { line("source-$it") }
         val apiByBaseUrl = lines.associate { line ->
             line.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
                 val active = activeRequests.incrementAndGet()
@@ -158,7 +158,9 @@ class MovieRepositoryTest {
 
         repository.searchProgressively("source-1", page = 1, keyword = "并发").toList()
 
-        assertTrue(maximumConcurrentRequests.get() in 2..3)
+        // 默认并发上限为 6（QuantitySettings.MaxParallelSourceRequests），9 个源也不应超过该上限；
+        // 同时下限 > 1 证明确实在多个源之间扇出并发，而非退化为串行。
+        assertTrue(maximumConcurrentRequests.get() in 2..6)
     }
 
     @Test

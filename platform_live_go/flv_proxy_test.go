@@ -37,14 +37,20 @@ func (f *fakeProxyAdapter) Resolve(roomInput string) (*ResolvedLiveStream, error
 	}, nil
 }
 
+// testFLVSeed 让每段假流的帧内容唯一：真实 FLV 每帧编码内容都不同，
+// 而代理靠帧指纹识别「重连回放」，若所有帧字节相同会把正常续流误判成旧缓冲。
+var testFLVSeed uint64
+
 // writeTestFLV 输出一段“上游会话”：FLV 头 + 若干音视频标签。
 func writeTestFLV(writer io.Writer, timestamps []int64) {
 	_, _ = writer.Write([]byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
-	for _, ts := range timestamps {
-		size := 3
+	seed := atomic.AddUint64(&testFLVSeed, 1)
+	for index, ts := range timestamps {
+		data := []byte{0x17, 0x01, 0x00, byte(seed), byte(seed >> 8), byte(index)}
+		size := len(data)
 		header := []byte{0x09, 0x00, 0x00, byte(size), byte(ts >> 16), byte(ts >> 8), byte(ts), byte(ts >> 24), 0, 0, 0}
 		_, _ = writer.Write(header)
-		_, _ = writer.Write([]byte{0x17, 0x01, 0x00})
+		_, _ = writer.Write(data)
 		prev := uint32(flvProxyTagHeaderSize + size)
 		_, _ = writer.Write([]byte{byte(prev >> 24), byte(prev >> 16), byte(prev >> 8), byte(prev)})
 	}
@@ -110,11 +116,13 @@ func TestFlvProxyStitchesSessions(t *testing.T) {
 			t.Fatalf("第 %d 个标签时间戳=%d，期望 %d（实际序列 %v）", index, tags[index], want, tags)
 		}
 	}
-	if got := atomic.LoadInt64(&adapter.resolves); got < 2 {
-		t.Fatalf("上游关流后应重新解析，实际 Resolve 次数=%d", got)
+	// CDN 正常关流时优先复用同一地址快速续拉（避免斗鱼每次重跑耗时签名），
+	// 因此 Resolve 只发生在首次拉流；续流是否发生用上游请求次数验证。
+	if got := atomic.LoadInt64(&adapter.resolves); got < 1 {
+		t.Fatalf("首次拉流应解析地址，实际 Resolve 次数=%d", got)
 	}
 	if got := atomic.LoadInt64(&sessions); got < 2 {
-		t.Fatalf("上游应有至少两次拉流，实际=%d", got)
+		t.Fatalf("上游关流后应立即续拉，实际拉流次数=%d", got)
 	}
 
 	var stats map[string]interface{}
@@ -177,7 +185,8 @@ type testFrame struct {
 // writeTestFLVEx 输出一段“上游会话”，可指定每个标签的类型、是否关键帧、是否序列头。
 func writeTestFLVEx(writer io.Writer, frames []testFrame) {
 	_, _ = writer.Write([]byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00})
-	for _, f := range frames {
+	seed := atomic.AddUint64(&testFLVSeed, 1)
+	for index, f := range frames {
 		var tagType byte
 		var data []byte
 		switch {
@@ -198,6 +207,8 @@ func writeTestFLVEx(writer io.Writer, frames []testFrame) {
 		default:
 			continue
 		}
+		// 追加段 seed + 帧序号，保证段内每帧、跨段帧内容都不同。
+		data = append(data, byte(seed), byte(seed>>8), byte(index), byte(index>>8))
 		size := len(data)
 		header := []byte{
 			tagType, byte(size >> 16), byte(size >> 8), byte(size),
@@ -212,10 +223,10 @@ func writeTestFLVEx(writer io.Writer, frames []testFrame) {
 }
 
 type frameInfo struct {
-	ts        int64
-	video     bool
-	audio     bool
-	keyframe  bool
+	ts       int64
+	video    bool
+	audio    bool
+	keyframe bool
 }
 
 // readTestFLVTagsEx 读取代理输出，返回每个标签的类型与时间戳（用于精确断言）。
@@ -271,7 +282,7 @@ func TestFlvProxyReconnectNoRollback(t *testing.T) {
 			})
 		default:
 			writeTestFLVEx(w, []testFrame{
-				{ts: 0, video: true, keyframe: false}, // 重连瞬间前导非关键帧：应丢弃
+				{ts: 0, video: true, keyframe: false},                 // 重连瞬间前导非关键帧：应丢弃
 				{ts: 0, video: true, keyframe: true, seqHeader: true}, // AVC 序列头：应保留
 				{ts: 0, audio: true},
 				{ts: 33, video: true, keyframe: true}, // 首个可解码关键帧：应转发并解除等待
@@ -413,3 +424,106 @@ func TestFlvProxyKeyframeHelpers(t *testing.T) {
 	}
 }
 
+// ───────────────── 正常关流的「同地址快速续拉」与失败回退 ─────────────────
+
+// 验证：CDN 正常关流（不是签名失效）时复用同一地址立即续拉，不重复跑平台解析。
+// 斗鱼每次 Resolve 都要重新拉签名 JS + goja 执行 + 逐个 CDN 取流，耗时数秒，
+// 播放器缓冲耗尽就会表现为可见的「断流重连」。
+func TestFlvProxyFastReconnectReusesURL(t *testing.T) {
+	var sessions int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&sessions, 1)
+		w.Header().Set("Content-Type", "video/x-flv")
+		w.WriteHeader(http.StatusOK)
+		writeTestFLV(w, []int64{0, 33, 66})
+	}))
+	defer upstream.Close()
+
+	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
+	service := &Service{byID: map[string]Adapter{"fake": adapter}}
+	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	if err != nil {
+		t.Fatalf("newFlvProxy: %v", err)
+	}
+	defer proxy.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.url, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("连接本地代理失败：%v", err)
+	}
+	defer response.Body.Close()
+
+	// 3 段 × 3 帧，全部来自同一地址。
+	tags, err := readTestFLVTags(response.Body, 9)
+	if err != nil && len(tags) < 9 {
+		t.Fatalf("读取代理输出失败：%v（已读 %d，统计=%s）", err, len(tags), proxy.statsJSON())
+	}
+	for i := 1; i < len(tags); i++ {
+		if tags[i] < tags[i-1] {
+			t.Fatalf("快速续拉后时间戳回退：%v", tags)
+		}
+	}
+	if got := atomic.LoadInt64(&sessions); got < 3 {
+		t.Fatalf("应至少完成 3 段连续拉流，实际=%d", got)
+	}
+	if got := atomic.LoadInt64(&adapter.resolves); got != 1 {
+		t.Fatalf("正常关流应复用同地址快速续拉，不应重复解析，实际 Resolve=%d", got)
+	}
+}
+
+// 验证：同地址快速续拉被 CDN 拒绝（签名过期 / 403）时，回退到重新解析拿新地址，
+// 且不误触发「切换候选线路」。
+func TestFlvProxyFastReconnectFallsBackToResolve(t *testing.T) {
+	var calls int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt64(&calls, 1) == 2 {
+			// 第 2 次请求 = 同地址快速续拉，模拟签名过期被拒。
+			http.Error(w, "signature expired", http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "video/x-flv")
+		w.WriteHeader(http.StatusOK)
+		writeTestFLV(w, []int64{0, 33})
+	}))
+	defer upstream.Close()
+
+	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
+	service := &Service{byID: map[string]Adapter{"fake": adapter}}
+	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	if err != nil {
+		t.Fatalf("newFlvProxy: %v", err)
+	}
+	defer proxy.close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, proxy.url, nil)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatalf("连接本地代理失败：%v", err)
+	}
+	defer response.Body.Close()
+
+	// 段1(2) + 403 后重新解析的段2(2) + 快速续拉的段3(2)
+	tags, err := readTestFLVTags(response.Body, 6)
+	if err != nil && len(tags) < 6 {
+		t.Fatalf("403 回退后输出不连续：%v（已读 %d，统计=%s）", err, len(tags), proxy.statsJSON())
+	}
+	for i := 1; i < len(tags); i++ {
+		if tags[i] < tags[i-1] {
+			t.Fatalf("回退后时间戳回退：%v", tags)
+		}
+	}
+	if got := atomic.LoadInt64(&adapter.resolves); got < 2 {
+		t.Fatalf("快速续拉被 403 拒绝后应重新解析，实际 Resolve=%d", got)
+	}
+	var stats map[string]interface{}
+	if err := json.Unmarshal([]byte(proxy.statsJSON()), &stats); err == nil {
+		if switches, _ := stats["candidateSwitches"].(float64); switches != 0 {
+			t.Fatalf("签名过期不应误切换候选线路，实际切换 %v 次", switches)
+		}
+	}
+}

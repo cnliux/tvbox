@@ -77,14 +77,20 @@ internal fun PlayerSurface(
 
 /**
  * 画面比例即时生效：只改媒体视图的缩放模式与比例框，不重建播放器、不打断播放。
- * 固定比例档位由 [VideoScaleMode.aspectRatio] 强制比例，并配合拉伸填满；
- * 其它档位保持 `0f`（跟随视频原始比例）。
+ * 固定比例档位由 [VideoScaleMode.aspectRatio] 把画面框约束到目标比例（居中留黑边），
+ * 配合 FIT 在框内保持视频原始比例；其余档位清空比例（跟随容器与 resizeMode）。
+ * 每次应用都打印生效的模式与比例框，便于确认“画面比例设置”确实生效。
  */
 @OptIn(UnstableApi::class)
 private fun PlayerView.applyVideoScaleMode(mode: VideoScaleMode) {
     resizeMode = mode.toPlayerResizeMode()
+    val ratio = mode.aspectRatio ?: 0f
     findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
-        ?.setAspectRatio(mode.aspectRatio ?: 0f)
+        ?.setAspectRatio(ratio)
+    android.util.Log.i(
+        "TVBoxVideoScale",
+        "applyVideoScaleMode mode=${mode.storageKey}, resizeMode=$resizeMode, frameAspectRatio=$ratio",
+    )
 }
 
 /** 播放状态表达：加载中 / 三类失败（取流失败、建源后未出帧、出帧后卡死）。 */

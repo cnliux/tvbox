@@ -18,6 +18,8 @@ class QuantitySettingsTest {
         QuantitySettings.DoubanHotFallbackLines,
         QuantitySettings.HistoryMaxItems,
         QuantitySettings.MaxParallelSourceRequests,
+        QuantitySettings.HomePosterCount,
+        QuantitySettings.PlatformLivePosterCount,
     )
 
     @Test
@@ -34,7 +36,11 @@ class QuantitySettingsTest {
         assertEquals(20, QuantitySettings.DoubanHotPageSize.default)
         assertEquals(6, QuantitySettings.DoubanHotFallbackLines.default)
         assertEquals(100, QuantitySettings.HistoryMaxItems.default)
-        assertEquals(3, QuantitySettings.MaxParallelSourceRequests.default)
+        // 多源搜索并发默认提升到 6（上限 12），修复“多个源只搜到 1~2 个内容”。
+        assertEquals(6, QuantitySettings.MaxParallelSourceRequests.default)
+        // 首页 / 直播海报数量默认“中等”36（可选不限制至 120 / 200）。
+        assertEquals(36, QuantitySettings.HomePosterCount.default)
+        assertEquals(36, QuantitySettings.PlatformLivePosterCount.default)
     }
 
     @Test
@@ -52,6 +58,8 @@ class QuantitySettingsTest {
         assertEquals(QuantitySettings.DoubanHotFallbackLines.default, defaults.doubanHotFallbackLines)
         assertEquals(QuantitySettings.HistoryMaxItems.default, defaults.historyMaxItems)
         assertEquals(QuantitySettings.MaxParallelSourceRequests.default, defaults.maxParallelSourceRequests)
+        assertEquals(QuantitySettings.HomePosterCount.default, defaults.homePosterCount)
+        assertEquals(QuantitySettings.PlatformLivePosterCount.default, defaults.platformLivePosterCount)
     }
 
     @Test

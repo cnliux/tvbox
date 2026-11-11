@@ -74,6 +74,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -377,7 +378,14 @@ private fun PlatformLiveRoomsScreen(
         loadingMoreError = if (favoritesMode) null else state.platformLiveLoadingMoreError,
         onRetryLoadMore = actions::loadMorePlatformLiveRooms,
     ) {
-        itemsIndexed(state.platformLiveRooms, key = { _, room -> room.id }) { index, room ->
+        itemsIndexed(
+            if (state.appSettings.platformLivePosterCount > 0) {
+                state.platformLiveRooms.take(state.appSettings.platformLivePosterCount)
+            } else {
+                state.platformLiveRooms
+            },
+            key = { _, room -> room.id },
+        ) { index, room ->
             PlatformLiveRoomCard(
                 room = room,
                 onClick = { actions.openPlatformLiveRoom(room) },
@@ -960,6 +968,15 @@ private fun PlatformLivePlayerScreen(
                     playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
                 }
 
+                override fun onVideoSizeChanged(videoSize: VideoSize) {
+                    // 分辨率变化是虎牙/斗鱼重连换流的常见征兆（同源可能从 1920x1080 翻到 1280x720），
+                    // 单独记一条日志便于定位“画面卡一下/闪一下”的根因。
+                    android.util.Log.d(
+                        PLATFORM_LIVE_LOG_TAG,
+                        "【视频尺寸】w=${videoSize.width}, h=${videoSize.height}, pixelRatio=${videoSize.pixelWidthHeightRatio}, mode=${videoScaleMode.storageKey}, url=${logSafeUrl(playbackUrl)}",
+                    )
+                }
+
                 override fun onPlaybackStateChanged(playbackState: Int) {
                     val name = when (playbackState) {
                         Player.STATE_IDLE -> "IDLE"
@@ -992,7 +1009,7 @@ private fun PlatformLivePlayerScreen(
         if (player == null || stream == null || targetUrl.isNullOrBlank()) return@LaunchedEffect
         android.util.Log.d(
             PLATFORM_LIVE_LOG_TAG,
-            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(targetUrl)}, sourceUrl=${logSafeUrl(stream.activeCandidateOrNull?.url)}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}"
+            "【开始播放】room=${room.title}(${room.id}), site=${room.site}, url=${logSafeUrl(targetUrl)}, sourceUrl=${logSafeUrl(stream.activeCandidateOrNull?.url)}, quality=${stream.quality}, protocol=${stream.protocol}, activeCdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, candidateIndex=${stream.safeActiveCandidateIndex}/${stream.candidates.size}, 画面比例=${videoScaleMode.storageKey}"
         )
         playbackError = null
         chrome.bump()
@@ -1000,6 +1017,28 @@ private fun PlatformLivePlayerScreen(
         player.setMediaItem(MediaItem.fromUri(targetUrl))
         player.prepare()
         session.preparePlayback(player)
+    }
+
+    // 周期性播放健康采样（每 10s）：汇总分辨率、解码/丢弃帧、缓冲、码率、当前线路，
+    // 直接用于监控虎牙/斗鱼“卡顿/重连换流/重复画面”等问题，无需进播放信息面板。
+    // 退到后台时由 repeatOnLifecycle 自动暂停，避免无意义的定时唤醒与日志刷屏。
+    LaunchedEffect(lifecycleOwner, continuityProxy) {
+        if (player == null) return@LaunchedEffect
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                delay(10_000L)
+                val p = player ?: return@repeatOnLifecycle
+                val size = p.videoSize
+                val counters = p.videoDecoderCounters
+                val rendered = counters?.renderedOutputBufferCount ?: -1L
+                val dropped = counters?.droppedBufferCount ?: -1L
+                val bufferedMs = (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
+                android.util.Log.d(
+                    PLATFORM_LIVE_LOG_TAG,
+                    "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.stats() ?: "continuityProxy=null"}"
+                )
+            }
+        }
     }
 
     // 连续代理会周期性续流，定期把代理统计打进日志，便于确认续流是否正常。
@@ -1247,7 +1286,10 @@ private fun PlatformLivePlayerScreen(
                     },
                     onPrevious = { actions.playPreviousPlatformLiveRoom(); chrome.bump() },
                     onNext = { actions.playNextPlatformLiveRoom(); chrome.bump() },
-                    onSelectResize = { mode -> actions.updateContentVideoScaleMode(scaleContentKey, mode); chrome.bump() },
+                    onSelectResize = { mode ->
+                        android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【切换画面比例】room=${room.id}, from=${videoScaleMode.storageKey}, to=${mode.storageKey}")
+                        actions.updateContentVideoScaleMode(scaleContentKey, mode); chrome.bump()
+                    },
                     onOpenLinePanel = {
                         if (stream?.hasCandidates == true) {
                             showLineControl = true

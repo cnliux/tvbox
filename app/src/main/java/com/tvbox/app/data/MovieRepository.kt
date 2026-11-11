@@ -9,7 +9,6 @@ import com.tvbox.app.domain.PagedMovies
 import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.fanOutIncrementally
-import com.tvbox.app.domain.splitSearchTimeoutBudget
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -187,13 +186,16 @@ class DefaultMovieRepository(
 
     override fun searchProgressively(apiLineId: String, page: Int, keyword: String): Flow<MultiSourceSearchUpdate> = channelFlow {
         val requestedPage = page.coerceAtLeast(1)
-        val lines = prioritizedLines(apiLineId)
+        // 搜索覆盖全部已启用的线路：不剔除冷却中的线路（冷却是播放自动换线用的，
+        // 不该让一次搜索把链路“拉黑”进后续所有搜索），主源在前、其余按健康分排序。
+        val lines = searchLines(apiLineId)
         if (lines.isEmpty()) {
             return@channelFlow
         }
 
         // 并发骨架统一交给 domain 的 fan-out 工具：限流 / 单源超时 / 失败隔离 /
         // 先到先发 / 取消传播。这里只保留「取数 + 健康度记账 + 按源累积合并」的业务语义。
+        val completedMovies = mutableMapOf<String, List<Movie>>()
         val tasks: List<FanOutTask<List<Movie>>> = lines.map { line ->
             FanOutTask {
                 val startedAtMs = nowMs()
@@ -205,31 +207,27 @@ class DefaultMovieRepository(
                     // 页面退出 / 发起新搜索导致的取消必须原样上抛，不能被当成源失败。
                     throw error
                 } catch (error: Throwable) {
-                    sourceHealth.recordFailure(line.id)
-                    Log.d(TAG, "search source failed: lineId=${line.id}, type=${error::class.simpleName}")
+                    // 搜索失败只记日志、不计入冷却：避免把慢/临时抖动的源从后续搜索里踢掉，
+                    // 这正是“多个源只搜到 1~2 个”的根因之一（尾源被权重超时踢出后又进冷却）。
+                    Log.w(TAG, "search source failed: lineId=${line.id}, type=${error::class.simpleName}")
                     emptyList<Movie>()
                 }
             }
         }
-        val completedMovies = mutableMapOf<String, List<Movie>>()
-        // 第 100/141 轮：按来源优先级分配单源超时预算，主源拿满额，备用源递减；
-        // 不加权时（列表为空）fan-out 工具会退回统一超时，行为不变。
-        val timeouts = splitSearchTimeoutBudget(
-            weights = lines.indices.map { index -> (100 - index * 20).coerceAtLeast(20) },
-            baseTimeoutMs = SEARCH_TIMEOUT_MS,
-        )
+        // 搜索对所有源一视同仁：统一 6s 预算 + 高并发（maxParallel 默认 6），
+        // 不再按权重递减超时，避免尾源只剩几百毫秒而整体超时。
         fanOutIncrementally(
             tasks = tasks,
             maxParallel = maxParallelSourceRequests,
             perSourceTimeoutMs = SEARCH_TIMEOUT_MS,
-            timeoutForSource = { index -> timeouts.getOrElse(index) { SEARCH_TIMEOUT_MS } },
+            timeoutForSource = { SEARCH_TIMEOUT_MS },
         ).collect { update ->
             val line = lines[update.sourceIndex]
             val movies = update.value
-            if (movies == null) {
-                // 工具把「单源超时」折叠成 null，按失败记账，保证进度仍能走到终点。
-                sourceHealth.recordFailure(line.id)
-            }
+            Log.d(
+                TAG,
+                "search source done: lineId=${line.id}, name=${line.name}, ok=${movies != null}, count=${movies?.size ?: 0}, progress=${update.completedSources}/${update.totalSources}",
+            )
             // collect 在单一协程上串行执行，累积状态无需 Mutex 保护。
             completedMovies[line.id] = movies.orEmpty()
             send(
@@ -243,6 +241,25 @@ class DefaultMovieRepository(
                     completedSources = update.completedSources,
                     totalSources = update.totalSources,
                 ),
+            )
+        }
+        Log.i(TAG, "search completed: keyword=$keyword, sources=${lines.size}, results=${completedMovies.values.sumOf { it.size }}")
+    }
+
+    /**
+     * 搜索用的来源列表：全部已启用线路，主源在前、其余按健康分降序。
+     * 与播放自动换线用的 [prioritizedLines] 不同，**不剔除冷却中的线路**——
+     * 冷却只服务于播放时段的自动换线，搜索应当覆盖所有可用源，否则尾源被临时超时踢出后又进冷却，
+     * 下一次搜索就再也搜不到它，表现为“多个源只能搜到 1~2 个内容”。
+     */
+    private fun searchLines(primaryLineId: String): List<ApiLine> {
+        val primary = requireLine(primaryLineId)
+        return buildList {
+            add(primary)
+            addAll(
+                apiLines
+                    .filterNot { it.id == primary.id }
+                    .sortedByDescending { sourceHealth.score(it.id) },
             )
         }
     }
@@ -508,8 +525,8 @@ class DefaultMovieRepository(
     private fun relevanceOf(movie: Movie, query: String): Int = scoreNameRelevance(movie.name, query)
 
     private companion object {
-        const val MAX_PARALLEL_SOURCE_REQUESTS = 3
-        const val SEARCH_TIMEOUT_MS = 3_000L
+        const val MAX_PARALLEL_SOURCE_REQUESTS = 6
+        const val SEARCH_TIMEOUT_MS = 6_000L
         const val DETAIL_SOURCE_TIMEOUT_MS = 4_000L
         const val SPEED_TEST_TIMEOUT_MS = 10_000L
         const val MOVIES_CACHE_TTL_MS = 5 * 60_000L

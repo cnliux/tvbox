@@ -95,6 +95,8 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putInt(SettingsStorageKeys.DOUBAN_HOT_FALLBACK_LINES, settings.doubanHotFallbackLines)
     putInt(SettingsStorageKeys.HISTORY_MAX_ITEMS, settings.historyMaxItems)
     putInt(SettingsStorageKeys.MAX_PARALLEL_SOURCE_REQUESTS, settings.maxParallelSourceRequests)
+    putInt(SettingsStorageKeys.HOME_POSTER_COUNT, settings.homePosterCount)
+    putInt(SettingsStorageKeys.PLATFORM_LIVE_POSTER_COUNT, settings.platformLivePosterCount)
 }
 
 /** 把 DataStore 内容还原成旧快照形状，交给同一套解析函数读取。 */

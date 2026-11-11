@@ -95,6 +95,8 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -972,18 +974,19 @@ private fun SettingsActionButton(
         shadowElevation = if (focused) 10.dp else 0.dp,
     ) {
         // 触控热区至少 48dp，避免手机端按钮偏小导致误触。
+        // 修复（手机端按钮文字被截）：原先强制单行 + 省略号，大字号或窄卡片下
+        // 「打开远程管理（网页）」等长文案只剩前半截。改为自然换行 + 垂直留白。
         Box(
             modifier = Modifier
                 .heightIn(min = 48.dp)
-                .padding(horizontal = 18.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = text,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
         }
     }
@@ -1352,7 +1355,10 @@ private fun MovieGrid(
                     )
                 }
             } else {
-                items(state.movies, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                items(
+                    if (state.appSettings.homePosterCount > 0) state.movies.take(state.appSettings.homePosterCount) else state.movies,
+                    key = { "${it.apiLineId}-${it.id}" },
+                ) { movie ->
                     MoviePosterCard(
                         movie = movie,
                         onClick = {
@@ -1602,7 +1608,10 @@ private fun MobileHomeFeed(
                                 )
                             }
                         } else {
-                            items(state.movies, key = { "${it.apiLineId}-${it.id}" }) { movie ->
+                            items(
+                    if (state.appSettings.homePosterCount > 0) state.movies.take(state.appSettings.homePosterCount) else state.movies,
+                    key = { "${it.apiLineId}-${it.id}" },
+                ) { movie ->
                                 MoviePosterCard(
                                     movie = movie,
                                     onClick = { actions.openDetail(movie.id) },
@@ -1839,9 +1848,10 @@ private fun SourceManagerSetting(
                             append(" | ")
                             append(line.baseUrls.firstOrNull() ?: "")
                         },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.labelSmall,
-                        maxLines = 1,
+                        // 原为 labelSmall 单行，手机端字太小且源地址只剩开头几个字符。
+                        color = TvColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -1967,6 +1977,10 @@ private fun LiveSourceSetting(
         mutableStateOf(state.appSettings.liveSourceDefaultIndex)
     }
     var savedMessage by remember { mutableStateOf<String?>(null) }
+    // 保存/清空后必须主动收起软键盘并清除焦点：edge-to-edge 下键盘 + 输入法候选栏会
+    // 一直盖住页面下半部分，用户看不到也点不到「返回」，表现为「遮挡层无法退出」。
+    val keyboardController = LocalSoftwareKeyboardController.current
+    val focusManager = LocalFocusManager.current
 
     // 将当前文本区内容解析为 URL 列表（仅在首次渲染时计算）。
     val currentUrls = remember(urlsText) {
@@ -2081,6 +2095,9 @@ private fun LiveSourceSetting(
                     }
                     actions.updateLiveSourceUrls(urls, defaultGroup, effectiveIdx)
                     savedMessage = "已保存 ${urls.size} 个直播源"
+                    // 保存后立即收起键盘：否则输入法会一直遮住页面与「返回」按钮。
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
                 },
             )
             SettingsActionButton(
@@ -2093,6 +2110,8 @@ private fun LiveSourceSetting(
                     urlsText = ""
                     defaultGroup = ""
                     savedMessage = "已清空直播源"
+                    keyboardController?.hide()
+                    focusManager.clearFocus()
                 },
             )
         }
@@ -2241,11 +2260,16 @@ private fun ManageScreenHeader(
 
 @Composable
 private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // 全屏管理页必须自己接管系统返回键：外层 MainActivity 的 BackHandler 会被内层
+    // 输入法/焦点状态吞掉，导致保存后按返回无反应，看起来像「遮挡层无法退出」。
+    BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
+            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
+            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "源管理",
@@ -2306,17 +2330,22 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
                     }
                 }
             }
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
         }
     }
 }
 
 @Composable
 private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
+            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
+            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "视频接口管理",
@@ -2368,17 +2397,23 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                     BlockedVideoCategorySetting(state = state, actions = actions)
                 }
             }
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
         }
     }
 }
 
 @Composable
 private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // IPTV 直播源管理页：保存后若键盘/遮罩未退，系统返回键仍必须能回到设置页。
+    BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页，吸收状态栏/手势条安全区，避免标题与底部内容被遮挡。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).padding(padding),
+            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
+            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "直播源管理",
@@ -2423,6 +2458,9 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
                     PlatformLiveSiteSetting(state = state, actions = actions)
                 }
             }
+            // 常驻兜底返回：即使软键盘/遮罩盖住顶部标题栏，底部仍有一个可点的退出入口。
+            Spacer(modifier = Modifier.height(10.dp))
+            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
         }
     }
 }
