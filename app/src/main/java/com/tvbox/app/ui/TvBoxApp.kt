@@ -1243,13 +1243,15 @@ private fun MovieGrid(
         emptyList()
     }
     val itemOffset = (if (recent.isNotEmpty()) 1 else 0) + (if (state.homeNotice != null) 1 else 0)
+    // 首屏按设置条数展示；一旦用户触发「加载更多」（page > 1）就解除该上限。
+    // 之前这里直接 take(设置值) 并把 hotCapReached 作为加载更多的开关，滑到底
+    // 既不出「加载更多」也不触发自动加载，正是「下滑无法加载更多」的残留根因。
     val hotItems = if (state.isShowingDoubanHot) {
-        state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+        if (state.page > 1) state.doubanHotMovies
+        else state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
     } else {
         emptyList()
     }
-    val hotCapReached = state.isShowingDoubanHot &&
-        hotItems.size >= state.appSettings.homeHotContentCount
     val focusItems = recent.map { "continue:${it.apiLineId}:${it.movieId}" to 0 } +
         if (state.isShowingDoubanHot) hotItems.mapIndexed { index, item -> "douban:${item.doubanId}" to index + itemOffset }
         else state.movies.mapIndexed { index, movie -> "${movie.apiLineId}:${movie.id}" to index + itemOffset }
@@ -1356,7 +1358,7 @@ private fun MovieGrid(
                 }
             } else {
                 items(
-                    if (state.appSettings.homePosterCount > 0) state.movies.take(state.appSettings.homePosterCount) else state.movies,
+                    state.movies,
                     key = { "${it.apiLineId}-${it.id}" },
                 ) { movie ->
                     MoviePosterCard(
@@ -1370,7 +1372,7 @@ private fun MovieGrid(
                     )
                 }
             }
-            if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
+            if (state.canLoadMore || state.loadingMore) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     Row(
                         modifier = Modifier.padding(vertical = 10.dp),
@@ -1438,15 +1440,15 @@ private fun MobileHomeFeed(
             info.visibleItemsInfo.lastOrNull()?.index?.let { it >= info.totalItemsCount - 1 } == true
         }
     }
+    // 同上：首屏按设置条数展示，加载更多后解除上限，保证自动加载能持续推进。
     val hotItems = if (state.isShowingDoubanHot) {
-        state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+        if (state.page > 1) state.doubanHotMovies
+        else state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
     } else {
         emptyList()
     }
-    val hotCapReached = state.isShowingDoubanHot &&
-        hotItems.size >= state.appSettings.homeHotContentCount
-    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore, hotCapReached) {
-        if (canLoadMore && state.canLoadMore && !state.loadingMore && !hotCapReached) {
+    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore) {
+        if (canLoadMore && state.canLoadMore && !state.loadingMore) {
             actions.loadNextPage()
         }
     }
@@ -1609,16 +1611,16 @@ private fun MobileHomeFeed(
                             }
                         } else {
                             items(
-                    if (state.appSettings.homePosterCount > 0) state.movies.take(state.appSettings.homePosterCount) else state.movies,
-                    key = { "${it.apiLineId}-${it.id}" },
-                ) { movie ->
+                                state.movies,
+                                key = { "${it.apiLineId}-${it.id}" },
+                            ) { movie ->
                                 MoviePosterCard(
                                     movie = movie,
                                     onClick = { actions.openDetail(movie.id) },
                                 )
                             }
                         }
-                        if ((state.canLoadMore || state.loadingMore) && !hotCapReached) {
+                        if (state.canLoadMore || state.loadingMore) {
                             item(span = { GridItemSpan(maxLineSpan) }) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),

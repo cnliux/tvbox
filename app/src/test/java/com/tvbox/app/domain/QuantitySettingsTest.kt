@@ -18,29 +18,28 @@ class QuantitySettingsTest {
         QuantitySettings.DoubanHotFallbackLines,
         QuantitySettings.HistoryMaxItems,
         QuantitySettings.MaxParallelSourceRequests,
-        QuantitySettings.HomePosterCount,
-        QuantitySettings.PlatformLivePosterCount,
     )
 
     @Test
-    fun `默认值必须等于原写死值`() {
-        assertEquals(6, QuantitySettings.ContinueWatchingCount.default)
-        assertEquals(4, QuantitySettings.EpgCardRows.default)
-        assertEquals(6, QuantitySettings.LiveNumberMatchRows.default)
-        assertEquals(50, QuantitySettings.LiveNumberSearchLimit.default)
-        assertEquals(12, QuantitySettings.RelatedChannelCount.default)
-        assertEquals(18, QuantitySettings.HotWordCount.default)
-        assertEquals(3, QuantitySettings.SearchSuggestionCount.default)
-        // 首页热播默认渲染一个豆瓣分页（20 条），与改造前一致。
-        assertEquals(20, QuantitySettings.HomeHotContentCount.default)
-        assertEquals(20, QuantitySettings.DoubanHotPageSize.default)
-        assertEquals(6, QuantitySettings.DoubanHotFallbackLines.default)
-        assertEquals(100, QuantitySettings.HistoryMaxItems.default)
-        // 多源搜索并发默认提升到 6（上限 12），修复“多个源只搜到 1~2 个内容”。
-        assertEquals(6, QuantitySettings.MaxParallelSourceRequests.default)
-        // 首页 / 直播海报数量默认“中等”36（可选不限制至 120 / 200）。
-        assertEquals(36, QuantitySettings.HomePosterCount.default)
-        assertEquals(36, QuantitySettings.PlatformLivePosterCount.default)
+    fun `默认值按大屏体验调优后的既定档位`() {
+        assertEquals(8, QuantitySettings.ContinueWatchingCount.default)
+        assertEquals(5, QuantitySettings.EpgCardRows.default)
+        assertEquals(8, QuantitySettings.LiveNumberMatchRows.default)
+        assertEquals(100, QuantitySettings.LiveNumberSearchLimit.default)
+        assertEquals(16, QuantitySettings.RelatedChannelCount.default)
+        assertEquals(24, QuantitySettings.HotWordCount.default)
+        assertEquals(6, QuantitySettings.SearchSuggestionCount.default)
+        // 首页热播首屏 30 条；滑到底会继续自动加载，该值不再充当硬上限。
+        assertEquals(30, QuantitySettings.HomeHotContentCount.default)
+        assertEquals(30, QuantitySettings.DoubanHotPageSize.default)
+        assertEquals(8, QuantitySettings.DoubanHotFallbackLines.default)
+        assertEquals(200, QuantitySettings.HistoryMaxItems.default)
+        // 多源搜索并发默认拉满到上限 12，修复「多个源只搜到 1~2 个内容」。
+        assertEquals(12, QuantitySettings.MaxParallelSourceRequests.default)
+        assertEquals(
+            QuantitySettings.MaxParallelSourceRequests.max,
+            QuantitySettings.MaxParallelSourceRequests.default,
+        )
     }
 
     @Test
@@ -58,8 +57,6 @@ class QuantitySettingsTest {
         assertEquals(QuantitySettings.DoubanHotFallbackLines.default, defaults.doubanHotFallbackLines)
         assertEquals(QuantitySettings.HistoryMaxItems.default, defaults.historyMaxItems)
         assertEquals(QuantitySettings.MaxParallelSourceRequests.default, defaults.maxParallelSourceRequests)
-        assertEquals(QuantitySettings.HomePosterCount.default, defaults.homePosterCount)
-        assertEquals(QuantitySettings.PlatformLivePosterCount.default, defaults.platformLivePosterCount)
     }
 
     @Test

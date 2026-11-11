@@ -160,6 +160,26 @@ type flvProxy struct {
 	diagEnabled bool
 	diagLastTs  []int64 // 最近每段起始的 lastTs（重连前）
 	diagSrcTs   []int64 // 对应段的源首帧 sourceTs
+
+	// 诊断：区分“重连后时间戳连续”还是“归零重置（新 FLV 段）”，这是决定去重/重绑策略的关键。
+	segLastOutTsBefore int64
+	segFirstSrcTs      int64
+	segGap             int64
+	segReset           bool
+	lastSrcTs          [2]int64 // 音/视频各自最近一次转发的源时间戳
+	videoBackwardInSeg int64   // 段内源时间戳大幅回退次数（=CDN 带回旧缓冲/重放）
+
+	// 诊断计数器：区分视频帧与音频帧的转发/丢弃，便于发现“画面冻结但声音在播”。
+	videoForwarded       int64
+	audioForwarded       int64
+	videoDroppedReplay   int64
+	audioDroppedReplay   int64
+	videoDroppedAwaitKey int64
+	dropReplayActive     bool
+	guardActiveNow       bool
+	lastVideoForwardedAt time.Time
+	lastAudioForwardedAt time.Time
+	recentEvents         []string
 }
 
 func newFlvProxy(service *Service, site, roomID string, candidateIndex int, initialURL string, initialHeaders map[string]string) (*flvProxy, error) {
@@ -467,6 +487,16 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 	var droppedSourceMs int64
 	var prevSourceTs int64
 	var havePrevSourceTs bool
+
+	// 诊断：记录本段相对上一段的落差，判断重连后是“连续时间戳”还是“归零重置”。
+	p.statsMu.Lock()
+	p.segLastOutTsBefore = p.lastTs
+	p.segFirstSrcTs = -1
+	p.segGap = 0
+	p.segReset = false
+	p.dropReplayActive = dropReplay
+	p.guardActiveNow = guardActive
+	p.statsMu.Unlock()
 	for {
 		tagHeader := make([]byte, flvProxyTagHeaderSize)
 		if _, err := io.ReadFull(reader, tagHeader); err != nil {
@@ -506,10 +536,21 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		if guardActive && !isSeq {
 			guardFrames++
 			if replayed {
+				p.statsMu.Lock()
+				if tagType == flvTagTypeVideo {
+					p.videoDroppedReplay++
+				} else if tagType == flvTagTypeAudio {
+					p.audioDroppedReplay++
+				}
+				p.statsMu.Unlock()
 				continue
 			}
 			if guardFrames >= flvProxyReplayGuardMaxFrames {
 				guardActive = false
+				p.statsMu.Lock()
+				p.guardActiveNow = false
+				p.statsMu.Unlock()
+				p.event(fmt.Sprintf("guardAutoReleased frame=%d", guardFrames))
 			}
 		}
 
@@ -525,15 +566,23 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 					return err
 				}
 				p.rememberFrame(fp, ts)
+				p.incForwarded(tagType, sourceTs)
 				continue
 			}
 			// 3) 未见过的视频帧仍须等关键帧才能独立解码。
 			if tagType == flvTagTypeVideo && !isKey {
+				p.statsMu.Lock()
+				p.videoDroppedAwaitKey++
+				p.statsMu.Unlock()
 				continue
 			}
 			// 4) 未转发过的关键帧 = 真正追上直播线，解除回放丢弃。
 			if isKey {
 				dropReplay = false
+				p.statsMu.Lock()
+				p.dropReplayActive = false
+				p.statsMu.Unlock()
+				p.event("dropReplayCleared")
 			}
 		}
 
@@ -543,6 +592,16 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			adjusted = p.spliceBase(sourceTs)
 			offset = adjusted - sourceTs
 			haveBase = true
+			gap := sourceTs - p.segLastOutTsBefore
+			p.statsMu.Lock()
+			if p.segFirstSrcTs < 0 {
+				p.segFirstSrcTs = sourceTs
+				p.segGap = gap
+				// 源首帧比上一段输出小很多 => 时间戳归零重置（新 FLV 段）；
+				// 否则视为连续时间戳（重连后续流，正常情况）。
+				p.segReset = isContinuation && (gap < -1000)
+			}
+			p.statsMu.Unlock()
 			if p.diagEnabled {
 				p.statsMu.Lock()
 				p.diagLastTs = append(p.diagLastTs, prefixLastTs)
@@ -552,8 +611,8 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 					p.diagSrcTs = p.diagSrcTs[len(p.diagSrcTs)-20:]
 				}
 				p.statsMu.Unlock()
-				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d\n",
-					p.upstreamSessions, prefixLastTs, sourceTs)
+				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d gap=%d reset=%v\n",
+					p.upstreamSessions, prefixLastTs, sourceTs, gap, p.segReset)
 			}
 		} else {
 			adjusted = sourceTs - droppedSourceMs + offset
@@ -573,6 +632,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			return err
 		}
 		p.rememberFrame(fp, adjusted)
+		p.incForwarded(tagType, sourceTs)
 	}
 }
 
@@ -740,6 +800,38 @@ func (p *flvProxy) recordSession(startedAt time.Time) {
 	p.statsMu.Unlock()
 }
 
+// incForwarded 记录一次成功转发，并维护各轨道最近源时间戳用于诊断段内回退。
+func (p *flvProxy) incForwarded(tagType byte, sourceTs int64) {
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	track := int(tagType) - 8
+	if track >= 0 && track < 2 {
+		// 段内源时间戳大幅回退（>1s）= CDN 带回旧缓冲/重放，记录下来。
+		if p.lastSrcTs[track] != 0 && sourceTs < p.lastSrcTs[track]-1000 {
+			p.videoBackwardInSeg++
+		}
+		p.lastSrcTs[track] = sourceTs
+	}
+	switch tagType {
+	case flvTagTypeVideo:
+		p.videoForwarded++
+		p.lastVideoForwardedAt = time.Now()
+	case flvTagTypeAudio:
+		p.audioForwarded++
+		p.lastAudioForwardedAt = time.Now()
+	}
+}
+
+// event 记录一条诊断事件到环形缓冲（最近 60 条），供 Kotlin 侧周期性打印。
+func (p *flvProxy) event(msg string) {
+	p.statsMu.Lock()
+	defer p.statsMu.Unlock()
+	p.recentEvents = append(p.recentEvents, fmt.Sprintf("%d %s", time.Now().UnixMilli(), msg))
+	if len(p.recentEvents) > 60 {
+		p.recentEvents = p.recentEvents[len(p.recentEvents)-60:]
+	}
+}
+
 // tagCount 返回已写给播放器的标签总数，用于判断一段上游是否真的推过数据。
 func (p *flvProxy) tagCount() int64 {
 	p.statsMu.Lock()
@@ -764,16 +856,44 @@ func (p *flvProxy) bumpCandidateSwitch(err error) {
 func (p *flvProxy) statsJSON() string {
 	p.statsMu.Lock()
 	payload := map[string]interface{}{
-		"url":               p.url,
-		"client":            p.hasClient(),
-		"uptimeSec":         int64(time.Since(p.startedAt).Seconds()),
-		"upstreamSessions":  p.upstreamSessions,
-		"reconnects":        p.reconnects,
-		"candidateSwitches": p.candidateSwitches,
-		"tagsWritten":       p.tagsWritten,
-		"bytesWritten":      p.bytesWritten,
-		"lastSessionMs":     p.lastSessionMs,
-		"lastError":         p.lastError,
+		"url":                 p.url,
+		"client":              p.hasClient(),
+		"uptimeSec":           int64(time.Since(p.startedAt).Seconds()),
+		"upstreamSessions":    p.upstreamSessions,
+		"reconnects":          p.reconnects,
+		"candidateSwitches":   p.candidateSwitches,
+		"tagsWritten":         p.tagsWritten,
+		"bytesWritten":        p.bytesWritten,
+		"lastSessionMs":       p.lastSessionMs,
+		"lastError":           p.lastError,
+		"videoForwarded":      p.videoForwarded,
+		"audioForwarded":      p.audioForwarded,
+		"videoDroppedReplay":  p.videoDroppedReplay,
+		"audioDroppedReplay":  p.audioDroppedReplay,
+		"videoDroppedAwaitKey": p.videoDroppedAwaitKey,
+		"videoBackwardInSeg":  p.videoBackwardInSeg,
+		"dropReplayActive":    p.dropReplayActive,
+		"guardActiveNow":      p.guardActiveNow,
+		"segGap":              p.segGap,
+		"segReset":            p.segReset,
+		"lastVideoForwardedAgoMs": func() int64 {
+			if p.lastVideoForwardedAt.IsZero() {
+				return -1
+			}
+			return time.Since(p.lastVideoForwardedAt).Milliseconds()
+		}(),
+		"lastAudioForwardedAgoMs": func() int64 {
+			if p.lastAudioForwardedAt.IsZero() {
+				return -1
+			}
+			return time.Since(p.lastAudioForwardedAt).Milliseconds()
+		}(),
+	}
+	if len(p.recentEvents) > 0 {
+		// recentEvents 复制到快照，避免外部修改底层切片。
+		ev := make([]string, len(p.recentEvents))
+		copy(ev, p.recentEvents)
+		payload["recentEvents"] = ev
 	}
 	if p.diagEnabled && len(p.diagLastTs) > 0 {
 		// 汇总最近20次重连的回溯量分布

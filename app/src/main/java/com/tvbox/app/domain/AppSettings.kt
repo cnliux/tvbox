@@ -69,10 +69,6 @@ data class AppSettings(
     val historyMaxItems: Int = QuantitySettings.HistoryMaxItems.default,
     /** 多源搜索/详情同时请求的源数量。 */
     val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
-    /** 首页“正在热播”海报卡片显示上限；0 表示不限制（按分页全部展示）。 */
-    val homePosterCount: Int = QuantitySettings.HomePosterCount.default,
-    /** 平台直播房间/分类海报卡片显示上限；0 表示不限制（按分页全部展示）。 */
-    val platformLivePosterCount: Int = QuantitySettings.PlatformLivePosterCount.default,
     /** 解码器策略：默认硬解优先、失败自动回落；也可强制只选硬件解码器。 */
     val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
 )
@@ -117,28 +113,39 @@ data class QuantitySetting(
 
 /**
  * 数量类设置项的默认值与可选档位。
- * 默认值必须等于原写死值，保证升级后行为不变。
+ *
+ * 默认值按「1080p 电视 + 现代手机」的实测体验重新调优，而不是沿用改造前的写死值：
+ * 首屏内容量、搜索并发、热词/建议条数都取一档更充分的档位，用户仍可在设置里逐项改小。
  */
 object QuantitySettings {
-    val ContinueWatchingCount = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
-    val EpgCardRows = QuantitySetting(4, 2, 8, listOf(2, 3, 4, 5, 6, 8))
-    val LiveNumberMatchRows = QuantitySetting(6, 2, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    /** 继续观看：横滑一行放不下时多给两条，避免刚看过的剧被挤到第二屏。 */
+    val ContinueWatchingCount = QuantitySetting(8, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    /** EPG 节目单：1080p 下 5 行仍可一屏看全，比 4 行多一档频道。 */
+    val EpgCardRows = QuantitySetting(5, 2, 8, listOf(2, 3, 4, 5, 6, 8))
+    /** 数字换台匹配：给足 8 行，覆盖「输入两个数字」时的常见命中范围。 */
+    val LiveNumberMatchRows = QuantitySetting(8, 2, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    /** 数字换台搜索上限：一次匹配到 100 个频道足够，再大只是白算。 */
     val LiveNumberSearchLimit = QuantitySetting(
         LIVE_NUMBER_SEARCH_LIMIT,
         10,
         200,
-        listOf(20, 30, LIVE_NUMBER_SEARCH_LIMIT, 100, 200),
+        listOf(20, 30, 50, LIVE_NUMBER_SEARCH_LIMIT, 200),
     )
-    val RelatedChannelCount = QuantitySetting(12, 4, 24, listOf(6, 8, 10, 12, 16, 20, 24))
-    val HotWordCount = QuantitySetting(18, 6, 30, listOf(12, 15, 18, 21, 24, 30))
-    val SearchSuggestionCount = QuantitySetting(3, 1, 8, listOf(1, 2, 3, 4, 5, 6, 8))
-    val HomeHotContentCount = QuantitySetting(20, 4, 40, listOf(4, 6, 8, 10, 12, 16, 20, 30, 40))
-    val DoubanHotPageSize = QuantitySetting(20, 5, 40, listOf(10, 15, 20, 25, 30, 40))
-    val DoubanHotFallbackLines = QuantitySetting(6, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
-    val HistoryMaxItems = QuantitySetting(100, 20, 500, listOf(50, 100, 200, 300, 500))
-    val MaxParallelSourceRequests = QuantitySetting(6, 1, 12, listOf(2, 3, 4, 6, 8, 10, 12))
-    val HomePosterCount = QuantitySetting(36, 6, 200, listOf(12, 18, 24, 36, 48, 72, 120))
-    val PlatformLivePosterCount = QuantitySetting(36, 6, 300, listOf(12, 18, 24, 36, 48, 72, 120, 200))
+    val RelatedChannelCount = QuantitySetting(16, 4, 24, listOf(6, 8, 10, 12, 16, 20, 24))
+    /** 搜索热词：24 条把三列铺满且不触发额外请求（并发拉取，条数上限不变）。 */
+    val HotWordCount = QuantitySetting(24, 6, 30, listOf(12, 15, 18, 21, 24, 30))
+    /** 搜索联想：6 条正好铺满下拉区，再多会盖住键盘上方的结果。 */
+    val SearchSuggestionCount = QuantitySetting(6, 1, 8, listOf(1, 2, 3, 4, 5, 6, 8))
+    /** 首页热播首屏：30 条（约 1.5 个豆瓣分页），滑到底会继续自动加载，不再是硬上限。 */
+    val HomeHotContentCount = QuantitySetting(30, 4, 40, listOf(4, 6, 8, 10, 12, 16, 20, 30, 40))
+    /** 豆瓣热播分页：30 条/页，兼顾首屏速度与加载更多的颗粒度。 */
+    val DoubanHotPageSize = QuantitySetting(30, 5, 40, listOf(10, 15, 20, 25, 30, 40))
+    /** 豆瓣不可用时的回退线路数：多试两条，提升首屏出片率。 */
+    val DoubanHotFallbackLines = QuantitySetting(8, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
+    /** 观看历史：200 条足够回溯，存储与内存开销可忽略。 */
+    val HistoryMaxItems = QuantitySetting(200, 20, 500, listOf(50, 100, 200, 300, 500))
+    /** 多源搜索并发：默认拉满 12（上限同值），修复「多个源只搜到 1~2 个内容」。 */
+    val MaxParallelSourceRequests = QuantitySetting(12, 1, 12, listOf(2, 3, 4, 6, 8, 10, 12))
 }
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {

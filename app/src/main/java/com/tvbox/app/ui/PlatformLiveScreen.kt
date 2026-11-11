@@ -7,6 +7,8 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.aspectRatio
@@ -17,6 +19,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -379,11 +382,7 @@ private fun PlatformLiveRoomsScreen(
         onRetryLoadMore = actions::loadMorePlatformLiveRooms,
     ) {
         itemsIndexed(
-            if (state.appSettings.platformLivePosterCount > 0) {
-                state.platformLiveRooms.take(state.appSettings.platformLivePosterCount)
-            } else {
-                state.platformLiveRooms
-            },
+            state.platformLiveRooms,
             key = { _, room -> room.id },
         ) { index, room ->
             PlatformLiveRoomCard(
@@ -946,6 +945,20 @@ private fun PlatformLivePlayerScreen(
     // 手机"全屏"：按房间记忆裁剪铺满；未记忆时回退设置里的全局默认值。
     val scaleContentKey = roomVideoScaleKey(room.site, room.id)
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
+    // 弹幕：按平台接入官方弹幕长连接（斗鱼 STT / 虎牙 Tars），换房或退出即断开。
+    val danmakuClient = remember(room.site, room.id) {
+        com.tvbox.app.data.DanmakuClients.create(room.site, room.id)?.also { client ->
+            android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕开启】site=${room.site}, room=${room.id}")
+            client.start()
+        }
+    }
+    DisposableEffect(danmakuClient) {
+        onDispose {
+            danmakuClient?.close()
+            android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕关闭】room=${room.id}")
+        }
+    }
+    var danmakuEnabled by remember(room.id) { mutableStateOf(true) }
 
     DisposableEffect(player) {
         if (player == null) {
@@ -1112,6 +1125,44 @@ private fun PlatformLivePlayerScreen(
 
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
+    // 调试监控：把续流代理统计与播放器解码计数以可读文本实时叠在画面上，
+    // 用于现场定位虎牙/斗鱼“重复取流/画面卡死”的根因。仅在开启时轮询，1s 刷新。
+    var showDebugMonitor by remember { mutableStateOf(false) }
+    var debugMonitorText by remember { mutableStateOf("") }
+    LaunchedEffect(showDebugMonitor, continuityProxy, player) {
+        if (!showDebugMonitor) {
+            debugMonitorText = ""
+            return@LaunchedEffect
+        }
+        while (true) {
+            delay(1_000L)
+            val sb = StringBuilder()
+            continuityProxy?.stats()?.let { json ->
+                try {
+                    val o = org.json.JSONObject(json)
+                    sb.appendLine("运行时长: ${o.opt("uptimeSec")}s  上游会话: ${o.opt("upstreamSessions")}  重连: ${o.opt("reconnects")}  换线: ${o.opt("candidateSwitches")}")
+                    sb.appendLine("段首源Ts落差: ${o.opt("segGap")}  归零重置: ${o.opt("segReset")}")
+                    sb.appendLine("视频转发: ${o.opt("videoForwarded")}  丢(回放): ${o.opt("videoDroppedReplay")}  丢(关键帧): ${o.opt("videoDroppedAwaitKey")}")
+                    sb.appendLine("音频转发: ${o.opt("audioForwarded")}  丢(回放): ${o.opt("audioDroppedReplay")}")
+                    sb.appendLine("距上次视频转发: ${o.opt("lastVideoForwardedAgoMs")}ms  距上次音频: ${o.opt("lastAudioForwardedAgoMs")}ms")
+                    sb.appendLine("回放丢弃中: ${o.opt("dropReplayActive")}  指纹守卫中: ${o.opt("guardActiveNow")}  段内回退: ${o.opt("videoBackwardInSeg")}")
+                    sb.appendLine("末错误: ${o.opt("lastError")}")
+                    val ev = o.optJSONArray("recentEvents")
+                    if (ev != null) {
+                        for (i in 0 until ev.length()) sb.appendLine("  事件: ${ev.opt(i)}")
+                    }
+                } catch (e: Exception) {
+                    sb.appendLine(json)
+                }
+            } ?: sb.appendLine("（无续流代理：直连线路）")
+            player?.let { p ->
+                val size = p.videoSize
+                val c = p.videoDecoderCounters
+                sb.appendLine("播放器: ${size.width}x${size.height}  rendered=${c?.renderedOutputBufferCount ?: -1}  dropped=${c?.droppedBufferCount ?: -1}  bufferedMs=${(p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)}  playWhenReady=${p.playWhenReady}")
+            }
+            debugMonitorText = sb.toString()
+        }
+    }
     // 返回键仍逐层收起页面浮层：URL 浮层 → 候选线路浮层 → 退出；不额外增加“先隐藏控件”一层。
     PlayerChromeBackHandler(
         state = chrome,
@@ -1129,6 +1180,14 @@ private fun PlatformLivePlayerScreen(
             {
                 if (showLineControl) {
                     showLineControl = false
+                    true
+                } else {
+                    false
+                }
+            },
+            {
+                if (showDebugMonitor) {
+                    showDebugMonitor = false
                     true
                 } else {
                     false
@@ -1192,6 +1251,18 @@ private fun PlatformLivePlayerScreen(
     ) {
         if (player != null) {
             PlayerSurface(player = player, resizeMode = videoScaleMode)
+        }
+        if (danmakuEnabled && danmakuClient != null) {
+            // 弹幕层压在画面上方、控件下方：留出顶部角标与按钮的高度，避免遮挡。
+            DanmakuOverlay(
+                messages = danmakuClient.messages,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.55f)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(top = if (isMobile) 76.dp else 96.dp, start = 20.dp, end = 20.dp),
+            )
         }
         if (isMobile) {
             // 点击画面切换控制条显隐；覆盖层位于按钮与角标之下，不拦截它们的手势。
@@ -1465,6 +1536,69 @@ private fun PlatformLivePlayerScreen(
                         }
                     }
                 }
+            }
+        }
+
+        // 右上角开关组：弹幕开关 + 调试监控开关（手机点击 / 电视聚焦回车）。
+        Column(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(28.dp),
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (danmakuClient != null) {
+                Box(
+                    modifier = Modifier
+                        .clip(MaterialTheme.shapes.small)
+                        .background(if (danmakuEnabled) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
+                        .clickable { danmakuEnabled = !danmakuEnabled }
+                        .focusable()
+                        .padding(horizontal = 16.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = if (danmakuEnabled) "弹幕·开" else "弹幕",
+                        color = if (danmakuEnabled) Color.Black else Color.White,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
+            // 调试监控开关（手机点击 / 电视聚焦回车）：实时叠加续流与解码数据面板。
+            Box(
+                modifier = Modifier
+                    .clip(MaterialTheme.shapes.small)
+                    .background(if (showDebugMonitor) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
+                    .clickable { showDebugMonitor = !showDebugMonitor }
+                    .focusable()
+                    .padding(horizontal = 16.dp, vertical = 10.dp)
+            ) {
+                Text(
+                    text = if (showDebugMonitor) "监控·开" else "调试监控",
+                    color = if (showDebugMonitor) Color.Black else Color.White,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
+
+        if (showDebugMonitor && debugMonitorText.isNotBlank()) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(0.62f)
+                    .fillMaxHeight(0.5f)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(16.dp)
+                    .clip(MaterialTheme.shapes.small)
+                    .background(Color(0xCC000000))
+                    .padding(14.dp)
+            ) {
+                Text(
+                    text = debugMonitorText,
+                    color = Color(0xFF7AE2BA),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
             }
         }
     }

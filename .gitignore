@@ -50,5 +50,9 @@ platform_live_go/flv_proxy_diag_test.go
 # 本地临时文件和工具脚本
 .tmp_*.ps1
 .tmp_*.py
+# 本地调试目录：设备截图/日志、adb 工具、参考仓库、协议验证脚本
+.tmp_*/
+.adbtools/
+.ref/
 .trae/
 *.png

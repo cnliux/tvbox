@@ -54,7 +54,8 @@ class LiveChannelNumberSearchTest {
     @Test
     fun `limit caps the result size`() {
         val many = (1..200).map { channel(it) }
-        assertEquals(50, findLiveChannelsByNumberPrefix(many, "1").size)
+        // 默认上限已提升到 100（LIVE_NUMBER_SEARCH_LIMIT），200 个频道仍被裁到该上限。
+        assertEquals(LIVE_NUMBER_SEARCH_LIMIT, findLiveChannelsByNumberPrefix(many, "1").size)
         assertEquals(3, findLiveChannelsByNumberPrefix(many, "1", limit = 3).size)
     }
 

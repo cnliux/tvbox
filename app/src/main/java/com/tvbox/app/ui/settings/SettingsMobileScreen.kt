@@ -616,44 +616,6 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
-            title = "首页海报数量",
-            subtitle = if (state.appSettings.homePosterCount > 0) "最多 ${state.appSettings.homePosterCount} 个" else "不限制（按分页全部展示）",
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = listOf(0) + QuantitySettings.HomePosterCount.choices,
-                    selected = state.appSettings.homePosterCount,
-                    label = {
-                        if (it == 0) "不限制"
-                        else if (it == QuantitySettings.HomePosterCount.default) "默认"
-                        else "$it"
-                    },
-                    onSelect = actions::updateHomePosterCount,
-                )
-            },
-        )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "直播海报数量",
-            subtitle = if (state.appSettings.platformLivePosterCount > 0) "最多 ${state.appSettings.platformLivePosterCount} 个" else "不限制（按分页全部展示）",
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = listOf(0) + QuantitySettings.PlatformLivePosterCount.choices,
-                    selected = state.appSettings.platformLivePosterCount,
-                    label = {
-                        if (it == 0) "不限制"
-                        else if (it == QuantitySettings.PlatformLivePosterCount.default) "默认"
-                        else "$it"
-                    },
-                    onSelect = actions::updatePlatformLivePosterCount,
-                )
-            },
-        )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
             title = "继续观看数量",
             subtitle = quantitySummary(
                 state.appSettings.continueWatchingCount,

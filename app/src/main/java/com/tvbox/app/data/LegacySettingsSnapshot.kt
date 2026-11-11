@@ -67,8 +67,6 @@ internal object SettingsStorageKeys {
     const val DOUBAN_HOT_FALLBACK_LINES = "douban_hot_fallback_lines"
     const val HISTORY_MAX_ITEMS = "history_max_items"
     const val MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
-    const val HOME_POSTER_COUNT = "home_poster_count"
-    const val PLATFORM_LIVE_POSTER_COUNT = "platform_live_poster_count"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -155,14 +153,6 @@ internal fun readLegacySettings(
         maxParallelSourceRequests = quantity(
             SettingsStorageKeys.MAX_PARALLEL_SOURCE_REQUESTS,
             QuantitySettings.MaxParallelSourceRequests,
-        ),
-        homePosterCount = quantity(
-            SettingsStorageKeys.HOME_POSTER_COUNT,
-            QuantitySettings.HomePosterCount,
-        ),
-        platformLivePosterCount = quantity(
-            SettingsStorageKeys.PLATFORM_LIVE_POSTER_COUNT,
-            QuantitySettings.PlatformLivePosterCount,
         ),
     )
 }

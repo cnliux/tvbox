@@ -158,9 +158,10 @@ class MovieRepositoryTest {
 
         repository.searchProgressively("source-1", page = 1, keyword = "并发").toList()
 
-        // 默认并发上限为 6（QuantitySettings.MaxParallelSourceRequests），9 个源也不应超过该上限；
-        // 同时下限 > 1 证明确实在多个源之间扇出并发，而非退化为串行。
-        assertTrue(maximumConcurrentRequests.get() in 2..6)
+        // 默认并发上限为 12（QuantitySettings.MaxParallelSourceRequests 已拉满），
+        // 这里 9 个源应全部扇出并发，所以上限是「源数量」而不再是 6。
+        // 下限 > 1 证明确实在多个源之间并发，而非退化为串行。
+        assertTrue(maximumConcurrentRequests.get() in 2..9)
     }
 
     @Test

@@ -16,7 +16,8 @@ data class LiveChannelNumberMatch(
     val channel: LiveChannel,
 )
 
-internal const val LIVE_NUMBER_SEARCH_LIMIT = 50
+/** 默认匹配上限；同时作为数量设置项的默认档位（可在设置中改小）。 */
+internal const val LIVE_NUMBER_SEARCH_LIMIT = 100
 
 fun findLiveChannelsByNumberPrefix(
     channels: List<LiveChannel>,

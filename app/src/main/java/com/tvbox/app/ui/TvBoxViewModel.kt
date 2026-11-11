@@ -1936,22 +1936,6 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
-    /** 更新首页“正在热播”海报卡片显示上限；0 表示不限制。 */
-    fun updateHomePosterCount(count: Int) {
-        val value = QuantitySettings.HomePosterCount.clamp(count)
-        val settings = _state.value.appSettings.copy(homePosterCount = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
-    /** 更新平台直播海报卡片显示上限；0 表示不限制。 */
-    fun updatePlatformLivePosterCount(count: Int) {
-        val value = QuantitySettings.PlatformLivePosterCount.clamp(count)
-        val settings = _state.value.appSettings.copy(platformLivePosterCount = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
-    }
-
     fun updateDeviceMode(mode: DeviceMode) {
         if (_state.value.appSettings.deviceMode == mode) return
         val settings = _state.value.appSettings.copy(deviceMode = mode)
