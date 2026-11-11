@@ -1335,13 +1335,30 @@ private fun PlayerChromeMobilePanel(
             when (section) {
                 PlayerPanel.Episodes -> {
                     val epList = if (episodeSortReverse) data.episodes.asReversed() else data.episodes
+                    // 当前集在「可能已倒序」的列表里的下标。
+                    val currentListIndex = if (episodeSortReverse) {
+                        data.episodes.lastIndex - data.episodeIndex
+                    } else {
+                        data.episodeIndex
+                    }
+                    val epRowState = rememberLazyListState()
+                    // 打开选集面板时直接定位到当前集（左边留两格上下文）；
+                    // 否则百集剧要从第 1 集横滑几十次才能找到正在看的那集。
+                    LaunchedEffect(section, currentListIndex, epList.size) {
+                        if (currentListIndex in epList.indices) {
+                            epRowState.scrollToItem((currentListIndex - 2).coerceAtLeast(0))
+                        }
+                    }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                             TextButton(onClick = onSortReverse) {
                                 Text(if (episodeSortReverse) "正序" else "倒序", color = Color.White.copy(alpha = 0.8f))
                             }
                         }
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        LazyRow(
+                            state = epRowState,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             items(epList.size, key = { it }) { index ->
                                 val realIndex = if (episodeSortReverse) data.episodes.lastIndex - index else index
                                 MobileChip(

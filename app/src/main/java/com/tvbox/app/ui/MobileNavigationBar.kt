@@ -103,8 +103,11 @@ fun MobileNavWrapper(
         else -> true
     }
     // 手机模式电视直播页自带 52dp 搜索栏（见 MobileLiveScreen），不再叠加公共顶栏；
-    // 底部 Tab 导航照常显示（列表页不沉浸）。
-    val showTopBar = showChrome && state.screen != TvScreen.Live
+    // 搜索页自带 64dp 真实搜索框（MobileSearchScreen），公共顶栏那个只是「点不动」的
+    // 假入口，叠上去会白吃 56dp 还把键盘顶掉，所以同样排除。
+    val showTopBar = showChrome &&
+        state.screen != TvScreen.Live &&
+        state.screen != TvScreen.Search
     // 手机模式统一按触摸界面渲染：关闭遥控器焦点框，避免触摸后高亮残留。
     CompositionLocalProvider(LocalTouchMode provides true) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -118,11 +121,13 @@ fun MobileNavWrapper(
             // 底部导航：放在内容下方，避免遮挡首屏内容。
             if (isMobile && showChrome) {
                 NavigationBar(
-                    // edge-to-edge 下吸收系统导航栏高度，避免三键/手势条遮挡导航内容。
+                    // Material3 的 NavigationBar 自带 windowInsets（含系统导航栏），
+                    // 这里只显式声明一次；外面再加 windowInsetsPadding 会重复避让，
+                    // 多出一条没有 containerColor 的黑色空条（三键导航机型最明显）。
                     modifier = Modifier.fillMaxWidth()
-                        .windowInsetsPadding(WindowInsets.navigationBars)
                         // 最小 56dp：大字号下标签行高增加，固定高度会裁切。
                         .heightIn(min = 56.dp),
+                    windowInsets = WindowInsets.navigationBars,
                     tonalElevation = 0.dp,
                     containerColor = Color(0xFF1A1A1A),
                 ) {

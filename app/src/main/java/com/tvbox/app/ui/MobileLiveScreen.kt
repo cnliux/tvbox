@@ -58,6 +58,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -180,9 +181,10 @@ fun MobileLiveScreen(
     }
 
     val currentChannel = state.liveChannels.getOrNull(state.liveChannelIndex)
-    // 列表页筛选状态（搜索/分组/只看收藏）与滚动位置都挂在本层，进出播放层不丢失。
-    val listFilters = remember { MobileLiveListFilters() }
-    val listScrollState = remember { LazyListState() }
+    // 列表页筛选状态（搜索/分组/只看收藏）与滚动位置都挂在本层，进出播放层不丢失；
+    // 并且必须用 rememberSaveable / rememberLazyListState，才能在切换底部 Tab 后恢复。
+    val listFilters = rememberSaveable(saver = MobileLiveFiltersSaver) { MobileLiveListFilters() }
+    val listScrollState = rememberLazyListState()
     if (playerOpen && currentChannel != null) {
         MobileLivePlayerScreen(
             state = state,
@@ -219,6 +221,23 @@ private class MobileLiveListFilters {
     val selectedGroup = mutableStateOf<String?>(null) // null = 全部
     val favoritesOnly = mutableStateOf(false)
 }
+
+/**
+ * 让筛选状态活过「切底部 Tab」：SaveableStateHolder 只保存 rememberSaveable 的数据，
+ * 普通 remember 在页面移出组合（Home ↔ 电视）时就被丢弃，回来时关键词/分组/只看收藏全归零。
+ */
+private val MobileLiveFiltersSaver = listSaver<MobileLiveListFilters, String>(
+    save = {
+        listOf(it.query.value, it.selectedGroup.value ?: "", it.favoritesOnly.value.toString())
+    },
+    restore = {
+        MobileLiveListFilters().apply {
+            query.value = it[0]
+            selectedGroup.value = it[1].ifBlank { null }
+            favoritesOnly.value = it[2].toBoolean()
+        }
+    },
+)
 
 @Composable
 private fun MobileLiveListScreen(
@@ -1066,6 +1085,14 @@ private fun MobileLivePlayerScreen(
     val relatedChannels = remember(channel, channels) {
         channels.filter { it.number != channel.number && it.groupName == channel.groupName }
     }
+    // 相关频道点击要拿「在完整频道列表里的下标」。原来在 LazyRow 的 item 里做 channels.indexOf(related)，
+    // 而 LiveChannel 是 data class（含 lines 列表），每次重组都要逐字段深比较；同组上百个频道、
+    // 源里几千条频道时就是数十万次比较，滚动必掉帧。这里预先建表，查询 O(1)。
+    val channelIndexOf = remember(channels) {
+        val map = HashMap<LiveChannel, Int>(channels.size)
+        channels.forEachIndexed { index, item -> map.putIfAbsent(item, index) }
+        map
+    }
 
     Column(
         modifier = Modifier
@@ -1292,7 +1319,7 @@ private fun MobileLivePlayerScreen(
             items(relatedChannels, key = { it.number }) { related ->
                 // 提前取「正在播」用于整卡合并播报，避免读屏逐个朗读名称与节目。
                 val relatedNow = actions.liveEpgNow(related)?.title
-                val relatedIndex = channels.indexOf(related)
+                val relatedIndex = channelIndexOf[related] ?: -1
                 Column(
                     modifier = Modifier
                         .width(100.dp)

@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -743,8 +744,9 @@ private fun HistoryScreen(
             modifier = Modifier
                 .fillMaxSize()
                 // 修复顶部遮挡：历史页此前用 safeDrawing，在部分机型/主题下状态栏 inset 未生效，
-                // 导致「历史」标题被状态栏压住。改用与设置页 TopAppBar 一致的 statusBars 显式吸收。
-                .windowInsetsPadding(WindowInsets.statusBars)
+                // 导致「历史」标题被状态栏压住。改用 systemBars 显式吸收（顶部状态栏 + 底部导航栏），
+                // 底部列表最后一项不会被三键导航栏/手势条压住。
+                .windowInsetsPadding(WindowInsets.systemBars)
                 .padding(padding),
         ) {
             val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
@@ -773,12 +775,16 @@ private fun HistoryScreen(
                     ) {
                         Text("清空")
                     }
-                    Button(
-                        onClick = actions::goBack,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
-                    ) {
-                        Text("返回")
+                    // 手机模式下「历史」是底部 Tab 的一级页面，没有「返回上一页」的语义：
+                    // 顶部已由公共顶栏提供源切换/搜索/设置，底部有 Tab 导航，这个返回只会
+                    // 把用户莫名送回首页。电视端保持原样（遥控器没有系统返回键）。
+                    if (!isMobile) {
+                        Button(
+                            onClick = actions::goBack,
+                            shape = RoundedCornerShape(8.dp),
+                        ) {
+                            Text("返回")
+                        }
                     }
                 }
             }
@@ -1601,6 +1607,36 @@ private fun MobileHomeFeed(
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
+                        // 过滤/屏蔽导致「一条都不剩」时，此前页面只剩标题下的空白，
+                        // 用户没有任何可点的操作，只能切源或切分类碰运气。这里补一个空态 + 刷新。
+                        val feedEmpty = if (state.isShowingDoubanHot) {
+                            hotItems.isEmpty()
+                        } else {
+                            state.movies.isEmpty()
+                        }
+                        if (feedEmpty && !state.homeLoading && !state.loadingMore) {
+                            item(span = { GridItemSpan(maxLineSpan) }) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 56.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    Text(
+                                        text = "当前分类没有可显示的内容",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        color = Color.White,
+                                    )
+                                    Text(
+                                        text = "可能是分类被屏蔽，或该源此刻没有返回数据",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvColors.TextSecondary,
+                                    )
+                                    Button(onClick = { actions.refreshHome(forceRefresh = true) }) {
+                                        Text("刷新")
+                                    }
+                                }
+                            }
+                        }
                         if (state.isShowingDoubanHot) {
                             items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
                                 DoubanHotPosterCard(
@@ -2268,10 +2304,12 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
             // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
+            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
+            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
+            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "源管理",
@@ -2344,10 +2382,12 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
             // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
+            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
+            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
+            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "视频接口管理",
@@ -2412,10 +2452,12 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
         Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收状态栏，保证标题栏（含「返回」按钮）可用。
+            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
             // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。与历史页修复保持一致。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.statusBars).padding(padding),
+            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
+            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
+            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
+            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
         ) {
             ManageScreenHeader(
                 title = "直播源管理",

@@ -64,6 +64,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -797,9 +798,10 @@ internal fun MobileSearchScreen(
     if (!isMobile) return
     // 用 TextFieldValue 保留光标在末尾的语义（PR#5 修复的核心逻辑）。
     // TextFieldValue 无法写入 Bundle，不能用 rememberSaveable，不然切换页面保存状态时会抛 IllegalArgumentException。
-    var fieldValue by remember(state.searchQuery) {
-        mutableStateOf(queryFieldValue(state.searchQuery))
-    }
+    // 注意：这里**不能**用 remember(state.searchQuery) 作 key —— 输入时每个字符都会回写
+    // searchQuery，key 一变 state 就被重建，selection 被强制挪到末尾、composition 被清空，
+    // 中文拼音会在组合区就被打断。改为空 key + LaunchedEffect 单向同步（与电视版一致）。
+    var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
     val gridState = rememberLazyGridState()
 
@@ -811,11 +813,15 @@ internal fun MobileSearchScreen(
         gridState.scrollToItem(0)
     }
 
+    val focusManager = LocalFocusManager.current
+
     fun submit() {
         val q = fieldValue.text.trim()
         if (q.isEmpty()) return
         actions.updateSearchQuery(q)
         actions.submitSearch()
+        // 提交后收起键盘：否则 IME 会把结果区压掉大半屏，还得手动按返回键收起来。
+        focusManager.clearFocus()
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -844,12 +850,29 @@ internal fun MobileSearchScreen(
                 ) {
                     OutlinedTextField(
                         value = fieldValue,
-                        onValueChange = { fieldValue = it; actions.updateSearchQuery(it.text) },
+                        // 只更新本地输入框：把每个字符都回写 searchQuery 会触发
+                        // LaunchedEffect 里的「回到结果顶部」，用户一边打字一边被拽回顶部。
+                        // searchQuery 代表「已提交的搜索词」，只在 submit / 热词 / 清空时改写。
+                        onValueChange = { fieldValue = it },
                         modifier = Modifier
                             .weight(1f)
                             .heightIn(min = 52.dp),
                         singleLine = true,
                         placeholder = { Text("搜索影片") },
+                        trailingIcon = {
+                            if (fieldValue.text.isNotEmpty()) {
+                                Text(
+                                    text = "✕",
+                                    color = Color.White.copy(alpha = 0.7f),
+                                    modifier = Modifier
+                                        .clickable {
+                                            fieldValue = queryFieldValue("")
+                                            actions.clearSearch()
+                                        }
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                         keyboardActions = KeyboardActions(onSearch = { submit() }),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
@@ -890,7 +913,15 @@ internal fun MobileSearchScreen(
 
                     state.searchError != null && state.searchResults.isEmpty() -> {
                         item(span = { GridItemSpan(maxLineSpan) }) {
-                            ErrorState(message = state.searchError, onRetry = actions::submitSearch, modifier = Modifier.fillMaxWidth().height(200.dp))
+                            // 手机上错误文案常折到 3~4 行，之前固定 height(200.dp) 会把文字顶出
+                            // 布局只留下一个「重试」按钮 —— 用户看不到失败原因，只觉得"点了没反应"。
+                            ErrorState(
+                                message = state.searchError,
+                                onRetry = actions::submitSearch,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 200.dp, max = 420.dp),
+                            )
                         }
                     }
 

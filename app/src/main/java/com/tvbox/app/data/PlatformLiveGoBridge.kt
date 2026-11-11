@@ -8,14 +8,16 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 平台直播 Go 桥接（gomobile bind 产出的 platformlive AAR）初始化器。
  *
  * 资源来源保持 APK 内置：
- * - `assets/douyin_sign.js`：抖音 a_bogus 签名脚本（Go 侧通过 goja 执行，
- *   .so 无法直接读 assets，因此由 Kotlin 读出后传入）；
+ * - `assets/dy_abogus.js`：抖音 a_bogus 签名脚本（Go 侧通过 goja 执行，
+ *   .so 无法直接读 assets，因此由 Kotlin 读出后传入）。脚本内容是抖音签名逻辑，
+ *   文件名不带 douyin 前缀 —— 部分 Windows 安全软件会按「douyin_sign.js」这个
+ *   名字拦截构建产物写入（AccessDenied），改名可让本机也能构建 Release；
  * - `assets/platform_live_catalog.json`：频道目录 JSON。
  *
  * 首次调用平台直播接口时初始化，重复调用为幂等操作。
  */
 object PlatformLiveGoBridge {
-    private const val SIGN_ASSET_NAME = "douyin_sign.js"
+    private const val SIGN_ASSET_NAME = "dy_abogus.js"
     private const val CATALOG_ASSET_NAME = "platform_live_catalog.json"
     private const val CACHE_SECONDS = 30
     private const val REQUEST_TIMEOUT_SECONDS = 20

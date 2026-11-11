@@ -335,7 +335,8 @@ fun LoadingState(text: String, modifier: Modifier = Modifier) {
     ) {
         CircularProgressIndicator()
         Spacer(modifier = Modifier.height(14.dp))
-        Text(text = text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // 同上：不依赖 colorScheme，避免在纯黑背景页面上文字变成深色而看不见。
+        Text(text = text, color = TvColors.TextSecondary)
     }
 }
 
@@ -348,22 +349,34 @@ fun ErrorState(
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
 ) {
+    // 删除诊断日志：已确认 message 正常传入，问题在于文字颜色继承了外层 LocalContentColor
     Column(
         modifier = modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         if (title != null) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = TvColors.TextPrimary,
+            )
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = message.ifBlank { "加载失败，请稍后重试" },
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TvColors.TextSecondary,
                 textAlign = TextAlign.Center,
             )
         } else {
-            Text(text = message.ifBlank { "加载失败，请稍后重试" }, style = MaterialTheme.typography.titleMedium)
+            // 显式指定颜色：不指定时会继承 LocalContentColor，在深色页面（如手机搜索页）
+            // 可能拿到接近纯黑的 contentColor，表现为「只有重试按钮，看不到任何错误原因」。
+            Text(
+                text = message.ifBlank { "加载失败，请稍后重试" },
+                style = MaterialTheme.typography.titleMedium,
+                color = TvColors.TextPrimary,
+                textAlign = TextAlign.Center,
+            )
         }
         Spacer(modifier = Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -397,7 +410,7 @@ fun EmptyState(
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = TvColors.TextPrimary,
             textAlign = TextAlign.Center,
         )
         if (!subtitle.isNullOrBlank()) {
@@ -405,7 +418,7 @@ fun EmptyState(
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = TvColors.TextSecondary,
                 textAlign = TextAlign.Center,
             )
         }

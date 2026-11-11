@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -83,6 +84,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.FlvContinuityProxy
 import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.PlaybackWatchdog
@@ -213,6 +215,7 @@ private fun PlatformLiveParentCategoriesScreen(
     PlatformLiveBrowseSurface(
         title = site?.name ?: "直播",
         subtitle = "选择直播大类",
+        onBack = { actions.goBack() },
         loading = state.platformLiveLoading,
         error = state.platformLiveError,
         isEmpty = state.platformLiveParentCategories.isEmpty(),
@@ -259,6 +262,7 @@ private fun PlatformLiveCategoriesScreen(
     PlatformLiveBrowseSurface(
         title = parentCategory?.name ?: site?.name ?: "直播分类",
         subtitle = "选择二级分类",
+        onBack = { actions.goBack() },
         loading = state.platformLiveLoading,
         error = state.platformLiveError,
         isEmpty = categories.isEmpty(),
@@ -375,6 +379,7 @@ private fun PlatformLiveRoomsScreen(
         isEmpty = state.platformLiveRooms.isEmpty(),
         emptyMessage = if (favoritesMode) "还没有收藏的直播房间" else "这个分类暂时没有正在直播的房间",
         onRetry = actions::refreshPlatformLive,
+        onBack = { actions.goBack() },
         gridState = gridState,
         notice = state.platformLiveFavoriteError,
         loadingMore = !favoritesMode && state.platformLiveLoadingMore,
@@ -410,6 +415,8 @@ private fun PlatformLiveBrowseSurface(
     isEmpty: Boolean,
     emptyMessage: String,
     onRetry: () -> Unit,
+    /** 手机触摸模式下的返回入口：为 null 表示这一层是根页（如「平台选择」），不需要返回。 */
+    onBack: (() -> Unit)? = null,
     gridState: LazyGridState? = null,
     notice: String? = null,
     loadingMore: Boolean = false,
@@ -447,6 +454,24 @@ private fun PlatformLiveBrowseSurface(
                             vertical = if (LocalTouchMode.current) 10.dp else 24.dp,
                         ),
                 ) {
+                    // 手机端没有返回键、也没有遥控器：标题随首项滚出后整页只剩网格，
+                    // 用户看不出还能退回上一级。这里固定一个「返回」，不参与 headerVisible 的显隐。
+                    if (LocalTouchMode.current && onBack != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(Color.White.copy(alpha = 0.12f))
+                                    .clickable(role = Role.Button) { onBack() }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                            ) {
+                                Text("‹ 返回", style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+                    }
                     AnimatedVisibility(visible = headerVisible) {
                         Column {
                             // 站点名/分类名可能很长（分类页直接用二级分类名当标题），限制两行避免页头无限增高。
@@ -958,7 +983,8 @@ private fun PlatformLivePlayerScreen(
             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕关闭】room=${room.id}")
         }
     }
-    var danmakuEnabled by remember(room.id) { mutableStateOf(true) }
+    // 用 rememberSaveable：手机横屏/切后台引起的重组不应把用户关掉的弹幕又打开。
+    var danmakuEnabled by rememberSaveable(room.id) { mutableStateOf(true) }
 
     DisposableEffect(player) {
         if (player == null) {
@@ -1540,44 +1566,52 @@ private fun PlatformLivePlayerScreen(
         }
 
         // 右上角开关组：弹幕开关 + 调试监控开关（手机点击 / 电视聚焦回车）。
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .windowInsetsPadding(WindowInsets.safeDrawing)
-                .padding(28.dp),
-            horizontalAlignment = Alignment.End,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            if (danmakuClient != null) {
-                Box(
-                    modifier = Modifier
-                        .clip(MaterialTheme.shapes.small)
-                        .background(if (danmakuEnabled) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
-                        .clickable { danmakuEnabled = !danmakuEnabled }
-                        .focusable()
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = if (danmakuEnabled) "弹幕·开" else "弹幕",
-                        color = if (danmakuEnabled) Color.Black else Color.White,
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                }
-            }
-            // 调试监控开关（手机点击 / 电视聚焦回车）：实时叠加续流与解码数据面板。
-            Box(
+        // 只在控制条可见时出现：
+        // ① 横屏全屏看直播时顶栏已自动收起，这两个按钮还常驻会一直压在画面上；
+        // ② 播放器顶栏右上是「全屏」按钮，常驻会与它抢点击区域。
+        // 同时整组下移到顶栏下方（top = 68dp），彻底避开右上角「全屏」。
+        if (chrome.visible) {
+            Column(
                 modifier = Modifier
-                    .clip(MaterialTheme.shapes.small)
-                    .background(if (showDebugMonitor) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
-                    .clickable { showDebugMonitor = !showDebugMonitor }
-                    .focusable()
-                    .padding(horizontal = 16.dp, vertical = 10.dp)
+                    .align(Alignment.TopEnd)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(top = 68.dp, end = 20.dp),
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text(
-                    text = if (showDebugMonitor) "监控·开" else "调试监控",
-                    color = if (showDebugMonitor) Color.Black else Color.White,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                if (danmakuClient != null) {
+                    Box(
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .background(if (danmakuEnabled) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
+                            .clickable { danmakuEnabled = !danmakuEnabled }
+                            .focusable()
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = if (danmakuEnabled) "弹幕·开" else "弹幕",
+                            color = if (danmakuEnabled) Color.Black else Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+                // 调试监控只出现在调试包：正式版里它是纯干扰项，普通用户只会误点。
+                if (BuildConfig.DEBUG) {
+                    Box(
+                        modifier = Modifier
+                            .clip(MaterialTheme.shapes.small)
+                            .background(if (showDebugMonitor) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
+                            .clickable { showDebugMonitor = !showDebugMonitor }
+                            .focusable()
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                    ) {
+                        Text(
+                            text = if (showDebugMonitor) "监控·开" else "调试监控",
+                            color = if (showDebugMonitor) Color.Black else Color.White,
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
             }
         }
 
