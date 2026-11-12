@@ -75,14 +75,15 @@ const (
 	flvProxyReplayGuardMaxFrames = 7200
 	// 同地址快速续拉最多连续 N 次，之后强制重新解析并退避，避免 CDN 短会话
 	// 时在同地址上每秒重连多次（PC 侧曾观测到 200 秒 51 次会话）。
-	flvProxyMaxFastReconnectStreak = 3
-	// 短/空段（上游在数秒内即 EOF）退避与换线：监控曾出现 3 分钟 48 次重连的风暴，
-	// 根因是短段 EOF 立即无退避重连且不计入失败，同一条坏线路被高速反复重连。
-	// 连续出现短段时按指数退避，达阈值则视为当前候选线路不稳定，切换到下一条 CDN。
-	flvProxyShortSessionMs   = 5000
-	flvProxyMaxShortStreak   = 4
-	flvProxyShortBackoffBase = 500 * time.Millisecond
-	flvProxyShortBackoffMax  = 5 * time.Second
+	// 短/空段退避与换线：监控曾出现 3 分钟 48 次重连的风暴，根因是短段 EOF
+	// 立即无退避重连且不计入失败，同一条坏线路被高速反复重连。
+	// 注意：重连策略已按平台分档进 flvSiteTuning（见下方 huya* 常量与
+	// siteTuningFor），这里的历史常量仅作为虎牙/默认档位的取值来源。
+	huyaMaxFastReconnectStreak = 3
+	huyaShortSessionMs         = int64(5000)
+	huyaMaxShortStreak         = 4
+	huyaShortBackoffBase       = 500 * time.Millisecond
+	huyaShortBackoffMax        = 5 * time.Second
 )
 
 // flvSiteTuning 把「一起看」续流代理的关键参数按平台分档，
@@ -97,38 +98,67 @@ type flvSiteTuning struct {
 	replayGuardMaxFrames int
 	spliceStepMs         int64
 	pacerMaxDelay        time.Duration
+	// —— 重连策略（按平台分档的核心差异）——
+	// 同地址快速续拉最大连续次数：EOF 后复用上次地址直接续拉，省去一次完整解析。
+	// 0 = 完全关闭，EOF 后一律重新解析拿新签名。
+	maxFastReconnectStreak int
+	// 会话短于该毫秒数视为「短段」（上游很快 EOF）。
+	shortSessionMs int64
+	// 连续短段达到该次数才切换候选线路；<=0 表示**永不**因短段自动换线，
+	// 短段只做退避 + 重新解析，信任当前线路（适合 CDN 稳定的平台）。
+	maxShortStreak int
+	// 短段指数退避的起始值与上限。
+	shortBackoffBase time.Duration
+	shortBackoffMax  time.Duration
 }
 
 // siteTuningFor 按平台返回专属调参；未知平台回退到与历史默认一致的保护档，避免行为漂移。
 func siteTuningFor(site string) flvSiteTuning {
 	switch strings.ToLower(strings.TrimSpace(site)) {
 	case "douyu":
-		// 斗鱼「一起看」回放缓冲通常明显短于虎牙（虎牙实测 6.08s 才需 12s 窗口），
-		// 指纹去重窗口收紧到 8s：既覆盖斗鱼回放，又更快遗忘陈旧指纹、
-		// 减少误伤新帧与内存占用。其余沿用历史安全值。
+		// 斗鱼「一起看」：CDN 相对稳定、回放缓冲更短，与虎牙走完全不同的重连思路——
+		// 不做「快速续拉 ×3 + 短段频发就换线」的激进策略：
+		// - EOF 后最多同地址续拉 1 次，随后一律重新解析拿新签名（斗鱼签名按会话发放）；
+		// - 短段只做耐心退避（2s 起步、上限 8s），**永不因短段自动换线**，
+		//   信任当前 CDN 线路；真正坏掉的线路由硬失败路径（HTTP 错误）换线兜底。
 		return flvSiteTuning{
-			name:                 "douyu-yqk",
-			replayWindowMs:       8000,
-			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
-			spliceStepMs:         flvProxySpliceStepMs,
-			pacerMaxDelay:        flvProxyPacerMaxDelay,
+			name:                   "douyu-yqk",
+			replayWindowMs:         8000,
+			replayGuardMaxFrames:   flvProxyReplayGuardMaxFrames,
+			spliceStepMs:           flvProxySpliceStepMs,
+			pacerMaxDelay:          flvProxyPacerMaxDelay,
+			maxFastReconnectStreak: 1,
+			shortSessionMs:         4000,
+			maxShortStreak:         0,
+			shortBackoffBase:       2 * time.Second,
+			shortBackoffMax:        8 * time.Second,
 		}
 	case "huya":
 		return flvSiteTuning{
-			name:                 "huya-yqk",
-			replayWindowMs:       flvProxyReplayWindowMs,
-			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
-			spliceStepMs:         flvProxySpliceStepMs,
-			pacerMaxDelay:        flvProxyPacerMaxDelay,
+			name:                   "huya-yqk",
+			replayWindowMs:         flvProxyReplayWindowMs,
+			replayGuardMaxFrames:   flvProxyReplayGuardMaxFrames,
+			spliceStepMs:           flvProxySpliceStepMs,
+			pacerMaxDelay:          flvProxyPacerMaxDelay,
+			maxFastReconnectStreak: huyaMaxFastReconnectStreak,
+			shortSessionMs:         huyaShortSessionMs,
+			maxShortStreak:         huyaMaxShortStreak,
+			shortBackoffBase:       huyaShortBackoffBase,
+			shortBackoffMax:        huyaShortBackoffMax,
 		}
 	default:
-		// 其它平台（B站/抖音/快手等）沿用历史默认，行为不变。
+		// 其它平台（B站/抖音/快手等）沿用历史默认（= 虎牙策略），行为不变。
 		return flvSiteTuning{
-			name:                 "default",
-			replayWindowMs:       flvProxyReplayWindowMs,
-			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
-			spliceStepMs:         flvProxySpliceStepMs,
-			pacerMaxDelay:        flvProxyPacerMaxDelay,
+			name:                   "default",
+			replayWindowMs:         flvProxyReplayWindowMs,
+			replayGuardMaxFrames:   flvProxyReplayGuardMaxFrames,
+			spliceStepMs:           flvProxySpliceStepMs,
+			pacerMaxDelay:          flvProxyPacerMaxDelay,
+			maxFastReconnectStreak: huyaMaxFastReconnectStreak,
+			shortSessionMs:         huyaShortSessionMs,
+			maxShortStreak:         huyaMaxShortStreak,
+			shortBackoffBase:       huyaShortBackoffBase,
+			shortBackoffMax:        huyaShortBackoffMax,
 		}
 	}
 }
@@ -431,7 +461,7 @@ func (p *flvProxy) streamLoop() {
 			candidate = LiveStreamCandidate{CDN: "本地首段", URL: p.initialURL, Protocol: "flv"}
 			headers = p.initialHeaders
 			useInitial = false
-		case fastReconnectCandidate != nil && fastReconnectStreak < flvProxyMaxFastReconnectStreak:
+		case fastReconnectCandidate != nil && fastReconnectStreak < p.tuning.maxFastReconnectStreak:
 			candidate = *fastReconnectCandidate
 			headers = fastReconnectHeaders
 			fastReconnectCandidate = nil
@@ -479,18 +509,25 @@ func (p *flvProxy) streamLoop() {
 				fastReconnectCandidate = &candidate
 				fastReconnectHeaders = headers
 			}
-			// 短/空段（上游很快关闭）：监控曾出现 3 分钟 48 次重连的风暴，
-			// 根因是短段 EOF 立即无退避重连且不计入失败。这里加指数退避并视为
-			// 当前线路不稳定，连续多次则切换候选，避免在坏线路上高速空转。
-			if p.lastSessionMs < flvProxyShortSessionMs {
+			// 短/空段（上游很快关闭）：按平台分档的重连策略处理。
+			// 虎牙：500ms 指数退避、连续 4 次短段换线（CDN 易抖，需主动切）。
+			// 斗鱼：2s 起步的耐心退避、**永不因短段换线**（CDN 稳定，信任线路，
+			// 坏线路由硬失败路径兜底）。
+			if p.lastSessionMs < p.tuning.shortSessionMs {
 				shortStreak++
-				backoff := flvProxyShortBackoffBase * time.Duration(1<<uint(shortStreak-1))
-				if backoff > flvProxyShortBackoffMax {
-					backoff = flvProxyShortBackoffMax
+				// 移位封顶防溢出：斗鱼档不换线时 shortStreak 会持续增长，
+				// 1<<(n-1) 超过 63 位会变负数导致退避失效，这里封到 6（64 倍）足够。
+				shift := uint(shortStreak - 1)
+				if shift > 6 {
+					shift = 6
 				}
-				p.event(fmt.Sprintf("shortSession sessionMs=%d streak=%d backoff=%s",
-					p.lastSessionMs, shortStreak, backoff))
-				if shortStreak >= flvProxyMaxShortStreak {
+				backoff := p.tuning.shortBackoffBase * time.Duration(1<<shift)
+				if backoff > p.tuning.shortBackoffMax {
+					backoff = p.tuning.shortBackoffMax
+				}
+				p.event(fmt.Sprintf("shortSession sessionMs=%d streak=%d backoff=%s site=%s",
+					p.lastSessionMs, shortStreak, backoff, p.tuning.name))
+				if p.tuning.maxShortStreak > 0 && shortStreak >= p.tuning.maxShortStreak {
 					shortStreak = 0
 					failures = 0
 					candidateIndex++
@@ -1037,6 +1074,11 @@ func (p *flvProxy) statsJSON() string {
 		"client":               p.hasClient(),
 		"site":                 p.site,
 		"tuning":               p.tuning.name,
+		// 重连策略分档：真机监控可直接确认斗鱼/虎牙各走各的策略。
+		"fastReconnectMax": p.tuning.maxFastReconnectStreak,
+		"shortSessionMs":   p.tuning.shortSessionMs,
+		"shortStreakMax":   p.tuning.maxShortStreak, // <=0 表示不因短段换线
+		"shortBackoffMs":   p.tuning.shortBackoffBase.Milliseconds(),
 		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
 		"upstreamSessions":     p.upstreamSessions,
 		"reconnects":           p.reconnects,

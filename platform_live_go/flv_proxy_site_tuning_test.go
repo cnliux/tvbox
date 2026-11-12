@@ -24,6 +24,19 @@ func TestSiteTuningHuyaMatchesLegacyConstants(t *testing.T) {
 	if huya.pacerMaxDelay != flvProxyPacerMaxDelay {
 		t.Fatalf("huya pacerMaxDelay = %v, want legacy %v", huya.pacerMaxDelay, flvProxyPacerMaxDelay)
 	}
+	// 虎牙重连策略必须与历史常量逐字一致。
+	if huya.maxFastReconnectStreak != huyaMaxFastReconnectStreak {
+		t.Fatalf("huya maxFastReconnectStreak = %d, want %d", huya.maxFastReconnectStreak, huyaMaxFastReconnectStreak)
+	}
+	if huya.shortSessionMs != huyaShortSessionMs {
+		t.Fatalf("huya shortSessionMs = %d, want %d", huya.shortSessionMs, huyaShortSessionMs)
+	}
+	if huya.maxShortStreak != huyaMaxShortStreak {
+		t.Fatalf("huya maxShortStreak = %d, want %d", huya.maxShortStreak, huyaMaxShortStreak)
+	}
+	if huya.shortBackoffBase != huyaShortBackoffBase || huya.shortBackoffMax != huyaShortBackoffMax {
+		t.Fatalf("huya backoff = %v/%v, want %v/%v", huya.shortBackoffBase, huya.shortBackoffMax, huyaShortBackoffBase, huyaShortBackoffMax)
+	}
 }
 
 // TestSiteTuningDouyuDistinctFromHuya 是本次需求的核心：斗鱼与虎牙不再共用同一套逻辑。
@@ -49,6 +62,34 @@ func TestSiteTuningDouyuDistinctFromHuya(t *testing.T) {
 	}
 	if douyu.pacerMaxDelay != huya.pacerMaxDelay {
 		t.Fatalf("douyu pacerMaxDelay = %v, want %v", douyu.pacerMaxDelay, huya.pacerMaxDelay)
+	}
+}
+
+// TestDouyuReconnectPolicyCalmerThanHuya 是本次需求的核心：斗鱼 CDN 相对稳定，
+// 重连思路必须与虎牙区分开——不做激进换线，信任线路、耐心退避、重新解析拿新签名。
+func TestDouyuReconnectPolicyCalmerThanHuya(t *testing.T) {
+	douyu := siteTuningFor("douyu")
+	huya := siteTuningFor("huya")
+
+	// 斗鱼最多一次同地址续拉（比虎牙的 3 次克制），EOF 后尽快重新解析拿新签名。
+	if douyu.maxFastReconnectStreak >= huya.maxFastReconnectStreak {
+		t.Fatalf("douyu maxFastReconnectStreak = %d must be < huya %d", douyu.maxFastReconnectStreak, huya.maxFastReconnectStreak)
+	}
+	// 斗鱼**永不**因短段自动换线（<=0），虎牙保持 4 次换线。
+	if douyu.maxShortStreak != 0 {
+		t.Fatalf("douyu maxShortStreak = %d, want 0 (never switch on short sessions)", douyu.maxShortStreak)
+	}
+	if huya.maxShortStreak <= 0 {
+		t.Fatalf("huya maxShortStreak = %d must stay positive", huya.maxShortStreak)
+	}
+	// 斗鱼短段退避更耐心：起步与上限都不得低于虎牙。
+	if douyu.shortBackoffBase < huya.shortBackoffBase || douyu.shortBackoffMax <= huya.shortBackoffMax {
+		t.Fatalf("douyu backoff %v/%v must be gentler than huya %v/%v",
+			douyu.shortBackoffBase, douyu.shortBackoffMax, huya.shortBackoffBase, huya.shortBackoffMax)
+	}
+	// 斗鱼短段判定阈值不得高于虎牙（斗鱼会话通常更长，短段即异常）。
+	if douyu.shortSessionMs > huya.shortSessionMs {
+		t.Fatalf("douyu shortSessionMs = %d must be <= huya %d", douyu.shortSessionMs, huya.shortSessionMs)
 	}
 }
 
