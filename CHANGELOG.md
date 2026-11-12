@@ -1,3 +1,25 @@
+## v1.0.10 - 2026-11-13
+
+斗鱼「一起看」重连策略与虎牙正式分道：
+
+- **斗鱼 CDN 稳定，不再走虎牙的激进重连逻辑**：重连策略从全局常量改为按站点分档
+  （`flvSiteTuning` 新增 `maxFastReconnectStreak`/`shortSessionMs`/`maxShortStreak`/
+  `shortBackoffBase`/`shortBackoffMax`，`streamLoop` 全部改为读各站配置）。
+  - 斗鱼 `douyu-yqk`：EOF 后最多同地址续拉 1 次，随后一律重新解析拿新签名
+    （斗鱼签名按会话发放）；短段（<4s）耐心退避 2s→8s；**永不因短段自动换线**，
+    信任当前 CDN 线路，真正坏掉的线路由硬失败（HTTP 错误）路径兜底换线。
+  - 虎牙 `huya-yqk` / 默认档：逐字保留历史策略（续拉 ×3、短段 <5s、退避 500ms→5s、
+    连续 4 次短段换线），已有实测结论不回退。
+- **修复退避移位溢出隐患**：斗鱼不换线时短段计数会持续增长，`1<<(n-1)` 移位超过
+  63 位会溢出为负导致退避失效，已加封顶。
+- **监控可观测性**：`statsJSON` 新增 `fastReconnectMax`/`shortSessionMs`/
+  `shortStreakMax`/`shortBackoffMs`，真机监控可直接确认两个平台各走各的策略。
+- 验证：Go 全套测试通过（含新增 `TestDouyuReconnectPolicyCalmerThanHuya`，
+  断言斗鱼策略必须比虎牙更克制）；真机 192.168.1.37 斗鱼房间实测
+  `tuning:"douyu-yqk"` 生效、播放稳定。
+
+
+
 ## v1.0.9 - 2026-11-12
 
 直播「一起看」续流稳定性、播放器缓冲调试、OTA CDN 与交互优化：
