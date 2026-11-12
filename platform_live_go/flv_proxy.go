@@ -26,6 +26,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -40,9 +41,22 @@ const (
 	flvProxyResolveRetry = 1500 * time.Millisecond
 	flvProxyMaxTagSize   = 8 << 20
 	flvProxyMaxFailures  = 2
-	// pacer 单帧最大等待：超过说明时间戳跳变或续段重绑，直接重置墙钟基准。
-	flvProxyPacerMaxDelay = 2 * time.Second
+	// pacer 单帧最大等待：超过说明时间戳跳变或续段重绑（如长空窗后追帧），
+	// 直接重置墙钟基准避免无限期等待。这里提到 6s，配合下方 5s 目标缓冲使用。
+	flvProxyPacerMaxDelay = 6 * time.Second
+)
 
+// pacer 目标缓冲：故意比实时慢约 N 毫秒推送，让下游始终保有 N 毫秒已接收数据。
+// 上游抖动 / 重连空窗期间播放器仍有缓冲可播，抵抗「一起看」续流风暴。
+// 实测旧包 pacer 把缓冲压到 ~2s 时抗抖动能力差（重连风暴 dropped 0→119），
+// 默认 5s 与用户目标 4~6s 对齐。运行时可由 SetPacerTargetBufferMs 调整（调试用）。
+var flvProxyPacerTargetBufferMs atomic.Int64
+
+func init() {
+	flvProxyPacerTargetBufferMs.Store(5000)
+}
+
+const (
 	// FLV Tag 类型（tagHeader[0] & 0x1f）。
 	flvTagTypeAudio = 8
 	flvTagTypeVideo = 9
@@ -62,7 +76,62 @@ const (
 	// 同地址快速续拉最多连续 N 次，之后强制重新解析并退避，避免 CDN 短会话
 	// 时在同地址上每秒重连多次（PC 侧曾观测到 200 秒 51 次会话）。
 	flvProxyMaxFastReconnectStreak = 3
+	// 短/空段（上游在数秒内即 EOF）退避与换线：监控曾出现 3 分钟 48 次重连的风暴，
+	// 根因是短段 EOF 立即无退避重连且不计入失败，同一条坏线路被高速反复重连。
+	// 连续出现短段时按指数退避，达阈值则视为当前候选线路不稳定，切换到下一条 CDN。
+	flvProxyShortSessionMs   = 5000
+	flvProxyMaxShortStreak   = 4
+	flvProxyShortBackoffBase = 500 * time.Millisecond
+	flvProxyShortBackoffMax  = 5 * time.Second
 )
+
+// flvSiteTuning 把「一起看」续流代理的关键参数按平台分档，
+// 让斗鱼与虎牙不再共用同一套调参——它们的回放缓冲形态差异很大：
+// - 虎牙「一起看」续流会「先给一个全新关键帧，再跟 6 秒旧缓冲」，回放窗口必须够长；
+// - 斗鱼「一起看」回放缓冲通常更短、时间戳更稳，可收紧去重窗口、更快遗忘陈旧指纹。
+// 历史调参（常量）全部保留为 Huya/默认档位的取值，保证已有实测结论不回退；
+// Douyu 档位在「不破坏正确性」前提下做差异化收紧，后续可按真机实测继续微调。
+type flvSiteTuning struct {
+	name                 string
+	replayWindowMs       int64
+	replayGuardMaxFrames int
+	spliceStepMs         int64
+	pacerMaxDelay        time.Duration
+}
+
+// siteTuningFor 按平台返回专属调参；未知平台回退到与历史默认一致的保护档，避免行为漂移。
+func siteTuningFor(site string) flvSiteTuning {
+	switch strings.ToLower(strings.TrimSpace(site)) {
+	case "douyu":
+		// 斗鱼「一起看」回放缓冲通常明显短于虎牙（虎牙实测 6.08s 才需 12s 窗口），
+		// 指纹去重窗口收紧到 8s：既覆盖斗鱼回放，又更快遗忘陈旧指纹、
+		// 减少误伤新帧与内存占用。其余沿用历史安全值。
+		return flvSiteTuning{
+			name:                 "douyu-yqk",
+			replayWindowMs:       8000,
+			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
+			spliceStepMs:         flvProxySpliceStepMs,
+			pacerMaxDelay:        flvProxyPacerMaxDelay,
+		}
+	case "huya":
+		return flvSiteTuning{
+			name:                 "huya-yqk",
+			replayWindowMs:       flvProxyReplayWindowMs,
+			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
+			spliceStepMs:         flvProxySpliceStepMs,
+			pacerMaxDelay:        flvProxyPacerMaxDelay,
+		}
+	default:
+		// 其它平台（B站/抖音/快手等）沿用历史默认，行为不变。
+		return flvSiteTuning{
+			name:                 "default",
+			replayWindowMs:       flvProxyReplayWindowMs,
+			replayGuardMaxFrames: flvProxyReplayGuardMaxFrames,
+			spliceStepMs:         flvProxySpliceStepMs,
+			pacerMaxDelay:        flvProxyPacerMaxDelay,
+		}
+	}
+}
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
 type FlvProxyHandle struct {
@@ -117,6 +186,8 @@ func (h *FlvProxyHandle) Stats() string {
 type flvProxy struct {
 	service        *Service
 	site           string
+	// 按平台分档的续流调参（斗鱼/虎牙「一起看」各自独立，避免共用一套参数）。
+	tuning         flvSiteTuning
 	roomID         string
 	candidateIndex int
 
@@ -215,6 +286,7 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 	proxy := &flvProxy{
 		service:        service,
 		site:           site,
+		tuning:         siteTuningFor(site),
 		roomID:         roomID,
 		candidateIndex: candidateIndex,
 		initialURL:     Text(initialURL, ""),
@@ -340,6 +412,8 @@ func (p *flvProxy) waitClient() bool {
 func (p *flvProxy) streamLoop() {
 	candidateIndex := p.candidateIndex
 	failures := 0
+	// 连续短/空段计数：用于指数退避与触发候选切换，正常长度的段会清零。
+	shortStreak := 0
 	useInitial := p.initialURL != ""
 	// CDN 关闭的是「本次连接」，播放地址与签名往往仍然有效。正常关流后先用同一地址
 	// 立即续拉一次，避免每次重连都完整重跑平台解析（斗鱼要重新拉签名 JS、用 goja
@@ -405,6 +479,31 @@ func (p *flvProxy) streamLoop() {
 				fastReconnectCandidate = &candidate
 				fastReconnectHeaders = headers
 			}
+			// 短/空段（上游很快关闭）：监控曾出现 3 分钟 48 次重连的风暴，
+			// 根因是短段 EOF 立即无退避重连且不计入失败。这里加指数退避并视为
+			// 当前线路不稳定，连续多次则切换候选，避免在坏线路上高速空转。
+			if p.lastSessionMs < flvProxyShortSessionMs {
+				shortStreak++
+				backoff := flvProxyShortBackoffBase * time.Duration(1<<uint(shortStreak-1))
+				if backoff > flvProxyShortBackoffMax {
+					backoff = flvProxyShortBackoffMax
+				}
+				p.event(fmt.Sprintf("shortSession sessionMs=%d streak=%d backoff=%s",
+					p.lastSessionMs, shortStreak, backoff))
+				if shortStreak >= flvProxyMaxShortStreak {
+					shortStreak = 0
+					failures = 0
+					candidateIndex++
+					p.bumpCandidateSwitch(fmt.Errorf("短段频发已切换线路 sessionMs=%d", p.lastSessionMs))
+				}
+				select {
+				case <-p.ctx.Done():
+					return
+				case <-time.After(backoff):
+				}
+				continue
+			}
+			shortStreak = 0
 			continue
 		}
 		if fastReconnect {
@@ -564,7 +663,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 				p.statsMu.Unlock()
 				continue
 			}
-			if guardFrames >= flvProxyReplayGuardMaxFrames {
+			if guardFrames >= p.tuning.replayGuardMaxFrames {
 				guardActive = false
 				p.statsMu.Lock()
 				p.guardActiveNow = false
@@ -663,15 +762,18 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		}
 		// pacer：上游常以突发方式一次送来数秒数据，原样灌给播放器会造成
 		// 快进/跳帧感。按输出媒体时间对齐墙钟，让下游始终以实时速度收到帧。
-		// 单帧等待超过阈值说明时间戳跳变/续段重绑，重置基准而不是空等。
+		// 额外叠加「目标缓冲」偏移：故意比实时慢约 flvProxyPacerTargetBufferMs 推送，
+		// 让本地始终保有数秒已接收数据，上游抖动 / 重连空窗时播放器仍有缓冲可播。
+		// 单帧等待超过 pacerMaxDelay 说明时间戳跳变/长空窗后追帧，重置基准而非空等。
 		if p.pacerEnabled && p.ctx.Err() == nil {
 			if !pacerStarted {
 				pacerStarted = true
 				pacerMediaStart = adjusted
 				pacerWallStart = time.Now()
 			}
-			deadline := pacerWallStart.Add(time.Duration(adjusted-pacerMediaStart) * time.Millisecond)
-			if delay := time.Until(deadline); delay > flvProxyPacerMaxDelay {
+		deadline := pacerWallStart.Add(
+			time.Duration(adjusted-pacerMediaStart+flvProxyPacerTargetBufferMs.Load()) * time.Millisecond)
+			if delay := time.Until(deadline); delay > p.tuning.pacerMaxDelay {
 				pacerMediaStart, pacerWallStart = adjusted, time.Now()
 				p.event("pacerRebased")
 			} else if delay > 0 {
@@ -739,7 +841,7 @@ func (p *flvProxy) rememberFrame(fp uint64, ts int64) {
 	}
 	p.recent[fp] = ts
 	p.recentList = append(p.recentList, flvReplayEntry{fp: fp, ts: ts})
-	cutoff := ts - flvProxyReplayWindowMs
+	cutoff := ts - p.tuning.replayWindowMs
 	for len(p.recentList) > 0 && p.recentList[0].ts < cutoff {
 		entry := p.recentList[0]
 		// 同一指纹若在窗口内被更新过，保留较新的那条记录。
@@ -800,7 +902,7 @@ func (p *flvProxy) spliceBase(sourceTs int64) int64 {
 	if !p.haveOut[0] && !p.haveOut[1] {
 		return sourceTs
 	}
-	return p.maxOutTsLocked() + flvProxySpliceStepMs
+	return p.maxOutTsLocked() + p.tuning.spliceStepMs
 }
 
 // acceptTs 只在**同一轨道内部**拒绝时间戳回退，允许相等时间戳。
@@ -933,6 +1035,8 @@ func (p *flvProxy) statsJSON() string {
 	payload := map[string]interface{}{
 		"url":                  p.url,
 		"client":               p.hasClient(),
+		"site":                 p.site,
+		"tuning":               p.tuning.name,
 		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
 		"upstreamSessions":     p.upstreamSessions,
 		"reconnects":           p.reconnects,

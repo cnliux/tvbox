@@ -81,6 +81,20 @@ func bridgeCurrent() (*Service, error) {
 	return bridgeService, nil
 }
 
+// SetPacerTargetBufferMs 运行时调整 pacer 目标缓冲（毫秒），用于「一起看」续流缓冲调试。
+// 0 表示关闭目标缓冲（严格实时匀速）；负值被忽略。修改立即对所有在播/新建代理生效。
+func SetPacerTargetBufferMs(ms int64) {
+	if ms < 0 {
+		return
+	}
+	flvProxyPacerTargetBufferMs.Store(ms)
+}
+
+// GetPacerTargetBufferMs 返回当前 pacer 目标缓冲（毫秒）。
+func GetPacerTargetBufferMs() int64 {
+	return flvProxyPacerTargetBufferMs.Load()
+}
+
 // ChannelsJson 等价 Python tvbox_live_bridge.channels_json。
 func ChannelsJson() (string, error) {
 	service, err := bridgeCurrent()

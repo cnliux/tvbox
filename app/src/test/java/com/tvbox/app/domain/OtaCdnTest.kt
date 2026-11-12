@@ -15,12 +15,14 @@ class OtaCdnTest {
     @Test
     fun apkCandidatesKeepOfficialSourceFirstAndDeriveProxies() {
         val candidates = buildOtaApkCandidates(releaseUrl)
-        assertEquals(4, candidates.size)
+        assertEquals(6, candidates.size) // 官方源 + 5 个代理（含 2 条新增兜底镜像）
         assertEquals("官方源", candidates.first().label)
         assertEquals(releaseUrl, candidates.first().url)
         assertEquals("https://ghfast.top/$releaseUrl", candidates[1].url)
         assertEquals("https://gh-proxy.com/$releaseUrl", candidates[2].url)
         assertEquals("https://ghproxy.net/$releaseUrl", candidates[3].url)
+        assertEquals("https://ghproxy.link/$releaseUrl", candidates[4].url)
+        assertEquals("https://cf.ghproxy.cn/$releaseUrl", candidates[5].url)
         assertTrue(candidates.all { it.url.startsWith("https://") })
         assertEquals(candidates.size, candidates.distinctBy { it.id }.size)
     }
@@ -41,7 +43,7 @@ class OtaCdnTest {
         assertEquals("官方源", candidates[0].label)
         assertEquals(mirror, candidates[1].url)
         assertEquals("https://ghfast.top/$releaseUrl", candidates[2].url)
-        assertEquals(5, candidates.size) // 显式镜像占用一个 ghfast 位置，其余 2 个代理仍派生
+        assertEquals(7, candidates.size) // 显式镜像占用一个位置，其余 4 个代理仍派生
         assertEquals("gh-proxy.com", candidates[3].id)
         assertFalse(candidates.any { it.url.startsWith("http://") })
         assertEquals(1, candidates.count { it.url == mirror })
@@ -63,10 +65,12 @@ class OtaCdnTest {
     @Test
     fun manifestCandidatesKeepExistingPrimaryAndBackupFirst() {
         val candidates = buildOtaManifestCandidates()
-        assertEquals(7, candidates.size)
+        assertEquals(9, candidates.size) // 原 7 条 + 2 条新增兜底镜像
         assertEquals("ghfast", candidates[0].label)
         assertTrue(candidates[0].url.startsWith("https://ghfast.top/https://raw.githubusercontent.com/"))
         assertEquals("https://raw.githubusercontent.com/cnliux/tvbox/main/update.json", candidates[1].url)
+        assertTrue(candidates.any { it.label == "ghproxy.link" && it.url.startsWith("https://ghproxy.link/https://raw.githubusercontent.com/") })
+        assertTrue(candidates.any { it.label == "cf.ghproxy.cn" && it.url.startsWith("https://cf.ghproxy.cn/https://raw.githubusercontent.com/") })
         assertTrue(candidates.all { it.url.startsWith("https://") })
         assertEquals(candidates.size, candidates.distinctBy { it.url }.size)
     }
@@ -82,6 +86,35 @@ class OtaCdnTest {
     fun rankingKeepsDeclaredOrderWhenNoHealthRecords() {
         val candidates = buildOtaApkCandidates(releaseUrl)
         assertEquals(candidates, rankOtaCdnCandidates(candidates, emptyMap(), nowMs = 10_000L))
+    }
+
+    @Test
+    fun rankingPrefersProbedAvailableCdnOverUnreachable() {
+        val candidates = buildOtaApkCandidates(releaseUrl)
+        // 「先检查 CDN 是否可用，再优选」：官方源探活不可达，应排到所有可达/未探活线路之后。
+        val availability = mapOf("origin" to false)
+        val ranked = rankOtaCdnCandidates(candidates, emptyMap(), nowMs = 1_000L, availability = availability)
+        assertEquals("ghfast.top", ranked.first().id)
+        assertEquals("origin", ranked.last().id)
+    }
+
+    @Test
+    fun rankingTreatsUntestedCdnAsAvailable() {
+        val candidates = buildOtaApkCandidates(releaseUrl)
+        // availability 不含该线路（未探活/探活异常）应视为未知、保持原健康度排序，不误杀。
+        val ranked = rankOtaCdnCandidates(candidates, emptyMap(), nowMs = 1_000L, availability = emptyMap())
+        assertEquals("origin", ranked.first().id)
+    }
+
+    @Test
+    fun probePlanCapsProbesAndBudgetsEvenly() {
+        val candidates = buildOtaManifestCandidates() // 7 条
+        val plan = buildCdnProbePlan(candidates, budgetMs = 3_000L, maxProbes = 3)
+        assertEquals(3, plan.size)
+        plan.forEach { (_, ms) -> assertEquals(1_000L, ms) }
+        // maxProbes 放开时不超过候选总数。
+        val all = buildCdnProbePlan(candidates, budgetMs = 3_000L, maxProbes = 10)
+        assertEquals(candidates.size, all.size)
     }
 
     @Test

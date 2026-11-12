@@ -158,7 +158,7 @@ func TestFlvProxyStripsSitePrefix(t *testing.T) {
 
 // 验证双轨独立时间轴、同轨回退判据与续段顺延。
 func TestFlvProxySpliceTimestamps(t *testing.T) {
-	proxy := &flvProxy{}
+	proxy := &flvProxy{tuning: siteTuningFor("default")}
 	if got := proxy.spliceBase(0); got != 0 {
 		t.Fatalf("首段应沿用原始时间戳，实际 %d", got)
 	}

@@ -124,7 +124,9 @@ jobs:
             "apkMirrors": [
               "https://ghfast.top/$APK_URL",
               "https://gh-proxy.com/$APK_URL",
-              "https://ghproxy.net/$APK_URL"
+              "https://ghproxy.net/$APK_URL",
+              "https://ghproxy.link/$APK_URL",
+              "https://cf.ghproxy.cn/$APK_URL"
             ]
           }
           ENDJSON

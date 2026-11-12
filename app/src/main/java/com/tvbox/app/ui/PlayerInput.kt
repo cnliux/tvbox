@@ -287,23 +287,24 @@ internal class PlayerChannelKeyMap(
     }
 }
 
-/** 平台直播遥控：左右换房间、上下换候选、OK 打开线路、菜单强制重连。 */
+/** 平台直播遥控：左右换房间、上下换候选、OK 打开节目列表、菜单强制重连。 */
 internal class PlayerRoomKeyMap(
     var callbacks: Callbacks,
 ) : PlayerKeyMap {
     data class Callbacks(
-        val isLineControlVisible: () -> Boolean,
+        /** 房间列表/线路浮层等页面级浮层打开时，按键交给浮层自己解释。 */
+        val isOverlayVisible: () -> Boolean,
         val onPreviousRoom: () -> Unit,
         val onNextRoom: () -> Unit,
         val onPreviousCandidate: () -> Unit,
         val onNextCandidate: () -> Unit,
-        val onOpenLine: () -> Unit,
+        val onOpenRoomList: () -> Unit,
         val onReconnect: () -> Unit,
     )
 
     override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
         if (event.type != KeyEventType.KeyUp) return false
-        if (callbacks.isLineControlVisible()) return false
+        if (callbacks.isOverlayVisible()) return false
         return when (event.nativeKeyEvent.keyCode) {
             AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
                 callbacks.onPreviousRoom()
@@ -327,7 +328,7 @@ internal class PlayerRoomKeyMap(
             AndroidKeyEvent.KEYCODE_ENTER,
             AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             -> {
-                callbacks.onOpenLine()
+                callbacks.onOpenRoomList()
                 chrome.bump()
                 true
             }

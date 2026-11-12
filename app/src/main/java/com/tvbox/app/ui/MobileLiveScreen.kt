@@ -98,6 +98,8 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
+import com.tvbox.app.data.PacerDebugPrefs
+import platformlive.Platformlive
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
@@ -749,6 +751,14 @@ private fun MobileLivePlayerScreen(
     HardwareDecoderFallbackToast()
     // 解码策略变化会重建播放器：重连当前频道/线路时提示一次。
     var playerBuilt by remember { mutableStateOf(false) }
+    // pacer 目标缓冲调试：循环切换 2s/5s/8s/关闭，实时写回 Go 全局变量并持久化。
+    var pacerBufferMs by rememberSaveable { mutableLongStateOf(PacerDebugPrefs.loadPacerBufferMs(context)) }
+    val cyclePacerBuffer: () -> Unit = {
+        val next = PacerDebugPrefs.nextPreset(pacerBufferMs)
+        pacerBufferMs = next
+        PacerDebugPrefs.savePacerBufferMs(context, next)
+        runCatching { Platformlive.setPacerTargetBufferMs(next) }
+    }
     LaunchedEffect(player) {
         if (playerBuilt) {
             Toast.makeText(context, "解码器已切换，正在重连当前线路", Toast.LENGTH_SHORT).show()
@@ -994,6 +1004,9 @@ private fun MobileLivePlayerScreen(
                         channel = true,
                         info = true,
                         url = true,
+                        // pacer 目标缓冲调试按钮（手机端经 PlayerChromeTouch 渲染，竖屏也保留）。
+                        pacerBufferMs = pacerBufferMs,
+                        onCyclePacerBuffer = cyclePacerBuffer,
                     ),
                     actions = PlayerChromeActions(
                         onToggle = {

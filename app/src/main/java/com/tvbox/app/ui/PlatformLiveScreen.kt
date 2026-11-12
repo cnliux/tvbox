@@ -61,6 +61,11 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key as ComposeKey
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
@@ -86,6 +91,8 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.FlvContinuityProxy
+import com.tvbox.app.data.PacerDebugPrefs
+import androidx.compose.runtime.mutableLongStateOf
 import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
@@ -1151,9 +1158,24 @@ private fun PlatformLivePlayerScreen(
 
     var showUrlOverlay by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
+    // 确认键打开的「节目列表」：列出当前分类下的房间（带封面图），与电视直播的频道列表同语义。
+    var showRoomList by remember { mutableStateOf(false) }
+    // 页面级浮层打开期间不自动隐藏控件，否则列表还没选完按钮就消失了。
+    LaunchedEffect(showRoomList, showLineControl) {
+        chrome.holdVisible = showRoomList || showLineControl
+    }
     // 调试监控：把续流代理统计与播放器解码计数以可读文本实时叠在画面上，
     // 用于现场定位虎牙/斗鱼“重复取流/画面卡死”的根因。仅在开启时轮询，1s 刷新。
     var showDebugMonitor by remember { mutableStateOf(false) }
+    // pacer 目标缓冲调试：循环切换 2s/5s/8s/关闭，实时写回 Go 全局变量并持久化。
+    var pacerBufferMs by rememberSaveable { mutableLongStateOf(PacerDebugPrefs.loadPacerBufferMs(context)) }
+    val cyclePacerBuffer: () -> Unit = {
+        val next = PacerDebugPrefs.nextPreset(pacerBufferMs)
+        pacerBufferMs = next
+        PacerDebugPrefs.savePacerBufferMs(context, next)
+        runCatching { platformlive.Platformlive.setPacerTargetBufferMs(next) }
+        chrome.bump()
+    }
     var debugMonitorText by remember { mutableStateOf("") }
     LaunchedEffect(showDebugMonitor, continuityProxy, player) {
         if (!showDebugMonitor) {
@@ -1190,12 +1212,21 @@ private fun PlatformLivePlayerScreen(
             debugMonitorText = sb.toString()
         }
     }
-    // 返回键仍逐层收起页面浮层：URL 浮层 → 候选线路浮层 → 退出；不额外增加“先隐藏控件”一层。
+    // 返回键逐层收起页面浮层：节目列表 → URL 浮层 → 候选线路浮层 → 调试面板 → 退出；
+    // 不额外增加“先隐藏控件”一层。节目列表是最上层，必须排第一。
     PlayerChromeBackHandler(
         state = chrome,
         onExit = { actions.goBack() },
         dismissControls = false,
         extraDismiss = listOf(
+            {
+                if (showRoomList) {
+                    showRoomList = false
+                    true
+                } else {
+                    false
+                }
+            },
             {
                 if (showUrlOverlay) {
                     showUrlOverlay = false
@@ -1222,6 +1253,38 @@ private fun PlatformLivePlayerScreen(
             },
         ),
     )
+    // 播放器统一按钮行：线路、弹幕、调试监控全部走同一个模型、同一排、同样式。
+    // 手机由 PlayerChrome 渲染成与「画面/信息/地址」同排的 MobileChip；
+    // 电视由页面底部的同款 ControlButton 排渲染。确认键不再直接弹线路。
+    val liveActions = buildList {
+        if (stream?.hasCandidates == true) {
+            add(
+                PlayerChromeAction(
+                    label = "线路",
+                    onClick = { showLineControl = true; chrome.bump() },
+                )
+            )
+        }
+        if (danmakuClient != null) {
+            add(
+                PlayerChromeAction(
+                    label = if (danmakuEnabled) "弹幕·开" else "弹幕",
+                    primary = danmakuEnabled,
+                    onClick = { danmakuEnabled = !danmakuEnabled; chrome.bump() },
+                )
+            )
+        }
+        // 调试监控只出现在调试包：正式版里它是纯干扰项，普通用户只会误点。
+        if (BuildConfig.DEBUG) {
+            add(
+                PlayerChromeAction(
+                    label = if (showDebugMonitor) "监控·开" else "监控",
+                    primary = showDebugMonitor,
+                    onClick = { showDebugMonitor = !showDebugMonitor; chrome.bump() },
+                )
+            )
+        }
+    }
     val lineListState = rememberLazyListState()
     val lineFocusRequester = remember { FocusRequester() }
     var focusedCandidateIndex by remember { mutableStateOf(-1) }
@@ -1241,28 +1304,29 @@ private fun PlatformLivePlayerScreen(
     val roomKeyMap = remember {
         PlayerRoomKeyMap(
             PlayerRoomKeyMap.Callbacks(
-                isLineControlVisible = { false },
+                isOverlayVisible = { false },
                 onPreviousRoom = {},
                 onNextRoom = {},
                 onPreviousCandidate = {},
                 onNextCandidate = {},
-                onOpenLine = {},
+                onOpenRoomList = {},
                 onReconnect = {},
             ),
         )
     }
     roomKeyMap.callbacks = PlayerRoomKeyMap.Callbacks(
-        isLineControlVisible = { showLineControl },
+        isOverlayVisible = { showLineControl || showRoomList },
         onPreviousRoom = { actions.playPreviousPlatformLiveRoom() },
         onNextRoom = { actions.playNextPlatformLiveRoom() },
         onPreviousCandidate = { actions.playPreviousPlatformLiveCandidate() },
         onNextCandidate = { actions.playNextPlatformLiveCandidate() },
-        onOpenLine = {
+        // 确认键改为打开「节目列表」（当前分类房间，带封面图）；线路改由按钮触发。
+        onOpenRoomList = {
             if (session.interrupted && player != null) {
                 session.play(player)
                 actions.reconnectPlatformLiveChannel()
             } else {
-                showLineControl = true
+                showRoomList = true
             }
         },
         onReconnect = { actions.reconnectPlatformLiveChannel() },
@@ -1365,9 +1429,14 @@ private fun PlatformLivePlayerScreen(
                     resize = true,
                     orientation = true,
                     room = true,
-                    lines = stream?.hasCandidates == true,
+                    // 线路不再用内置按钮，与弹幕/监控一起由 actions 统一注入，保证同排同样式。
+                    lines = false,
                     info = true,
                     url = true,
+                    actions = liveActions,
+                    // pacer 目标缓冲调试按钮（手机端经 PlayerChromeTouch 渲染，竖屏也保留）。
+                    pacerBufferMs = pacerBufferMs,
+                    onCyclePacerBuffer = cyclePacerBuffer,
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {
@@ -1566,57 +1635,57 @@ private fun PlatformLivePlayerScreen(
             }
         }
 
-        // 右上角开关组：弹幕开关 + 调试监控开关（手机点击 / 电视聚焦回车）。
-        // 只在控制条可见时出现：
-        // ① 横屏全屏看直播时顶栏已自动收起，这两个按钮还常驻会一直压在画面上；
-        // ② 播放器顶栏右上是「全屏」按钮，常驻会与它抢点击区域。
-        // 同时整组下移到顶栏下方（top = 68dp），彻底避开右上角「全屏」。
-        if (chrome.visible) {
-            Column(
+        // 电视端没有 PlayerChrome 的按钮行，这里补一条与共享层完全相同的 ControlButton 排，
+        // 让弹幕/监控和播放器其它控制按钮同处底部、同样式、同样可被遥控器聚焦。
+        // 手机端已由 PlayerChrome 统一渲染，避免重复出现两组按钮。
+        // 只在控制条可见时出现：横屏全屏看直播时顶栏已收起，常驻会一直压在画面上。
+        if (!isMobile && chrome.visible && (liveActions.isNotEmpty() || cyclePacerBuffer != null)) {
+            Row(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
+                    .align(Alignment.BottomEnd)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(top = 68.dp, end = 20.dp),
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                    .padding(end = 28.dp, bottom = 28.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (danmakuClient != null) {
-                    Box(
-                        modifier = Modifier
-                            .clip(MaterialTheme.shapes.small)
-                            .background(if (danmakuEnabled) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
-                            .clickable { danmakuEnabled = !danmakuEnabled }
-                            .focusable()
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = if (danmakuEnabled) "弹幕·开" else "弹幕",
-                            color = if (danmakuEnabled) Color.Black else Color.White,
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                    }
+                liveActions.forEach { action ->
+                    ControlButton(
+                        text = action.label,
+                        onClick = action.onClick,
+                        primary = action.primary,
+                    )
                 }
-                // 调试监控只出现在调试包：正式版里它是纯干扰项，普通用户只会误点。
-                if (BuildConfig.DEBUG) {
-                    Box(
-                        modifier = Modifier
-                            .clip(MaterialTheme.shapes.small)
-                            .background(if (showDebugMonitor) Color(0xFF7AE2BA).copy(alpha = 0.85f) else Color(0x99000000))
-                            .clickable { showDebugMonitor = !showDebugMonitor }
-                            .focusable()
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                    ) {
-                        Text(
-                            text = if (showDebugMonitor) "监控·开" else "调试监控",
-                            color = if (showDebugMonitor) Color.Black else Color.White,
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                    }
+                // pacer 目标缓冲调试按钮（与「一起看」续流缓冲实时调试）。
+                cyclePacerBuffer?.let { cb ->
+                    ControlButton(pacerBufferLabel(pacerBufferMs), cb)
                 }
             }
         }
 
-        if (showDebugMonitor && debugMonitorText.isNotBlank()) {
+        // 确认键打开：与电视直播频道列表同语义的「节目列表」，列出所在分类的房间并带封面图。
+        if (showRoomList) {
+            PlatformLiveRoomListPanel(
+                rooms = state.platformLiveRooms,
+                currentIndex = state.platformLiveRoomIndex,
+                categoryName = state.platformLiveSelectedCategory?.name
+                    ?: room.categoryName.ifBlank { "直播间" },
+                onPick = { index ->
+                    showRoomList = false
+                    actions.switchPlatformLiveRoom(index)
+                    chrome.bump()
+                },
+                onClose = { showRoomList = false },
+                modifier = Modifier
+                    .align(Alignment.CenterStart)
+                    .fillMaxWidth(0.36f)
+                    .fillMaxHeight(0.86f)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(start = 28.dp, top = 20.dp, bottom = 20.dp),
+            )
+        }
+
+        // 节目列表浮层盖住左下角时，调试面板让位，避免两层文字叠在一起。
+        if (showDebugMonitor && !showRoomList && debugMonitorText.isNotBlank()) {
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -1677,6 +1746,176 @@ private fun PlatformLivePlayerBadge(
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 平台直播「节目列表」：与电视直播频道列表同语义，但每行带房间封面图。
+ * 遥控器 ▲▼ 选房间、确认键播放并返回播放页、返回键由外层 BackHandler 收起。
+ */
+@Composable
+private fun PlatformLiveRoomListPanel(
+    rooms: List<PlatformLiveRoom>,
+    currentIndex: Int,
+    categoryName: String,
+    onPick: (Int) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val safeCurrent = currentIndex.coerceIn(0, rooms.lastIndex.coerceAtLeast(0))
+    var focusedIndex by remember(rooms.firstOrNull()?.id, safeCurrent) {
+        mutableIntStateOf(safeCurrent)
+    }
+    val listState = rememberLazyListState()
+    val panelFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (rooms.isNotEmpty()) listState.scrollToItem(safeCurrent)
+        runCatching { panelFocus.requestFocus() }
+    }
+    LaunchedEffect(focusedIndex) {
+        // 焦点行滚出可视区时把它带回来，遥控快速连按不会选到屏幕外。
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == focusedIndex }) {
+            listState.scrollToItem(focusedIndex)
+        }
+    }
+    // 半透明遮罩：点画面空白处收起，与电视直播频道列表一致。
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.35f))
+            .clickable(
+                indication = null,
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+            ) { onClose() },
+    )
+    Surface(
+        modifier = modifier
+            .focusRequester(panelFocus)
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                when (event.key) {
+                    ComposeKey.DirectionUp -> {
+                        focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
+                        true
+                    }
+                    ComposeKey.DirectionDown -> {
+                        focusedIndex = (focusedIndex + 1).coerceAtMost(rooms.lastIndex.coerceAtLeast(0))
+                        true
+                    }
+                    ComposeKey.DirectionCenter, ComposeKey.Enter -> {
+                        if (rooms.isNotEmpty()) onPick(focusedIndex.coerceIn(0, rooms.lastIndex))
+                        true
+                    }
+                    else -> false
+                }
+            }
+            .focusable(),
+        color = Color(0xE6101010),
+        shape = MaterialTheme.shapes.medium,
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "节目列表 · $categoryName",
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "共 ${rooms.size} 个房间   ▲▼ 选择   确认 播放   返回 关闭",
+                color = Color.White.copy(alpha = 0.55f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                lazyItemsIndexed(rooms, key = { _, room -> room.id }) { index, room ->
+                    PlatformLiveRoomListRow(
+                        room = room,
+                        focused = index == focusedIndex,
+                        playing = index == currentIndex,
+                        onClick = { onPick(index) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 节目列表单行：横向封面 + 标题/主播/人气，选中态绿框、当前播放行浅绿底。 */
+@Composable
+private fun PlatformLiveRoomListRow(
+    room: PlatformLiveRoom,
+    focused: Boolean,
+    playing: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = MaterialTheme.shapes.small
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 68.dp)
+            .clip(shape)
+            .background(
+                when {
+                    focused -> Color(0xFF7AE2BA).copy(alpha = 0.22f)
+                    playing -> Color(0xFF7AE2BA).copy(alpha = 0.10f)
+                    else -> Color.White.copy(alpha = 0.04f)
+                }
+            )
+            .border(
+                width = if (focused) 1.dp else 0.dp,
+                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                shape = shape,
+            )
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) { contentDescription = "${room.title}，${room.anchor}" }
+            .padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = room.cover,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            imageLoader = com.tvbox.app.ui.components.rememberTvImageLoader(),
+            modifier = Modifier
+                .width(96.dp)
+                .height(54.dp)
+                .clip(shape)
+                .background(Color(0xFF222222)),
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = room.title,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = listOf(room.anchor, formatOnline(room.online))
+                    .filter { it.isNotBlank() }
+                    .joinToString(" / "),
+                color = Color.White.copy(alpha = 0.6f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (playing) {
+            Text(
+                text = "播放中",
+                color = Color(0xFF7AE2BA),
+                style = MaterialTheme.typography.labelSmall,
             )
         }
     }

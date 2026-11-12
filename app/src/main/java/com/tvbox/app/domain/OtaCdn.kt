@@ -14,11 +14,17 @@ import kotlinx.coroutines.CancellationException
  * - 所有派生 / 显式镜像都强制 HTTPS；原始 `apkUrl` 保持调用方给出的值不变。
  */
 
-/** 默认用于 GitHub Release APK 的代理 CDN（按优先级排列）。 */
+/**
+ * 默认用于 GitHub Release APK 的代理 CDN（按优先级排列）。
+ * 末尾两条（ghproxy.link / cf.ghproxy.cn）为 2026-11-12 实测可达后新增的兜底镜像，
+ * 当主源 ghfast.top 不可达时由探活排序自动提前。
+ */
 val DEFAULT_OTA_APK_CDN_HOSTS: List<String> = listOf(
     "ghfast.top",
     "gh-proxy.com",
     "ghproxy.net",
+    "ghproxy.link",
+    "cf.ghproxy.cn",
 )
 
 /** 连续失败的降权冷却时间：超过后惩罚衰减到 20%，给线路重新尝试的机会。 */
@@ -148,6 +154,9 @@ fun buildOtaManifestCandidates(
         OtaCdnCandidate("manifest-jsdelivr", "jsDelivr", "https://cdn.jsdelivr.net$jsdelivrPath"),
         OtaCdnCandidate("manifest-fastly", "Fastly jsDelivr", "https://fastly.jsdelivr.net$jsdelivrPath"),
         OtaCdnCandidate("manifest-gcore", "Gcore jsDelivr", "https://gcore.jsdelivr.net$jsdelivrPath"),
+        // 2026-11-12 实测可达后新增的兜底镜像：ghfast 主源不可达时由探活排序自动提前。
+        OtaCdnCandidate("manifest-ghproxy-link", "ghproxy.link", "https://ghproxy.link/$raw"),
+        OtaCdnCandidate("manifest-cf-ghproxy-cn", "cf.ghproxy.cn", "https://cf.ghproxy.cn/$raw"),
     )
 }
 
@@ -155,11 +164,16 @@ fun buildOtaManifestCandidates(
  * 按本机健康度排序候选。无任何记录时严格保持声明顺序（主源优先不变）；
  * 连续失败越多惩罚越大，冷却期后惩罚衰减。成功次数只用于状态展示，
  * 不参与排序加权，避免「成功过的线路」越过从未失败的官方源造成行为漂移。
+ *
+ * [availability] 是「先探活再优选」的结果：键为候选 id，值为该线路本次是否可达。
+ * 只有确有「不可达」结论时才对其大幅降权；键不存在（未参与探活 / 探活异常）的线路
+ * 视为未知，保持原有健康度排序，绝不因探活失败而误杀可用线路。
  */
 fun rankOtaCdnCandidates(
     candidates: List<OtaCdnCandidate>,
     health: Map<String, OtaCdnHealth>,
     nowMs: Long,
+    availability: Map<String, Boolean> = emptyMap(),
     cooldownMs: Long = DEFAULT_OTA_CDN_COOLDOWN_MS,
 ): List<OtaCdnCandidate> = candidates
     .mapIndexed { index, candidate ->
@@ -167,7 +181,10 @@ fun rankOtaCdnCandidates(
         val failureAgeMs = if (record.lastFailureAtMs > 0L) nowMs - record.lastFailureAtMs else 0L
         val decay = if (record.consecutiveFailures > 0 && failureAgeMs >= cooldownMs) 0.2 else 1.0
         val penalty = minOf(record.consecutiveFailures, 6) * 100.0 * decay
-        RankedOtaCandidate(score = penalty, index = index, candidate = candidate)
+        // 探活不可达：大幅降权，使其排到所有可达（或未知）线路之后。
+        // 该惩罚高于历史失败上限（6*100=600），确保不可达线路永远靠后。
+        val availPenalty = if (availability[candidate.id] == false) 5000.0 else 0.0
+        RankedOtaCandidate(score = penalty + availPenalty, index = index, candidate = candidate)
     }
     .sortedWith(compareBy<RankedOtaCandidate> { it.score }.thenBy { it.index })
     .map { it.candidate }

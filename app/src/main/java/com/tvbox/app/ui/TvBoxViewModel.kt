@@ -2363,6 +2363,32 @@ class TvBoxViewModel(
         resolvePlatformLiveRoom()
     }
 
+    /**
+     * 播放页「节目列表」选房间：只换 roomIndex 并重新解析。
+     * 不能复用 [openPlatformLiveRoom]——它会把 playerReturnDestination 改写成当前的 Player，
+     * 导致之后按返回键退不出播放页。
+     */
+    fun switchPlatformLiveRoom(index: Int) {
+        val current = _state.value
+        val rooms = current.platformLive.rooms
+        if (index !in rooms.indices || index == current.platformLive.roomIndex) return
+        platformLiveResolveJob?.cancel()
+        platformLiveRecoveryInProgress = false
+        platformLiveSameLineRetries = 0
+        platformLiveRecoveryWindowAttempts = 0
+        rememberPlatformLiveMemory(roomId = rooms[index].id)
+        _state.update {
+            it.copy(platformLive = it.platformLive.copy(
+                roomIndex = index,
+                stream = null,
+                error = null,
+                notice = null,
+                resolving = false,
+            ))
+        }
+        resolvePlatformLiveRoom()
+    }
+
     fun selectLiveChannel(index: Int) {
         liveStallRetries = 0
         lastExhaustedChannelNumber = null

@@ -12,6 +12,9 @@ import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.data.network.parseNetworkPayload
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,6 +31,7 @@ import com.tvbox.app.domain.OtaDownloadProgressGate
 import com.tvbox.app.domain.afterFailure
 import com.tvbox.app.domain.afterSuccess
 import com.tvbox.app.domain.applyCdnPreference
+import com.tvbox.app.domain.buildCdnProbePlan
 import com.tvbox.app.domain.decodeCdnPreference
 import com.tvbox.app.domain.buildOtaApkCandidates
 import com.tvbox.app.domain.buildOtaManifestCandidates
@@ -84,6 +88,12 @@ class DefaultAppUpdateRepository(
     }
     private val client = HttpClients.default.newBuilder()
         .followRedirects(true)
+        .build()
+    // 探活专用客户端：短超时，避免对更新检查/下载路径造成长时间阻塞。
+    private val probeClient = HttpClients.default.newBuilder()
+        .followRedirects(true)
+        .connectTimeout(CDN_PROBE_CONNECT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .readTimeout(CDN_PROBE_READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
 
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = withContext(Dispatchers.IO) {
@@ -484,11 +494,60 @@ class DefaultAppUpdateRepository(
     }
 
     /** 健康度排序 + 设置页的手动线路选择（默认 Auto，行为与排序结果一致）。 */
-    private fun orderedCandidates(candidates: List<OtaCdnCandidate>): List<OtaCdnCandidate> =
-        applyCdnPreference(
-            rankOtaCdnCandidates(candidates, readCdnHealth(), System.currentTimeMillis()),
+    private suspend fun orderedCandidates(candidates: List<OtaCdnCandidate>): List<OtaCdnCandidate> {
+        // 先探活：对前若干候选做轻量 HEAD 探测，不可达的线路在排序中大幅降权，
+        // 实现「先检查 CDN 是否可用，再进行优选」。探活异常/超时安全降级为空（保留原行为）。
+        val availability = probeCdnAvailability(candidates)
+        return applyCdnPreference(
+            rankOtaCdnCandidates(candidates, readCdnHealth(), System.currentTimeMillis(), availability),
             decodeCdnPreference(cdnPrefs.getString("preference", null)),
         )
+    }
+
+    /**
+     * 对候选 CDN 做轻量可达性探活：只探前 [buildCdnProbePlan] 预算内的若干条，
+     * 并发执行并受整体超时约束，避免拖慢更新检查/下载。返回 id→是否可达；
+     * 任意异常（网络、超时、解析）都返回空表，让排序退回纯健康度策略，不误杀可用线路。
+     */
+    private suspend fun probeCdnAvailability(candidates: List<OtaCdnCandidate>): Map<String, Boolean> {
+        if (candidates.isEmpty()) return emptyMap()
+        val plan = buildCdnProbePlan(candidates)
+        if (plan.isEmpty()) return emptyMap()
+        val budgetBy = plan.toMap()
+        return runCatching {
+            withTimeout(CDN_PROBE_OVERALL_TIMEOUT_MS) {
+                coroutineScope {
+                    candidates.filter { it.id in budgetBy }.map { candidate ->
+                        async {
+                            val reachable = probeOne(candidate.url, budgetBy.getValue(candidate.id))
+                            candidate.id to reachable
+                        }
+                    }.awaitAll().toMap()
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
+    /** 单条候选的轻量可达性探测：HEAD 请求，成功状态码（2xx/3xx）或 HEAD 不被支持（405/403）视为可用。 */
+    private suspend fun probeOne(url: String, budgetMs: Long): Boolean {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("Cache-Control", "no-cache")
+            .head()
+            .build()
+        return try {
+            withTimeout(budgetMs) {
+                probeClient.newCall(request).execute().use { response ->
+                    val code = response.code
+                    // 405/403 多因 CDN 不支持 HEAD，不能据此判定线路不可用；视为可用以保留该候选。
+                    code in 200..399 || code == 405 || code == 403
+                }
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
 }
 
 internal fun parseAppUpdateManifest(
@@ -533,6 +592,13 @@ private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
 
 /** 单个更新清单源的整体超时：慢 CDN 快速失败并切换下一个，不让启动检查长时间挂起。 */
 private const val MANIFEST_CHECK_TIMEOUT_MS = 10_000L
+
+/** 探活整体上限：前若干候选并发探测，单条预算约 1s，整体留足余量后强制结束（结果回退纯健康度排序）。 */
+private const val CDN_PROBE_OVERALL_TIMEOUT_MS = 4_000L
+
+/** 探活单条连接/读取超时：短于整体上限，确保不可达线路快速判定。 */
+private const val CDN_PROBE_CONNECT_TIMEOUT_MS = 1_500L
+private const val CDN_PROBE_READ_TIMEOUT_MS = 1_500L
 
 /** downloadInApp 中连续拿不到 Service 状态的最大次数（每次间隔 750ms）。 */
 private const val MAX_NULL_STATUS_POLLS = 20

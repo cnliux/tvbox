@@ -53,7 +53,7 @@ fun cdnStatusLabel(health: OtaCdnHealth, nowMs: Long): String {
 fun buildCdnProbePlan(
     candidates: List<OtaCdnCandidate>,
     budgetMs: Long = 3_000L,
-    maxProbes: Int = 3,
+    maxProbes: Int = 5,
     minProbeMs: Long = 300L,
 ): List<Pair<String, Long>> {
     val targets = candidates.take(maxProbes.coerceAtLeast(0))

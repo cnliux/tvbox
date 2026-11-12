@@ -40,6 +40,8 @@ object PlatformLiveGoBridge {
                 // 根据设备类型选择 clientType：电视/盒子用 tv UA 避免风控，手机用 mobile，PC 浏览器模式用 web
                 val clientType = resolveClientType(appContext)
                 platformlive.Platformlive.init(signScript, catalogJson, CACHE_SECONDS.toLong(), REQUEST_TIMEOUT_SECONDS.toLong(), clientType)
+                // 回写调试用的 pacer 目标缓冲（默认 5s），使其对后续代理生效。
+                PacerDebugPrefs.applyToBridge(appContext)
             } catch (error: Throwable) {
                 throw IOException(bridgeErrorMessage(error), error)
             }

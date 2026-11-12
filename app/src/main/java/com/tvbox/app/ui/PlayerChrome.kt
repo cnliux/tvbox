@@ -294,6 +294,18 @@ internal data class PlayerChromeData(
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
+/**
+ * 页面自定义按钮（线路、弹幕、调试监控等）。
+ * 由共享层渲染成与其它功能按钮完全相同的一排、完全相同的样式，
+ * 避免各页自己在角落里堆悬浮按钮导致位置/外观割裂。
+ * [primary] 用于表达「开启态」高亮（如弹幕·开）。
+ */
+internal data class PlayerChromeAction(
+    val label: String,
+    val primary: Boolean = false,
+    val onClick: () -> Unit,
+)
+
 internal data class PlayerChromeCapabilities(
     val seek: Boolean = true,
     val episodes: Boolean = false,
@@ -320,6 +332,11 @@ internal data class PlayerChromeCapabilities(
     val subtitleTracks: Boolean = false,
     /** 竖版精简：仅保留全屏与返回，其余控件不在竖版渲染。由 [forOrientation] 统一裁剪。 */
     val portraitMinimal: Boolean = false,
+    /** 页面注入的自定义按钮，统一追加在内置功能按钮之后。 */
+    val actions: List<PlayerChromeAction> = emptyList(),
+    /** 调试：pacer 目标缓冲（毫秒），0 表示关闭；用于「一起看」续流缓冲实时调试。 */
+    val pacerBufferMs: Long = 0,
+    val onCyclePacerBuffer: (() -> Unit)? = null,
 )
 
 /**
@@ -354,6 +371,10 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             audioTracks = false,
             subtitleTracks = false,
             portraitMinimal = true,
+            actions = emptyList(),
+            // 调试按钮（pacer 缓冲）在竖屏也保留，方便手机端实时调缓冲。
+            pacerBufferMs = this.pacerBufferMs,
+            onCyclePacerBuffer = this.onCyclePacerBuffer,
         )
     } else {
         this
@@ -596,6 +617,18 @@ private fun PlayerChromeTv(
                     if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info) })
                     if (capabilities.url) ControlButton("地址", { state.openPanel(PlayerPanel.Url) })
                     if (capabilities.settings) ControlButton("设置", { actions.onSettings(); state.interaction++ })
+                    // 页面按钮（线路、弹幕、调试监控等）与内置按钮同排同样式。
+                    capabilities.actions.forEach { action ->
+                        ControlButton(
+                            text = action.label,
+                            onClick = { action.onClick(); actions.onInteraction() },
+                            primary = action.primary,
+                        )
+                    }
+                    // 调试：pacer 目标缓冲循环按钮（「一起看」续流缓冲实时调试）。
+                    capabilities.onCyclePacerBuffer?.let { cb ->
+                        ControlButton(pacerBufferLabel(capabilities.pacerBufferMs), cb)
+                    }
                 }
             }
         }
@@ -865,6 +898,17 @@ private fun PlayerChromeTouch(
                     if (capabilities.cast) add(ChromeFeature(capabilities.castLabel ?: "投屏") {
                         actions.onCast(); state.interaction++
                     })
+                    capabilities.actions.forEach { action ->
+                        add(ChromeFeature(action.label, action.primary) {
+                            action.onClick(); actions.onInteraction()
+                        })
+                    }
+                    // 调试：pacer 目标缓冲循环按钮（手机端与 TV 同语义）。
+                    capabilities.onCyclePacerBuffer?.let { cb ->
+                        add(ChromeFeature(pacerBufferLabel(capabilities.pacerBufferMs)) {
+                            cb(); actions.onInteraction()
+                        })
+                    }
                 }
                 if (wide) {
                     Row(
@@ -896,6 +940,10 @@ private fun PlayerChromeTouch(
         }
     }
 }
+
+/** pacer 目标缓冲按钮文案：0 表示关闭（严格实时），否则显示秒数。 */
+internal fun pacerBufferLabel(ms: Long): String =
+    if (ms <= 0L) "缓冲·关" else "缓冲${ms / 1000}s"
 
 private data class ChromeFeature(
     val label: String,

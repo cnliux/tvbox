@@ -45,6 +45,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -117,6 +118,12 @@ fun SearchScreen(
         if (state.searchResults.isNotEmpty()) {
             runCatching { resultsFocus.requestFocus() }
         }
+    }
+    // 离开搜索页（点进详情/播放、切底部 Tab、按返回）时把关键词与结果一起清掉。
+    // 顶部公共栏的 MobileSearchEntry 直接读 state.searchQuery，不清就会在其它页面
+    // 一直挂着上一次的搜索词，下次进搜索页也还留着旧结果。
+    DisposableEffect(Unit) {
+        onDispose { actions.clearSearch() }
     }
     var savedQuery by rememberSaveable { mutableStateOf(state.searchQuery) }
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
@@ -801,6 +808,11 @@ internal fun MobileSearchScreen(
     // 注意：这里**不能**用 remember(state.searchQuery) 作 key —— 输入时每个字符都会回写
     // searchQuery，key 一变 state 就被重建，selection 被强制挪到末尾、composition 被清空，
     // 中文拼音会在组合区就被打断。改为空 key + LaunchedEffect 单向同步（与电视版一致）。
+    // 与电视版一致：页面被移出组合（跳详情、切 Tab）就清空搜索词与结果，
+    // 否则顶部栏会一直显示上一次的关键词。
+    DisposableEffect(Unit) {
+        onDispose { actions.clearSearch() }
+    }
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
     val gridState = rememberLazyGridState()
