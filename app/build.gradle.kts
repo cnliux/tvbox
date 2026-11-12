@@ -314,6 +314,43 @@ tasks.matching { it.name == "preBuild" }.configureEach {
     dependsOn(stripPlatformLiveAar)
 }
 
+// 打包前校验必备 assets。
+// 背景：曾出现过 assets/dy_abogus.js（抖音 a_bogus 签名脚本）被本机安全软件静默删除，
+// 而构建仍然成功，最终发出一个缺少该资源的包 —— 运行时 assets.open() 抛
+// FileNotFoundException，整个平台直播初始化失败（虎牙/斗鱼/抖音一起挂）。
+// 这里在 preBuild 阶段直接拦死，避免再产出残缺包。
+val verifyRequiredAssets by tasks.registering {
+    val assetsDir = layout.projectDirectory.dir("src/main/assets").asFile
+    // 最小体积兜底：被截断成 0 字节的文件同样视为缺失。
+    val required = mapOf(
+        "dy_abogus.js" to 1024L,
+        "platform_live_catalog.json" to 64L,
+    )
+    // 每次构建都检查（两个文件 stat，代价可忽略），不要因 up-to-date 跳过。
+    outputs.upToDateWhen { false }
+    doLast {
+        val bad = required.mapNotNull { (name, minBytes) ->
+            val file = assetsDir.resolve(name)
+            when {
+                !file.isFile -> "$name(缺失)"
+                file.length() < minBytes -> "$name(仅 ${file.length()} 字节)"
+                else -> null
+            }
+        }
+        if (bad.isNotEmpty()) {
+            throw GradleException(
+                "必备 assets 校验失败：${bad.joinToString("，")}。" +
+                    "请从 platform_live_go/platformassets/ 恢复（cp platform_live_go/platformassets/douyin_sign.js " +
+                    "app/src/main/assets/dy_abogus.js）后重新构建。",
+            )
+        }
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(verifyRequiredAssets)
+}
+
 dependencies {
     // 平台直播解析（虎牙/斗鱼/B站/抖音/快手）由 Go 实现（platform_live_go），
     // 以 gomobile bind 产出 AAR：tools/bind-platform-live.(ps1|sh)
