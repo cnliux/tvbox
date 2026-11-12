@@ -6,10 +6,18 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+// 假流是一次性写完的，pacer 按墙钟限速会把用例拖到超时；
+// 单测只验证时间轴/去重逻辑，平滑输出由真机监控验证。
+func TestMain(m *testing.M) {
+	_ = os.Setenv("TVBOX_LIVE_PROXY_NO_PACER", "1")
+	os.Exit(m.Run())
+}
 
 // fakeProxyAdapter 只提供 Resolve，用于验证代理的缝流行为。
 type fakeProxyAdapter struct {
@@ -148,27 +156,35 @@ func TestFlvProxyStripsSitePrefix(t *testing.T) {
 	}
 }
 
-// 验证时间戳顺延与回退判据。
+// 验证双轨独立时间轴、同轨回退判据与续段顺延。
 func TestFlvProxySpliceTimestamps(t *testing.T) {
 	proxy := &flvProxy{}
 	if got := proxy.spliceBase(0); got != 0 {
 		t.Fatalf("首段应沿用原始时间戳，实际 %d", got)
 	}
-	if !proxy.acceptTs(0) {
+	// 视频先到 100，音频随后到 80 —— FLV 两轨交错是常态。
+	// 旧实现用单一全局 lastTs，这一步会把音频帧整帧丢掉（持续掉帧根因）。
+	if !proxy.acceptTs(1, 100) {
 		t.Fatal("首帧应被接受")
 	}
+	if !proxy.acceptTs(0, 80) {
+		t.Fatal("音频帧不应被视频轨的时间戳误杀")
+	}
+	if !proxy.acceptTs(1, 100) {
+		t.Fatal("同一时刻的同轨标签应被接受")
+	}
+	if proxy.acceptTs(1, 99) {
+		t.Fatal("同轨时间戳回退的标签应被丢弃")
+	}
+	if proxy.acceptTs(0, 79) {
+		t.Fatal("音频轨同样只拒绝本轨回退")
+	}
 	base := proxy.spliceBase(0)
-	if want := int64(flvProxySpliceStepMs); base != want {
+	if want := int64(100 + flvProxySpliceStepMs); base != want {
 		t.Fatalf("续段首帧应接在上一帧之后 %dms，实际 %d", want, base)
 	}
-	if !proxy.acceptTs(base) {
+	if !proxy.acceptTs(1, base) {
 		t.Fatal("续段首帧应被接受")
-	}
-	if proxy.acceptTs(base - 10) {
-		t.Fatal("时间戳回退的标签应被丢弃")
-	}
-	if !proxy.acceptTs(base) {
-		t.Fatal("同一时刻的音视频标签应被接受")
 	}
 }
 

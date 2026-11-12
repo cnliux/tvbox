@@ -1172,6 +1172,7 @@ private fun PlatformLivePlayerScreen(
                     sb.appendLine("音频转发: ${o.opt("audioForwarded")}  丢(回放): ${o.opt("audioDroppedReplay")}")
                     sb.appendLine("距上次视频转发: ${o.opt("lastVideoForwardedAgoMs")}ms  距上次音频: ${o.opt("lastAudioForwardedAgoMs")}ms")
                     sb.appendLine("回放丢弃中: ${o.opt("dropReplayActive")}  指纹守卫中: ${o.opt("guardActiveNow")}  段内回退: ${o.opt("videoBackwardInSeg")}")
+                    sb.appendLine("双轨拒绝: 视频 ${o.opt("tsRejectedVideo")} / 音频 ${o.opt("tsRejectedAudio")}  pacer等待: ${o.opt("pacerWaitMs")}ms")
                     sb.appendLine("末错误: ${o.opt("lastError")}")
                     val ev = o.optJSONArray("recentEvents")
                     if (ev != null) {

@@ -18,6 +18,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
@@ -62,6 +63,8 @@ fun DanmakuOverlay(
             )
             entries.add(entry)
             // 同屏条数上限：超量时淘汰最早的一条，避免长时间播放后无限堆积。
+            // 每条弹幕都是独立的 Composable + Animatable，低端 TV 盒上同屏 60 条
+            // 会明显拖慢绘制；24 条已覆盖 5 条轨道且不会挤满画面。
             while (entries.size > MAX_CONCURRENT) {
                 entries.removeAt(0)
             }
@@ -120,8 +123,11 @@ private fun DanmakuTrack(
             color = entry.message.color.takeIf { it != 0 }?.let { Color(it) } ?: Color.White,
             fontSize = fontSize,
             maxLines = 1,
+            // 低端 TV 盒上 blurRadius>0 会走 RenderEffect/MaskFilter，几十条弹幕同时
+            // 滚动时每帧都要做模糊，很容易掉帧。改为零半径的偏移描边：视觉效果接近，
+            // 但只是一次普通文字绘制。
             style = TextStyle(
-                shadow = Shadow(color = Color.Black, blurRadius = 4f),
+                shadow = Shadow(color = Color.Black, offset = Offset(1f, 1f), blurRadius = 0f),
             ),
             modifier = Modifier
                 .offset(y = laneHeightDp * entry.lane)
@@ -131,4 +137,4 @@ private fun DanmakuTrack(
     }
 }
 
-private const val MAX_CONCURRENT = 60
+private const val MAX_CONCURRENT = 24

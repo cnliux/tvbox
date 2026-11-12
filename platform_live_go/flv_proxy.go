@@ -40,6 +40,8 @@ const (
 	flvProxyResolveRetry = 1500 * time.Millisecond
 	flvProxyMaxTagSize   = 8 << 20
 	flvProxyMaxFailures  = 2
+	// pacer 单帧最大等待：超过说明时间戳跳变或续段重绑，直接重置墙钟基准。
+	flvProxyPacerMaxDelay = 2 * time.Second
 
 	// FLV Tag 类型（tagHeader[0] & 0x1f）。
 	flvTagTypeAudio = 8
@@ -137,9 +139,12 @@ type flvProxy struct {
 
 	clientReady chan struct{}
 
-	tsMu     sync.Mutex
-	haveLast bool
-	lastTs   int64
+	// 音/视频各自一条输出时间轴：索引 0=音频(tag 8)、1=视频(tag 9)。
+	// FLV 两轨时间戳本来就是交错的，用单一全局 lastTs 比较会把落后几十毫秒
+	// 的那一轨整帧丢掉（「一起看」持续掉帧的根因之一）。
+	tsMu      sync.Mutex
+	haveOut   [2]bool
+	lastOutTs [2]int64
 
 	// 最近已转发帧的内容指纹，用于重连时识别并丢弃 CDN 带回的旧缓冲（回放）。
 	// 只存指纹不存帧体，按输出时间戳淘汰窗口外记录。
@@ -156,6 +161,8 @@ type flvProxy struct {
 	bytesWritten      int64
 	lastSessionMs     int64
 	lastError         string
+	// pacer 是否按墙钟平滑输出；离线测试可用 TVBOX_LIVE_PROXY_NO_PACER=1 关闭。
+	pacerEnabled bool
 	// 诊断字段（仅 TVBOX_LIVE_PROXY_DIAG=1 时输出）：每次重连的回溯量列表
 	diagEnabled bool
 	diagLastTs  []int64 // 最近每段起始的 lastTs（重连前）
@@ -167,7 +174,7 @@ type flvProxy struct {
 	segGap             int64
 	segReset           bool
 	lastSrcTs          [2]int64 // 音/视频各自最近一次转发的源时间戳
-	videoBackwardInSeg int64   // 段内源时间戳大幅回退次数（=CDN 带回旧缓冲/重放）
+	videoBackwardInSeg int64    // 段内源时间戳大幅回退次数（=CDN 带回旧缓冲/重放）
 
 	// 诊断计数器：区分视频帧与音频帧的转发/丢弃，便于发现“画面冻结但声音在播”。
 	videoForwarded       int64
@@ -177,6 +184,10 @@ type flvProxy struct {
 	videoDroppedAwaitKey int64
 	dropReplayActive     bool
 	guardActiveNow       bool
+	// 双轨时间戳过滤实际拦下的帧数、pacer 累计等待时长（现场定位掉帧用）。
+	tsRejectedVideo      int64
+	tsRejectedAudio      int64
+	pacerWaitMs          int64
 	lastVideoForwardedAt time.Time
 	lastAudioForwardedAt time.Time
 	recentEvents         []string
@@ -232,6 +243,7 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 		_ = proxy.server.Serve(listener)
 	}()
 	proxy.diagEnabled = os.Getenv("TVBOX_LIVE_PROXY_DIAG") != ""
+	proxy.pacerEnabled = os.Getenv("TVBOX_LIVE_PROXY_NO_PACER") == ""
 	go proxy.run()
 	return proxy, nil
 }
@@ -487,10 +499,17 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 	var droppedSourceMs int64
 	var prevSourceTs int64
 	var havePrevSourceTs bool
+	// pacer：按输出媒体时间平滑发送，避免上游突发把数秒数据瞬间灌给播放器。
+	var pacerMediaStart int64
+	var pacerWallStart time.Time
+	var pacerStarted bool
 
 	// 诊断：记录本段相对上一段的落差，判断重连后是“连续时间戳”还是“归零重置”。
+	p.tsMu.Lock()
+	lastOutBefore := p.maxOutTsLocked()
+	p.tsMu.Unlock()
 	p.statsMu.Lock()
-	p.segLastOutTsBefore = p.lastTs
+	p.segLastOutTsBefore = lastOutBefore
 	p.segFirstSrcTs = -1
 	p.segGap = 0
 	p.segReset = false
@@ -559,7 +578,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			//    不让它成为 spliceBase 锚点，避免时间轴上撕出回放长度的空洞。
 			if isSeq {
 				ts := p.controlledTs()
-				if !p.acceptTs(ts) {
+				if !p.acceptTs(1, ts) { // AVC 序列头属于视频轨
 					continue
 				}
 				if err := p.writeTag(tagHeader, data, ts); err != nil {
@@ -588,7 +607,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 
 		adjusted := sourceTs
 		if !haveBase {
-			prefixLastTs := p.lastTs
+			prefixLastTs := lastOutBefore
 			adjusted = p.spliceBase(sourceTs)
 			offset = adjusted - sourceTs
 			haveBase = true
@@ -625,8 +644,48 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 				adjusted = minimum
 			}
 		}
-		if !p.acceptTs(adjusted) {
+		track := -1
+		switch tagType {
+		case flvTagTypeAudio:
+			track = 0
+		case flvTagTypeVideo:
+			track = 1
+		}
+		if !p.acceptTs(track, adjusted) {
+			p.statsMu.Lock()
+			if track == 1 {
+				p.tsRejectedVideo++
+			} else {
+				p.tsRejectedAudio++
+			}
+			p.statsMu.Unlock()
 			continue
+		}
+		// pacer：上游常以突发方式一次送来数秒数据，原样灌给播放器会造成
+		// 快进/跳帧感。按输出媒体时间对齐墙钟，让下游始终以实时速度收到帧。
+		// 单帧等待超过阈值说明时间戳跳变/续段重绑，重置基准而不是空等。
+		if p.pacerEnabled && p.ctx.Err() == nil {
+			if !pacerStarted {
+				pacerStarted = true
+				pacerMediaStart = adjusted
+				pacerWallStart = time.Now()
+			}
+			deadline := pacerWallStart.Add(time.Duration(adjusted-pacerMediaStart) * time.Millisecond)
+			if delay := time.Until(deadline); delay > flvProxyPacerMaxDelay {
+				pacerMediaStart, pacerWallStart = adjusted, time.Now()
+				p.event("pacerRebased")
+			} else if delay > 0 {
+				timer := time.NewTimer(delay)
+				select {
+				case <-p.ctx.Done():
+					timer.Stop()
+					return newError("代理已关闭")
+				case <-timer.C:
+				}
+				p.statsMu.Lock()
+				p.pacerWaitMs += delay.Milliseconds()
+				p.statsMu.Unlock()
+			}
 		}
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
 			return err
@@ -640,7 +699,18 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 func (p *flvProxy) hasLastTs() bool {
 	p.tsMu.Lock()
 	defer p.tsMu.Unlock()
-	return p.haveLast
+	return p.haveOut[0] || p.haveOut[1]
+}
+
+// maxOutTsLocked 返回两条轨道里最近一次输出的最大时间戳；调用方须持有 tsMu。
+func (p *flvProxy) maxOutTsLocked() int64 {
+	max := int64(-1)
+	for i := 0; i < 2; i++ {
+		if p.haveOut[i] && p.lastOutTs[i] > max {
+			max = p.lastOutTs[i]
+		}
+	}
+	return max
 }
 
 // flvReplayEntry 记录一帧的指纹与输出时间戳，用于按窗口淘汰。
@@ -693,7 +763,7 @@ func (p *flvProxy) isReplayedFrame(fp uint64) bool {
 func (p *flvProxy) controlledTs() int64 {
 	p.tsMu.Lock()
 	defer p.tsMu.Unlock()
-	return p.lastTs + 1
+	return p.maxOutTsLocked() + 1
 }
 
 // isAvcSequenceHeader 判断 FLV 视频标签是否为 AVC 序列头（AVCPacketType=0），
@@ -723,24 +793,29 @@ func isVideoKeyframe(data []byte) bool {
 }
 
 // spliceBase 计算新一段首帧的输出时间戳：首段沿用原值，续段接在上一帧之后。
+// 用两轨中的最大值做锚点，避免音视频交错时把落后的一轨抬到未来时刻。
 func (p *flvProxy) spliceBase(sourceTs int64) int64 {
 	p.tsMu.Lock()
 	defer p.tsMu.Unlock()
-	if !p.haveLast {
+	if !p.haveOut[0] && !p.haveOut[1] {
 		return sourceTs
 	}
-	return p.lastTs + flvProxySpliceStepMs
+	return p.maxOutTsLocked() + flvProxySpliceStepMs
 }
 
-// acceptTs 只拒绝真正的时间戳回退；同一时刻的音视频标签允许并存。
-func (p *flvProxy) acceptTs(ts int64) bool {
+// acceptTs 只在**同一轨道内部**拒绝时间戳回退，允许相等时间戳。
+// track: 0=音频、1=视频、-1=script/其它（不参与时间轴）。
+func (p *flvProxy) acceptTs(track int, ts int64) bool {
 	p.tsMu.Lock()
 	defer p.tsMu.Unlock()
-	if p.haveLast && ts < p.lastTs {
+	if track < 0 || track > 1 {
+		return true
+	}
+	if p.haveOut[track] && ts < p.lastOutTs[track] {
 		return false
 	}
-	p.lastTs = ts
-	p.haveLast = true
+	p.lastOutTs[track] = ts
+	p.haveOut[track] = true
 	return true
 }
 
@@ -856,26 +931,31 @@ func (p *flvProxy) bumpCandidateSwitch(err error) {
 func (p *flvProxy) statsJSON() string {
 	p.statsMu.Lock()
 	payload := map[string]interface{}{
-		"url":                 p.url,
-		"client":              p.hasClient(),
-		"uptimeSec":           int64(time.Since(p.startedAt).Seconds()),
-		"upstreamSessions":    p.upstreamSessions,
-		"reconnects":          p.reconnects,
-		"candidateSwitches":   p.candidateSwitches,
-		"tagsWritten":         p.tagsWritten,
-		"bytesWritten":        p.bytesWritten,
-		"lastSessionMs":       p.lastSessionMs,
-		"lastError":           p.lastError,
-		"videoForwarded":      p.videoForwarded,
-		"audioForwarded":      p.audioForwarded,
-		"videoDroppedReplay":  p.videoDroppedReplay,
-		"audioDroppedReplay":  p.audioDroppedReplay,
+		"url":                  p.url,
+		"client":               p.hasClient(),
+		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
+		"upstreamSessions":     p.upstreamSessions,
+		"reconnects":           p.reconnects,
+		"candidateSwitches":    p.candidateSwitches,
+		"tagsWritten":          p.tagsWritten,
+		"bytesWritten":         p.bytesWritten,
+		"lastSessionMs":        p.lastSessionMs,
+		"lastError":            p.lastError,
+		"videoForwarded":       p.videoForwarded,
+		"audioForwarded":       p.audioForwarded,
+		"videoDroppedReplay":   p.videoDroppedReplay,
+		"audioDroppedReplay":   p.audioDroppedReplay,
 		"videoDroppedAwaitKey": p.videoDroppedAwaitKey,
-		"videoBackwardInSeg":  p.videoBackwardInSeg,
-		"dropReplayActive":    p.dropReplayActive,
-		"guardActiveNow":      p.guardActiveNow,
-		"segGap":              p.segGap,
-		"segReset":            p.segReset,
+		"videoBackwardInSeg":   p.videoBackwardInSeg,
+		// 双轨时间戳过滤拦下的帧数：旧版全局时间戳会在这里大量丢帧。
+		"tsRejectedVideo": p.tsRejectedVideo,
+		"tsRejectedAudio": p.tsRejectedAudio,
+		// pacer 累计等待时长，持续增长说明上游突发已被平滑。
+		"pacerWaitMs":      p.pacerWaitMs,
+		"dropReplayActive": p.dropReplayActive,
+		"guardActiveNow":   p.guardActiveNow,
+		"segGap":           p.segGap,
+		"segReset":         p.segReset,
 		"lastVideoForwardedAgoMs": func() int64 {
 			if p.lastVideoForwardedAt.IsZero() {
 				return -1
