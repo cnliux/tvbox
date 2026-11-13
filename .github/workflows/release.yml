@@ -53,7 +53,9 @@ jobs:
         id: cache-aar
         uses: actions/cache@v4
         with:
-          path: app/libs/platformlive.aar
+          path: |
+            app/libs/platformlive.aar
+            app/libs/platformlive.fingerprint
           key: platformlive-aar-${{ hashFiles('platform_live_go/**', 'tools/bind-platform-live.sh') }}
 
       - name: Build release APK

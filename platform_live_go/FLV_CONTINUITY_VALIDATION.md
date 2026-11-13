@@ -306,7 +306,9 @@ $env:GOSUMDB = "off"
 
 最终 APK 内 `lib/arm64-v8a/libgojni.so` 同为 17,272,624 B。在新 `.so` 中可查到 `rememberFrame` / `isReplayedFrame` / `flvFrameFingerprint` / `controlledTs` 等符号，确认新 Go 代码已编译进产物。
 
-> 后续建议：改完 `platform_live_go/*.go` 后，明确执行一次上述脚本（或先删 AAR 再构建），不要依赖 Gradle 的 `onlyIf`。
+> 后续建议（历史记录，已于 2026-11-13 修复）：改完 `platform_live_go/*.go` 后，明确执行一次上述脚本（或先删 AAR 再构建），不要依赖 Gradle 的 `onlyIf`。
+>
+> **2026-11-13 更新**：`bindPlatformLive` 已改为按 `platform_live_go/**` + `tools/bind-platform-live.*` 的内容指纹决定是否需要重绑，指纹落在 `app/libs/platformlive.fingerprint`（与 AAR 同目录，CI 缓存同步恢复），`stripPlatformLiveAar` 原地改写 AAR 不再破坏判定。现在改了 Go 直接 `assembleDebug` 就会自动重绑；`-PtvboxSkipPlatformBind=true` 仍可跳过。`GOPROXY` / `GOSUMDB` 的设置要求不变。
 
 ### 8.3 真机验证
 
@@ -400,7 +402,9 @@ uptimeSec=160  reconnects=1 upstreamSessions=2 tagsWritten=11214 lastError=""
 
 ### 11.5 一次必须记录的干扰实验
 
-曾尝试 `adb forward + curl` 直接录制 Android 代理输出。Go 侧 `ServeHTTP` 是**单客户端**（`p.client = w` 会被后连者覆盖），外部录制会抢走播放器的 writer，触发 App 看门狗 `Stalled` → 重新解析 → 重建播放器与代理端口（45389 → 38087 → 40609 …），期间出现 30 秒 33 次重连、`上游 HTTP 403`。**这不是续流逻辑的回归**：移除转发、重新进入房间后连续 240 秒 `reconnects=0`。因此 Android 侧验证以 logcat 统计为准，帧指纹录制放到 PC 侧独立进程。
+曾尝试 `adb forward + curl` 直接录制 Android 代理输出。当时 Go 侧 `ServeHTTP` 是**单客户端**（`p.client = w` 会被后连者覆盖），外部录制会抢走播放器的 writer，触发 App 看门狗 `Stalled` → 重新解析 → 重建播放器与代理端口（45389 → 38087 → 40609 …），期间出现 30 秒 33 次重连、`上游 HTTP 403`。**这不是续流逻辑的回归**：移除转发、重新进入房间后连续 240 秒 `reconnects=0`。因此 Android 侧验证以 logcat 统计为准，帧指纹录制放到 PC 侧独立进程。
+
+> **2026-11-13 更新**：该单客户端限制已修复。`ServeHTTP` 现在按连接代次（gen）做「新连接接管、旧连接退出」，并给新连接补发 FLV 头 + 缓存的 `onMetaData` / AVC / AAC 序列头；同时 `Accept-Ranges: none`、支持 HEAD、FLV header flags 按实际轨道推导。播放器侧对本地代理也放宽了读超时（60s）与看门狗 stall（15s），避免代理静默续流被误判成卡死。
 
 ### 11.6 PC 侧真实 CDN 流检测（最终判据）
 

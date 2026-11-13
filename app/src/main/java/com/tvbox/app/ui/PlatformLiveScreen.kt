@@ -926,10 +926,15 @@ private fun PlatformLivePlayerScreen(
             null
         } else {
             val resolved = stream
+            // 连续代理在上游 EOF / 计划内切换期间会有短暂的「本地无数据」窗口；
+            // 20s 读超时会把「代理正在静默续流」误判成读失败并触发重建播放器，
+            // 正好抵消代理「一条永不结束的本地流」的设计。走代理时放宽到 60s，
+            // 真正的上游半开连接由 Go 侧 15s 空闲读超时负责断开重连。
+            val usesProxy = continuityProxy != null
             val dataSourceFactory = DefaultHttpDataSource.Factory()
                 .setAllowCrossProtocolRedirects(true)
                 .setConnectTimeoutMs(15_000)
-                .setReadTimeoutMs(20_000)
+                .setReadTimeoutMs(if (usesProxy) 60_000 else 20_000)
             // User-Agent 属于 ExoPlayer 受限请求头，必须走 setUserAgent，其余（Referer/Cookie）走通用请求头。
             val userAgentEntry = resolved.headers.entries
                 .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) && it.value.isNotBlank() }
@@ -971,8 +976,19 @@ private fun PlatformLivePlayerScreen(
     )
     var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
     // 共享看门狗：首帧超时与出帧后卡死同一套判定；候选/地址变化时重建计时。
-    var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex) {
-        mutableStateOf(PlaybackWatchdog())
+    // 走连续代理时放宽阈值：代理的短段退避（斗鱼上限 8s）+ 重新解析可能超过
+    // 默认 4s stall，过早触发 recoverPlatformLiveChannel 会重建播放器，
+    // 反而把代理内部的无缝续流变成一次可见重连。上游真卡死由 Go 侧 15s
+    // 空闲读超时 + 播放器 60s 读超时兜底。
+    val proxyWrapped = continuityProxy != null
+    var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex, proxyWrapped) {
+        mutableStateOf(
+            if (proxyWrapped) {
+                PlaybackWatchdog(firstFrameTimeoutMs = 20_000L, stallTimeoutMs = 15_000L)
+            } else {
+                PlaybackWatchdog()
+            }
+        )
     }
     // 手机"全屏"：按房间记忆裁剪铺满；未记忆时回退设置里的全局默认值。
     val scaleContentKey = roomVideoScaleKey(room.site, room.id)

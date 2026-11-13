@@ -220,7 +220,9 @@ func writeTestFLVEx(writer io.Writer, frames []testFrame) {
 			data = []byte{(frameType << 4) | flvVideoCodecAVC, avcPacketType, 0, 0}
 		case f.audio:
 			tagType = flvTagTypeAudio
-			data = []byte{0xA0, 0, 0}
+			// AACPacketType=1 才是普通音频帧；写 0 会被当成 AAC 序列头，
+			// 进而被新客户端配置标签缓存误收（真实 CDN 不会这样发）。
+			data = []byte{0xA0, 1, 0}
 		default:
 			continue
 		}

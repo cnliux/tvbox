@@ -50,6 +50,8 @@ platform_live_go/flv_proxy_diag_test.go
 # 本地临时文件和工具脚本
 .tmp_*.ps1
 .tmp_*.py
+# Gradle/gomobile 本地构建临时目录（TMP 环境变量指向此处）
+.tmp-build/
 # 本地调试目录：设备截图/日志、adb 工具、参考仓库、协议验证脚本
 .tmp_*/
 .adbtools/

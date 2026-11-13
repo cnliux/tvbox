@@ -157,13 +157,15 @@ type fakeResponseWriter struct{ buf bytes.Buffer }
 func (f *fakeResponseWriter) Header() http.Header         { return http.Header{} }
 func (f *fakeResponseWriter) Write(b []byte) (int, error) { return f.buf.Write(b) }
 func (f *fakeResponseWriter) WriteHeader(int)             {}
+func (f *fakeResponseWriter) Flush()                      {}
 
 // newManualDouyuProxy 构造不走 HTTP 服务器的最小代理实例（仅供直连 pull 单测）。
 func newManualDouyuProxy(site string) *flvProxy {
 	proxy := &flvProxy{tuning: siteTuningFor(site)}
 	proxy.ctx, proxy.cancel = context.WithCancel(context.Background())
 	proxy.httpClient = &http.Client{Transport: &http.Transport{DisableCompression: true}}
-	proxy.client = &fakeResponseWriter{}
+	downstream := &fakeResponseWriter{}
+	proxy.client = &flvProxyClient{writer: downstream, flusher: downstream, done: make(chan struct{})}
 	return proxy
 }
 

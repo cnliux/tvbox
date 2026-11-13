@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // HTTP 响应辅助：对齐 Python 版 create_handler 的错误/JSON 输出行为。
 

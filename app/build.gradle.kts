@@ -1,3 +1,4 @@
+import java.security.MessageDigest
 import java.util.Properties
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
@@ -43,8 +44,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.0.10"
-val TVBOX_VERSION_CODE = 20010
+val TVBOX_VERSION_NAME = "1.0.11"
+val TVBOX_VERSION_CODE = 20011
 
 android {
     namespace = "com.tvbox.app"
@@ -193,6 +194,39 @@ androidComponents {
 // 无 Go 工具链时可用 -PtvboxSkipPlatformBind=true 跳过（需事先准备 app/libs/platformlive.aar）。
 val platformLiveAar = file("libs/platformlive.aar")
 
+// Go 源码指纹：决定是否需要重新 gomobile bind。
+// 旧实现用 onlyIf { !platformLiveAar.exists() }，AAR 一旦存在就永不重绑，
+// 改了 Go 代码仍会把旧 .so 打进 APK；而 stripPlatformLiveAar 又会原地改写
+// 同一个 AAR，直接把它声明成 outputs 会让每次构建都误判为过期。
+// 因此这里按源码内容做显式指纹，并把指纹放在 build/ 下，与 AAR 本体解耦。
+fun goSourceFingerprint(): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val root = rootProject.rootDir
+    val sources = mutableListOf<File>()
+    rootProject.file("platform_live_go").walkTopDown().forEach { candidate ->
+        if (candidate.isFile && (candidate.extension == "go" ||
+                candidate.name == "go.mod" || candidate.name == "go.sum")
+        ) {
+            sources.add(candidate)
+        }
+    }
+    rootProject.file("tools").listFiles()?.forEach { candidate ->
+        if (candidate.isFile && candidate.name.startsWith("bind-platform-live.")) {
+            sources.add(candidate)
+        }
+    }
+    sources.sortedBy { it.relativeTo(root).path }.forEach { source ->
+        digest.update(source.relativeTo(root).path.toByteArray())
+        digest.update(source.readBytes())
+    }
+    digest.update(emulatorAbisEnabled.toString().toByteArray())
+    return digest.digest().joinToString("") { byte: Byte -> "%02x".format(byte.toInt() and 0xff) }
+}
+
+// 指纹文件与 AAR 同目录，随 CI 缓存一起恢复；放 build/ 会被 clean 清掉，
+// 导致 clean 之后即使 Go 源码变了也误判为「已绑定」。
+val platformLiveFingerprintFile = file("libs/platformlive.fingerprint")
+
 fun resolveNdkDir(): File? {
     android.ndkPath?.let { path -> File(path).takeIf { it.isDirectory }?.let { return it } }
     System.getenv("ANDROID_NDK_HOME")?.let { path ->
@@ -219,13 +253,23 @@ val bindPlatformLive = tasks.register<Exec>("bindPlatformLive") {
         "bind-platform-live.sh"
     }
     val script = rootProject.file("tools/$scriptName")
-    inputs.dir(rootProject.file("platform_live_go"))
-    // 模拟器 ABI 开关变化时重新绑定，产出含 x86/x86_64 的 AAR。
-    inputs.property("emulatorAbis", emulatorAbisEnabled)
-    if (platformLiveAar.exists()) {
-        outputs.file(platformLiveAar)
+    // 不做 Gradle up-to-date 声明：本任务由下方的源码指纹显式决定是否需要执行，
+    // 避免 strip 任务原地改写 AAR 造成「每次都过期」或「改了 Go 却不重绑」。
+    onlyIf {
+        if (project.hasProperty("tvboxSkipPlatformBind")) return@onlyIf false
+        if (!platformLiveAar.exists()) return@onlyIf true
+        val cached = if (platformLiveFingerprintFile.isFile) {
+            platformLiveFingerprintFile.readText()
+        } else {
+            ""
+        }
+        // AAR 来自 CI 缓存但本地没有指纹时，强制重绑一次以建立基线。
+        cached.isBlank() || cached != goSourceFingerprint()
     }
-    onlyIf { !project.hasProperty("tvboxSkipPlatformBind") && !platformLiveAar.exists() }
+    doLast {
+        platformLiveFingerprintFile.parentFile?.mkdirs()
+        platformLiveFingerprintFile.writeText(goSourceFingerprint())
+    }
     environment("TVBOX_EMULATOR_ABIS", if (emulatorAbisEnabled) "1" else "0")
     if (org.gradle.internal.os.OperatingSystem.current().isWindows) {
         commandLine(

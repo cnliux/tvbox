@@ -21,8 +21,15 @@ object FlvContinuityProxy {
     private const val LOG_TAG = "TVBoxPlatformLive"
 
     /**
-     * 虎牙实测约 2 分钟必被 CDN 关流；斗鱼 FLV 同样带时效签名、存在会话上限，
-     * 一并走代理。代理对不断流的平台只是单会话透传，无副作用。
+     * 只有虎牙 / 斗鱼进入连续 FLV 代理，这是刻意的产品约束，不是遗漏：
+     *  - 虎牙 ~120s 必被 CDN 关流，需要计划内预建双连接 + 归零时间轴平移；
+     *  - 斗鱼是 expire 租约语义，需要 expire=0 补丁 + 主动续期 + 同轴时间轴；
+     *  - 其余平台（B站/抖音/快手等）**不进代理**，因此根本不会碰到虎牙或
+     *    斗鱼的任何专属假设，避免把实测结论错误套到第三个平台上。
+     *
+     * Go 侧 siteTuningFor 的第三档 `generic-live` 是「防御性回退」：仅在
+     * 将来放开白名单、或有自定义源显式指定代理时才会启用；当前生产路径不可达，
+     * 不要把它当成「其它平台正在用的策略」。
      */
     private val supportedSites = setOf("huya", "douyu")
 

@@ -43,20 +43,11 @@ const (
 	flvProxyResolveRetry = 1500 * time.Millisecond
 	flvProxyMaxTagSize   = 8 << 20
 	flvProxyMaxFailures  = 2
-	// pacer 单帧最大等待：超过说明时间戳跳变或续段重绑（如长空窗后追帧），
-	// 直接重置墙钟基准避免无限期等待。这里提到 6s，配合下方 5s 目标缓冲使用。
-	flvProxyPacerMaxDelay = 6 * time.Second
 )
 
-// pacer 目标缓冲：故意比实时慢约 N 毫秒推送，让下游始终保有 N 毫秒已接收数据。
-// 上游抖动 / 重连空窗期间播放器仍有缓冲可播，抵抗「一起看」续流风暴。
-// 实测旧包 pacer 把缓冲压到 ~2s 时抗抖动能力差（重连风暴 dropped 0→119），
-// 默认 5s 与用户目标 4~6s 对齐。运行时可由 SetPacerTargetBufferMs 调整（调试用）。
-var flvProxyPacerTargetBufferMs atomic.Int64
-
-func init() {
-	flvProxyPacerTargetBufferMs.Store(5000)
-}
+// pacer 目标缓冲的默认值、运行时配置与每个代理实例的状态见 flv_proxy_pacer.go；
+// 传输层（空闲读超时 / 客户端接管 / 配置标签）见 flv_proxy_transport.go；
+// 计划内预建双连接见 flv_proxy_handover.go。
 
 const (
 	// FLV Tag 类型（tagHeader[0] & 0x1f）。
@@ -167,6 +158,13 @@ type flvSiteTuning struct {
 	//   代理要①给 ws 短租线打 expire=0 补丁；②在租约到期前主动断开重解析，
 	//   变「被动挨杀」为「计划内切换」。
 	leaseAware bool
+	// —— 计划内预建双连接（虎牙专属）——
+	// plannedRefreshLeadMs>0 时，在上一段预期关流前这么久预解析并预建第二条
+	// 连接，缓冲到首个关键帧后在当前段的关键帧处交接，消除解析/握手空窗。
+	// nominalSessionMs 是首次会话的预期时长；之后按上一段实测时长学习。
+	// 斗鱼（租约语义）与通用档（不预设周期）均为 0，绝不借用虎牙策略。
+	plannedRefreshLeadMs int64
+	nominalSessionMs     int64
 }
 
 // timelineModeName 返回档位的时间轴语义，供 statsJSON / 真机监控区分三档。
@@ -206,6 +204,8 @@ func siteTuningFor(site string) flvSiteTuning {
 			timelineContinuous:     true,
 			timelineAuto:           false,
 			leaseAware:             true,
+			plannedRefreshLeadMs:   0,
+			nominalSessionMs:       0,
 		}
 	case "huya":
 		return flvSiteTuning{
@@ -222,6 +222,8 @@ func siteTuningFor(site string) flvSiteTuning {
 			timelineContinuous:     false,
 			timelineAuto:           false,
 			leaseAware:             false,
+			plannedRefreshLeadMs:   huyaPlannedRefreshLeadMs,
+			nominalSessionMs:       huyaNominalSessionMs,
 		}
 	default:
 		// 其它平台（B站 / 抖音 / 快手 / 自定义源等）：**通用中性档**。
@@ -438,11 +440,20 @@ type flvProxy struct {
 
 	httpClient *http.Client
 
-	mu      sync.Mutex
-	client  http.ResponseWriter
-	flusher http.Flusher
+	// 下游播放器连接。新连接会「接管」写端并让旧连接退出，避免两个连接
+	// 同时抢同一个 writer（旧实现会让旧连接饿死、新连接因缺解码参数黑屏）。
+	mu         sync.Mutex
+	client     *flvProxyClient
+	clientSeq  atomic.Uint64
+	writeMu    sync.Mutex
+	configMu   sync.Mutex
+	configTags map[byte][]byte
 
 	clientReady chan struct{}
+
+	// pacer 目标缓冲为「每个代理一份」，运行时调整写回全部在播实例。
+	pacerTargetMs atomic.Int64
+	pacerRebase   atomic.Bool
 
 	// 音/视频各自一条输出时间轴：索引 0=音频(tag 8)、1=视频(tag 9)。
 	// FLV 两轨时间戳本来就是交错的，用单一全局 lastTs 比较会把落后几十毫秒
@@ -461,6 +472,9 @@ type flvProxy struct {
 	startedAt         time.Time
 	upstreamSessions  int64
 	reconnects        int64
+	plannedHandovers  int64
+	idleTimeouts      int64
+	clientTakeovers   int64
 	candidateSwitches int64
 	tagsWritten       int64
 	bytesWritten      int64
@@ -544,13 +558,15 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 				// FLV 不能被压缩，避免 Accept-Encoding: gzip 导致整段缓冲。
 				DisableCompression:    true,
 				ResponseHeaderTimeout: 12 * time.Second,
-				DialContext: (&net.Dialer{
-					Timeout:   10 * time.Second,
-					KeepAlive: 30 * time.Second,
-				}).DialContext,
+				// 每次 Read 前刷新 15s 截止时刻：CDN 半开连接时自行断开重连，
+				// 而不是让 consume 永久卡在 io.ReadFull（画面冻结且无兜底）。
+				DialContext:     dialWithIdleReadTimeout(flvProxyIdleReadTimeout),
+				DisableKeepAlives: true,
 			},
 		},
 	}
+	proxy.pacerTargetMs.Store(GetPacerTargetBufferMs())
+	registerFlvProxy(proxy)
 	proxy.server = &http.Server{Handler: proxy}
 	go func() {
 		_ = proxy.server.Serve(listener)
@@ -563,6 +579,7 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 
 func (p *flvProxy) close() {
 	p.cancel()
+	unregisterFlvProxy(p)
 	_ = p.server.Close()
 	select {
 	case <-p.done:
@@ -575,43 +592,77 @@ func (p *flvProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	w.Header().Set("Content-Type", "video/x-flv")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "close")
+	// 直播流不可 seek：明确告知，避免播放器发起 Range 后误判为可回退内容。
+	w.Header().Set("Accept-Ranges", "none")
+	if r.Method == http.MethodHead {
+		// 探测请求只回头部，不注册客户端、不占用写端。
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "video/x-flv")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Connection", "close")
 	w.WriteHeader(http.StatusOK)
-	// 先给出 FLV 头，播放器可立即按 FLV 解析，不必等上游首段到达。
-	_, _ = w.Write(flvProxyFileHeader())
-	flusher.Flush()
 
+	client := &flvProxyClient{
+		gen:     p.clientSeq.Add(1),
+		writer:  w,
+		flusher: flusher,
+		done:    make(chan struct{}),
+	}
 	p.mu.Lock()
-	p.client = w
-	p.flusher = flusher
+	previous := p.client
+	p.client = client
 	p.mu.Unlock()
+	if previous != nil {
+		// 新连接接管：让旧 ServeHTTP 立刻返回，net/http 结束旧响应。
+		previous.retire()
+		p.statsMu.Lock()
+		p.clientTakeovers++
+		p.statsMu.Unlock()
+		p.event("clientTakeover")
+	}
+	// 起步字节 = FLV 头 + 已缓存的真实 onMetaData / AVC / AAC 配置标签。
+	// 这样解码器切换或播放器重连后不必等下一个 GOP 就能出画面。
+	if err := p.writeToClient(client, p.initialClientPayload()); err != nil {
+		p.dropClientIf(client)
+		return
+	}
 	select {
 	case p.clientReady <- struct{}{}:
 	default:
 	}
 
-	<-r.Context().Done()
-
+	select {
+	case <-r.Context().Done():
+	case <-client.done:
+	}
 	p.mu.Lock()
-	if p.client == w {
+	if p.client == client {
 		p.client = nil
-		p.flusher = nil
 	}
 	p.mu.Unlock()
 }
 
-// flvProxyFileHeader 生成 FLV 文件头 + PreviousTagSize0。
-func flvProxyFileHeader() []byte {
-	header := []byte{'F', 'L', 'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09}
-	header = append(header, 0x00, 0x00, 0x00, 0x00)
-	return header
+// writeToClient 合并为一次 Write + 一次 Flush，并由 writeMu 串行化，
+// 避免接管瞬间两个 goroutine 交叉写坏 HTTP chunk 流。
+func (p *flvProxy) writeToClient(client *flvProxyClient, payload []byte) error {
+	p.writeMu.Lock()
+	defer p.writeMu.Unlock()
+	if _, err := client.writer.Write(payload); err != nil {
+		return err
+	}
+	client.flusher.Flush()
+	return nil
 }
 
 func (p *flvProxy) hasClient() bool {
@@ -663,64 +714,129 @@ func (p *flvProxy) streamLoop() {
 	var fastReconnectCandidate *LiveStreamCandidate
 	var fastReconnectHeaders map[string]string
 	fastReconnectStreak := 0
+	// 计划内预建的第二条连接：一旦就绪，下一段直接消费它，不再经过解析/握手。
+	var preparedNext *preparedStream
 	for p.hasClient() && p.ctx.Err() == nil {
 		var candidate LiveStreamCandidate
 		var headers map[string]string
+		var opts *pullOptions
+		var preparedCh chan *preparedStream
+		var stopPrepare context.CancelFunc
 		fastReconnect := false
-		switch {
-		case useInitial:
-			candidate = LiveStreamCandidate{CDN: "本地首段", URL: p.initialURL, Protocol: "flv"}
-			headers = p.initialHeaders
-			useInitial = false
-		case fastReconnectCandidate != nil && fastReconnectStreak < p.tuning.maxFastReconnectStreak:
-			candidate = *fastReconnectCandidate
-			headers = fastReconnectHeaders
-			fastReconnectCandidate = nil
-			fastReconnect = true
-			fastReconnectStreak++
-		default:
-			// 走到重新解析（含连续快速续拉达到上限）时清零并丢弃旧候选，
-			// 本轮一定使用重新解析出来的地址。
-			fastReconnectStreak = 0
-			fastReconnectCandidate = nil
-			fastReconnectHeaders = nil
-			stream, err := p.resolve()
-			if err != nil {
-				p.setLastError(err.Error())
-				select {
-				case <-p.ctx.Done():
-					return
-				case <-time.After(flvProxyResolveRetry):
-				}
-				continue
-			}
-			if len(stream.Candidates) == 0 {
-				p.setLastError("未返回可播放地址")
-				select {
-				case <-p.ctx.Done():
-					return
-				case <-time.After(flvProxyResolveRetry):
-				}
-				continue
-			}
-			candidate = stream.Candidates[candidateIndex%len(stream.Candidates)]
-			headers = stream.Headers
-		}
-		// 仅斗鱼：地址租约处理。ws 短租线打 expire=0 补丁；带 expire 的地址
-		// 在到期前主动断开做计划内切换。虎牙与通用档 leaseAware=false，
-		// 不改写 URL、不解析租约、不触发计划内切换。
-		if p.tuning.leaseAware {
-			candidate.URL = patchDouyuURL(candidate.URL)
-		}
 		leaseDeadline := time.Time{}
-		if p.tuning.leaseAware {
-			leaseDeadline = douyuLeaseDeadline(candidate.URL, time.Now())
+
+		if preparedNext != nil {
+			opts = &pullOptions{usePrepared: preparedNext}
+			preparedNext = nil
+		} else {
+			switch {
+			case useInitial:
+				candidate = LiveStreamCandidate{CDN: "本地首段", URL: p.initialURL, Protocol: "flv"}
+				headers = p.initialHeaders
+				useInitial = false
+			case fastReconnectCandidate != nil && fastReconnectStreak < p.tuning.maxFastReconnectStreak:
+				candidate = *fastReconnectCandidate
+				headers = fastReconnectHeaders
+				fastReconnectCandidate = nil
+				fastReconnect = true
+				fastReconnectStreak++
+			default:
+				// 走到重新解析（含连续快速续拉达到上限）时清零并丢弃旧候选，
+				// 本轮一定使用重新解析出来的地址。
+				fastReconnectStreak = 0
+				fastReconnectCandidate = nil
+				fastReconnectHeaders = nil
+				resolved, resolveHeaders, err := p.resolveCandidate(candidateIndex)
+				if err != nil {
+					p.setLastError(err.Error())
+					select {
+					case <-p.ctx.Done():
+						return
+					case <-time.After(flvProxyResolveRetry):
+					}
+					continue
+				}
+				candidate, headers = resolved, resolveHeaders
+			}
+			// 仅斗鱼：地址租约处理。ws 短租线打 expire=0 补丁；带 expire 的地址
+			// 在到期前主动断开做计划内切换。虎牙与通用档 leaseAware=false，
+			// 不改写 URL、不解析租约、不触发计划内切换。
+			if p.tuning.leaseAware {
+				candidate.URL = patchDouyuURL(candidate.URL)
+				leaseDeadline = douyuLeaseDeadline(candidate.URL, time.Now())
+			}
+			// 仅虎牙：在预期关流前预解析 + 预建第二条连接，消除 EOF 后的解析空窗。
+			// 斗鱼（租约）与通用档 plannedRefreshLeadMs=0，不进这条路径。
+			if p.tuning.plannedRefreshLeadMs > 0 && !fastReconnect {
+				prepareCtx, cancel := context.WithCancel(p.ctx)
+				stopPrepare = cancel
+				preparedCh = make(chan *preparedStream, 1)
+				// 刻意不按上一段实际时长「学习」：计划内交接会让本段提前结束，
+				// 若把缩短后的时长再喂回下一轮，预建时刻会逐轮前移形成正反馈
+				// （125s → 113s → 101s …），反而制造更频繁的切换。
+				// 虎牙 120~137s 的关流周期是 CDN 固有上限，用固定标称值即可。
+				delayMs := p.tuning.nominalSessionMs - p.tuning.plannedRefreshLeadMs
+				if delayMs < 1000 {
+					delayMs = 1000
+				}
+				index := candidateIndex
+				go func() {
+					select {
+					case <-prepareCtx.Done():
+						return
+					case <-time.After(time.Duration(delayMs) * time.Millisecond):
+					}
+					stream := p.prepareNextConnection(prepareCtx, func() (LiveStreamCandidate, map[string]string, error) {
+						return p.resolveCandidate(index)
+					})
+					if stream == nil {
+						return
+					}
+					select {
+					case preparedCh <- stream:
+					case <-prepareCtx.Done():
+						stream.close()
+					}
+				}()
+				opts = &pullOptions{prepared: preparedCh}
+			}
 		}
 
 		beforeTags := p.tagCount()
-		leaseExpired, err := p.pull(candidate, headers, leaseDeadline)
+		leaseExpired, handover, err := p.pullSegment(candidate, headers, leaseDeadline, opts)
+		if stopPrepare != nil {
+			stopPrepare()
+		}
 		if p.ctx.Err() != nil {
 			return
+		}
+		if handover != nil {
+			// 当前段已在关键帧处收尾，立刻接着消费预备连接。
+			preparedNext = handover
+			p.statsMu.Lock()
+			p.plannedHandovers++
+			p.statsMu.Unlock()
+			p.event("plannedHandover")
+			shortStreak = 0
+			failures = 0
+			fastReconnectStreak = 0
+			fastReconnectCandidate = nil
+			fastReconnectHeaders = nil
+			continue
+		}
+		if preparedCh != nil {
+			// 本段先 EOF 了：预备连接若已就绪，直接用于下一段，不浪费。
+			select {
+			case stream := <-preparedCh:
+				if stream != nil {
+					if preparedNext == nil {
+						preparedNext = stream
+					} else {
+						stream.close()
+					}
+				}
+			default:
+			}
 		}
 		if leaseExpired {
 			// 斗鱼租约到期：计划内切换。地址即将失效，不做同地址快速续拉，
@@ -815,55 +931,121 @@ func (p *flvProxy) resolve() (*ResolvedLiveStream, error) {
 	return adapter.Resolve(roomID)
 }
 
+// resolveCandidate 把「重新解析 + 按候选下标选线」收敛成一个函数，
+// 让正常续拉与计划内预建走完全相同的解析路径。
+func (p *flvProxy) resolveCandidate(index int) (LiveStreamCandidate, map[string]string, error) {
+	stream, err := p.resolve()
+	if err != nil {
+		return LiveStreamCandidate{}, nil, err
+	}
+	if len(stream.Candidates) == 0 {
+		return LiveStreamCandidate{}, nil, newError("未返回可播放地址")
+	}
+	return stream.Candidates[index%len(stream.Candidates)], stream.Headers, nil
+}
+
 // pull 拉取一段上游 FLV 并原样缝进本地输出。
 // 返回 leaseExpired=true 表示是租约到期触发的计划内断开（斗鱼主动续期），
 // 上游流本身没有出错；err 为 nil 表示上游正常结束（含计划内断开）。
 // leaseDeadline 为零值表示无租约语义（虎牙等平台行为完全不变）。
+// pull 保留三参数签名（历史用例在用），委托给支持计划内交接的 pullSegment。
 func (p *flvProxy) pull(candidate LiveStreamCandidate, headers map[string]string, leaseDeadline time.Time) (bool, error) {
+	leaseExpired, _, err := p.pullSegment(candidate, headers, leaseDeadline, nil)
+	return leaseExpired, err
+}
+
+// pullSegment 拉取一段上游 FLV 并缝进本地输出。
+// 返回：leaseExpired=租约到期计划内断开；handover=已就绪的第二条连接；err=实际故障。
+func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string]string, leaseDeadline time.Time, opts *pullOptions) (bool, *preparedStream, error) {
+	// 计划内交接：本段直接消费已预建好的连接，不再发起新请求。
+	if opts != nil && opts.usePrepared != nil {
+		stream := opts.usePrepared
+		stream.take()
+		defer stream.close()
+		err := p.consumeWithOptions(stream.reader(), nil)
+		if err == errHandover {
+			err = nil
+		}
+		return false, nil, err
+	}
+
 	requestCtx := p.ctx
 	var leaseExpired atomic.Bool
 	var cancel context.CancelFunc
+	var leaseTimer *time.Timer
 	if !leaseDeadline.IsZero() && leaseDeadline.After(time.Now()) {
 		requestCtx, cancel = context.WithCancel(p.ctx)
 		defer cancel()
-		time.AfterFunc(time.Until(leaseDeadline), func() {
+		leaseTimer = time.AfterFunc(time.Until(leaseDeadline), func() {
 			// 租约到期：主动取消本次上游读取（计划内切换，不是故障）。
 			leaseExpired.Store(true)
 			cancel()
 		})
+		defer leaseTimer.Stop()
 	}
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, candidate.URL, nil)
 	if err != nil {
-		return false, newError("上游地址无效：%s", err.Error())
+		return false, nil, newError("上游地址无效：%s", err.Error())
 	}
 	request.Header.Set("Accept", "*/*")
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
+	// 预建连接 watcher 的生命周期必须绑定本次请求，段结束时立即退出。
+	watchCtx, stopWatch := context.WithCancel(requestCtx)
+	defer stopWatch()
+	state := &handoverState{}
+	if opts != nil && opts.prepared != nil {
+		state.ready = opts.prepared
+		state.watch(watchCtx)
+	}
+
 	response, err := p.httpClient.Do(request)
 	if err != nil {
 		if leaseExpired.Load() && p.ctx.Err() == nil {
-			return true, nil
+			return true, nil, nil
 		}
-		return false, newError("上游拉流失败：%s", err.Error())
+		return false, nil, newError("上游拉流失败：%s", err.Error())
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return leaseExpired.Load(), newError("上游 HTTP %d", response.StatusCode)
+		return leaseExpired.Load(), nil, newError("上游 HTTP %d", response.StatusCode)
 	}
 	reader := bufio.NewReaderSize(response.Body, 128*1024)
-	consumeErr := p.consume(reader)
+	consumeErr := p.consumeWithOptions(reader, state)
+	if consumeErr == errHandover {
+		return false, state.prepared(), nil
+	}
+	if consumeErr == errUpstreamIdle {
+		// 上游静默：软重连，不记硬失败、不换线路。
+		p.statsMu.Lock()
+		p.idleTimeouts++
+		p.statsMu.Unlock()
+		p.event("upstreamIdleTimeout")
+		return false, nil, nil
+	}
+	if consumeErr == nil && leaseExpired.Load() && p.ctx.Err() == nil {
+		return true, nil, nil
+	}
 	if consumeErr != nil && leaseExpired.Load() && p.ctx.Err() == nil {
 		// 读取因租约取消而中断：consume 已通过 defer 记录会话时长，
 		// 对 streamLoop 呈现为一次干净的「计划内 EOF」。
-		return true, nil
+		return true, nil, nil
 	}
-	return leaseExpired.Load(), consumeErr
+	return leaseExpired.Load(), nil, consumeErr
 }
 
 func (p *flvProxy) consume(reader *bufio.Reader) error {
+	return p.consumeWithOptions(reader, nil)
+}
+
+// consumeWithOptions 与 consume 同路径，额外支持「计划内关键帧交接」信号。
+func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverState) error {
 	header := make([]byte, flvProxyHeaderSize+flvProxyPrevTagSizeLen)
 	if _, err := io.ReadFull(reader, header); err != nil {
+		if isNetworkTimeout(err) {
+			return errUpstreamIdle
+		}
 		return newError("上游 FLV 头读取失败：%s", err.Error())
 	}
 	if header[0] != 'F' || header[1] != 'L' || header[2] != 'V' {
@@ -895,10 +1077,15 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 	var droppedSourceMs int64
 	var prevSourceTs int64
 	var havePrevSourceTs bool
-	// pacer：按输出媒体时间平滑发送，避免上游突发把数秒数据瞬间灌给播放器。
+	// pacer：目标缓冲区间的帧按上游到达速度立即预填给播放器（形成真实缓冲），
+	// 之后按输出媒体时间实时匀速发送，避免上游突发把数秒数据瞬间灌给播放器。
+	// 旧实现「整体延迟 target」只增加直播延迟，并不会增加播放器 bufferedMs。
+	var pacerFirstTs int64
 	var pacerMediaStart int64
 	var pacerWallStart time.Time
 	var pacerStarted bool
+	var pacerHaveFirst bool
+	prefillMs := p.pacerTargetMs.Load()
 
 	// 诊断：记录本段相对上一段的落差，判断重连后是“连续时间戳”还是“归零重置”。
 	p.tsMu.Lock()
@@ -918,6 +1105,9 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
 			}
+			if isNetworkTimeout(err) {
+				return errUpstreamIdle
+			}
 			return newError("上游 FLV 读取失败：%s", err.Error())
 		}
 		size := int(tagHeader[1])<<16 | int(tagHeader[2])<<8 | int(tagHeader[3])
@@ -927,9 +1117,15 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		sourceTs := int64(tagHeader[4])<<16 | int64(tagHeader[5])<<8 | int64(tagHeader[6]) | int64(tagHeader[7])<<24
 		data := make([]byte, size)
 		if _, err := io.ReadFull(reader, data); err != nil {
+			if isNetworkTimeout(err) {
+				return errUpstreamIdle
+			}
 			return newError("上游 FLV 数据读取失败：%s", err.Error())
 		}
 		if _, err := io.ReadFull(reader, make([]byte, flvProxyPrevTagSizeLen)); err != nil {
+			if isNetworkTimeout(err) {
+				return errUpstreamIdle
+			}
 			return newError("上游 FLV 尾部读取失败：%s", err.Error())
 		}
 
@@ -973,12 +1169,13 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			//    不让它成为 spliceBase 锚点，避免时间轴上撕出回放长度的空洞。
 			if isSeq {
 				ts := p.controlledTs()
-				if !p.acceptTs(1, ts) { // AVC 序列头属于视频轨
+				if !p.validateTs(1, ts) { // AVC 序列头属于视频轨
 					continue
 				}
 				if err := p.writeTag(tagHeader, data, ts); err != nil {
 					return err
 				}
+				p.commitTs(1, ts)
 				p.rememberFrame(fp, ts)
 				p.incForwarded(tagType, sourceTs)
 				continue
@@ -1070,7 +1267,7 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		case flvTagTypeVideo:
 			track = 1
 		}
-		if !p.acceptTs(track, adjusted) {
+		if !p.validateTs(track, adjusted) {
 			p.statsMu.Lock()
 			if track == 1 {
 				p.tsRejectedVideo++
@@ -1080,40 +1277,58 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 			p.statsMu.Unlock()
 			continue
 		}
-		// pacer：上游常以突发方式一次送来数秒数据，原样灌给播放器会造成
-		// 快进/跳帧感。按输出媒体时间对齐墙钟，让下游始终以实时速度收到帧。
-		// 额外叠加「目标缓冲」偏移：故意比实时慢约 flvProxyPacerTargetBufferMs 推送，
-		// 让本地始终保有数秒已接收数据，上游抖动 / 重连空窗时播放器仍有缓冲可播。
+		// pacer「首段预填」：
+		//  - 目标窗口内的帧按上游到达速度立即交给播放器，让播放器真的攒下缓冲；
+		//  - 窗口之后以当前帧为墙钟/媒体基准，按输出媒体时间实时匀速输出；
+		//  - 运行时调整目标缓冲时从当前帧重新对齐基准，不产生整段跳变。
 		// 单帧等待超过 pacerMaxDelay 说明时间戳跳变/长空窗后追帧，重置基准而非空等。
 		if p.pacerEnabled && p.ctx.Err() == nil {
-			if !pacerStarted {
+			if p.pacerRebase.Swap(false) {
+				prefillMs = p.pacerTargetMs.Load()
+				pacerStarted = false
+				pacerHaveFirst = false
+				p.event("pacerTargetRebased")
+			}
+			if !pacerHaveFirst {
+				pacerHaveFirst = true
+				pacerFirstTs = adjusted
+			}
+			if !pacerStarted && adjusted-pacerFirstTs >= prefillMs {
 				pacerStarted = true
 				pacerMediaStart = adjusted
 				pacerWallStart = time.Now()
 			}
-			deadline := pacerWallStart.Add(
-				time.Duration(adjusted-pacerMediaStart+flvProxyPacerTargetBufferMs.Load()) * time.Millisecond)
-			if delay := time.Until(deadline); delay > p.tuning.pacerMaxDelay {
-				pacerMediaStart, pacerWallStart = adjusted, time.Now()
-				p.event("pacerRebased")
-			} else if delay > 0 {
-				timer := time.NewTimer(delay)
-				select {
-				case <-p.ctx.Done():
-					timer.Stop()
-					return newError("代理已关闭")
-				case <-timer.C:
+			if pacerStarted {
+				deadline := pacerWallStart.Add(
+					time.Duration(adjusted-pacerMediaStart) * time.Millisecond)
+				if delay := time.Until(deadline); delay > p.tuning.pacerMaxDelay {
+					pacerMediaStart, pacerWallStart = adjusted, time.Now()
+					p.event("pacerRebased")
+				} else if delay > 0 {
+					timer := time.NewTimer(delay)
+					select {
+					case <-p.ctx.Done():
+						timer.Stop()
+						return newError("代理已关闭")
+					case <-timer.C:
+					}
+					p.statsMu.Lock()
+					p.pacerWaitMs += delay.Milliseconds()
+					p.statsMu.Unlock()
 				}
-				p.statsMu.Lock()
-				p.pacerWaitMs += delay.Milliseconds()
-				p.statsMu.Unlock()
 			}
 		}
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
 			return err
 		}
+		p.commitTs(track, adjusted)
 		p.rememberFrame(fp, adjusted)
 		p.incForwarded(tagType, sourceTs)
+		// 计划内交接：只在成功写出一个关键帧之后离开，保证新段起点可独立解码。
+		if isKey && handover.shouldHandover() {
+			p.event("plannedHandoverAtKeyframe")
+			return errHandover
+		}
 	}
 }
 
@@ -1227,18 +1442,34 @@ func (p *flvProxy) spliceBase(sourceTs int64) int64 {
 
 // acceptTs 只在**同一轨道内部**拒绝时间戳回退，允许相等时间戳。
 // track: 0=音频、1=视频、-1=script/其它（不参与时间轴）。
+// acceptTs 保留原有「校验并提交」语义（历史测试与 AVC 序列头路径在用）。
+// 常规帧改走 validateTs + commitTs：只有标签真正写给下游后才推进时间轴，
+// 避免写失败/客户端断开时状态与输出不一致。
 func (p *flvProxy) acceptTs(track int, ts int64) bool {
-	p.tsMu.Lock()
-	defer p.tsMu.Unlock()
+	if !p.validateTs(track, ts) {
+		return false
+	}
+	p.commitTs(track, ts)
+	return true
+}
+
+func (p *flvProxy) validateTs(track int, ts int64) bool {
 	if track < 0 || track > 1 {
 		return true
 	}
-	if p.haveOut[track] && ts < p.lastOutTs[track] {
-		return false
+	p.tsMu.Lock()
+	defer p.tsMu.Unlock()
+	return !p.haveOut[track] || ts >= p.lastOutTs[track]
+}
+
+func (p *flvProxy) commitTs(track int, ts int64) {
+	if track < 0 || track > 1 {
+		return
 	}
+	p.tsMu.Lock()
 	p.lastOutTs[track] = ts
 	p.haveOut[track] = true
-	return true
+	p.tsMu.Unlock()
 }
 
 func (p *flvProxy) writeTag(tagHeader []byte, data []byte, ts int64) error {
@@ -1247,42 +1478,50 @@ func (p *flvProxy) writeTag(tagHeader []byte, data []byte, ts int64) error {
 	tagHeader[6] = byte(ts)
 	tagHeader[7] = byte(ts >> 24)
 	prevSize := uint32(flvProxyTagHeaderSize + len(data))
-	prev := []byte{byte(prevSize >> 24), byte(prevSize >> 16), byte(prevSize >> 8), byte(prevSize)}
+	// 拼成一帧一次写出：30~60fps 下旧实现的 3 次 Write + 1 次 Flush
+	// 每秒会产生上百次系统调用与 chunk 边界。
+	frame := make([]byte, 0, flvProxyTagHeaderSize+len(data)+flvProxyPrevTagSizeLen)
+	frame = append(frame, tagHeader...)
+	frame = append(frame, data...)
+	frame = append(frame, byte(prevSize>>24), byte(prevSize>>16), byte(prevSize>>8), byte(prevSize))
 
 	p.mu.Lock()
-	writer := p.client
-	flusher := p.flusher
+	client := p.client
 	p.mu.Unlock()
-	if writer == nil {
+	if client == nil {
 		return newError("本地播放器已断开")
 	}
-	if _, err := writer.Write(tagHeader); err != nil {
-		p.dropClient()
+	if err := p.writeToClient(client, frame); err != nil {
+		p.dropClientIf(client)
 		return newError("本地写入失败：%s", err.Error())
 	}
-	if _, err := writer.Write(data); err != nil {
-		p.dropClient()
-		return newError("本地写入失败：%s", err.Error())
-	}
-	if _, err := writer.Write(prev); err != nil {
-		p.dropClient()
-		return newError("本地写入失败：%s", err.Error())
-	}
-	if flusher != nil {
-		flusher.Flush()
-	}
+	p.rememberConfigTag(frame)
 	p.statsMu.Lock()
 	p.tagsWritten++
-	p.bytesWritten += int64(flvProxyTagHeaderSize + len(data) + flvProxyPrevTagSizeLen)
+	p.bytesWritten += int64(len(frame))
 	p.statsMu.Unlock()
 	return nil
 }
 
+func (p *flvProxy) dropClientIf(client *flvProxyClient) {
+	p.mu.Lock()
+	if p.client == client {
+		p.client = nil
+	}
+	p.mu.Unlock()
+	if client != nil {
+		client.retire()
+	}
+}
+
 func (p *flvProxy) dropClient() {
 	p.mu.Lock()
+	client := p.client
 	p.client = nil
-	p.flusher = nil
 	p.mu.Unlock()
+	if client != nil {
+		client.retire()
+	}
 }
 
 func (p *flvProxy) setLastError(message string) {
@@ -1370,7 +1609,12 @@ func (p *flvProxy) statsJSON() string {
 		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
 		"upstreamSessions":     p.upstreamSessions,
 		"reconnects":           p.reconnects,
+		"plannedHandovers":     p.plannedHandovers,
+		"idleTimeouts":         p.idleTimeouts,
+		"clientTakeovers":      p.clientTakeovers,
 		"candidateSwitches":    p.candidateSwitches,
+		"pacerTargetBufferMs":  p.pacerTargetMs.Load(),
+		"plannedRefreshLeadMs": p.tuning.plannedRefreshLeadMs,
 		"tagsWritten":          p.tagsWritten,
 		"bytesWritten":         p.bytesWritten,
 		"lastSessionMs":        p.lastSessionMs,

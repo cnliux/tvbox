@@ -1,3 +1,45 @@
+## v1.0.11 - 2026-11-13
+
+FLV 连续代理工程护栏加固、三档策略彻底分离与计划内切换（含 v1.0.10 之后未发布的三组改动）：
+
+- **斗鱼「一起看」独立重做（不复用虎牙思路）**：从 `pure_live` 提取 `expire=300` 与同轴时间轴线索，
+  新增斗鱼专属 `patchDouyuURL`（ws 短租线改写为 `expire=0`）、`douyuLeaseDeadline`（到期前主动
+  计划内重解析）、`douyuContinuityOffset`（同房间两次连接共享同一媒体时间轴）。`douyu-yqk`
+  使用 continuous 时间轴，不再套用虎牙的归零式 splice。
+- **其它平台独立通用档 `generic-live`**：自适应 `auto` 时间轴（动态容差 `min(1000ms, lastOut/2)`）、
+  独立 `generic*` 常量族，不改写 URL、不解析租约、不套虎牙全局 `controlledTs` 钳制。
+  `FlvContinuityProxy` 白名单仍只放虎牙/斗鱼，通用档作为防御性回退保留，其它平台不进代理、
+  也就不会误用任何一家的假设。
+- **修复代理单客户端致命缺陷**：旧 `ServeHTTP` 直接覆盖 `p.client`，第二个连接（解码器切换、
+  播放器重连、外部录制）会让旧连接饿死且新连接缺 AVC 序列头导致黑屏。现改为按连接代次
+  「新连接接管、旧连接退出」，并缓存真实 `onMetaData` / AVC / AAC 序列头按需补发；
+  FLV header flags 按实际轨道推导，支持 HEAD 与 `Accept-Ranges: none`。
+- **上游 15s 空闲读超时**：参考 livepurer 的 idle deadline，每次 `Read` 前刷新截止时间，
+  半开连接自动软重连（不计硬失败、不换线），避免虎牙/通用档永久阻塞；租约 timer 用完即 `Stop`。
+- **修正 pacer 目标缓冲语义**：旧实现只是给整条流加 5 秒直播延迟，并不会增加播放器 `bufferedMs`，
+  这正是「代理蓄流 5s、播放器只有 1.5–2.8s」的根因。现改为「首段预填窗口内按上游到达速度
+  立即转发，窗口之后实时匀速」，缓冲调试按钮才真正改变播放器侧缓冲；目标缓冲 per-proxy 化，
+  调整会写回所有在播实例并在下一帧重对齐，不再出现全局 atomic 造成的瞬时灌入或长等待。
+- **虎牙计划内预建双连接 + 关键帧切换**：提前 12s 预解析并预建第二条上游连接、缓冲到首个关键帧，
+  当前段在自己的关键帧处交接，消除 EOF 后解析/握手空窗（对标 PureLive `FlvSplicer`）。
+  刻意不按上一段时长学习，避免 125s→113s→101s 的正反馈；斗鱼租约与通用档 `lead=0`，
+  三档仍互不借用。新增 `prepareReady`/`plannedHandover` 等统计字段便于真机确认。
+- **写入与时间戳原子性**：`writeTag` 由 3 次 `Write` + `Flush` 合并为单次 `Write`；
+  `acceptTs` 拆成 `validateTs` + `commitTs`，写成功才推进时间轴，避免写失败留下时间轴空洞。
+- **Kotlin 超时对齐**：本地代理 `readTimeout` 20s→60s，看门狗首帧 12s→20s、stall 4s→15s，
+  避免代理静默续流被误判卡死而重建播放器，抵消「不重新 prepare」的设计目标。
+- **AAR 重绑守卫修复**：旧 `onlyIf { !platformLiveAar.exists() }` 导致 AAR 存在时改 Go 代码
+  也不会重绑、打进旧 `.so`。现按 `platform_live_go/**` 内容 SHA-256 指纹判定，
+  指纹落 `app/libs/platformlive.fingerprint`（CI 两处 cache path 同步），
+  strip 原地改写不再破坏 up-to-date 判定。
+- **工程清理**：移除 `handlers.go` 的 UTF-8 BOM（此前使 server 包 `go test -cover` 失败）；
+  更新 `FLV_CONTINUITY_VALIDATION.md` 两处过时说明；修正测试夹具把普通音频帧误写成 AAC 序列头。
+- 验证：`go vet` 干净、`go test -count=1 -cover ./...` 全绿（118 用例，覆盖率 43.1%→45.5%）、
+  新增 10 个用例重复 5 次稳定；`assembleDebug` BUILD SUCCESSFUL 并自动触发 AAR 重绑；
+  `.so` 内含 `prepareReady`/`plannedHandover`/`upstreamIdleTimeout`/`clientTakeover`/`pacerTargetRebased`；
+  指纹守卫两方向验证（源码变→重绑、未变→SKIPPED）；真机 192.168.1.37 安装启动无崩溃。
+  未覆盖：`-race` 因本机缺 gcc 未运行；adb over TCP 掉线，未做房间内长时监控。
+
 ## v1.0.10 - 2026-11-13
 
 斗鱼「一起看」重连策略与虎牙正式分道：
