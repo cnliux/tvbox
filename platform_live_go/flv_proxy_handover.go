@@ -118,6 +118,9 @@ type pullOptions struct {
 // prepareNextConnection 解析新地址、连上 CDN，并读到第一个视频关键帧。
 // 任何一步失败都返回 nil，调用方回落到原有的 EOF 后续拉路径，不会让播放中断。
 func (p *flvProxy) prepareNextConnection(ctx context.Context, resolve resolveCandidateFunc) *preparedStream {
+	if ctx.Err() != nil {
+		return nil
+	}
 	candidate, headers, err := resolve()
 	if err != nil {
 		p.event("prepareResolveFailed")
@@ -126,7 +129,16 @@ func (p *flvProxy) prepareNextConnection(ctx context.Context, resolve resolveCan
 	if p.tuning.leaseAware {
 		candidate.URL = patchDouyuURL(candidate.URL)
 	}
-	requestCtx, cancel := context.WithCancel(ctx)
+	// 关键：请求的生命周期只挂代理本身，绝不挂「等待预建」的 ctx。
+	// streamLoop 在每段结束（包括刚完成计划内交接）时会 stopPrepare() 取消
+	// 后者；若请求是它的子 context，刚接手的第二条连接会立刻被级联掐断，
+	// 下一段 consume 直接读到 context canceled，反而制造一次可见断流。
+	// 预备连接自己的关闭由 preparedStream.close()/hold timeout 负责。
+	baseCtx := p.ctx
+	if baseCtx == nil {
+		baseCtx = ctx
+	}
+	requestCtx, cancel := context.WithCancel(baseCtx)
 	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, candidate.URL, nil)
 	if err != nil {
 		cancel()

@@ -334,9 +334,13 @@ internal data class PlayerChromeCapabilities(
     val portraitMinimal: Boolean = false,
     /** 页面注入的自定义按钮，统一追加在内置功能按钮之后。 */
     val actions: List<PlayerChromeAction> = emptyList(),
-    /** 调试：pacer 目标缓冲（毫秒），0 表示关闭；用于「一起看」续流缓冲实时调试。 */
-    val pacerBufferMs: Long = 0,
-    val onCyclePacerBuffer: (() -> Unit)? = null,
+    /**
+     * 手机端调试按钮：切换实时调试浮层（续流统计 / 播放健康）。
+     * 与 [actions] 分开是因为竖屏精简会清空 actions，而调试入口需要在竖屏保留；
+     * 电视端不注入，仍使用页面自己的底部按钮行。
+     */
+    val debugActive: Boolean = false,
+    val onToggleDebug: (() -> Unit)? = null,
 )
 
 /**
@@ -372,9 +376,9 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             subtitleTracks = false,
             portraitMinimal = true,
             actions = emptyList(),
-            // 调试按钮（pacer 缓冲）在竖屏也保留，方便手机端实时调缓冲。
-            pacerBufferMs = this.pacerBufferMs,
-            onCyclePacerBuffer = this.onCyclePacerBuffer,
+            // 竖屏只保留调试入口：手机端靠它现场看播放健康，缓冲档位按钮不再下发。
+            debugActive = this.debugActive,
+            onToggleDebug = this.onToggleDebug,
         )
     } else {
         this
@@ -624,10 +628,6 @@ private fun PlayerChromeTv(
                             onClick = { action.onClick(); actions.onInteraction() },
                             primary = action.primary,
                         )
-                    }
-                    // 调试：pacer 目标缓冲循环按钮（「一起看」续流缓冲实时调试）。
-                    capabilities.onCyclePacerBuffer?.let { cb ->
-                        ControlButton(pacerBufferLabel(capabilities.pacerBufferMs), cb)
                     }
                 }
             }
@@ -903,9 +903,12 @@ private fun PlayerChromeTouch(
                             action.onClick(); actions.onInteraction()
                         })
                     }
-                    // 调试：pacer 目标缓冲循环按钮（手机端与 TV 同语义）。
-                    capabilities.onCyclePacerBuffer?.let { cb ->
-                        add(ChromeFeature(pacerBufferLabel(capabilities.pacerBufferMs)) {
+                    // 手机端调试入口：竖屏精简后这一项仍然保留（替代原来的缓冲档位按钮）。
+                    capabilities.onToggleDebug?.let { cb ->
+                        add(ChromeFeature(
+                            label = if (capabilities.debugActive) "调试·开" else "调试",
+                            selected = capabilities.debugActive,
+                        ) {
                             cb(); actions.onInteraction()
                         })
                     }

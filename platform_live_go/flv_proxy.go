@@ -454,6 +454,10 @@ type flvProxy struct {
 	// pacer 目标缓冲为「每个代理一份」，运行时调整写回全部在播实例。
 	pacerTargetMs atomic.Int64
 	pacerRebase   atomic.Bool
+	// pacer 的墙钟/媒体基准必须跨上游会话保持：若每段 consume 都重新做一次
+	// 目标缓冲预填，计划内交接（虎牙约每 2 分钟一次）就会周期性把数秒数据
+	// 突发灌给播放器，正是「还剩一点点卡顿」的来源。
+	pacer flvPacer
 
 	// 音/视频各自一条输出时间轴：索引 0=音频(tag 8)、1=视频(tag 9)。
 	// FLV 两轨时间戳本来就是交错的，用单一全局 lastTs 比较会把落后几十毫秒
@@ -507,6 +511,8 @@ type flvProxy struct {
 	tsRejectedVideo      int64
 	tsRejectedAudio      int64
 	pacerWaitMs          int64
+	// 交接后积压追帧 / 时间戳跳变导致 pacer 重新对齐的次数（真机定位卡顿用）。
+	pacerRebases int64
 	lastVideoForwardedAt time.Time
 	lastAudioForwardedAt time.Time
 	recentEvents         []string
@@ -831,6 +837,7 @@ func (p *flvProxy) streamLoop() {
 				if stream != nil {
 					if preparedNext == nil {
 						preparedNext = stream
+						stream.take()
 					} else {
 						stream.close()
 					}
@@ -1014,7 +1021,13 @@ func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string
 	reader := bufio.NewReaderSize(response.Body, 128*1024)
 	consumeErr := p.consumeWithOptions(reader, state)
 	if consumeErr == errHandover {
-		return false, state.prepared(), nil
+		// 交接已发生，立刻标记为「已取用」，避免 20s hold timeout 的定时器
+		// 在 streamLoop 拿到它之前把这条连接关掉。
+		prepared := state.prepared()
+		if prepared != nil {
+			prepared.take()
+		}
+		return false, prepared, nil
 	}
 	if consumeErr == errUpstreamIdle {
 		// 上游静默：软重连，不记硬失败、不换线路。
@@ -1075,17 +1088,14 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 	// 被丢弃的回放帧在源时间轴上占了几毫秒：转发新内容时必须扣掉，
 	// 否则输出时间轴会撕出与回放等长的空洞（播放器表现为卡住几秒）。
 	var droppedSourceMs int64
+	// offset 锁定之前已累计的丢弃量。这段时间轴已经在 spliceBase 里被
+	// 平移吸收，若后续帧再把它扣一遍，输出时间戳会被拉回上一段交付位置之前，
+	// 触发 validateTs 拒绝 / controlledTs 钳制，续段表现为卡住数秒。
+	var droppedAtBase int64
 	var prevSourceTs int64
 	var havePrevSourceTs bool
-	// pacer：目标缓冲区间的帧按上游到达速度立即预填给播放器（形成真实缓冲），
-	// 之后按输出媒体时间实时匀速发送，避免上游突发把数秒数据瞬间灌给播放器。
-	// 旧实现「整体延迟 target」只增加直播延迟，并不会增加播放器 bufferedMs。
-	var pacerFirstTs int64
-	var pacerMediaStart int64
-	var pacerWallStart time.Time
-	var pacerStarted bool
-	var pacerHaveFirst bool
-	prefillMs := p.pacerTargetMs.Load()
+	// pacer 的墙钟基准保存在 p.pacer，跨上游会话保持，这里不再有
+	// 任何「每段重新预填」的局部状态。
 
 	// 诊断：记录本段相对上一段的落差，判断重连后是“连续时间戳”还是“归零重置”。
 	p.tsMu.Lock()
@@ -1215,6 +1225,9 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 				adjusted = p.spliceBase(sourceTs)
 			}
 			offset = adjusted - sourceTs
+			// 基准之前丢掉的回放帧已经通过 spliceBase/自适应偏移被平移吸收，
+			// 后续帧只压缩「基准之后」新增的丢弃量，避免重复扣减。
+			droppedAtBase = droppedSourceMs
 			haveBase = true
 			gap := sourceTs - p.segLastOutTsBefore
 			p.statsMu.Lock()
@@ -1247,7 +1260,8 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			// 虎牙 / 通用档：丢弃回放帧后压缩源时间轴，避免输出时间轴出现数秒
 			// 空洞导致播放器卡住。这是 FLV 续流的通用正确性保证，不是任何平台
 			// 的专属假设；两档真正的差异在首帧对齐方式与全局钳制策略。
-			adjusted = sourceTs - droppedSourceMs + offset
+			// 只扣基准之后的增量（droppedAtBase 见上方说明）。
+			adjusted = sourceTs - (droppedSourceMs - droppedAtBase) + offset
 		}
 		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差；
 		// 兜底保证输出严格不回退（acceptTs 只允许相等，这里保证至少 +1ms）。
@@ -1277,45 +1291,37 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			p.statsMu.Unlock()
 			continue
 		}
-		// pacer「首段预填」：
-		//  - 目标窗口内的帧按上游到达速度立即交给播放器，让播放器真的攒下缓冲；
-		//  - 窗口之后以当前帧为墙钟/媒体基准，按输出媒体时间实时匀速输出；
-		//  - 运行时调整目标缓冲时从当前帧重新对齐基准，不产生整段跳变。
-		// 单帧等待超过 pacerMaxDelay 说明时间戳跳变/长空窗后追帧，重置基准而非空等。
+		// pacer：预填只在开播首段做一次，之后跨重连/租约续期/计划内交接
+		// 保持同一条实时匀速曲线（状态在 p.pacer）。落后超过预算说明读到的是
+		// 交接后预建连接里的积压旧帧，重新对齐基准，避免一整段数据瞬间灌入。
 		if p.pacerEnabled && p.ctx.Err() == nil {
-			if p.pacerRebase.Swap(false) {
-				prefillMs = p.pacerTargetMs.Load()
-				pacerStarted = false
-				pacerHaveFirst = false
+			targetRebased := p.pacerRebase.Swap(false)
+			if targetRebased {
 				p.event("pacerTargetRebased")
 			}
-			if !pacerHaveFirst {
-				pacerHaveFirst = true
-				pacerFirstTs = adjusted
-			}
-			if !pacerStarted && adjusted-pacerFirstTs >= prefillMs {
-				pacerStarted = true
-				pacerMediaStart = adjusted
-				pacerWallStart = time.Now()
-			}
-			if pacerStarted {
-				deadline := pacerWallStart.Add(
-					time.Duration(adjusted-pacerMediaStart) * time.Millisecond)
-				if delay := time.Until(deadline); delay > p.tuning.pacerMaxDelay {
-					pacerMediaStart, pacerWallStart = adjusted, time.Now()
+			wait, rebased, catchUp := p.pacer.pace(
+				adjusted, p.pacerTargetMs.Load(), p.tuning.pacerMaxDelay, targetRebased)
+			if rebased {
+				p.statsMu.Lock()
+				p.pacerRebases++
+				p.statsMu.Unlock()
+				if catchUp {
+					p.event("pacerCatchUpRebased")
+				} else {
 					p.event("pacerRebased")
-				} else if delay > 0 {
-					timer := time.NewTimer(delay)
-					select {
-					case <-p.ctx.Done():
-						timer.Stop()
-						return newError("代理已关闭")
-					case <-timer.C:
-					}
-					p.statsMu.Lock()
-					p.pacerWaitMs += delay.Milliseconds()
-					p.statsMu.Unlock()
 				}
+			}
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-p.ctx.Done():
+					timer.Stop()
+					return newError("代理已关闭")
+				case <-timer.C:
+				}
+				p.statsMu.Lock()
+				p.pacerWaitMs += wait.Milliseconds()
+				p.statsMu.Unlock()
 			}
 		}
 		if err := p.writeTag(tagHeader, data, adjusted); err != nil {
@@ -1628,8 +1634,10 @@ func (p *flvProxy) statsJSON() string {
 		// 双轨时间戳过滤拦下的帧数：旧版全局时间戳会在这里大量丢帧。
 		"tsRejectedVideo": p.tsRejectedVideo,
 		"tsRejectedAudio": p.tsRejectedAudio,
-		// pacer 累计等待时长，持续增长说明上游突发已被平滑。
+		// pacer 累计等待时长，持续增长说明上游突发已被平滑；
+		// pacerRebases 上升说明发生过时间戳跳变或交接积压追帧的重新对齐。
 		"pacerWaitMs":      p.pacerWaitMs,
+		"pacerRebases":     p.pacerRebases,
 		"dropReplayActive": p.dropReplayActive,
 		"guardActiveNow":   p.guardActiveNow,
 		"segGap":           p.segGap,

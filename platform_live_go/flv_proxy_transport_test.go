@@ -406,6 +406,17 @@ func TestStreamLoopUsesPlannedHandover(t *testing.T) {
 			if got := atomic.LoadInt64(&sessions); got < 2 {
 				t.Fatalf("计划内交接应建立第二条上游连接，实际会话数 %d", got)
 			}
+			// 让交接后的第二条连接真正跑一段：旧实现里 stopPrepare() 会级联
+			// 取消预建请求，使 consume 立刻读到 context canceled / 空闲超时。
+			time.Sleep(300 * time.Millisecond)
+			proxy.statsMu.Lock()
+			lastErr := proxy.lastError
+			idle := proxy.idleTimeouts
+			proxy.statsMu.Unlock()
+			if lastErr != "" || idle > 0 {
+				t.Fatalf("计划内交接不应制造断流：lastError=%q idleTimeouts=%d 统计=%s",
+					lastErr, idle, proxy.statsJSON())
+			}
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

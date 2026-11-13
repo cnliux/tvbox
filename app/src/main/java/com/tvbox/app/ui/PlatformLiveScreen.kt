@@ -1290,8 +1290,9 @@ private fun PlatformLivePlayerScreen(
                 )
             )
         }
-        // 调试监控只出现在调试包：正式版里它是纯干扰项，普通用户只会误点。
-        if (BuildConfig.DEBUG) {
+        // 电视端调试监控：只出现在调试包，正式版里它是纯干扰项。
+        // 手机端不进 actions（竖屏会被精简裁掉），改由 capabilities 的专用调试按钮注入。
+        if (BuildConfig.DEBUG && !isMobile) {
             add(
                 PlayerChromeAction(
                     label = if (showDebugMonitor) "监控·开" else "监控",
@@ -1450,9 +1451,10 @@ private fun PlatformLivePlayerScreen(
                     info = true,
                     url = true,
                     actions = liveActions,
-                    // pacer 目标缓冲调试按钮（手机端经 PlayerChromeTouch 渲染，竖屏也保留）。
-                    pacerBufferMs = pacerBufferMs,
-                    onCyclePacerBuffer = cyclePacerBuffer,
+                    // 手机端不再提供「缓冲档位」按钮，改为一个竖屏也保留的调试入口：
+                    // 点击打开与电视端相同的实时播放健康/续流统计浮层。
+                    debugActive = showDebugMonitor,
+                    onToggleDebug = { showDebugMonitor = !showDebugMonitor; chrome.bump() },
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {
@@ -1655,7 +1657,7 @@ private fun PlatformLivePlayerScreen(
         // 让弹幕/监控和播放器其它控制按钮同处底部、同样式、同样可被遥控器聚焦。
         // 手机端已由 PlayerChrome 统一渲染，避免重复出现两组按钮。
         // 只在控制条可见时出现：横屏全屏看直播时顶栏已收起，常驻会一直压在画面上。
-        if (!isMobile && chrome.visible && (liveActions.isNotEmpty() || cyclePacerBuffer != null)) {
+        if (!isMobile && chrome.visible) {
             Row(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
@@ -1671,10 +1673,8 @@ private fun PlatformLivePlayerScreen(
                         primary = action.primary,
                     )
                 }
-                // pacer 目标缓冲调试按钮（与「一起看」续流缓冲实时调试）。
-                cyclePacerBuffer?.let { cb ->
-                    ControlButton(pacerBufferLabel(pacerBufferMs), cb)
-                }
+                // 电视端保留 pacer 目标缓冲档位按钮；手机端已改为调试入口。
+                ControlButton(pacerBufferLabel(pacerBufferMs), cyclePacerBuffer)
             }
         }
 
@@ -1705,8 +1705,9 @@ private fun PlatformLivePlayerScreen(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .fillMaxWidth(0.62f)
-                    .fillMaxHeight(0.5f)
+                    // 手机竖屏太窄，0.62f 会把续流统计折成多行；调试面板按屏宽自适应。
+                    .fillMaxWidth(if (isMobile) 0.9f else 0.62f)
+                    .fillMaxHeight(if (isMobile) 0.42f else 0.5f)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(16.dp)
                     .clip(MaterialTheme.shapes.small)

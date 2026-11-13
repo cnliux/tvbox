@@ -10,6 +10,8 @@ import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -98,8 +100,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
-import com.tvbox.app.data.PacerDebugPrefs
-import platformlive.Platformlive
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
@@ -751,13 +751,16 @@ private fun MobileLivePlayerScreen(
     HardwareDecoderFallbackToast()
     // 解码策略变化会重建播放器：重连当前频道/线路时提示一次。
     var playerBuilt by remember { mutableStateOf(false) }
-    // pacer 目标缓冲调试：循环切换 2s/5s/8s/关闭，实时写回 Go 全局变量并持久化。
-    var pacerBufferMs by rememberSaveable { mutableLongStateOf(PacerDebugPrefs.loadPacerBufferMs(context)) }
-    val cyclePacerBuffer: () -> Unit = {
-        val next = PacerDebugPrefs.nextPreset(pacerBufferMs)
-        pacerBufferMs = next
-        PacerDebugPrefs.savePacerBufferMs(context, next)
-        runCatching { Platformlive.setPacerTargetBufferMs(next) }
+    // 手机端调试浮层：替代原来的「缓冲档位」按钮，点击后在画面左上角显示播放健康快照。
+    // 1s 心跳只为触发重组读取 ExoPlayer 的实时计数，关闭时协程立即结束、不空转。
+    var showDebugOverlay by rememberSaveable { mutableStateOf(false) }
+    var debugTick by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(showDebugOverlay) {
+        if (!showDebugOverlay) return@LaunchedEffect
+        while (true) {
+            delay(1_000L)
+            debugTick++
+        }
     }
     LaunchedEffect(player) {
         if (playerBuilt) {
@@ -1004,9 +1007,9 @@ private fun MobileLivePlayerScreen(
                         channel = true,
                         info = true,
                         url = true,
-                        // pacer 目标缓冲调试按钮（手机端经 PlayerChromeTouch 渲染，竖屏也保留）。
-                        pacerBufferMs = pacerBufferMs,
-                        onCyclePacerBuffer = cyclePacerBuffer,
+                        // 手机端调试按钮：竖屏精简后仍保留，替代原缓冲档位循环按钮。
+                        debugActive = showDebugOverlay,
+                        onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
                     ),
                     actions = PlayerChromeActions(
                         onToggle = {
@@ -1058,6 +1061,22 @@ private fun MobileLivePlayerScreen(
         )
     }
 
+    // 调试浮层文本：只读现有播放状态，由上面的 1s 心跳触发重组刷新。
+    // 普通电视直播没有续流代理，因此这里展示线路/缓冲/解码与看门狗相关指标。
+    val debugText = if (showDebugOverlay) buildString {
+        appendLine("频道: ${channel.groupName}/${channel.name}")
+        appendLine("线路: ${lineIndex + 1}/${channel.lines.size} ${currentLine.protocolHint}")
+        appendLine("地址: ${logSafeUrl(currentLine.url)}")
+        appendLine("播放: ready=${playbackHost.snapshot.playWhenReady} buffering=${playbackHost.snapshot.isBuffering} 阻塞=$streamBlocked")
+        appendLine("缓冲: ${(player.bufferedPosition - player.currentPosition).coerceAtLeast(0L)}ms 位置=${player.currentPosition}ms")
+        appendLine("画面: ${player.videoSize.width}x${player.videoSize.height}")
+        val counters = player.videoDecoderCounters
+        appendLine("解码: render=${counters?.renderedOutputBufferCount ?: -1} drop=${counters?.droppedBufferCount ?: -1}")
+        appendLine("策略: ${state.appSettings.decoderStrategy} 回落=${HardwareDecoderFallbackNotice.kinds}")
+        appendLine("首帧耗时: ${lineFirstFrameMs[currentLine.url] ?: -1}ms 失败=$blockedFailureKind")
+        append("采样: $debugTick")
+    } else ""
+
     if (!isPortrait) {
         // 横屏全屏：仅播放区铺满（控件 4s 自动隐藏，单击唤出）。
         Box(
@@ -1066,6 +1085,9 @@ private fun MobileLivePlayerScreen(
                 .background(Color.Black),
         ) {
             playerSurface()
+            if (showDebugOverlay) {
+                MobileLiveDebugOverlay(debugText, Modifier.align(Alignment.TopStart))
+            }
         }
         return
     }
@@ -1120,6 +1142,9 @@ private fun MobileLivePlayerScreen(
                 .background(Color.Black),
         ) {
             playerSurface()
+            if (showDebugOverlay) {
+                MobileLiveDebugOverlay(debugText, Modifier.align(Alignment.TopStart))
+            }
         }
 
         // 2. 频道信息区（约 80dp）。
@@ -1580,6 +1605,26 @@ private fun LiveBlockedAction(text: String, onClick: () -> Unit) {
             fontWeight = FontWeight.Bold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** 手机端调试浮层：竖屏播放区高度有限，正文限高且可滚动，不遮挡整块画面。 */
+@Composable
+private fun MobileLiveDebugOverlay(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .padding(12.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xCC000000))
+            .heightIn(max = 180.dp)
+            .padding(10.dp),
+    ) {
+        Text(
+            text = text,
+            color = Color(0xFF7AE2BA),
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.verticalScroll(rememberScrollState()),
         )
     }
 }
