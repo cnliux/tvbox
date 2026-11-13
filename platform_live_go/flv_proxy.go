@@ -88,6 +88,46 @@ const (
 	huyaShortBackoffMax        = 5 * time.Second
 )
 
+// ───────────── 通用档：其它平台（B站 / 抖音 / 快手等）的独立中性策略 ─────────────
+//
+// 用户明确要求：其它平台既不能用虎牙的方式，也不能用斗鱼的方式，否则容易出错。
+// 虎牙的 12s 去重窗口来自「回放缓冲 6.08s」实测、归零时间轴来自虎牙 CDN 语义；
+// 斗鱼的 8s 窗口 / 连续时间轴 / URL 租约补丁来自斗鱼 CDN 特性。把任何一方的
+// 站点专属假设套到第三个平台，都会误判回放、错误平移时间戳或改坏播放地址。
+//
+// 因此通用档：
+//   - 常量全部独立命名、独立取值，**不引用任何 huya* / douyu* 或按虎牙实测调出的
+//     flvProxyReplayWindowMs 等历史常量**；
+//   - 时间轴不预设「归零」也不预设「同轴」，按新段实际首帧自适应（timelineAuto）；
+//   - 不改写 URL、不解析 expire 租约、不启用任何平台专属补丁；
+//   - 快速续拉取独立的中性次数，短段只温和退避、绝不换线；
+//   - 回放去重后的时间轴压缩是 FLV 通用正确性保证（避免空洞），
+//     但不用虎牙的全局钳制，也不用斗鱼/虎牙的首帧对齐假设。
+const (
+	// 去重窗口取一个足够覆盖常见 2~5 秒回放缓冲的中性值，刻意不等于虎牙 12s / 斗鱼 8s。
+	genericReplayWindowMs       = int64(10000)
+	genericReplayGuardMaxFrames = 5400 // 通用防失控上限（约 180s @30fps），与虎牙实测无关
+	genericSpliceStepMs         = int64(33)
+	genericPacerMaxDelay        = 6 * time.Second
+	// 同地址快速续拉 2 次（虎牙 3 次、斗鱼 1 次都是各自 CDN 的实测值，通用档取
+	// 独立的中性次数）。保留该机制是 FLV 代理的通用正确性前提：正常关流后
+	// 立即复用地址续拉，避免每次续流都重跑平台解析导致播放器缓冲耗尽。
+	// 超过次数或遇到 403/签名过期则重新解析，不会在旧地址上空转。
+	genericMaxFastReconnectStreak = 2
+	genericShortSessionMs         = int64(3000)
+	// -1 = 显式禁用「短段频发换线」（虎牙 4 次换线、斗鱼 0 次禁用都属平台专属策略，
+	// 通用档用独立的取值与语义：没有任何平台实测依据，就不主动切线路）。
+	genericMaxShortStreak   = -1
+	genericShortBackoffBase = 1 * time.Second
+	genericShortBackoffMax  = 4 * time.Second
+	// 自适应时间轴容差上限：新段首帧比已交付位置落后不超过该值仍视为同轴
+	// （两轨交错/抖动），只有明显回退（典型的时间戳归零重启）才平移续接。
+	// 实际容差还会被「已交付位置的一半」约束，见 genericTimelineTolerance。
+	genericTimelineResetToleranceMs = int64(1000)
+)
+
+// ───────────────────── 通用档常量结束 ─────────────────────
+
 // flvSiteTuning 把「一起看」续流代理的关键参数按平台分档，
 // 让斗鱼与虎牙不再共用同一套调参——它们的回放缓冲形态差异很大：
 // - 虎牙「一起看」续流会「先给一个全新关键帧，再跟 6 秒旧缓冲」，回放窗口必须够长；
@@ -112,13 +152,16 @@ type flvSiteTuning struct {
 	// 短段指数退避的起始值与上限。
 	shortBackoffBase time.Duration
 	shortBackoffMax  time.Duration
-	// —— 时间轴语义（斗鱼与虎牙的又一核心差异）——
-	// false（虎牙/默认）：新一段源时间戳从 0 重启，必须平移接续上一段输出
-	//   （spliceBase = maxOutTs + step，历史行为，逐字保留）。
-	// true（斗鱼）：同一房间两次连接共享同一时间轴（pure_live 实测结论），
-	//   新连接的时间戳天然连续，直接沿用源时间戳，不做 spliceBase 平移；
-	//   仅当与已交付位置差超过对齐窗口（另一条时间轴）才平移续接。
+	// —— 时间轴语义：三档互斥，其它平台绝不套用虎牙/斗鱼的假设 ——
+	// timelineContinuous=false && timelineAuto=false（虎牙）：新一段源时间戳从 0
+	//   重启，必须平移接续上一段输出（spliceBase = maxOutTs + step，历史行为，逐字保留）。
+	// timelineContinuous=true（斗鱼）：同一房间两次连接共享同一时间轴（pure_live 实测），
+	//   新连接时间戳天然连续，直接沿用源时间戳，不做 spliceBase 平移；
+	//   仅当与已交付位置差超过 60s 对齐窗口（另一条时间轴）才平移续接。
+	// timelineAuto=true（通用档）：不预设「归零」也不预设「同轴」，按新段首帧与
+	//   已交付位置的实际关系自适应决定；既不无条件平移，也不按固定窗口强行同轨。
 	timelineContinuous bool
+	timelineAuto       bool
 	// —— URL 租约（斗鱼专属）——
 	// true（斗鱼）：解析出的播放地址可能带 expire=N（N 秒后 CDN 主动断流）。
 	//   代理要①给 ws 短租线打 expire=0 补丁；②在租约到期前主动断开重解析，
@@ -126,7 +169,21 @@ type flvSiteTuning struct {
 	leaseAware bool
 }
 
-// siteTuningFor 按平台返回专属调参；未知平台回退到与历史默认一致的保护档，避免行为漂移。
+// timelineModeName 返回档位的时间轴语义，供 statsJSON / 真机监控区分三档。
+func (t flvSiteTuning) timelineModeName() string {
+	switch {
+	case t.timelineContinuous:
+		return "continuous" // 斗鱼：同轴
+	case t.timelineAuto:
+		return "auto" // 通用档：按实际首帧自适应
+	default:
+		return "reset" // 虎牙：归零重启 + spliceBase 平移
+	}
+}
+
+// siteTuningFor 返回**三档互斥**的调参：虎牙、斗鱼、其它平台（通用中性档）。
+// 只有精确匹配 douyu / huya 才使用各自的站点专属策略；其余一律走通用档，
+// 绝不把任一平台的实测假设或专属逻辑借给第三个平台。
 func siteTuningFor(site string) flvSiteTuning {
 	switch strings.ToLower(strings.TrimSpace(site)) {
 	case "douyu":
@@ -147,6 +204,7 @@ func siteTuningFor(site string) flvSiteTuning {
 			shortBackoffBase:       2 * time.Second,
 			shortBackoffMax:        8 * time.Second,
 			timelineContinuous:     true,
+			timelineAuto:           false,
 			leaseAware:             true,
 		}
 	case "huya":
@@ -162,22 +220,26 @@ func siteTuningFor(site string) flvSiteTuning {
 			shortBackoffBase:       huyaShortBackoffBase,
 			shortBackoffMax:        huyaShortBackoffMax,
 			timelineContinuous:     false,
+			timelineAuto:           false,
 			leaseAware:             false,
 		}
 	default:
-		// 其它平台（B站/抖音/快手等）沿用历史默认（= 虎牙策略），行为不变。
+		// 其它平台（B站 / 抖音 / 快手 / 自定义源等）：**通用中性档**。
+		// 不引用任何 huya* / douyu* / 按虎牙实测调出的历史常量，也不启用
+		// 归零平移、连续时间轴、URL 租约补丁等站点专属逻辑。
 		return flvSiteTuning{
-			name:                   "default",
-			replayWindowMs:         flvProxyReplayWindowMs,
-			replayGuardMaxFrames:   flvProxyReplayGuardMaxFrames,
-			spliceStepMs:           flvProxySpliceStepMs,
-			pacerMaxDelay:          flvProxyPacerMaxDelay,
-			maxFastReconnectStreak: huyaMaxFastReconnectStreak,
-			shortSessionMs:         huyaShortSessionMs,
-			maxShortStreak:         huyaMaxShortStreak,
-			shortBackoffBase:       huyaShortBackoffBase,
-			shortBackoffMax:        huyaShortBackoffMax,
+			name:                   "generic-live",
+			replayWindowMs:         genericReplayWindowMs,
+			replayGuardMaxFrames:   genericReplayGuardMaxFrames,
+			spliceStepMs:           genericSpliceStepMs,
+			pacerMaxDelay:          genericPacerMaxDelay,
+			maxFastReconnectStreak: genericMaxFastReconnectStreak,
+			shortSessionMs:         genericShortSessionMs,
+			maxShortStreak:         genericMaxShortStreak,
+			shortBackoffBase:       genericShortBackoffBase,
+			shortBackoffMax:        genericShortBackoffMax,
 			timelineContinuous:     false,
+			timelineAuto:           true,
 			leaseAware:             false,
 		}
 	}
@@ -234,10 +296,10 @@ func patchDouyuURL(rawURL string) string {
 }
 
 // douyuContinuityOffset 计算斗鱼新一段相对已交付位置的拼接偏移：
-// - 已无输出（首段）：偏移 0，完全沿用源时间戳；
-// - 新段首帧与已交付位置差在对齐窗口内：同一条时间轴，偏移 0 直接衔接；
-// - 差在窗口之外（另一条时间轴/长空窗）：平移到紧接已交付位置之后，
-//   输出时间轴无缝续接（pure_live 语义：last+1-source）。
+//   - 已无输出（首段）：偏移 0，完全沿用源时间戳；
+//   - 新段首帧与已交付位置差在对齐窗口内：同一条时间轴，偏移 0 直接衔接；
+//   - 差在窗口之外（另一条时间轴/长空窗）：平移到紧接已交付位置之后，
+//     输出时间轴无缝续接（pure_live 语义：last+1-source）。
 func douyuContinuityOffset(lastOutBefore, sourceTs int64) int64 {
 	if lastOutBefore <= 0 {
 		return 0
@@ -266,6 +328,43 @@ func douyuLeaseDeadline(rawURL string, now time.Time) time.Time {
 }
 
 // ───────────────────── 斗鱼专属辅助结束 ─────────────────────
+
+// ───────────────────── 通用档：自适应时间轴（不预设平台语义） ─────────────────────
+//
+// 虎牙假设「新段时间戳必然归零」所以无条件平移；斗鱼假设「新段必然同轴」所以在
+// 60s 窗口内一律不平移。两者的假设都只对各自平台成立。通用档不猜，只看数据：
+//   - 首段（还没有已交付帧）：原样沿用源时间戳；
+//   - 新段首帧在已交付位置附近或更靠后：视为同轴/连续，偏移 0 直接衔接
+//     （避免虎牙式无条件平移把音视频相对位置拉开）；
+//   - 新段首帧明显回退（超过容差，典型的时间戳归零重启）：平移到已交付位置
+//     之后续接（避免斗鱼式固定窗口把归零段当成同轴、导致整段被 acceptTs 丢弃）。
+//
+// genericTimelineTolerance 返回「仍视为同轴」的最大回退量 = min(1000ms, lastOut/2)。
+// 若直接用固定 1000ms，流刚开始时（已交付 ts=66）新段归零到 0 会落在
+// 66-1000 之内、被误判为同轴，整段因时间戳回退被 acceptTs 丢弃。
+// 按已交付位置的一半收窄，可在任意时刻正确识别归零重启。
+func genericTimelineTolerance(lastOutBefore int64) int64 {
+	if lastOutBefore <= 0 {
+		return 0
+	}
+	half := lastOutBefore / 2
+	if half < genericTimelineResetToleranceMs {
+		return half
+	}
+	return genericTimelineResetToleranceMs
+}
+
+func genericTimelineOffset(lastOutBefore, sourceTs, stepMs int64) int64 {
+	if lastOutBefore <= 0 {
+		return 0
+	}
+	if sourceTs >= lastOutBefore-genericTimelineTolerance(lastOutBefore) {
+		return 0
+	}
+	return lastOutBefore + stepMs - sourceTs
+}
+
+// ───────────────────── 通用档辅助结束 ─────────────────────
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
 type FlvProxyHandle struct {
@@ -318,9 +417,10 @@ func (h *FlvProxyHandle) Stats() string {
 }
 
 type flvProxy struct {
-	service        *Service
-	site           string
-	// 按平台分档的续流调参（斗鱼/虎牙「一起看」各自独立，避免共用一套参数）。
+	service *Service
+	site    string
+	// 三档互斥的续流调参：虎牙 / 斗鱼 / 其它平台（通用中性档）。
+	// 只有斗鱼与虎牙使用各自站点专属逻辑，其余平台一律不借用。
 	tuning         flvSiteTuning
 	roomID         string
 	candidateIndex int
@@ -417,15 +517,17 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 		return nil, newError("本机直播代理启动失败：%s", err.Error())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	// 斗鱼专属：Kotlin 侧解析出的首段地址若为 ws 短租线，立即打 expire=0 补丁，
-	// 避免 5 分钟租约到期后 CDN 强杀连接（虎牙及其它平台地址原样保留）。
-	if Text(site, "") == "douyu" {
+	tuning := siteTuningFor(site)
+	// 只有启用租约语义的档位（当前仅斗鱼）才改写首段地址：ws 短租线打
+	// expire=0 补丁，避免 5 分钟租约到期后被 CDN 强杀。虎牙与通用档的
+	// 地址一律原样保留，绝不套用斗鱼的 URL 补丁。
+	if tuning.leaseAware {
 		initialURL = patchDouyuURL(Text(initialURL, ""))
 	}
 	proxy := &flvProxy{
 		service:        service,
 		site:           site,
-		tuning:         siteTuningFor(site),
+		tuning:         tuning,
 		roomID:         roomID,
 		candidateIndex: candidateIndex,
 		initialURL:     Text(initialURL, ""),
@@ -604,8 +706,9 @@ func (p *flvProxy) streamLoop() {
 			candidate = stream.Candidates[candidateIndex%len(stream.Candidates)]
 			headers = stream.Headers
 		}
-		// 斗鱼专属：地址租约处理。ws 短租线打 expire=0 补丁；带 expire 的地址
-		// 在到期前主动断开做计划内切换（虎牙及其它平台 leaseAware=false，完全不变）。
+		// 仅斗鱼：地址租约处理。ws 短租线打 expire=0 补丁；带 expire 的地址
+		// 在到期前主动断开做计划内切换。虎牙与通用档 leaseAware=false，
+		// 不改写 URL、不解析租约、不触发计划内切换。
 		if p.tuning.leaseAware {
 			candidate.URL = patchDouyuURL(candidate.URL)
 		}
@@ -638,10 +741,11 @@ func (p *flvProxy) streamLoop() {
 				fastReconnectCandidate = &candidate
 				fastReconnectHeaders = headers
 			}
-			// 短/空段（上游很快关闭）：按平台分档的重连策略处理。
+			// 短/空段（上游很快关闭）：按三档各自的策略处理，互不相干。
 			// 虎牙：500ms 指数退避、连续 4 次短段换线（CDN 易抖，需主动切）。
 			// 斗鱼：2s 起步的耐心退避、**永不因短段换线**（CDN 稳定，信任线路，
 			// 坏线路由硬失败路径兜底）。
+			// 通用档：1s 起步的温和退避、显式禁用短段换线；EOF 后一律重新解析。
 			if p.lastSessionMs < p.tuning.shortSessionMs {
 				shortStreak++
 				// 移位封顶防溢出：斗鱼档不换线时 shortStreak 会持续增长，
@@ -899,13 +1003,18 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		adjusted := sourceTs
 		if !haveBase {
 			prefixLastTs := lastOutBefore
-			if p.tuning.timelineContinuous {
+			switch {
+			case p.tuning.timelineContinuous:
 				// 斗鱼：同一房间两次上游连接共享同一条时间戳时间轴（pure_live 实测），
 				// 新段源时间戳天然连续，直接沿用；仅当与已交付位置差超出对齐窗口
-				//（另一条时间轴/长空窗）才平移续接。虎牙不进这条路径。
+				//（另一条时间轴/长空窗）才平移续接。虎牙/通用档不进这条路径。
 				adjusted = sourceTs + douyuContinuityOffset(lastOutBefore, sourceTs)
-			} else {
-				// 虎牙/默认：新流时间戳从 0 重启，平移接续上一段输出（历史行为）。
+			case p.tuning.timelineAuto:
+				// 通用档：不预设归零/同轴，按新段首帧相对已交付位置自适应决定偏移。
+				// 既不套用虎牙的 spliceBase 无条件平移，也不套用斗鱼的 60s 同轨窗口。
+				adjusted = sourceTs + genericTimelineOffset(lastOutBefore, sourceTs, p.tuning.spliceStepMs)
+			default:
+				// 虎牙：新流时间戳从 0 重启，平移接续上一段输出（历史行为，逐字保留）。
 				adjusted = p.spliceBase(sourceTs)
 			}
 			offset = adjusted - sourceTs
@@ -933,19 +1042,23 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 					p.upstreamSessions, prefixLastTs, sourceTs, gap, p.segReset)
 			}
 		} else if p.tuning.timelineContinuous {
-			// 斗鱼连续时间轴：源时间戳即输出时间戳。回放帧由指纹去重丢弃，
+			// 仅斗鱼连续时间轴：源时间戳即输出时间戳。回放帧由指纹去重丢弃，
 			// 不做 droppedSourceMs 压缩补偿——压缩会把直播帧拉回已交付位置、
 			// 被 acceptTs 整批误杀（音画不同步的另一半根因）。
 			adjusted = sourceTs + offset
 		} else {
+			// 虎牙 / 通用档：丢弃回放帧后压缩源时间轴，避免输出时间轴出现数秒
+			// 空洞导致播放器卡住。这是 FLV 续流的通用正确性保证，不是任何平台
+			// 的专属假设；两档真正的差异在首帧对齐方式与全局钳制策略。
 			adjusted = sourceTs - droppedSourceMs + offset
 		}
 		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差；
 		// 兜底保证输出严格不回退（acceptTs 只允许相等，这里保证至少 +1ms）。
 		// 仅续段启用：首段没有「上一帧」，不能把首帧 0 抬成 1。
-		// 斗鱼连续时间轴不走该钳制：全局钳制会把音/视频同 ts 的帧错开 1ms，
-		// 且真正的同轨回退已由 acceptTs 守住。
-		if isContinuation && !p.tuning.timelineContinuous {
+		// 斗鱼连续时间轴与通用自适应时间轴都不走该钳制：全局钳制会把音/视频
+		// 同 ts 的帧错开 1ms，且真正的同轨回退已由 acceptTs 守住。
+		// 该钳制是虎牙归零重置路径的历史行为，逐字保留、不外借给其它平台。
+		if isContinuation && !p.tuning.timelineContinuous && !p.tuning.timelineAuto {
 			if minimum := p.controlledTs(); adjusted < minimum {
 				adjusted = minimum
 			}
@@ -978,8 +1091,8 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 				pacerMediaStart = adjusted
 				pacerWallStart = time.Now()
 			}
-		deadline := pacerWallStart.Add(
-			time.Duration(adjusted-pacerMediaStart+flvProxyPacerTargetBufferMs.Load()) * time.Millisecond)
+			deadline := pacerWallStart.Add(
+				time.Duration(adjusted-pacerMediaStart+flvProxyPacerTargetBufferMs.Load()) * time.Millisecond)
 			if delay := time.Until(deadline); delay > p.tuning.pacerMaxDelay {
 				pacerMediaStart, pacerWallStart = adjusted, time.Now()
 				p.event("pacerRebased")
@@ -1240,18 +1353,20 @@ func (p *flvProxy) bumpCandidateSwitch(err error) {
 func (p *flvProxy) statsJSON() string {
 	p.statsMu.Lock()
 	payload := map[string]interface{}{
-		"url":                  p.url,
-		"client":               p.hasClient(),
-		"site":                 p.site,
-		"tuning":               p.tuning.name,
-		// 时间轴语义与租约策略：斗鱼 continuous/leaseAware，虎牙 reset/无租约。
-		"timelineContinuous": p.tuning.timelineContinuous,
+		"url":    p.url,
+		"client": p.hasClient(),
+		"site":   p.site,
+		"tuning": p.tuning.name,
+		// 时间轴语义与租约策略：三档互斥，真机监控可直接确认各走各的路。
+		"timelineContinuous": p.tuning.timelineContinuous, // 兼容既有监控脚本
+		"timelineAuto":       p.tuning.timelineAuto,
+		"timelineMode":       p.tuning.timelineModeName(),
 		"leaseAware":         p.tuning.leaseAware,
 		// 重连策略分档：真机监控可直接确认斗鱼/虎牙各走各的策略。
-		"fastReconnectMax": p.tuning.maxFastReconnectStreak,
-		"shortSessionMs":   p.tuning.shortSessionMs,
-		"shortStreakMax":   p.tuning.maxShortStreak, // <=0 表示不因短段换线
-		"shortBackoffMs":   p.tuning.shortBackoffBase.Milliseconds(),
+		"fastReconnectMax":     p.tuning.maxFastReconnectStreak,
+		"shortSessionMs":       p.tuning.shortSessionMs,
+		"shortStreakMax":       p.tuning.maxShortStreak, // <=0 表示不因短段换线
+		"shortBackoffMs":       p.tuning.shortBackoffBase.Milliseconds(),
 		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
 		"upstreamSessions":     p.upstreamSessions,
 		"reconnects":           p.reconnects,

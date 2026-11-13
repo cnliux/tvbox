@@ -93,24 +93,28 @@ func TestDouyuReconnectPolicyCalmerThanHuya(t *testing.T) {
 	}
 }
 
-// TestSiteTuningCaseInsensitiveAndDefault 覆盖大小写/空白与未知平台回退。
-func TestSiteTuningCaseInsensitiveAndDefault(t *testing.T) {
+// TestSiteTuningCaseInsensitiveAndGeneric 覆盖大小写/空白，并确认未知平台
+// 走独立的通用中性档（不再沿用虎牙历史常量）。
+func TestSiteTuningCaseInsensitiveAndGeneric(t *testing.T) {
 	if siteTuningFor("DOUYU").name != "douyu-yqk" {
 		t.Fatal("siteTuningFor should be case-insensitive for douyu")
 	}
 	if siteTuningFor(" HuYa ").name != "huya-yqk" {
 		t.Fatal("siteTuningFor should trim and be case-insensitive for huya")
 	}
-	if siteTuningFor("bilibili").name != "default" {
-		t.Fatalf("unknown site should fall back to default, got %q", siteTuningFor("bilibili").name)
+	if siteTuningFor("bilibili").name != "generic-live" {
+		t.Fatalf("其它平台应走通用中性档，实际 %q", siteTuningFor("bilibili").name)
 	}
-	// 默认档位等于历史常量。
+	// 通用档必须独立于虎牙按实测调出的历史常量。
 	def := siteTuningFor("unknown")
-	if def.replayWindowMs != flvProxyReplayWindowMs {
-		t.Fatalf("default replayWindowMs = %d, want legacy %d", def.replayWindowMs, flvProxyReplayWindowMs)
+	if def.replayWindowMs == flvProxyReplayWindowMs {
+		t.Fatalf("通用档 replayWindowMs 不应沿用虎牙实测值 %d", flvProxyReplayWindowMs)
 	}
-	if def.pacerMaxDelay != flvProxyPacerMaxDelay {
-		t.Fatalf("default pacerMaxDelay = %v, want legacy %v", def.pacerMaxDelay, flvProxyPacerMaxDelay)
+	if def.replayGuardMaxFrames == flvProxyReplayGuardMaxFrames {
+		t.Fatalf("通用档 replayGuardMaxFrames 不应沿用虎牙历史值 %d", flvProxyReplayGuardMaxFrames)
+	}
+	if def.pacerMaxDelay != genericPacerMaxDelay {
+		t.Fatalf("通用档 pacerMaxDelay = %v, want %v", def.pacerMaxDelay, genericPacerMaxDelay)
 	}
 }
 

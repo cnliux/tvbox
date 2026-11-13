@@ -26,7 +26,7 @@ type fakeProxyAdapter struct {
 	resolves  int64
 }
 
-func (f *fakeProxyAdapter) SiteID() string                               { return "fake" }
+func (f *fakeProxyAdapter) SiteID() string                               { return "huya" }
 func (f *fakeProxyAdapter) SiteName() string                             { return "测试平台" }
 func (f *fakeProxyAdapter) Description() string                          { return "" }
 func (f *fakeProxyAdapter) NormalizeRoomID(value string) (string, error) { return Text(value, ""), nil }
@@ -97,8 +97,8 @@ func TestFlvProxyStitchesSessions(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -145,8 +145,8 @@ func TestFlvProxyStitchesSessions(t *testing.T) {
 // 验证：带平台前缀的房间主键（Kotlin 侧 room.id 形如 "huya:31297160"）
 // 会被归一化成纯房间号，避免续流时 NormalizeRoomID 报“房间号格式无效”。
 func TestFlvProxyStripsSitePrefix(t *testing.T) {
-	service := &Service{byID: map[string]Adapter{"fake": &fakeProxyAdapter{}}}
-	proxy, err := newFlvProxy(service, "fake", "fake:1001", 0, "http://127.0.0.1:1/live.flv", nil)
+	service := &Service{byID: map[string]Adapter{"huya": &fakeProxyAdapter{}}}
+	proxy, err := newFlvProxy(service, "huya", "huya:1001", 0, "http://127.0.0.1:1/live.flv", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -156,9 +156,10 @@ func TestFlvProxyStripsSitePrefix(t *testing.T) {
 	}
 }
 
-// 验证双轨独立时间轴、同轨回退判据与续段顺延。
+// 验证双轨独立时间轴、同轨回退判据与续段顺延（spliceBase 属虎牙归零重置路径，
+// 明确使用虎牙档位，避免与独立的通用档语义耦合）。
 func TestFlvProxySpliceTimestamps(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("default")}
+	proxy := &flvProxy{tuning: siteTuningFor("huya")}
 	if got := proxy.spliceBase(0); got != 0 {
 		t.Fatalf("首段应沿用原始时间戳，实际 %d", got)
 	}
@@ -310,8 +311,8 @@ func TestFlvProxyReconnectNoRollback(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -386,8 +387,8 @@ func TestFlvProxyFirstSegmentForwardsLeadingNonKeyframe(t *testing.T) {
 	}))
 	defer upstream.Close()
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -456,8 +457,8 @@ func TestFlvProxyFastReconnectReusesURL(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -507,8 +508,8 @@ func TestFlvProxyFastReconnectFallsBackToResolve(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}

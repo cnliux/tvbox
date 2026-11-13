@@ -193,8 +193,8 @@ func TestFlvProxyReplayDetection(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -331,8 +331,8 @@ func TestFlvProxyReplayAfterFreshKeyframe(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
@@ -475,8 +475,8 @@ func TestFlvProxyReplayMidSession(t *testing.T) {
 	defer upstream.Close()
 
 	adapter := &fakeProxyAdapter{streamURL: upstream.URL + flvProxyPath}
-	service := &Service{byID: map[string]Adapter{"fake": adapter}}
-	proxy, err := newFlvProxy(service, "fake", "1001", 0, "", nil)
+	service := &Service{byID: map[string]Adapter{"huya": adapter}}
+	proxy, err := newFlvProxy(service, "huya", "1001", 0, "", nil)
 	if err != nil {
 		t.Fatalf("newFlvProxy: %v", err)
 	}
