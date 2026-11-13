@@ -23,7 +23,9 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -110,6 +112,18 @@ type flvSiteTuning struct {
 	// 短段指数退避的起始值与上限。
 	shortBackoffBase time.Duration
 	shortBackoffMax  time.Duration
+	// —— 时间轴语义（斗鱼与虎牙的又一核心差异）——
+	// false（虎牙/默认）：新一段源时间戳从 0 重启，必须平移接续上一段输出
+	//   （spliceBase = maxOutTs + step，历史行为，逐字保留）。
+	// true（斗鱼）：同一房间两次连接共享同一时间轴（pure_live 实测结论），
+	//   新连接的时间戳天然连续，直接沿用源时间戳，不做 spliceBase 平移；
+	//   仅当与已交付位置差超过对齐窗口（另一条时间轴）才平移续接。
+	timelineContinuous bool
+	// —— URL 租约（斗鱼专属）——
+	// true（斗鱼）：解析出的播放地址可能带 expire=N（N 秒后 CDN 主动断流）。
+	//   代理要①给 ws 短租线打 expire=0 补丁；②在租约到期前主动断开重解析，
+	//   变「被动挨杀」为「计划内切换」。
+	leaseAware bool
 }
 
 // siteTuningFor 按平台返回专属调参；未知平台回退到与历史默认一致的保护档，避免行为漂移。
@@ -132,6 +146,8 @@ func siteTuningFor(site string) flvSiteTuning {
 			maxShortStreak:         0,
 			shortBackoffBase:       2 * time.Second,
 			shortBackoffMax:        8 * time.Second,
+			timelineContinuous:     true,
+			leaseAware:             true,
 		}
 	case "huya":
 		return flvSiteTuning{
@@ -145,6 +161,8 @@ func siteTuningFor(site string) flvSiteTuning {
 			maxShortStreak:         huyaMaxShortStreak,
 			shortBackoffBase:       huyaShortBackoffBase,
 			shortBackoffMax:        huyaShortBackoffMax,
+			timelineContinuous:     false,
+			leaseAware:             false,
 		}
 	default:
 		// 其它平台（B站/抖音/快手等）沿用历史默认（= 虎牙策略），行为不变。
@@ -159,9 +177,95 @@ func siteTuningFor(site string) flvSiteTuning {
 			maxShortStreak:         huyaMaxShortStreak,
 			shortBackoffBase:       huyaShortBackoffBase,
 			shortBackoffMax:        huyaShortBackoffMax,
+			timelineContinuous:     false,
+			leaseAware:             false,
 		}
 	}
 }
+
+// ───────────────────── 斗鱼专属：URL 租约与连续时间轴（勿动虎牙路径） ─────────────────────
+//
+// pure_live（github.com/liuchuancong/pure_live）实测结论：
+//  1. 斗鱼匿名原画地址带 expire=300 —— CDN 在地址签发 300 秒后主动断流；
+//     部分匿名/海外会话拿到的是 5 分钟即失效的 ws 线（expire=300&fcdn=ws），
+//     追加 &expire=0 可让 CDN 按默认时长签发（simple_live 同款补丁）。
+//  2. 同一斗鱼房间的两次上游连接共享同一条流时间戳时间轴，切换时在关键帧处
+//     直接衔接即可；只有对齐窗口之外（另一条时间轴）才需要平移续接。
+//
+// 由此斗鱼的自动重连根因是「租约到期被动挨杀」：代理在 300 秒时被 CDN 强断，
+// 再花数秒重新解析，播放器表现为周期性可见重连。对策是给 ws 短租线打补丁、
+// 并在租约到期前主动断开重解析（计划内切换）。
+
+const (
+	// 斗鱼连续时间轴的对齐窗口：新段首帧与已交付位置相差不超过该值视为同轴。
+	douyuTimelineAlignWindowMs = int64(60000)
+	// 斗鱼租约提前续期提前量：在 CDN 断流前这么多毫秒主动重连。
+	douyuLeaseRefreshLeadMs = int64(45000)
+)
+
+// parseURLExpireSec 解析播放地址 query 里的 expire=N（秒）。无或非法返回 0。
+func parseURLExpireSec(rawURL string) int64 {
+	uri, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	value, err := strconv.ParseInt(uri.Query().Get("expire"), 10, 64)
+	if err != nil || value <= 0 {
+		return 0
+	}
+	return value
+}
+
+// patchDouyuURL 给斗鱼 ws 短租线追加 &expire=0（simple_live 同款补丁）：
+// expire=300&fcdn=ws 的地址 5 分钟即失效，改为 expire=0 让 CDN 按默认时长签发。
+// 其它地址原样返回，绝不修改。
+func patchDouyuURL(rawURL string) string {
+	uri, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	query := uri.Query()
+	if query.Get("expire") != "300" || query.Get("fcdn") != "ws" {
+		return rawURL
+	}
+	query.Set("expire", "0")
+	uri.RawQuery = query.Encode()
+	return uri.String()
+}
+
+// douyuContinuityOffset 计算斗鱼新一段相对已交付位置的拼接偏移：
+// - 已无输出（首段）：偏移 0，完全沿用源时间戳；
+// - 新段首帧与已交付位置差在对齐窗口内：同一条时间轴，偏移 0 直接衔接；
+// - 差在窗口之外（另一条时间轴/长空窗）：平移到紧接已交付位置之后，
+//   输出时间轴无缝续接（pure_live 语义：last+1-source）。
+func douyuContinuityOffset(lastOutBefore, sourceTs int64) int64 {
+	if lastOutBefore <= 0 {
+		return 0
+	}
+	gap := sourceTs - lastOutBefore
+	if gap >= -douyuTimelineAlignWindowMs && gap <= douyuTimelineAlignWindowMs {
+		return 0
+	}
+	return lastOutBefore + 1 - sourceTs
+}
+
+// douyuLeaseDeadline 按地址租约计算「主动续期时刻」：
+// 租约以地址签发时刻为锚，代理只知道自己开始拉流的时刻——解析发生在拉流前
+// 数秒内，以拉流时刻近似签发时刻（提前量 45s 足以覆盖该误差）。
+// 无租约语义的地址返回零值（不主动断开，交给被动 EOF 路径）。
+func douyuLeaseDeadline(rawURL string, now time.Time) time.Time {
+	expire := parseURLExpireSec(rawURL)
+	if expire <= 0 {
+		return time.Time{}
+	}
+	deadline := now.Add(time.Duration(expire*1000-douyuLeaseRefreshLeadMs) * time.Millisecond)
+	if !deadline.After(now) {
+		return time.Time{}
+	}
+	return deadline
+}
+
+// ───────────────────── 斗鱼专属辅助结束 ─────────────────────
 
 // FlvProxyHandle 是本机连续 FLV 代理句柄（gomobile bind 后即 Java 对象）。
 type FlvProxyHandle struct {
@@ -313,6 +417,11 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 		return nil, newError("本机直播代理启动失败：%s", err.Error())
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	// 斗鱼专属：Kotlin 侧解析出的首段地址若为 ws 短租线，立即打 expire=0 补丁，
+	// 避免 5 分钟租约到期后 CDN 强杀连接（虎牙及其它平台地址原样保留）。
+	if Text(site, "") == "douyu" {
+		initialURL = patchDouyuURL(Text(initialURL, ""))
+	}
 	proxy := &flvProxy{
 		service:        service,
 		site:           site,
@@ -495,11 +604,31 @@ func (p *flvProxy) streamLoop() {
 			candidate = stream.Candidates[candidateIndex%len(stream.Candidates)]
 			headers = stream.Headers
 		}
+		// 斗鱼专属：地址租约处理。ws 短租线打 expire=0 补丁；带 expire 的地址
+		// 在到期前主动断开做计划内切换（虎牙及其它平台 leaseAware=false，完全不变）。
+		if p.tuning.leaseAware {
+			candidate.URL = patchDouyuURL(candidate.URL)
+		}
+		leaseDeadline := time.Time{}
+		if p.tuning.leaseAware {
+			leaseDeadline = douyuLeaseDeadline(candidate.URL, time.Now())
+		}
 
 		beforeTags := p.tagCount()
-		err := p.pull(candidate, headers)
+		leaseExpired, err := p.pull(candidate, headers, leaseDeadline)
 		if p.ctx.Err() != nil {
 			return
+		}
+		if leaseExpired {
+			// 斗鱼租约到期：计划内切换。地址即将失效，不做同地址快速续拉，
+			// 立即重新解析拿新签名；不计入短段/失败/换线任何异常计数。
+			p.bumpReconnect()
+			p.event(fmt.Sprintf("leaseRenewal sessionMs=%d site=%s", p.lastSessionMs, p.tuning.name))
+			shortStreak = 0
+			fastReconnectStreak = 0
+			fastReconnectCandidate = nil
+			fastReconnectHeaders = nil
+			continue
 		}
 		if err == nil {
 			p.bumpReconnect()
@@ -582,11 +711,26 @@ func (p *flvProxy) resolve() (*ResolvedLiveStream, error) {
 	return adapter.Resolve(roomID)
 }
 
-// pull 拉取一段上游 FLV 并原样缝进本地输出；返回 nil 表示上游正常结束。
-func (p *flvProxy) pull(candidate LiveStreamCandidate, headers map[string]string) error {
-	request, err := http.NewRequestWithContext(p.ctx, http.MethodGet, candidate.URL, nil)
+// pull 拉取一段上游 FLV 并原样缝进本地输出。
+// 返回 leaseExpired=true 表示是租约到期触发的计划内断开（斗鱼主动续期），
+// 上游流本身没有出错；err 为 nil 表示上游正常结束（含计划内断开）。
+// leaseDeadline 为零值表示无租约语义（虎牙等平台行为完全不变）。
+func (p *flvProxy) pull(candidate LiveStreamCandidate, headers map[string]string, leaseDeadline time.Time) (bool, error) {
+	requestCtx := p.ctx
+	var leaseExpired atomic.Bool
+	var cancel context.CancelFunc
+	if !leaseDeadline.IsZero() && leaseDeadline.After(time.Now()) {
+		requestCtx, cancel = context.WithCancel(p.ctx)
+		defer cancel()
+		time.AfterFunc(time.Until(leaseDeadline), func() {
+			// 租约到期：主动取消本次上游读取（计划内切换，不是故障）。
+			leaseExpired.Store(true)
+			cancel()
+		})
+	}
+	request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, candidate.URL, nil)
 	if err != nil {
-		return newError("上游地址无效：%s", err.Error())
+		return false, newError("上游地址无效：%s", err.Error())
 	}
 	request.Header.Set("Accept", "*/*")
 	for key, value := range headers {
@@ -594,14 +738,23 @@ func (p *flvProxy) pull(candidate LiveStreamCandidate, headers map[string]string
 	}
 	response, err := p.httpClient.Do(request)
 	if err != nil {
-		return newError("上游拉流失败：%s", err.Error())
+		if leaseExpired.Load() && p.ctx.Err() == nil {
+			return true, nil
+		}
+		return false, newError("上游拉流失败：%s", err.Error())
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return newError("上游 HTTP %d", response.StatusCode)
+		return leaseExpired.Load(), newError("上游 HTTP %d", response.StatusCode)
 	}
 	reader := bufio.NewReaderSize(response.Body, 128*1024)
-	return p.consume(reader)
+	consumeErr := p.consume(reader)
+	if consumeErr != nil && leaseExpired.Load() && p.ctx.Err() == nil {
+		// 读取因租约取消而中断：consume 已通过 defer 记录会话时长，
+		// 对 streamLoop 呈现为一次干净的「计划内 EOF」。
+		return true, nil
+	}
+	return leaseExpired.Load(), consumeErr
 }
 
 func (p *flvProxy) consume(reader *bufio.Reader) error {
@@ -613,6 +766,9 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		return newError("上游返回的不是 FLV 流")
 	}
 	startedAt := time.Now()
+	// 会话时长统一在退出时记录（含租约到期主动断开、读取出错等所有出口），
+	// 保证 streamLoop 的短段判定在任何结束方式下都有 lastSessionMs 可用。
+	defer p.recordSession(startedAt)
 	p.statsMu.Lock()
 	p.upstreamSessions++
 	p.statsMu.Unlock()
@@ -656,7 +812,6 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		tagHeader := make([]byte, flvProxyTagHeaderSize)
 		if _, err := io.ReadFull(reader, tagHeader); err != nil {
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
-				p.recordSession(startedAt)
 				return nil
 			}
 			return newError("上游 FLV 读取失败：%s", err.Error())
@@ -744,7 +899,15 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 		adjusted := sourceTs
 		if !haveBase {
 			prefixLastTs := lastOutBefore
-			adjusted = p.spliceBase(sourceTs)
+			if p.tuning.timelineContinuous {
+				// 斗鱼：同一房间两次上游连接共享同一条时间戳时间轴（pure_live 实测），
+				// 新段源时间戳天然连续，直接沿用；仅当与已交付位置差超出对齐窗口
+				//（另一条时间轴/长空窗）才平移续接。虎牙不进这条路径。
+				adjusted = sourceTs + douyuContinuityOffset(lastOutBefore, sourceTs)
+			} else {
+				// 虎牙/默认：新流时间戳从 0 重启，平移接续上一段输出（历史行为）。
+				adjusted = p.spliceBase(sourceTs)
+			}
 			offset = adjusted - sourceTs
 			haveBase = true
 			gap := sourceTs - p.segLastOutTsBefore
@@ -769,13 +932,20 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 				fmt.Printf("[DIAG] session=%d lastTs=%d firstSourceTs=%d gap=%d reset=%v\n",
 					p.upstreamSessions, prefixLastTs, sourceTs, gap, p.segReset)
 			}
+		} else if p.tuning.timelineContinuous {
+			// 斗鱼连续时间轴：源时间戳即输出时间戳。回放帧由指纹去重丢弃，
+			// 不做 droppedSourceMs 压缩补偿——压缩会把直播帧拉回已交付位置、
+			// 被 acceptTs 整批误杀（音画不同步的另一半根因）。
+			adjusted = sourceTs + offset
 		} else {
 			adjusted = sourceTs - droppedSourceMs + offset
 		}
 		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差；
 		// 兜底保证输出严格不回退（acceptTs 只允许相等，这里保证至少 +1ms）。
 		// 仅续段启用：首段没有「上一帧」，不能把首帧 0 抬成 1。
-		if isContinuation {
+		// 斗鱼连续时间轴不走该钳制：全局钳制会把音/视频同 ts 的帧错开 1ms，
+		// 且真正的同轨回退已由 acceptTs 守住。
+		if isContinuation && !p.tuning.timelineContinuous {
 			if minimum := p.controlledTs(); adjusted < minimum {
 				adjusted = minimum
 			}
@@ -1074,6 +1244,9 @@ func (p *flvProxy) statsJSON() string {
 		"client":               p.hasClient(),
 		"site":                 p.site,
 		"tuning":               p.tuning.name,
+		// 时间轴语义与租约策略：斗鱼 continuous/leaseAware，虎牙 reset/无租约。
+		"timelineContinuous": p.tuning.timelineContinuous,
+		"leaseAware":         p.tuning.leaseAware,
 		// 重连策略分档：真机监控可直接确认斗鱼/虎牙各走各的策略。
 		"fastReconnectMax": p.tuning.maxFastReconnectStreak,
 		"shortSessionMs":   p.tuning.shortSessionMs,
