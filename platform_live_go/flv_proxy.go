@@ -199,8 +199,9 @@ func siteTuningFor(site string) flvSiteTuning {
 			maxFastReconnectStreak: 1,
 			shortSessionMs:         4000,
 			maxShortStreak:         0,
-			shortBackoffBase:       2 * time.Second,
-			shortBackoffMax:        8 * time.Second,
+			// 短段退避可被手机端调试按钮运行时调整（默认仍为 2s/8s）。
+			shortBackoffBase: time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
+			shortBackoffMax:  time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
 			timelineContinuous:     true,
 			timelineAuto:           false,
 			leaseAware:             true,
@@ -322,7 +323,10 @@ func douyuLeaseDeadline(rawURL string, now time.Time) time.Time {
 	if expire <= 0 {
 		return time.Time{}
 	}
-	deadline := now.Add(time.Duration(expire*1000-douyuLeaseRefreshLeadMs) * time.Millisecond)
+	// 提前量可被手机端调试按钮运行时调整：调大可避免"刚续期又到期"，调小可续得更晚。
+	// 租约不足提前量时 deadline 落在 now 之前，下面统一回退被动路径（保持原语义）。
+	leadMs := douyuLeaseRefreshLead()
+	deadline := now.Add(time.Duration(int64(expire)*1000-leadMs) * time.Millisecond)
 	if !deadline.After(now) {
 		return time.Time{}
 	}
@@ -538,6 +542,11 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tuning := siteTuningFor(site)
+	// 斗鱼空闲读超时可被手机端调试按钮运行时调整；其它平台沿用固定 15s。
+	idleReadTimeout := flvProxyIdleReadTimeout
+	if strings.EqualFold(strings.TrimSpace(site), "douyu") {
+		idleReadTimeout = douyuIdleReadTimeout()
+	}
 	// 只有启用租约语义的档位（当前仅斗鱼）才改写首段地址：ws 短租线打
 	// expire=0 补丁，避免 5 分钟租约到期后被 CDN 强杀。虎牙与通用档的
 	// 地址一律原样保留，绝不套用斗鱼的 URL 补丁。
@@ -564,9 +573,10 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 				// FLV 不能被压缩，避免 Accept-Encoding: gzip 导致整段缓冲。
 				DisableCompression:    true,
 				ResponseHeaderTimeout: 12 * time.Second,
-				// 每次 Read 前刷新 15s 截止时刻：CDN 半开连接时自行断开重连，
+				// 每次 Read 前刷新截止时刻：CDN 半开连接时自行断开重连，
 				// 而不是让 consume 永久卡在 io.ReadFull（画面冻结且无兜底）。
-				DialContext:     dialWithIdleReadTimeout(flvProxyIdleReadTimeout),
+				// 斗鱼该值可运行时调整，其它平台固定 15s。
+				DialContext:     dialWithIdleReadTimeout(idleReadTimeout),
 				DisableKeepAlives: true,
 			},
 		},

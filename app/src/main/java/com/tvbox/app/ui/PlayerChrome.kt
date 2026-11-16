@@ -341,6 +341,12 @@ internal data class PlayerChromeCapabilities(
      */
     val debugActive: Boolean = false,
     val onToggleDebug: (() -> Unit)? = null,
+    /**
+     * 斗鱼「一起看」重连调优档位按钮：循环切换 稳健/默认/耐心 并即时写回 Go。
+     * 仅在斗鱼房间播放时由 PlatformLiveScreen 注入；与调试入口一样在竖屏保留。
+     */
+    val douyuTuningLabel: String? = null,
+    val onCycleDouyuTuning: (() -> Unit)? = null,
 )
 
 /**
@@ -378,9 +384,11 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             subtitleTracks = false,
             portraitMinimal = true,
             actions = emptyList(),
-            // 竖屏只保留调试入口：手机端靠它现场看播放健康，缓冲档位按钮不再下发。
+            // 竖屏只保留调试入口与斗鱼重连档位：手机端靠它们现场调参，缓冲档位按钮不再下发。
             debugActive = this.debugActive,
             onToggleDebug = this.onToggleDebug,
+            douyuTuningLabel = this.douyuTuningLabel,
+            onCycleDouyuTuning = this.onCycleDouyuTuning,
         )
     } else {
         this
@@ -910,6 +918,15 @@ private fun PlayerChromeTouch(
                         add(ChromeFeature(
                             label = if (capabilities.debugActive) "调试·开" else "调试",
                             selected = capabilities.debugActive,
+                        ) {
+                            cb(); actions.onInteraction()
+                        })
+                    }
+                    // 斗鱼「一起看」重连档位按钮：仅斗鱼房间注入，竖屏保留，循环切换即时生效。
+                    capabilities.onCycleDouyuTuning?.let { cb ->
+                        add(ChromeFeature(
+                            label = capabilities.douyuTuningLabel ?: "重连档位",
+                            selected = false,
                         ) {
                             cb(); actions.onInteraction()
                         })

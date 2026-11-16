@@ -97,6 +97,7 @@ import coil.compose.AsyncImage
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.FlvContinuityProxy
 import com.tvbox.app.data.PacerDebugPrefs
+import com.tvbox.app.data.DouyuTuningDebugPrefs
 import androidx.compose.runtime.mutableLongStateOf
 import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.PlaybackWatchdog
@@ -1282,6 +1283,15 @@ private fun PlatformLivePlayerScreen(
         runCatching { platformlive.Platformlive.setPacerTargetBufferMs(next) }
         chrome.bump()
     }
+    // 斗鱼「一起看」重连调优档位：循环切换 稳健/默认/耐心，即时写回 Go 并持久化。
+    var douyuTuningIndex by rememberSaveable { mutableIntStateOf(DouyuTuningDebugPrefs.loadProfileIndex(context)) }
+    val cycleDouyuTuning: () -> Unit = {
+        val next = DouyuTuningDebugPrefs.nextProfileIndex(douyuTuningIndex)
+        douyuTuningIndex = next
+        DouyuTuningDebugPrefs.saveProfileIndex(context, next)
+        DouyuTuningDebugPrefs.applyToBridge(context)
+        chrome.bump()
+    }
     var debugMonitorText by remember { mutableStateOf("") }
     LaunchedEffect(showDebugMonitor, continuityProxy, player) {
         if (!showDebugMonitor) {
@@ -1291,6 +1301,9 @@ private fun PlatformLivePlayerScreen(
         while (true) {
             delay(1_000L)
             val sb = StringBuilder()
+            if (room.site.equals("douyu", ignoreCase = true)) {
+                sb.appendLine("斗鱼重连档位: ${DouyuTuningDebugPrefs.summary(context)}")
+            }
             continuityProxy?.stats()?.let { json ->
                 try {
                     val o = org.json.JSONObject(json)
@@ -1563,6 +1576,13 @@ private fun PlatformLivePlayerScreen(
                     // 点击打开与电视端相同的实时播放健康/续流统计浮层。
                     debugActive = showDebugMonitor,
                     onToggleDebug = { showDebugMonitor = !showDebugMonitor; chrome.bump() },
+                    // 斗鱼「一起看」重连调优按钮：仅斗鱼房间显示，竖屏也保留，方便现场调参。
+                    douyuTuningLabel = if (room.site.equals("douyu", ignoreCase = true)) {
+                        "重连:${DouyuTuningDebugPrefs.PROFILES[douyuTuningIndex].label}"
+                    } else {
+                        null
+                    },
+                    onCycleDouyuTuning = if (room.site.equals("douyu", ignoreCase = true)) cycleDouyuTuning else null,
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {
@@ -1790,6 +1810,13 @@ private fun PlatformLivePlayerScreen(
                 }
                 // 电视端保留 pacer 目标缓冲档位按钮；手机端已改为调试入口。
                 ControlButton(pacerBufferLabel(pacerBufferMs), cyclePacerBuffer)
+                // 斗鱼「一起看」重连档位按钮：仅斗鱼房间显示，现场一键切换调优组合。
+                if (room.site.equals("douyu", ignoreCase = true)) {
+                    ControlButton(
+                        text = "重连档位:${DouyuTuningDebugPrefs.PROFILES[douyuTuningIndex].label}",
+                        onClick = cycleDouyuTuning,
+                    )
+                }
             }
         }
 

@@ -1,3 +1,25 @@
+## v1.0.15 - 2026-11-16
+
+斗鱼「一起看」重连问题专项修复与现场可调参数：
+
+- **重连参数从硬编码改为运行时可调**：斗鱼续流的租约续期提前量、上游空闲读超时、短段退避
+  基数/上限原先写死在 Go 常量里，现场无法调整。现改为「默认值 + 可写全局」，通过 gomobile
+  新增 `SetDouyuLeaseRefreshLeadMs/SetDouyuIdleReadTimeoutMs/SetDouyuShortBackoffBaseMs/
+  SetDouyuShortBackoffMaxMs` 暴露给 Kotlin；每档做范围钳制，非法值被忽略。仅影响斗鱼，
+  虎牙/其它平台行为不变。
+- **手机端新增「斗鱼重连调优」按钮**：三档策略「稳健 / 默认 / 耐心」一键循环切换，即时写回
+  Go 并持久化（独立 SharedPreferences）：稳健=提前60s/空闲30s/退避3→12s，默认=45s/15s/2→8s
+  （历史行为），耐心=30s/25s/4→16s。播放页控制条（竖屏也保留）与「设置→播放→斗鱼重连调优」
+  均可调整，方便不同网络环境下现场定位最佳组合，无需重新发版。
+- **租约边界修正**：`douyuLeaseDeadline` 的提前量改用运行时值；提前量大于租约总时长时按原语义
+  回退被动路径，避免异常 deadline。
+- **验证**：Go 单测（含新增调优 setter/clamp 与续期时刻跟随测试）与 Kotlin 编译/单测均通过。
+  真机（斐讯 p230 / Android 7.1.2）安装调试版，对 5 个斗鱼热门房间各播放 10 分钟并采集
+  `TVBoxPlatformLive` 统计：5 房间 `reconnects=0`、`upstreamSessions=1`、
+  `idleTimeouts=0`、`candidateSwitches=0`，Kotlin 侧看门狗/恢复/流结束均为 0，唯一事件为进房
+  初始化的 `pacerRebased`。基线在当前网络与热门房间下未复现「总是重连」，说明该问题与具体
+  CDN 线路/网络环境相关；本版将关键参数改为现场可调 + 调试面板可见，便于对症调整，无需发版。
+
 ## v1.0.14 - 2026-11-16
 
 手机搜索按源重做与 OTA 升级 CDN 动态择优（含上一版之后未发布的两组改动）：

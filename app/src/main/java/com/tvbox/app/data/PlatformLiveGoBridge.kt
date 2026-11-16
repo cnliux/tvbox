@@ -42,6 +42,8 @@ object PlatformLiveGoBridge {
                 platformlive.Platformlive.init(signScript, catalogJson, CACHE_SECONDS.toLong(), REQUEST_TIMEOUT_SECONDS.toLong(), clientType)
                 // 回写调试用的 pacer 目标缓冲（默认 5s），使其对后续代理生效。
                 PacerDebugPrefs.applyToBridge(appContext)
+                // 回写斗鱼重连调优档位（默认档=历史行为），使其对后续代理生效。
+                DouyuTuningDebugPrefs.applyToBridge(appContext)
             } catch (error: Throwable) {
                 throw IOException(bridgeErrorMessage(error), error)
             }

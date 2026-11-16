@@ -1,6 +1,7 @@
 package com.tvbox.app.ui.settings
 
 import androidx.activity.compose.BackHandler
+import com.tvbox.app.data.DouyuTuningDebugPrefs
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +56,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -532,6 +534,30 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
+        DividerInGroup()
+        // 斗鱼「一起看」重连调优：三档策略即时写回 Go，现场定位"总是重连"的最佳组合。
+        run {
+            val context = LocalContext.current
+            var tuningIndex by remember { mutableIntStateOf(DouyuTuningDebugPrefs.loadProfileIndex(context)) }
+            SettingsRow(
+                icon = Icons.Default.Build,
+                title = "斗鱼重连调优",
+                subtitle = "档位：${DouyuTuningDebugPrefs.PROFILES[tuningIndex].label}（改动仅影响斗鱼一起看）",
+                stackedTrailing = true,
+                trailing = {
+                    ChoiceChips(
+                        options = DouyuTuningDebugPrefs.PROFILES.indices.toList(),
+                        selected = tuningIndex,
+                        label = { DouyuTuningDebugPrefs.PROFILES[it].label },
+                        onSelect = { idx ->
+                            tuningIndex = idx
+                            DouyuTuningDebugPrefs.saveProfileIndex(context, idx)
+                            DouyuTuningDebugPrefs.applyToBridge(context)
+                        },
+                    )
+                },
+            )
+        }
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
