@@ -359,8 +359,10 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             speed = false,
             resize = false,
             skip = false,
-            cast = false,
-            castLabel = null,
+            // 投屏是手机端核心能力：竖屏同样保留入口（与调试入口一致），
+            // 否则手机竖屏（直播页默认方向）下投屏按钮会被裁剪掉。
+            cast = this.cast,
+            castLabel = this.castLabel,
             lock = false,
             favorite = false,
             favoriteLabel = null,

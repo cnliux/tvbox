@@ -790,6 +790,15 @@ private fun MobileLivePlayerScreen(
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
     // 控件显隐统一走共享状态；竖屏常驻、横屏 4 秒后自动收起。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
+    // 分层返回：信息/地址面板 → 控件 → 退出播放页。原先只有列表层一个
+    // BackHandler(enabled=playerOpen) 直接置 -1，横屏下打开「信息/地址」面板按返回
+    // 会整个退出播放层，丢失播放现场；这里与 PlayerScreen / PlatformLive 统一。
+    PlayerChromeBackHandler(state = chrome, onExit = onBack)
+    // 离开播放页（换台/切 Tab/退出）即停线路测速，避免后台继续占用网络并把旧频道的
+    // 测速结果写回当前频道（电视端 LiveTvChannelPanel 已做同样处理）。
+    DisposableEffect(Unit) {
+        onDispose { actions.cancelLiveChannelLineTest() }
+    }
     // 播放信息只在面板打开时采样，关闭即停。
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     var channelBadgeVisible by remember { mutableStateOf(true) }
@@ -805,6 +814,13 @@ private fun MobileLivePlayerScreen(
 
     val isFavorite = actions.isLiveFavorite(channel)
 
+    // 投屏（仅手机端）：直播源是直链，电视可直接播放；用 rememberUpdatedState 语义的 lambda
+    // 在点击设备时取当前线路地址，换线路后投的是新地址而非进页时的旧地址。
+    val castController = rememberCastController(
+        onNotice = { text -> Toast.makeText(context, text, Toast.LENGTH_SHORT).show() },
+        onCastStopped = { session.play(player) },
+    )
+
     fun toggleFavoriteWithToast() {
         val wasFavorite = actions.isLiveFavorite(channel)
         actions.toggleLiveFavorite(channel)
@@ -815,12 +831,20 @@ private fun MobileLivePlayerScreen(
         if (!session.canPlay) return
         val latest = latestChannel.value
         if (latest.lines.size <= 1 && reason == LiveLineFallbackReason.Error) {
-            // 单线频道硬错误：直接换台，避免手机端长时间黑屏。
+            // 单线频道硬错误：必须先走带退避门控的容错。直接 playNextLiveChannel() 会重置
+            // 节流并清空耗尽标记——当直播源里全是单线频道（或只有一个频道）时，会形成
+            // 「报错→换台→再报错→再换台」的无限循环（单频道时甚至换回自己），既刷日志
+            // 又持续占用解码器，用户永远看不到阻断重试卡片。
+            // advanceLiveLineAfterFailure 对单线路会走「线路用尽」分支返回 false，由下方
+            // 统一的兜底进入 streamBlocked 阻断态；多线频道仍按原有节流逻辑切换。
             android.util.Log.w(
                 MOBILE_LIVE_LOG_TAG,
-                "【自动切换】单线频道硬错误，切换到下一台 channel=${latestChannelLabel.value}",
+                "【自动切换】单线频道硬错误，走统一容错门控 channel=${latestChannelLabel.value}",
             )
-            actions.playNextLiveChannel()
+            if (!actions.advanceLiveLineAfterFailure(reason)) {
+                blockedFailureKind = PlaybackFailureKind.SourceFailed
+                streamBlocked = true
+            }
             return
         }
         android.util.Log.w(
@@ -1007,6 +1031,8 @@ private fun MobileLivePlayerScreen(
                         channel = true,
                         info = true,
                         url = true,
+                        cast = true,
+                        castLabel = castController.castLabel,
                         // 手机端调试按钮：竖屏精简后仍保留，替代原缓冲档位循环按钮。
                         debugActive = showDebugOverlay,
                         onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
@@ -1051,6 +1077,7 @@ private fun MobileLivePlayerScreen(
                             chrome.bump()
                         },
                         onSettings = actions::openSettings,
+                        onCast = castController::onCastClick,
                         onBack = onBack,
                         onInteraction = { chrome.bump() },
                     ),
@@ -1058,6 +1085,14 @@ private fun MobileLivePlayerScreen(
                     fade = true,
                 )
             },
+        )
+        // 投屏设备对话框挂在播放页根部：横屏/竖屏两条分支都能显示。
+        // 点击设备时取当前线路地址；投屏成功后暂停本机播放，避免双重声音。
+        CastDeviceDialog(
+            controller = castController,
+            castUrl = { currentLine.url },
+            castTitle = { "${channel.groupName}/${channel.name}" },
+            onCastingStarted = { session.pause(player) },
         )
     }
 

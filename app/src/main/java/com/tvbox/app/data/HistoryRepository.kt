@@ -67,6 +67,21 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         }
     }
 
+    override suspend fun removeHistoryItem(
+        apiLineId: String,
+        movieId: Int,
+    ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val updated = readHistory().filterNot {
+                it.apiLineId == apiLineId && it.movieId == movieId
+            }
+            check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
+                "Unable to remove watch history item"
+            }
+            updated
+        }
+    }
+
     private fun readHistory(): List<WatchHistoryItem> {
         val raw = prefs.getString(KEY_ITEMS, null) ?: return emptyList()
         return runCatching {

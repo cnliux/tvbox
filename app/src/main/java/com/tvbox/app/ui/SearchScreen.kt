@@ -808,11 +808,10 @@ internal fun MobileSearchScreen(
     // 注意：这里**不能**用 remember(state.searchQuery) 作 key —— 输入时每个字符都会回写
     // searchQuery，key 一变 state 就被重建，selection 被强制挪到末尾、composition 被清空，
     // 中文拼音会在组合区就被打断。改为空 key + LaunchedEffect 单向同步（与电视版一致）。
-    // 与电视版一致：页面被移出组合（跳详情、切 Tab）就清空搜索词与结果，
-    // 否则顶部栏会一直显示上一次的关键词。
-    DisposableEffect(Unit) {
-        onDispose { actions.clearSearch() }
-    }
+    // 手机端搜索是底部常驻 Tab：切到别的 Tab / 点结果进详情再返回时，用户期望搜索词、
+    // 结果与滚动位置都还在（SaveableStateHolder 已为此保存了 gridState）。因此不在
+    // onDispose 时清空——电视版 Search 是独立页面，离开即离开，二者语义不同。
+    // 需要清空时由搜索框的 ✕ 显式调用 clearSearch()。
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
     val gridState = rememberLazyGridState()

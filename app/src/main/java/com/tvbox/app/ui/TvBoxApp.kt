@@ -1569,7 +1569,17 @@ private fun MobileHomeFeed(
         }
         // 影片列表
         when {
-            state.homeLoading -> SkeletonGrid(modifier = Modifier.weight(1f).fillMaxWidth())
+            state.homeLoading -> BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                // 与下方真实网格用同一套 108dp 最小列宽推导，避免「骨架 5 列 → 内容 3~4 列」
+                // 在加载完成时发生列数跳变；尊重用户的视频网格列数设置。
+                val gridSpacing = 8.dp
+                val gridPadding = 8.dp
+                val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (108.dp + gridSpacing))
+                    .toInt().coerceAtLeast(1)
+                val requested = state.appSettings.videoGridColumns
+                val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
+                SkeletonGrid(columns = columns, modifier = Modifier.fillMaxWidth())
+            }
             state.homeError != null -> RetryableError(
                 message = state.homeError.orEmpty(),
                 onRetry = { actions.refreshHome(forceRefresh = true) },
@@ -2614,7 +2624,8 @@ private fun MobileNavScreenContent(
         else -> holder.SaveableStateProvider(screenSaveableKey(state)) {
             when (navScreen) {
                 MobileNavScreen.Home -> HomeScreen(state = state, actions = actions)
-                MobileNavScreen.History -> HistoryScreen(state = state, actions = actions)
+                // 手机端历史用专属列表页（时间分组 + 单条删除 + 无顶部提示），电视端仍走 HistoryScreen。
+                MobileNavScreen.History -> MobileHistoryScreen(state = state, actions = actions)
                 MobileNavScreen.Search -> SearchScreen(state = state, actions = actions)
                 // 手机模式「电视直播」：两层页面（列表页 + 播放页），电视端仍走 LiveScreen。
                 MobileNavScreen.Live -> MobileLiveScreen(
@@ -2622,8 +2633,10 @@ private fun MobileNavScreenContent(
                     actions = actions,
                     onOpenPlatformLive = actions::openPlatformLive,
                 )
-                // 平台直播在 TvBoxScreen 里整页渲染，这里只是保证 when 完整。
-                MobileNavScreen.PlatformLive -> PlatformLiveScreen(state = state, actions = actions)
+                // 平台直播已在上面 TvBoxScreen 分支整页渲染；currentTab 由 state.screen 1:1
+                // 派生，进入这里时 state.screen 不可能是 PlatformLive，故此分支不可达。
+                // 保留空实现仅为满足 when 穷尽，避免重复渲染一份 PlatformLiveScreen。
+                MobileNavScreen.PlatformLive -> Unit
             }
         }
     }

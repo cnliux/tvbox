@@ -1,6 +1,9 @@
 package com.tvbox.app.ui
 
+import android.content.Context
+import android.media.AudioManager
 import android.view.ViewGroup
+import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -44,6 +47,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import android.content.res.Configuration
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -903,7 +908,10 @@ private fun PlatformLivePlayerScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val isMobile = state.effectiveDeviceMode == com.tvbox.app.domain.DeviceMode.Mobile
     val activity = remember(context) { context.findActivity() }
-    var landscapeRequested by remember { mutableStateOf(false) }
+    // 全屏按钮按「当前真实方向」切换，而不是翻转一个本地布尔量：进入页面时屏幕可能
+    // 已被系统/传感器旋到横屏，本地量仍为 false，首次点击会误锁竖屏；物理旋转后同样失步。
+    val configuration = LocalConfiguration.current
+    val isPortraitNow = configuration.orientation == Configuration.ORIENTATION_PORTRAIT
     val initialRequestedOrientation = remember(activity) { activity?.requestedOrientation }
     if (isMobile) {
         // 手机模式直播播放页沉浸全屏，退出时恢复系统栏与屏幕方向。
@@ -964,6 +972,81 @@ private fun PlatformLivePlayerScreen(
     // 控件显隐/自动隐藏/返回层级统一走共享状态；平台直播保留自己的房间与候选语义。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
     val playerFocusRequester = chrome.rootFocus
+
+    // 竖滑调音量/亮度：与手机电视直播页共用 PlayerTouchGestureHandler，保持两个直播页
+    // 手感一致。TV 端不挂触摸监听（isMobile=false 时 capabilities 全关），仅手机生效。
+    val audioManager = remember(context) {
+        context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+    }
+    // 竖滑会直接改写 Window 亮度，退出播放器必须恢复进入前的设置。
+    val initialScreenBrightness = remember(activity) {
+        activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
+    var gesturePrompt by remember { mutableStateOf<String?>(null) }
+    var gesturePromptNonce by remember { mutableIntStateOf(0) }
+    PromptTimer(nonce = gesturePromptNonce, hideDelayMs = 1_200L) {
+        gesturePrompt = null
+    }
+    val touchHandler = remember {
+        PlayerTouchGestureHandler(
+            activity = activity,
+            audioManager = audioManager,
+            capabilities = PlayerTouchCapabilities(),
+            callbacks = PlayerTouchCallbacks(
+                isLocked = { chrome.locked },
+                currentPositionMs = { 0L },
+                durationMs = { null },
+                onToggleControls = {},
+                onLockedTap = {},
+                onPlaybackToggle = {},
+                onSeekBy = { _, _ -> },
+                onSeekDragPreview = { _, _ -> },
+                onSeekDragCommit = {},
+                onBrightnessChanged = { _, _ -> },
+                onVolumeChanged = { _, _ -> },
+                onLongPressStart = {},
+                onLongPressEnd = {},
+            ),
+        )
+    }
+    // 手机竖屏启用竖滑（左亮度右音量），其余手势关闭；锁屏时不响应。
+    touchHandler.capabilities = PlayerTouchCapabilities(
+        seekDrag = false,
+        doubleTapSeek = false,
+        longPressSpeed = false,
+        lock = false,
+        verticalSwipeEnabled = isMobile && isPortraitNow,
+        verticalSwipeLoose = true,
+    )
+    touchHandler.callbacks = PlayerTouchCallbacks(
+        isLocked = { chrome.locked },
+        currentPositionMs = { 0L },
+        durationMs = { null },
+        onToggleControls = { chrome.toggle() },
+        onLockedTap = {},
+        onPlaybackToggle = {},
+        onSeekBy = { _, _ -> },
+        onSeekDragPreview = { _, _ -> },
+        onSeekDragCommit = {},
+        onBrightnessChanged = { _, percent ->
+            gesturePrompt = "亮度 $percent%"
+            gesturePromptNonce++
+        },
+        onVolumeChanged = { volume, maxVolume ->
+            gesturePrompt = "音量 $volume/$maxVolume"
+            gesturePromptNonce++
+        },
+        onLongPressStart = {},
+        onLongPressEnd = {},
+    )
+    DisposableEffect(touchHandler, activity, initialScreenBrightness) {
+        onDispose {
+            touchHandler.release()
+            if (isMobile) {
+                activity?.window?.restoreScreenBrightness(initialScreenBrightness)
+            }
+        }
+    }
     // 播放信息只在面板打开时采样，关闭即停。
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     val session = rememberPlaybackSession()
@@ -975,6 +1058,12 @@ private fun PlatformLivePlayerScreen(
         resetKey = stream?.url to stream?.safeActiveCandidateIndex,
     )
     var playbackError by remember(stream?.url, stream?.safeActiveCandidateIndex) { mutableStateOf<String?>(null) }
+    // 投屏（仅手机端）：注意不能把 continuityProxy 的本机地址投给电视（电视访问不到 127.0.0.1），
+    // 必须投平台源地址；对话框里在点击设备时动态取当前流地址。
+    val castController = rememberCastController(
+        onNotice = { text -> android.widget.Toast.makeText(context, text, android.widget.Toast.LENGTH_SHORT).show() },
+        onCastStopped = { player?.let { session.play(it) } },
+    )
     // 共享看门狗：首帧超时与出帧后卡死同一套判定；候选/地址变化时重建计时。
     // 走连续代理时放宽阈值：代理的短段退避（斗鱼上限 8s）+ 重新解析可能超过
     // 默认 4s stall，过早触发 recoverPlatformLiveChannel 会重建播放器，
@@ -1358,7 +1447,15 @@ private fun PlatformLivePlayerScreen(
             .focusable(),
     ) {
         if (player != null) {
-            PlayerSurface(player = player, resizeMode = videoScaleMode)
+            PlayerSurface(
+                player = player,
+                resizeMode = videoScaleMode,
+                // 手机端把触摸交给共享手势处理器（单击唤出 + 竖滑亮度/音量）；
+                // TV 端不挂监听，避免与遥控器焦点/按键逻辑冲突。
+                configure = { view ->
+                    if (isMobile) view.setOnTouchListener(touchHandler)
+                },
+            )
         }
         if (danmakuEnabled && danmakuClient != null) {
             // 弹幕层压在画面上方、控件下方：留出顶部角标与按钮的高度，避免遮挡。
@@ -1372,15 +1469,23 @@ private fun PlatformLivePlayerScreen(
                     .padding(top = if (isMobile) 76.dp else 96.dp, start = 20.dp, end = 20.dp),
             )
         }
-        if (isMobile) {
-            // 点击画面切换控制条显隐；覆盖层位于按钮与角标之下，不拦截它们的手势。
-            Box(
+        if (isMobile && gesturePrompt != null) {
+            // 竖滑亮度/音量提示：单击唤出已由 PlayerSurface 的 touchHandler 统一处理，
+            // 这里只渲染手势反馈，不再叠加 pointerInput 覆盖层重复消费点击。
+            Surface(
+                color = Color.Black.copy(alpha = 0.72f),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
                 modifier = Modifier
-                    .matchParentSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures { chrome.toggle() }
-                    },
-            )
+                    .align(Alignment.Center)
+                    .padding(24.dp),
+            ) {
+                Text(
+                    text = gesturePrompt.orEmpty(),
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                )
+            }
         }
         if (session.interrupted && player != null) {
             ControlButton("继续播放", {
@@ -1450,6 +1555,8 @@ private fun PlatformLivePlayerScreen(
                     lines = false,
                     info = true,
                     url = true,
+                    cast = true,
+                    castLabel = castController.castLabel,
                     actions = liveActions,
                     // 手机端不再提供「缓冲档位」按钮，改为一个竖屏也保留的调试入口：
                     // 点击打开与电视端相同的实时播放健康/续流统计浮层。
@@ -1482,19 +1589,26 @@ private fun PlatformLivePlayerScreen(
                         }
                     },
                     onOrientation = {
-                        landscapeRequested = !landscapeRequested
-                        activity?.requestedOrientation = if (landscapeRequested) {
+                        activity?.requestedOrientation = if (isPortraitNow) {
                             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                         } else {
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
                         }
                         chrome.bump()
                     },
                     onBack = { actions.goBack() },
+                    onCast = castController::onCastClick,
                     onInteraction = { chrome.bump() },
                 ),
                 touch = true,
                 fade = true,
+            )
+            // 平台直播投屏必须用原始源地址，不能用本机续流代理地址。
+            CastDeviceDialog(
+                controller = castController,
+                castUrl = { stream?.url },
+                castTitle = { stream?.title ?: room.title },
+                onCastingStarted = { player?.let { session.pause(it) } },
             )
         }
         if (state.platformLiveResolving) {

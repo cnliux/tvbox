@@ -58,6 +58,8 @@ interface HistoryRepository {
         maxItems: Int = DEFAULT_HISTORY_MAX_ITEMS,
     ): List<WatchHistoryItem>
     suspend fun clearHistory(): List<WatchHistoryItem>
+    /** 删除单条观看记录（按来源 + 影片 id），返回删除后的最新列表。 */
+    suspend fun removeHistoryItem(apiLineId: String, movieId: Int): List<WatchHistoryItem>
 }
 
 interface LiveRepository {

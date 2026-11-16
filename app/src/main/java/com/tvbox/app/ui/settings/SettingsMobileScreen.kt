@@ -634,84 +634,10 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "EPG 节目条数",
-            subtitle = quantitySummary(
-                state.appSettings.epgCardRows,
-                QuantitySettings.EpgCardRows,
-                unit = " 条",
-            ),
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.EpgCardRows.choices,
-                    selected = state.appSettings.epgCardRows,
-                    label = { if (it == QuantitySettings.EpgCardRows.default) "默认" else "$it" },
-                    onSelect = actions::updateEpgCardRows,
-                )
-            },
-        )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "数字选台候选行数",
-            subtitle = quantitySummary(
-                state.appSettings.liveNumberMatchRows,
-                QuantitySettings.LiveNumberMatchRows,
-                unit = " 行",
-            ),
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.LiveNumberMatchRows.choices,
-                    selected = state.appSettings.liveNumberMatchRows,
-                    label = { if (it == QuantitySettings.LiveNumberMatchRows.default) "默认" else "$it" },
-                    onSelect = actions::updateLiveNumberMatchRows,
-                )
-            },
-        )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "数字选台匹配上限",
-            subtitle = quantitySummary(
-                state.appSettings.liveNumberSearchLimit,
-                QuantitySettings.LiveNumberSearchLimit,
-                unit = " 个",
-            ),
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.LiveNumberSearchLimit.choices,
-                    selected = state.appSettings.liveNumberSearchLimit,
-                    label = {
-                        if (it == QuantitySettings.LiveNumberSearchLimit.default) "默认" else "$it"
-                    },
-                    onSelect = actions::updateLiveNumberSearchLimit,
-                )
-            },
-        )
-        DividerInGroup()
-        SettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "相关频道数量",
-            subtitle = quantitySummary(
-                state.appSettings.relatedChannelCount,
-                QuantitySettings.RelatedChannelCount,
-                unit = " 个",
-            ),
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.RelatedChannelCount.choices,
-                    selected = state.appSettings.relatedChannelCount,
-                    label = { if (it == QuantitySettings.RelatedChannelCount.default) "默认" else "$it" },
-                    onSelect = actions::updateRelatedChannelCount,
-                )
-            },
-        )
+        // 以下四项（EPG 节目条数 / 数字选台候选行数 / 数字选台匹配上限 / 相关频道数量）
+        // 仅在电视端 LiveScreen 生效：数字选台是遥控器功能，手机直播页无此交互；
+        // 手机端 EPG 全量渲染、相关频道按同分组展示，均不读取这些配置。放在手机设置里
+        // 改了也没有任何效果，故不在手机端展示。
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,

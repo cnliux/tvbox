@@ -328,8 +328,11 @@ private fun EpisodeGrid(
             return
         }
         // 手机端没有剧集时头部信息仍要完整展示，空状态作为列表项跟随整页滚动。
+        // 列宽与下方「有剧集」分支保持一致：触摸模式用 92dp，否则 TV 档位；
+        // 否则无剧集的空态页会沿用 TV 的 132dp，头部信息在手机上排得过于稀疏。
+        val emptyTouchMode = LocalTouchMode.current
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = TvLayout.EpisodeGridMinWidth),
+            columns = GridCells.Adaptive(minSize = if (emptyTouchMode) 92.dp else TvLayout.EpisodeGridMinWidth),
             contentPadding = PaddingValues(bottom = 24.dp),
             modifier = modifier.fillMaxSize(),
         ) {

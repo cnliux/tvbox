@@ -969,6 +969,19 @@ class TvBoxViewModel(
         }
     }
 
+    fun removeHistoryItem(item: WatchHistoryItem) {
+        viewModelScope.launch {
+            // 与 clearHistory 同理：与进度保存共用写锁，避免删除后又被排队中的保存写回。
+            historyWriteMutex.withLock {
+                runCatching {
+                    historyRepository.removeHistoryItem(item.apiLineId, item.movieId)
+                }.onSuccess { history ->
+                    _state.update { it.copy(historyItems = history) }
+                }
+            }
+        }
+    }
+
     fun updateStartupUpdateCheck(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(checkUpdatesOnStartup = enabled)
         saveSettings(settings)
