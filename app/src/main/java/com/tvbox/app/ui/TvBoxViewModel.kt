@@ -191,6 +191,10 @@ data class TvBoxUiState(
     val historyLoaded: Boolean = false,
     val searchQuery: String = "",
     val searchResults: List<Movie> = emptyList(),
+    /** 每源原始搜索结果（未跨源去重），供手机端按源分组；key 为 apiLineId。 */
+    val searchResultsBySource: Map<String, List<Movie>> = emptyMap(),
+    /** 手机端搜索源筛选：空表示全部源，否则为选中的 apiLineId。底层仍搜全部源，只影响展示。 */
+    val searchSourceFilter: String = "",
     val searchLoading: Boolean = false,
     val searchError: String? = null,
     val searchCompletedSources: Int = 0,
@@ -1322,6 +1326,8 @@ class TvBoxViewModel(
             it.copy(
                 searchQuery = "",
                 searchResults = emptyList(),
+                searchResultsBySource = emptyMap(),
+                searchSourceFilter = "",
                 searchError = null,
                 searchLoading = false,
                 searchCompletedSources = 0,
@@ -1405,6 +1411,7 @@ class TvBoxViewModel(
                     searchLoading = true,
                     searchError = null,
                     searchResults = emptyList(),
+                    searchResultsBySource = emptyMap(),
                     searchCompletedSources = 0,
                     searchTotalSources = 0,
                 )
@@ -1419,6 +1426,7 @@ class TvBoxViewModel(
                     .distinct()
                 var totalSources = 0
                 var mergedResults: List<Movie> = emptyList()
+                var mergedBySource: Map<String, List<Movie>> = emptyMap()
                 // 多候选关键词并行搜索：拼音首字母可能扩展出多个候选中文片名，
                 // 全量并发缩短总延迟；首个（可信度最高）候选一旦产出结果即忽略其余，
                 // 避免低可信候选的结果反过来稀释/延后主结果。
@@ -1445,9 +1453,11 @@ class TvBoxViewModel(
                                     foundResults[0] = true
                                 }
                                 mergedResults = mergeSearchResults(mergedResults, update.movies)
+                                mergedBySource = mergeSearchResultsBySource(mergedBySource, update.moviesBySource)
                                 _state.update {
                                     it.copy(
                                         searchResults = mergedResults,
+                                        searchResultsBySource = mergedBySource,
                                         searchCompletedSources = update.completedSources,
                                         searchTotalSources = maxOf(totalSources, update.completedSources),
                                     )
@@ -1478,6 +1488,27 @@ class TvBoxViewModel(
 
     private fun mergeSearchResults(existing: List<Movie>, incoming: List<Movie>): List<Movie> =
         mergeMoviesBySourceAndId(existing, incoming)
+
+    /**
+     * 合并每源原始结果：每个源内部按 (apiLineId, movieId) 去重，源与源之间互不干扰，
+     * 让同一部片在多个源命中时各源分组下都能看到。
+     */
+    private fun mergeSearchResultsBySource(
+        existing: Map<String, List<Movie>>,
+        incoming: Map<String, List<Movie>>,
+    ): Map<String, List<Movie>> {
+        if (incoming.isEmpty()) return existing
+        val merged = existing.toMutableMap()
+        incoming.forEach { (sourceId, movies) ->
+            merged[sourceId] = mergeMoviesBySourceAndId(merged[sourceId].orEmpty(), movies)
+        }
+        return merged
+    }
+
+    /** 手机端切换搜索源筛选（空=全部源）。仅影响展示，不重新发起搜索。 */
+    fun setSearchSourceFilter(sourceId: String) {
+        _state.update { it.copy(searchSourceFilter = sourceId) }
+    }
 
     fun openDetail(movieId: Int, apiLineId: String = _state.value.selectedApiLineId) {
         historyResumeJob?.cancel()

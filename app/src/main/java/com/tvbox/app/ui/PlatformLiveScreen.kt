@@ -1178,7 +1178,8 @@ private fun PlatformLivePlayerScreen(
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 delay(10_000L)
-                val p = player ?: return@repeatOnLifecycle
+                // player 为 val 且上方已做非空判断，智能转换在此仍有效，无需 Elvis。
+                val p = player
                 val size = p.videoSize
                 val counters = p.videoDecoderCounters
                 val rendered = counters?.renderedOutputBufferCount ?: -1L

@@ -17,6 +17,12 @@ data class MultiSourceSearchUpdate(
     val movies: List<Movie>,
     val completedSources: Int,
     val totalSources: Int,
+    /**
+     * 每个来源的「原始」结果（跨源去重之前），键为 apiLineId。
+     * TV 端继续用 [movies] 扁平去重列表；手机端据此按源分组展示，
+     * 让同一部片在每个命中的源下都能看到。默认空表以兼容其它构造点。
+     */
+    val moviesBySource: Map<String, List<Movie>> = emptyMap(),
 )
 
 data class MovieDetailUpdate(

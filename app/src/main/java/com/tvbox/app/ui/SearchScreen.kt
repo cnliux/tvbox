@@ -81,7 +81,9 @@ import com.tvbox.app.ui.components.MediaCard
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
+import com.tvbox.app.domain.SearchSourceGroup
 import com.tvbox.app.domain.activeSearchProgressText
+import com.tvbox.app.domain.buildSearchSourceGroups
 import com.tvbox.app.domain.completedSearchProgressText
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
@@ -815,12 +817,29 @@ internal fun MobileSearchScreen(
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
     val gridState = rememberLazyGridState()
+    // 分组折叠状态：默认全部展开；用源 id 作 key，搜索结果刷新不影响展开状态。
+    var collapsedSources by remember { mutableStateOf<Set<String>>(emptySet()) }
+
+    // 按用户自定义源顺序分组；仅保留有结果的源。手机端据此渲染分组网格。
+    val sourceGroups = remember(state.searchResultsBySource, state.apiLines) {
+        buildSearchSourceGroups(state.searchResultsBySource, state.apiLines)
+    }
+    // 应用源筛选：空=全部源，否则只看选中的源（底层仍搜全部源，这里只影响展示）。
+    val visibleGroups = remember(sourceGroups, state.searchSourceFilter) {
+        if (state.searchSourceFilter.isEmpty()) sourceGroups
+        else sourceGroups.filter { it.sourceId == state.searchSourceFilter }
+    }
 
     LaunchedEffect(state.searchQuery) {
         if (fieldValue.text != state.searchQuery) {
             fieldValue = queryFieldValue(state.searchQuery)
         }
         // 换关键词后回到结果顶部，避免沿用上一批结果的滚动位置。
+        gridState.scrollToItem(0)
+    }
+
+    // 切换源筛选后分组内容变化大，滚回顶部避免停留在旧滚动位置的错位处。
+    LaunchedEffect(state.searchSourceFilter) {
         gridState.scrollToItem(0)
     }
 
@@ -907,6 +926,16 @@ internal fun MobileSearchScreen(
                     }
                 }
             }
+            // 源筛选条：默认「全部」，点选某源只看该源分组（不改变底层搜索）。
+            // 仅当有搜索结果时显示，避免空态/热词页出现一排无意义的源按钮。
+            if (sourceGroups.isNotEmpty()) {
+                SourceFilterBar(
+                    groups = sourceGroups,
+                    selectedId = state.searchSourceFilter,
+                    totalCount = state.searchResultsBySource.values.sumOf { it.size },
+                    onSelect = actions::setSearchSourceFilter,
+                )
+            }
             LazyVerticalGrid(
                 columns = GridCells.Fixed(columns),
                 state = gridState,
@@ -986,10 +1015,31 @@ internal fun MobileSearchScreen(
                                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                             }
                         }
-                        items(state.searchResults, key = { "${it.apiLineId}-${it.id}" }) { movie ->
-                            SearchResultCardMobile(movie = movie, onClick = {
-                                actions.openDetail(movie.id, movie.apiLineId)
-                            })
+                        // 按源分组渲染：每组一个可折叠的分组头（跨整行），组内用原网格卡片。
+                        visibleGroups.forEach { group ->
+                            val collapsed = group.sourceId in collapsedSources
+                            item(key = "header_${group.sourceId}", span = { GridItemSpan(maxLineSpan) }) {
+                                SearchGroupHeader(
+                                    group = group,
+                                    collapsed = collapsed,
+                                    onToggle = {
+                                        collapsedSources = if (collapsed) {
+                                            collapsedSources - group.sourceId
+                                        } else {
+                                            collapsedSources + group.sourceId
+                                        }
+                                    },
+                                )
+                            }
+                            if (!collapsed) {
+                                items(group.movies, key = { "${group.sourceId}-${it.id}" }) { movie ->
+                                    SearchResultCardMobile(
+                                        movie = movie,
+                                        showSourceBadge = state.searchSourceFilter.isEmpty(),
+                                        onClick = { actions.openDetail(movie.id, movie.apiLineId) },
+                                    )
+                                }
+                            }
                         }
                         // 搜索结果随多源完成持续增量合并，没有分页；加载完成后补底部留白。
                         if (!state.searchLoading) {
@@ -1046,6 +1096,7 @@ private fun HotSearchChips(
 private fun SearchResultCardMobile(
     movie: Movie,
     onClick: () -> Unit,
+    showSourceBadge: Boolean = true,
 ) {
     // 复用 MediaCard 底座，统一圆角、间距、字号与触摸反馈
     var posterFailed by remember(movie.posterUrl) { mutableStateOf(false) }
@@ -1073,8 +1124,8 @@ private fun SearchResultCardMobile(
             }
         },
         coverOverlay = {
-            // 来源角标
-            if (movie.apiLineName.isNotBlank()) {
+            // 来源角标：在「全部源」视图下显示以区分来源；选中单源分组时隐藏避免冗余。
+            if (showSourceBadge && movie.apiLineName.isNotBlank()) {
                 Surface(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -1094,4 +1145,138 @@ private fun SearchResultCardMobile(
             }
         },
     )
+}
+
+/**
+ * 搜索源筛选条：横向滚动的胶囊按钮。「全部」显示总数，各源显示自己的结果数。
+ * 选中态用品牌绿填充，未选中用深灰底；点击只切换展示，不重新发起搜索。
+ */
+@Composable
+private fun SourceFilterBar(
+    groups: List<SearchSourceGroup>,
+    selectedId: String,
+    totalCount: Int,
+    onSelect: (String) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFF161616)),
+    ) {
+        LazyRow(
+            state = listState,
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            item(key = "__all__") {
+                SourceFilterChip(
+                    label = "全部",
+                    count = totalCount,
+                    selected = selectedId.isEmpty(),
+                    onClick = { onSelect("") },
+                )
+            }
+            items(groups, key = { "filter_${it.sourceId}" }) { group ->
+                SourceFilterChip(
+                    label = group.sourceName,
+                    count = group.movies.size,
+                    selected = selectedId == group.sourceId,
+                    onClick = { onSelect(group.sourceId) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SourceFilterChip(
+    label: String,
+    count: Int,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val container = if (selected) Color(0xFF1ED760) else Color(0xFF2A2A2A)
+    val content = if (selected) Color.Black else Color.White.copy(alpha = 0.85f)
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = container,
+        modifier = Modifier
+            .clip(RoundedCornerShape(18.dp))
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "搜索源：$label，$count 个结果" },
+    ) {
+        Row(
+            modifier = Modifier
+                .heightIn(min = 40.dp)
+                .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.bodyMedium, color = content, maxLines = 1)
+            Text(
+                "$count",
+                style = MaterialTheme.typography.labelSmall,
+                color = content.copy(alpha = 0.75f),
+            )
+        }
+    }
+}
+
+/**
+ * 按源分组的分组头：左侧品牌绿竖条 + 源名 + 结果数 + 折叠箭头。
+ * 整行占满网格宽度，点击可折叠/展开该源下的影片。
+ */
+@Composable
+private fun SearchGroupHeader(
+    group: SearchSourceGroup,
+    collapsed: Boolean,
+    onToggle: () -> Unit,
+) {
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = Color(0xFF222222),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(role = Role.Button, onClick = onToggle)
+            .semantics { contentDescription = "${group.sourceName}，${group.movies.size} 个结果，${if (collapsed) "已折叠" else "已展开"}" },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(3.dp)
+                    .height(18.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color(0xFF1ED760)),
+            )
+            Text(
+                text = group.sourceName,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${group.movies.size} 部",
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White.copy(alpha = 0.6f),
+            )
+            Text(
+                text = if (collapsed) "▸" else "▾",
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White.copy(alpha = 0.7f),
+            )
+        }
+    }
 }

@@ -240,6 +240,9 @@ class DefaultMovieRepository(
                     ),
                     completedSources = update.completedSources,
                     totalSources = update.totalSources,
+                    // 手机端按源分组用的原始快照（未跨源去重）：同一部片在每个命中的源下都可见。
+                    // toMap() 做不可变拷贝，避免后续累积写入改动已发出的流元素。
+                    moviesBySource = completedMovies.toMap(),
                 ),
             )
         }
