@@ -1,3 +1,20 @@
+## v1.0.14 - 2026-11-16
+
+手机搜索按源重做与 OTA 升级 CDN 动态择优（含上一版之后未发布的两组改动）：
+
+- **手机搜索 UI 重做：按源筛选 + 按源分组**：结果改为按用户自定义源顺序分组展示，每组一个
+  可折叠分组头（源名 + 结果数）；顶部新增「全部 / 各源」筛选条，默认「全部」，点选某源只看该源
+  分组。底层仍搜全部源，切换筛选只改变展示视角、不重复发请求。同一部片在每个命中的源下都会显示
+  （不再跨源折叠）。`MultiSourceSearchUpdate` 新增 `moviesBySource` 带出每源原始结果，TV 端仍用原
+  去重扁平列表，互不影响；新增 `buildSearchSourceGroups` 分组纯函数与单测。
+- **OTA 升级 CDN 改为按实测速度动态择优**：探活从 HEAD 可达性升级为 Range 下载 64KB 计时，
+  排序以实测速率为主导（已测速可达 > 未测速未知 > 不可达），不再静态写死谁第一。删除失效节点
+  `ghproxy.link`、`cf.ghproxy.cn`（返回 HTML）与极慢的 `ghfast.top`，新增当前最快的 `gh-proxy.org`；
+  同步 `update.json`、release.yml 生成模板、README 与单测。设置页线路展示改用历史最快耗时排序。
+- **修复 Elvis 警告**：`PlatformLiveScreen` 播放健康采样中多余的 Elvis 判断（`player` 已智能转换为
+  非空），编译输出现已无警告。
+- **验证**：`compileDebugKotlin` 与 `testDebugUnitTest` 通过（离线）；发布构建由 Actions 触发。
+
 ## v1.0.13 - 2026-11-16
 
 手机端投屏、历史记录重设计与专项问题修复（本版聚焦手机体验，TV 端行为保持不变）：
