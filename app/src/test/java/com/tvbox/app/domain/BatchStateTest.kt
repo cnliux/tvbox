@@ -61,12 +61,12 @@ class BatchStateTest {
     fun cdnPreferenceSelectsOneLineAndFallsBackSafely() {
         assertEquals(CdnPreference(), decodeCdnPreference(null))
         assertEquals(CdnPreference(), decodeCdnPreference("v9|Manual|origin"))
-        val pref = CdnPreference(CdnSelectionMode.Manual, "ghfast.top")
+        val pref = CdnPreference(CdnSelectionMode.Manual, "gh-proxy.org")
         assertEquals(pref, decodeCdnPreference(encodeCdnPreference(pref)))
         val candidates = buildOtaApkCandidates(
             "https://github.com/cnliux/tvbox/releases/download/v1.0.2/juhe-video-v1.0.2.apk",
         )
-        assertEquals("ghfast.top", applyCdnPreference(candidates, pref).first().id)
+        assertEquals("gh-proxy.org", applyCdnPreference(candidates, pref).first().id)
         assertEquals(
             candidates,
             applyCdnPreference(candidates, CdnPreference(CdnSelectionMode.Manual, "missing")),

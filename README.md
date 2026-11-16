@@ -75,7 +75,7 @@
 从 Release 下载最新 APK：
 
 - [Latest Release](https://github.com/cnliux/tvbox/releases/latest)
-- OTA 更新清单：`https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json`
+- OTA 更新清单：`https://gh-proxy.org/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json`
 
 通过 ADB 安装：
 
@@ -94,7 +94,7 @@ adb install -r app-release.apk
 应用启动后会请求：
 
 ```text
-https://ghfast.top/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
+https://gh-proxy.org/https://raw.githubusercontent.com/cnliux/tvbox/main/update.json
 ```
 
 `update.json` 示例：

@@ -16,15 +16,17 @@ import kotlinx.coroutines.CancellationException
 
 /**
  * 默认用于 GitHub Release APK 的代理 CDN（按优先级排列）。
- * 末尾两条（ghproxy.link / cf.ghproxy.cn）为 2026-11-12 实测可达后新增的兜底镜像，
- * 当主源 ghfast.top 不可达时由探活排序自动提前。
+ * 2026-11-16 全量实测后重排：
+ * - `gh-proxy.org` 为 gh-proxy.com 官方新域名（2025-11 起启用），2MB/2.5s，最快，置顶；
+ * - `gh-proxy.com` 旧域名仍可用，2MB/8.8s，保留为第二候选；
+ * - `ghproxy.net` 可用但偏慢（2MB/15s），留作兜底；
+ * - 已移除 `ghfast.top`（30s 仅 720KB，20MB APK 实际下不完）、`ghproxy.link` 与
+ *   `cf.ghproxy.cn`（HTTP 200 但返回 HTML 页面，非 APK）。
  */
 val DEFAULT_OTA_APK_CDN_HOSTS: List<String> = listOf(
-    "ghfast.top",
+    "gh-proxy.org",
     "gh-proxy.com",
     "ghproxy.net",
-    "ghproxy.link",
-    "cf.ghproxy.cn",
 )
 
 /** 连续失败的降权冷却时间：超过后惩罚衰减到 20%，给线路重新尝试的机会。 */
@@ -42,6 +44,15 @@ data class OtaCdnCandidate(
     /** 面向用户的简短线路名，也会用于日志（不含 URL，天然脱敏）。 */
     val label: String,
     val url: String,
+)
+
+/**
+ * 单条 CDN 探活结果。[elapsedMs] 为下载固定字节的端到端耗时（越小越快）；
+ * -1 表示线路可达但未能测速（如不支持 Range），排序时保持中性、不误杀。
+ */
+data class OtaCdnProbe(
+    val reachable: Boolean,
+    val elapsedMs: Long = -1L,
 )
 
 data class OtaCdnHealth(
@@ -134,9 +145,11 @@ fun buildOtaApkCandidates(
 }
 
 /**
- * 生成更新清单候选。前两个保持原有顺序（ghfast 主源 → GitHub raw 备源），
- * 之后追加多个 CDN 兜底；jsDelivr 系对分支有缓存，只作兜底，
- * versionCode 比对保证旧缓存不会触发降级安装。
+ * 生成更新清单候选。GitHub raw 官方源保持第一，随后是按 2026-11-16 实测速率排序的 CDN；
+ * jsDelivr 系对分支有缓存，只作兜底，versionCode 比对保证旧缓存不会触发降级安装。
+ *
+ * 已移除：`ghfast.top`（实测极慢，2MB 下载 30s 仅 720KB）、`ghproxy.link` 与
+ * `cf.ghproxy.cn`（返回 HTML 页面而非清单）。新增 gh-proxy.com 官方新域名 `gh-proxy.org`。
  */
 fun buildOtaManifestCandidates(
     owner: String = "cnliux",
@@ -147,47 +160,71 @@ fun buildOtaManifestCandidates(
     val raw = "https://raw.githubusercontent.com/$owner/$repo/$branch/$path"
     val jsdelivrPath = "/gh/$owner/$repo@$branch/$path"
     return listOf(
-        OtaCdnCandidate("manifest-ghfast", "ghfast", "https://ghfast.top/$raw"),
         OtaCdnCandidate("manifest-raw", "GitHub raw", raw),
+        OtaCdnCandidate("manifest-gh-proxy-org", "gh-proxy.org", "https://gh-proxy.org/$raw"),
         OtaCdnCandidate("manifest-gh-proxy", "gh-proxy", "https://gh-proxy.com/$raw"),
         OtaCdnCandidate("manifest-ghproxy-net", "ghproxy.net", "https://ghproxy.net/$raw"),
         OtaCdnCandidate("manifest-jsdelivr", "jsDelivr", "https://cdn.jsdelivr.net$jsdelivrPath"),
         OtaCdnCandidate("manifest-fastly", "Fastly jsDelivr", "https://fastly.jsdelivr.net$jsdelivrPath"),
         OtaCdnCandidate("manifest-gcore", "Gcore jsDelivr", "https://gcore.jsdelivr.net$jsdelivrPath"),
-        // 2026-11-12 实测可达后新增的兜底镜像：ghfast 主源不可达时由探活排序自动提前。
-        OtaCdnCandidate("manifest-ghproxy-link", "ghproxy.link", "https://ghproxy.link/$raw"),
-        OtaCdnCandidate("manifest-cf-ghproxy-cn", "cf.ghproxy.cn", "https://cf.ghproxy.cn/$raw"),
     )
 }
 
 /**
- * 按本机健康度排序候选。无任何记录时严格保持声明顺序（主源优先不变）；
- * 连续失败越多惩罚越大，冷却期后惩罚衰减。成功次数只用于状态展示，
- * 不参与排序加权，避免「成功过的线路」越过从未失败的官方源造成行为漂移。
+ * 按「实测速度优先」排序候选：谁快谁排前面，不再由声明顺序决定谁是第一。
  *
- * [availability] 是「先探活再优选」的结果：键为候选 id，值为该线路本次是否可达。
- * 只有确有「不可达」结论时才对其大幅降权；键不存在（未参与探活 / 探活异常）的线路
- * 视为未知，保持原有健康度排序，绝不因探活失败而误杀可用线路。
+ * 排序依据（权重从高到低）：
+ * 1. 不可达线路重罚置底（[availability] 明确为 false 时）；
+ * 2. **实测速度**：[latencyMs] 中有数据的线路，按相对本轮最快线路的耗时差打分——
+ *    越快分越低排越前，以此实现「根据哪个速度快用哪一个」；
+ * 3. 历史连续失败作为次要惩罚（冷却期后衰减），避免偶发失败永久埋没一条线路；
+ * 4. 速度与失败都无记录的线路保持声明顺序，绝不被误杀。
+ *
+ * [latencyMs] 键为候选 id，值为本次探活下载固定字节的耗时（毫秒，越小越快）。
+ * 键不存在（未参与探活 / 探活异常）视为未知，该线路不加速度分，保持中性。
  */
 fun rankOtaCdnCandidates(
     candidates: List<OtaCdnCandidate>,
     health: Map<String, OtaCdnHealth>,
     nowMs: Long,
     availability: Map<String, Boolean> = emptyMap(),
+    latencyMs: Map<String, Long> = emptyMap(),
     cooldownMs: Long = DEFAULT_OTA_CDN_COOLDOWN_MS,
-): List<OtaCdnCandidate> = candidates
-    .mapIndexed { index, candidate ->
-        val record = health[candidate.id] ?: OtaCdnHealth()
-        val failureAgeMs = if (record.lastFailureAtMs > 0L) nowMs - record.lastFailureAtMs else 0L
-        val decay = if (record.consecutiveFailures > 0 && failureAgeMs >= cooldownMs) 0.2 else 1.0
-        val penalty = minOf(record.consecutiveFailures, 6) * 100.0 * decay
-        // 探活不可达：大幅降权，使其排到所有可达（或未知）线路之后。
-        // 该惩罚高于历史失败上限（6*100=600），确保不可达线路永远靠后。
-        val availPenalty = if (availability[candidate.id] == false) 5000.0 else 0.0
-        RankedOtaCandidate(score = penalty + availPenalty, index = index, candidate = candidate)
-    }
-    .sortedWith(compareBy<RankedOtaCandidate> { it.score }.thenBy { it.index })
-    .map { it.candidate }
+): List<OtaCdnCandidate> {
+    // 以本轮最快的有效耗时为基准；耗时必须为正才参与，避免 0/负值造成除零或倒挂。
+    val validLatencies = latencyMs.values.filter { it > 0L }
+    val fastestMs = validLatencies.minOrNull()
+    return candidates
+        .mapIndexed { index, candidate ->
+            val record = health[candidate.id] ?: OtaCdnHealth()
+            val failureAgeMs = if (record.lastFailureAtMs > 0L) nowMs - record.lastFailureAtMs else 0L
+            val decay = if (record.consecutiveFailures > 0 && failureAgeMs >= cooldownMs) 0.2 else 1.0
+            val failurePenalty = minOf(record.consecutiveFailures, 6) * 80.0 * decay
+            // 不可达：重罚置底，高于所有速度分与历史失败上限。
+            val availPenalty = if (availability[candidate.id] == false) 10_000.0 else 0.0
+            // 速度分：相对最快线路的倍数差。最快=0；慢 N 倍约 (N-1)*SPEED_WEIGHT，封顶 8 倍。
+            // 优先级：已测速可达(0~960) < 未测速未知(1000) < 不可达(10000)。
+            // 未测速给中性偏后的固定分，确保「已测得可用的线路」永远排在「还没测出速度」之前；
+            // 当全部线路都未测速时该分相同，退回声明顺序，不误杀。
+            val latency = latencyMs[candidate.id]?.takeIf { it > 0L }
+            val speedPenalty = if (latency != null && fastestMs != null) {
+                ((latency.toDouble() / fastestMs) - 1.0).coerceIn(0.0, 8.0) * SPEED_PENALTY_WEIGHT
+            } else SPEED_UNKNOWN_PENALTY
+            RankedOtaCandidate(
+                score = availPenalty + speedPenalty + failurePenalty,
+                index = index,
+                candidate = candidate,
+            )
+        }
+        .sortedWith(compareBy<RankedOtaCandidate> { it.score }.thenBy { it.index })
+        .map { it.candidate }
+}
+
+/** 速度分权重：慢一倍约 +120 分，8 倍封顶共 960 分。 */
+private const val SPEED_PENALTY_WEIGHT = 120.0
+
+/** 未测速线路的分数：大于已测速上限 960、小于不可达罚分 10000，处于中性偏后位置。 */
+private const val SPEED_UNKNOWN_PENALTY = 1_000.0
 
 private data class RankedOtaCandidate(
     val score: Double,

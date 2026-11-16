@@ -27,6 +27,7 @@ import com.tvbox.app.domain.buildCdnStatusRows
 import com.tvbox.app.domain.OtaCdnCandidate
 import com.tvbox.app.domain.OtaCdnFailureKind
 import com.tvbox.app.domain.OtaCdnHealth
+import com.tvbox.app.domain.OtaCdnProbe
 import com.tvbox.app.domain.OtaDownloadProgressGate
 import com.tvbox.app.domain.afterFailure
 import com.tvbox.app.domain.afterSuccess
@@ -485,33 +486,57 @@ class DefaultAppUpdateRepository(
     override fun cdnStatusRows(nowMs: Long): List<CdnStatusRow> {
         val health = readCdnHealth()
         val preference = decodeCdnPreference(cdnPrefs.getString("preference", null))
+        // 用历史最快耗时（bestSuccessMs）作速度信号，让展示顺序与「速度优先」的实际下载顺序一致；
+        // 未使用过的线路没有该数据，保持中性排序，不会被误杀。
+        val latencyMs = health.mapNotNull { (id, record) ->
+            record.bestSuccessMs.takeIf { it > 0L }?.let { id to it }
+        }.toMap()
         return buildCdnStatusRows(
-            candidates = rankOtaCdnCandidates(buildOtaManifestCandidates(), health, nowMs),
+            candidates = rankOtaCdnCandidates(
+                candidates = buildOtaManifestCandidates(),
+                health = health,
+                nowMs = nowMs,
+                latencyMs = latencyMs,
+            ),
             health = health,
             preference = preference,
             nowMs = nowMs,
         )
     }
 
-    /** 健康度排序 + 设置页的手动线路选择（默认 Auto，行为与排序结果一致）。 */
+    /** 速度优先排序 + 设置页的手动线路选择（默认 Auto，行为与排序结果一致）。 */
     private suspend fun orderedCandidates(candidates: List<OtaCdnCandidate>): List<OtaCdnCandidate> {
-        // 先探活：对前若干候选做轻量 HEAD 探测，不可达的线路在排序中大幅降权，
-        // 实现「先检查 CDN 是否可用，再进行优选」。探活异常/超时安全降级为空（保留原行为）。
-        val availability = probeCdnAvailability(candidates)
+        // 先探活测速：对前若干候选并发下载固定字节，不可达的重罚置底、快的排前面，
+        // 实现「不写死谁第一，实测谁快用谁」。探活异常/超时安全降级为空（退回中性排序）。
+        val probes = probeCdnAvailability(candidates)
+        val availability = probes.mapValues { (_, probe) -> probe.reachable }
+        val latencyMs = probes.mapValues { (_, probe) -> probe.elapsedMs }
+            .filterValues { it > 0L }
         return applyCdnPreference(
-            rankOtaCdnCandidates(candidates, readCdnHealth(), System.currentTimeMillis(), availability),
+            rankOtaCdnCandidates(
+                candidates = candidates,
+                health = readCdnHealth(),
+                nowMs = System.currentTimeMillis(),
+                availability = availability,
+                latencyMs = latencyMs,
+            ),
             decodeCdnPreference(cdnPrefs.getString("preference", null)),
         )
     }
 
     /**
-     * 对候选 CDN 做轻量可达性探活：只探前 [buildCdnProbePlan] 预算内的若干条，
-     * 并发执行并受整体超时约束，避免拖慢更新检查/下载。返回 id→是否可达；
-     * 任意异常（网络、超时、解析）都返回空表，让排序退回纯健康度策略，不误杀可用线路。
+     * 对候选 CDN 并发探活测速：只探前 [buildCdnProbePlan] 预算内的若干条，
+     * 每条 Range 下载固定字节并计时，整体受超时约束，避免拖慢更新检查/下载。
+     * 任意异常（网络、超时、解析）都返回空表，让排序退回中性策略，不误杀可用线路。
      */
-    private suspend fun probeCdnAvailability(candidates: List<OtaCdnCandidate>): Map<String, Boolean> {
+    private suspend fun probeCdnAvailability(candidates: List<OtaCdnCandidate>): Map<String, OtaCdnProbe> {
         if (candidates.isEmpty()) return emptyMap()
-        val plan = buildCdnProbePlan(candidates)
+        val plan = buildCdnProbePlan(
+            candidates,
+            budgetMs = CDN_PROBE_BUDGET_MS,
+            maxProbes = 5,
+            minProbeMs = CDN_PROBE_MIN_MS,
+        )
         if (plan.isEmpty()) return emptyMap()
         val budgetBy = plan.toMap()
         return runCatching {
@@ -519,8 +544,8 @@ class DefaultAppUpdateRepository(
                 coroutineScope {
                     candidates.filter { it.id in budgetBy }.map { candidate ->
                         async {
-                            val reachable = probeOne(candidate.url, budgetBy.getValue(candidate.id))
-                            candidate.id to reachable
+                            val probe = probeOne(candidate.url, budgetBy.getValue(candidate.id))
+                            candidate.id to probe
                         }
                     }.awaitAll().toMap()
                 }
@@ -528,24 +553,46 @@ class DefaultAppUpdateRepository(
         }.getOrDefault(emptyMap())
     }
 
-    /** 单条候选的轻量可达性探测：HEAD 请求，成功状态码（2xx/3xx）或 HEAD 不被支持（405/403）视为可用。 */
-    private suspend fun probeOne(url: String, budgetMs: Long): Boolean {
+    /**
+     * 单条候选的速度探测：Range GET 下载固定字节并计时。
+     * - 2xx/3xx 且读到数据：可达，elapsedMs 为端到端耗时（用于速度排序）；
+     * - 405/403（CDN 不支持 Range）：视为可达但无法测速，elapsedMs=-1 保持中性；
+     * - 超时/网络错误：不可达。
+     */
+    private suspend fun probeOne(url: String, budgetMs: Long): OtaCdnProbe {
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
             .header("Cache-Control", "no-cache")
-            .head()
+            .header("Range", "bytes=0-${CDN_PROBE_BYTES - 1}")
             .build()
         return try {
             withTimeout(budgetMs) {
+                val startedAtMs = System.currentTimeMillis()
                 probeClient.newCall(request).execute().use { response ->
                     val code = response.code
-                    // 405/403 多因 CDN 不支持 HEAD，不能据此判定线路不可用；视为可用以保留该候选。
-                    code in 200..399 || code == 405 || code == 403
+                    if (code == 405 || code == 403) {
+                        // 不支持 Range/HEAD：不能据此判定不可用，保留候选但不加速度分。
+                        return@use OtaCdnProbe(reachable = true, elapsedMs = -1L)
+                    }
+                    if (code !in 200..399) return@use OtaCdnProbe(reachable = false)
+                    val source = response.body.byteStream()
+                    val buffer = ByteArray(8 * 1024)
+                    var total = 0
+                    while (total < CDN_PROBE_BYTES) {
+                        val read = source.read(buffer, 0, minOf(buffer.size, CDN_PROBE_BYTES - total))
+                        if (read <= 0) break
+                        total += read
+                    }
+                    if (total == 0) OtaCdnProbe(reachable = false)
+                    else OtaCdnProbe(
+                        reachable = true,
+                        elapsedMs = (System.currentTimeMillis() - startedAtMs).coerceAtLeast(1L),
+                    )
                 }
             }
         } catch (_: Throwable) {
-            false
+            OtaCdnProbe(reachable = false)
         }
     }
 }
@@ -593,8 +640,18 @@ private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
 /** 单个更新清单源的整体超时：慢 CDN 快速失败并切换下一个，不让启动检查长时间挂起。 */
 private const val MANIFEST_CHECK_TIMEOUT_MS = 10_000L
 
-/** 探活整体上限：前若干候选并发探测，单条预算约 1s，整体留足余量后强制结束（结果回退纯健康度排序）。 */
+/** 探活整体上限：前若干候选并发测速，整体留足余量后强制结束（结果回退中性排序）。 */
 private const val CDN_PROBE_OVERALL_TIMEOUT_MS = 4_000L
+
+/** 探活单条预算：下载固定字节的端到端测速上限；5 条并发各 1.2s，仍受整体 4s 约束。 */
+private const val CDN_PROBE_BUDGET_MS = 3_600L
+private const val CDN_PROBE_MIN_MS = 1_200L
+
+/**
+ * 单条探活下载字节数：64KB 足以让快慢线路拉开差距（快线约 0.1s、慢线约 0.5s），
+ * 又不会在慢线路上耗尽预算。对小于该值的清单文件（如 858B 的 update.json）读满即止。
+ */
+private const val CDN_PROBE_BYTES = 64 * 1024
 
 /** 探活单条连接/读取超时：短于整体上限，确保不可达线路快速判定。 */
 private const val CDN_PROBE_CONNECT_TIMEOUT_MS = 1_500L
