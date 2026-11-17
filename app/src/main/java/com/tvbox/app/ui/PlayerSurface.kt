@@ -111,12 +111,15 @@ internal sealed interface PlaybackStatus {
 internal fun playbackFailureTitle(kind: PlaybackFailureKind): String = when (kind) {
     PlaybackFailureKind.SourceFailed -> "取流失败"
     PlaybackFailureKind.FirstFrameTimeout -> "已连接但迟迟没有画面"
+    // 软卡顿只用于页内轻提示，不会进入失败浮层；给兜底文案即可。
+    PlaybackFailureKind.StallSoft -> "正在重连"
     PlaybackFailureKind.Stalled -> "播放已中断"
 }
 
 internal fun playbackFailureMessage(kind: PlaybackFailureKind): String = when (kind) {
     PlaybackFailureKind.SourceFailed -> "当前线路取流失败，可重试当前线路或切换到下一台。"
     PlaybackFailureKind.FirstFrameTimeout -> "已建立连接但始终未出画面，可重试当前线路或切换到下一台。"
+    PlaybackFailureKind.StallSoft -> "连接短暂中断，正在自动恢复，请稍候。"
     PlaybackFailureKind.Stalled -> "画面已中断，可重试当前线路或切换到下一台。"
 }
 

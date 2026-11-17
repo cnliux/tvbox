@@ -97,11 +97,12 @@ import coil.compose.AsyncImage
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.FlvContinuityProxy
 import com.tvbox.app.data.PacerDebugPrefs
-import com.tvbox.app.data.DouyuTuningDebugPrefs
+import com.tvbox.app.data.LiveTuningDebugPrefs
 import androidx.compose.runtime.mutableLongStateOf
 import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.PlaybackProgressSample
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.roomVideoScaleKey
 import com.tvbox.app.domain.resolveVideoScaleMode
@@ -1074,7 +1075,13 @@ private fun PlatformLivePlayerScreen(
     var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex, proxyWrapped) {
         mutableStateOf(
             if (proxyWrapped) {
-                PlaybackWatchdog(firstFrameTimeoutMs = 20_000L, stallTimeoutMs = 15_000L)
+                // 两段式卡顿（pure_live 思路）：曾推进过的流静止 4s 只提示"正在重连"，
+                // 12s 才判硬卡死触发恢复。硬阈值 12s < Go 空闲读 15s，让 Go 代理先兜底。
+                PlaybackWatchdog(
+                    firstFrameTimeoutMs = 20_000L,
+                    stallTimeoutMs = 12_000L,
+                    softStallTimeoutMs = 4_000L,
+                )
             } else {
                 PlaybackWatchdog()
             }
@@ -1185,10 +1192,12 @@ private fun PlatformLivePlayerScreen(
                 val counters = p.videoDecoderCounters
                 val rendered = counters?.renderedOutputBufferCount ?: -1L
                 val dropped = counters?.droppedBufferCount ?: -1L
+                val skippedOut = counters?.skippedOutputBufferCount ?: -1L
+                val maxDropped = counters?.maxConsecutiveDroppedBufferCount ?: -1L
                 val bufferedMs = (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
                 android.util.Log.d(
                     PLATFORM_LIVE_LOG_TAG,
-                    "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.stats() ?: "continuityProxy=null"}"
+                    "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, skippedOut=$skippedOut, maxDropped=$maxDropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.stats() ?: "continuityProxy=null"}"
                 )
             }
         }
@@ -1231,11 +1240,28 @@ private fun PlatformLivePlayerScreen(
                     nowMs = now,
                     playWhenReady = player.playWhenReady && session.canPlay,
                 ) ?: playbackWatchdog.onProgressSample(
-                    isPlaying = player.playWhenReady,
-                    positionMs = player.currentPosition,
-                    nowMs = now,
+                    PlaybackProgressSample(
+                        isPlaying = player.playWhenReady,
+                        positionMs = player.currentPosition,
+                        nowMs = now,
+                        // 缓冲前瞻参与 slack 判定：位置虽未推进但缓冲充足时视为正常缓冲。
+                        // renderedFrames 不传（ExoPlayer 无稳定公开帧计数 API），以位置推进为准。
+                        bufferedAheadMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L),
+                        engineBuffering = player.playbackState == androidx.media3.common.Player.STATE_BUFFERING,
+                    )
                 )
                 if (failure != null) {
+                    if (failure.kind == PlaybackFailureKind.StallSoft) {
+                        // 软卡顿：曾推进过的流短暂静止。只提示"正在重连"，不重建播放器、
+                        // 不触发 recover——代理内部的短段/预建交接会在数秒内自行续上。
+                        android.util.Log.i(
+                            PLATFORM_LIVE_LOG_TAG,
+                            "【软卡顿】room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, elapsedMs=${failure.elapsedMs}, 仅提示不恢复",
+                        )
+                        playbackError = "直播连接中断，正在重连…"
+                        chrome.bump()
+                        continue
+                    }
                     android.util.Log.w(
                         PLATFORM_LIVE_LOG_TAG,
                         "【看门狗触发】kind=${failure.kind}, room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}, elapsedMs=${failure.elapsedMs}",
@@ -1244,6 +1270,7 @@ private fun PlatformLivePlayerScreen(
                         PlaybackFailureKind.FirstFrameTimeout -> "直播连接较慢，正在重新获取播放地址"
                         PlaybackFailureKind.Stalled -> "直播连接中断，正在重新获取播放地址"
                         PlaybackFailureKind.SourceFailed -> "播放失败，正在尝试恢复"
+                        PlaybackFailureKind.StallSoft -> "直播连接中断，正在重连…" // 上面已 continue，理论不可达
                     }
                     chrome.bump()
                     actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
@@ -1283,13 +1310,23 @@ private fun PlatformLivePlayerScreen(
         runCatching { platformlive.Platformlive.setPacerTargetBufferMs(next) }
         chrome.bump()
     }
-    // 斗鱼「一起看」重连调优档位：循环切换 稳健/默认/耐心，即时写回 Go 并持久化。
-    var douyuTuningIndex by rememberSaveable { mutableIntStateOf(DouyuTuningDebugPrefs.loadProfileIndex(context)) }
+    // 「一起看」重连调优档位（斗鱼/虎牙）：循环切换 稳健/默认/耐心，即时写回 Go 并持久化。
+    var douyuTuningIndex by rememberSaveable { mutableIntStateOf(LiveTuningDebugPrefs.loadProfileIndex(context, LiveTuningDebugPrefs.Site.DOUYU)) }
+    var huyaTuningIndex by rememberSaveable { mutableIntStateOf(LiveTuningDebugPrefs.loadProfileIndex(context, LiveTuningDebugPrefs.Site.HUYA)) }
     val cycleDouyuTuning: () -> Unit = {
-        val next = DouyuTuningDebugPrefs.nextProfileIndex(douyuTuningIndex)
+        val site = LiveTuningDebugPrefs.Site.DOUYU
+        val next = LiveTuningDebugPrefs.nextProfileIndex(site, douyuTuningIndex)
         douyuTuningIndex = next
-        DouyuTuningDebugPrefs.saveProfileIndex(context, next)
-        DouyuTuningDebugPrefs.applyToBridge(context)
+        LiveTuningDebugPrefs.saveProfileIndex(context, site, next)
+        LiveTuningDebugPrefs.applyToBridge(context, site)
+        chrome.bump()
+    }
+    val cycleHuyaTuning: () -> Unit = {
+        val site = LiveTuningDebugPrefs.Site.HUYA
+        val next = LiveTuningDebugPrefs.nextProfileIndex(site, huyaTuningIndex)
+        huyaTuningIndex = next
+        LiveTuningDebugPrefs.saveProfileIndex(context, site, next)
+        LiveTuningDebugPrefs.applyToBridge(context, site)
         chrome.bump()
     }
     var debugMonitorText by remember { mutableStateOf("") }
@@ -1301,8 +1338,8 @@ private fun PlatformLivePlayerScreen(
         while (true) {
             delay(1_000L)
             val sb = StringBuilder()
-            if (room.site.equals("douyu", ignoreCase = true)) {
-                sb.appendLine("斗鱼重连档位: ${DouyuTuningDebugPrefs.summary(context)}")
+            LiveTuningDebugPrefs.siteOf(room.site)?.let { site ->
+                sb.appendLine("${site.name.lowercase()}重连档位: ${LiveTuningDebugPrefs.summary(context, site)}")
             }
             continuityProxy?.stats()?.let { json ->
                 try {
@@ -1576,13 +1613,19 @@ private fun PlatformLivePlayerScreen(
                     // 点击打开与电视端相同的实时播放健康/续流统计浮层。
                     debugActive = showDebugMonitor,
                     onToggleDebug = { showDebugMonitor = !showDebugMonitor; chrome.bump() },
-                    // 斗鱼「一起看」重连调优按钮：仅斗鱼房间显示，竖屏也保留，方便现场调参。
-                    douyuTuningLabel = if (room.site.equals("douyu", ignoreCase = true)) {
-                        "重连:${DouyuTuningDebugPrefs.PROFILES[douyuTuningIndex].label}"
-                    } else {
-                        null
+                    // 「一起看」重连调优按钮（斗鱼/虎牙）：仅对应房间显示，竖屏也保留，方便现场调参。
+                    tuningLabel = LiveTuningDebugPrefs.siteOf(room.site)?.let { site ->
+                        val idx = when (site) {
+                            LiveTuningDebugPrefs.Site.DOUYU -> douyuTuningIndex
+                            LiveTuningDebugPrefs.Site.HUYA -> huyaTuningIndex
+                        }
+                        "重连:${LiveTuningDebugPrefs.profiles(site)[idx].label}"
                     },
-                    onCycleDouyuTuning = if (room.site.equals("douyu", ignoreCase = true)) cycleDouyuTuning else null,
+                    onCycleTuning = when (LiveTuningDebugPrefs.siteOf(room.site)) {
+                        LiveTuningDebugPrefs.Site.DOUYU -> cycleDouyuTuning
+                        LiveTuningDebugPrefs.Site.HUYA -> cycleHuyaTuning
+                        else -> null
+                    },
                 ),
                 actions = PlayerChromeActions(
                     onToggle = {
@@ -1810,11 +1853,15 @@ private fun PlatformLivePlayerScreen(
                 }
                 // 电视端保留 pacer 目标缓冲档位按钮；手机端已改为调试入口。
                 ControlButton(pacerBufferLabel(pacerBufferMs), cyclePacerBuffer)
-                // 斗鱼「一起看」重连档位按钮：仅斗鱼房间显示，现场一键切换调优组合。
-                if (room.site.equals("douyu", ignoreCase = true)) {
+                // 「一起看」重连档位按钮（斗鱼/虎牙）：仅对应房间显示，现场一键切换调优组合。
+                LiveTuningDebugPrefs.siteOf(room.site)?.let { site ->
+                    val idx = when (site) {
+                        LiveTuningDebugPrefs.Site.DOUYU -> douyuTuningIndex
+                        LiveTuningDebugPrefs.Site.HUYA -> huyaTuningIndex
+                    }
                     ControlButton(
-                        text = "重连档位:${DouyuTuningDebugPrefs.PROFILES[douyuTuningIndex].label}",
-                        onClick = cycleDouyuTuning,
+                        text = "重连档位:${LiveTuningDebugPrefs.profiles(site)[idx].label}",
+                        onClick = if (site == LiveTuningDebugPrefs.Site.DOUYU) cycleDouyuTuning else cycleHuyaTuning,
                     )
                 }
             }

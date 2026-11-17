@@ -1,7 +1,7 @@
 package com.tvbox.app.ui.settings
 
 import androidx.activity.compose.BackHandler
-import com.tvbox.app.data.DouyuTuningDebugPrefs
+import com.tvbox.app.data.LiveTuningDebugPrefs
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -535,30 +535,34 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             },
         )
         DividerInGroup()
-        // 斗鱼「一起看」重连调优：三档策略即时写回 Go，现场定位"总是重连"的最佳组合。
-        run {
-            val context = LocalContext.current
-            var tuningIndex by remember { mutableIntStateOf(DouyuTuningDebugPrefs.loadProfileIndex(context)) }
+        // 「一起看」重连调优：斗鱼/虎牙各三档策略即时写回 Go，现场定位"总是重连"的最佳组合。
+        val context = LocalContext.current
+        listOf(LiveTuningDebugPrefs.Site.DOUYU, LiveTuningDebugPrefs.Site.HUYA).forEach { site ->
+            val siteName = if (site == LiveTuningDebugPrefs.Site.DOUYU) "斗鱼" else "虎牙"
+            var tuningIndex by remember(site) {
+                mutableIntStateOf(LiveTuningDebugPrefs.loadProfileIndex(context, site))
+            }
+            val profiles = LiveTuningDebugPrefs.profiles(site)
             SettingsRow(
                 icon = Icons.Default.Build,
-                title = "斗鱼重连调优",
-                subtitle = "档位：${DouyuTuningDebugPrefs.PROFILES[tuningIndex].label}（改动仅影响斗鱼一起看）",
+                title = "${siteName}重连调优",
+                subtitle = "档位：${profiles[tuningIndex].label}（改动仅影响${siteName}一起看）",
                 stackedTrailing = true,
                 trailing = {
                     ChoiceChips(
-                        options = DouyuTuningDebugPrefs.PROFILES.indices.toList(),
+                        options = profiles.indices.toList(),
                         selected = tuningIndex,
-                        label = { DouyuTuningDebugPrefs.PROFILES[it].label },
+                        label = { profiles[it].label },
                         onSelect = { idx ->
                             tuningIndex = idx
-                            DouyuTuningDebugPrefs.saveProfileIndex(context, idx)
-                            DouyuTuningDebugPrefs.applyToBridge(context)
+                            LiveTuningDebugPrefs.saveProfileIndex(context, site, idx)
+                            LiveTuningDebugPrefs.applyToBridge(context, site)
                         },
                     )
                 },
             )
+            DividerInGroup()
         }
-        DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "视频缩放",

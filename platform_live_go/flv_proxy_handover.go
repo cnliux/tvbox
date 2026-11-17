@@ -184,8 +184,11 @@ func (p *flvProxy) prepareNextConnection(ctx context.Context, resolve resolveCan
 		}
 		size := int(tagHeader[1])<<16 | int(tagHeader[2])<<8 | int(tagHeader[3])
 		if size <= 0 || size > flvProxyMaxTagSize {
+			// 预备连接遇到同样的上游坏 tag：放弃这条预备流，主段仍可正常交接/续拉。
+			// 记事件便于真机监控区分「预建失败」与「在播会话坏 tag」。
 			_ = response.Body.Close()
 			cancel()
+			p.event("prepareMalformedTag")
 			return nil
 		}
 		tag := make([]byte, flvProxyTagHeaderSize+size+flvProxyPrevTagSizeLen)

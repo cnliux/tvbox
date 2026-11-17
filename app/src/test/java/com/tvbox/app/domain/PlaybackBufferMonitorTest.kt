@@ -214,4 +214,27 @@ class PlaybackBufferMonitorTest {
         assertNull(monitor.onBuffering(true, 34_000))
         assertNull(monitor.onReady(true, 40_000).decision)
     }
+
+    // ── 缓冲对账（pure_live G02.2）──────────────────────────────
+
+    @Test
+    fun reconcileBufferingByPositionWhenWithinWallClock() {
+        // 位置推进 1.2s，墙钟 1.2s，缓冲充足 → 对账成功。
+        assertTrue(PlaybackBufferMonitor.reconcileBuffering(1_200L, 1_200L, 0, 2_000L))
+    }
+
+    @Test
+    fun reconcileBufferingRejectsTimestampJumpBeyondSlack() {
+        // 位置推进 10s 但墙钟只过 1s（seek/时间戳跳变）→ 不算对账成功。
+        assertFalse(PlaybackBufferMonitor.reconcileBuffering(10_000L, 1_000L, 0, 3_000L))
+    }
+
+    @Test
+    fun reconcileBufferingByRenderedFrames() {
+        // 位置不动但 1 秒内渲染 10 帧，缓冲充足 → 对账成功。
+        assertTrue(PlaybackBufferMonitor.reconcileBuffering(0L, 1_000L, 10, 1_500L))
+        // 帧数不足或缓冲不足 → 不成功。
+        assertFalse(PlaybackBufferMonitor.reconcileBuffering(0L, 1_000L, 9, 1_500L))
+        assertFalse(PlaybackBufferMonitor.reconcileBuffering(0L, 1_000L, 10, 500L))
+    }
 }

@@ -198,7 +198,9 @@ func TestFlvProxyUpstreamIdleIsSoftReconnect(t *testing.T) {
 	proxy := newManualDouyuProxy("huya")
 	proxy.httpClient = &http.Client{Transport: &http.Transport{
 		DisableCompression: true,
-		DialContext:        dialWithIdleReadTimeout(200 * time.Millisecond),
+		// site 传空：本测试用 200ms 固定空闲超时验证半开连接软重连。
+		// 若传 "huya" 会走运行时 override（默认 15s）覆盖 200ms，测试将不成立。
+		DialContext: dialWithIdleReadTimeout(200*time.Millisecond, ""),
 	}}
 	started := time.Now()
 	leaseExpired, handover, err := proxy.pullSegment(
@@ -391,8 +393,11 @@ func TestStreamLoopUsesPlannedHandover(t *testing.T) {
 		httpClient: &http.Client{Transport: &http.Transport{DisableCompression: true}},
 		client:     &flvProxyClient{writer: downstream, flusher: downstream, done: make(chan struct{})},
 	}
-	proxy.tuning.plannedRefreshLeadMs = 60
-	proxy.tuning.nominalSessionMs = 200
+	// 参数改为使用点读取 override 后，直接设置原子变量（白盒测试用极小值加速，
+	// 绕过 setter 的合法范围钳制；生产路径的钳制由 TestHuyaTuningDefaultsAndClamp 覆盖）。
+	huyaPlannedRefreshLeadOverride.Store(60)
+	huyaNominalSessionOverride.Store(200)
+	defer resetHuyaTuning()
 	proxy.ctx, proxy.cancel = context.WithCancel(context.Background())
 	defer proxy.cancel()
 	go proxy.streamLoop()

@@ -155,5 +155,33 @@ class PlaybackBufferMonitor(
         const val DEFAULT_FREQUENT_BUFFER_WINDOW_MS = 60_000L
         const val DEFAULT_FREQUENT_BUFFER_COUNT = 3
         const val DEFAULT_CUMULATIVE_BUFFER_THRESHOLD_MS = 8_000L
+
+        /** pure_live 式缓冲对账阈值：位置推进 >= 1s 且不超过墙钟 +2s，或 1 秒内渲染 >= 10 帧。 */
+        const val BUFFER_RECONCILE_POSITION_MS = 1_000L
+        const val BUFFER_RECONCILE_SLACK_MS = 2_000L
+        const val BUFFER_RECONCILE_FRAMES = 10
+        const val BUFFER_RECONCILE_MIN_AHEAD_MS = 1_000L
+
+        /**
+         * 缓冲对账（pure_live G02.2）：判断"引擎说不缓冲了但会话仍认为在缓冲"时是否应结束缓冲。
+         *
+         * @param positionAdvancedMs 位置推进量；>= [BUFFER_RECONCILE_POSITION_MS] 且 <= 墙钟 + slack 才算真实推进
+         *   （超过墙钟说明时间戳跳变/seek，不能算）。
+         * @param wallElapsedMs 同一窗口的墙钟经过时长。
+         * @param renderedFrames 窗口内渲染帧数；>= [BUFFER_RECONCILE_FRAMES] 即视为在动。
+         * @param bufferedAheadMs 缓冲前瞻；至少 [BUFFER_RECONCILE_MIN_AHEAD_MS] 才认为有数据支撑。
+         */
+        fun reconcileBuffering(
+            positionAdvancedMs: Long,
+            wallElapsedMs: Long,
+            renderedFrames: Int,
+            bufferedAheadMs: Long,
+        ): Boolean {
+            if (wallElapsedMs <= 0) return false
+            val positionOk = positionAdvancedMs >= BUFFER_RECONCILE_POSITION_MS &&
+                positionAdvancedMs <= wallElapsedMs + BUFFER_RECONCILE_SLACK_MS
+            val framesOk = renderedFrames >= BUFFER_RECONCILE_FRAMES
+            return bufferedAheadMs >= BUFFER_RECONCILE_MIN_AHEAD_MS && (positionOk || framesOk)
+        }
     }
 }

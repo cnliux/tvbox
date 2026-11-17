@@ -329,8 +329,8 @@ func TestFlvProxyReconnectNoRollback(t *testing.T) {
 	}
 	defer response.Body.Close()
 
-	frames, err := readTestFLVTagsEx(response.Body, 8) // 上段 3 + 续段转发 5（丢弃 1）
-	if err != nil && len(frames) < 8 {
+	frames, err := readTestFLVTagsEx(response.Body, 7) // 上段 3 + 续段转发 4（丢弃前导非关键帧和黑窗音频）
+	if err != nil && len(frames) < 7 {
 		t.Fatalf("读取代理输出失败：%v（已读 %d，统计=%s）", err, len(frames), proxy.statsJSON())
 	}
 

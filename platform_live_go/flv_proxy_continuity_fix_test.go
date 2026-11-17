@@ -152,7 +152,7 @@ func TestContinuationDoesNotDoubleCountDroppedSourceMs(t *testing.T) {
 	for i := 0; i < replayFrames; i++ {
 		payload := replayVideoFrame(1000+i, i == 0)
 		replayPayloads = append(replayPayloads, payload)
-		proxy.rememberFrame(flvFrameFingerprint(flvTagTypeVideo, payload), 10000)
+		proxy.rememberFrame(flvFrameFingerprint(flvTagTypeVideo, payload), 10000, 0)
 	}
 
 	var flv bytes.Buffer

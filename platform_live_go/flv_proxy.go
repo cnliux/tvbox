@@ -200,15 +200,18 @@ func siteTuningFor(site string) flvSiteTuning {
 			shortSessionMs:         4000,
 			maxShortStreak:         0,
 			// 短段退避可被手机端调试按钮运行时调整（默认仍为 2s/8s）。
-			shortBackoffBase: time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
-			shortBackoffMax:  time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
-			timelineContinuous:     true,
-			timelineAuto:           false,
-			leaseAware:             true,
-			plannedRefreshLeadMs:   0,
-			nominalSessionMs:       0,
+			shortBackoffBase:     time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
+			shortBackoffMax:      time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
+			timelineContinuous:   true,
+			timelineAuto:         false,
+			leaseAware:           true,
+			plannedRefreshLeadMs: 0,
+			nominalSessionMs:     0,
 		}
 	case "huya":
+		// 虎牙参数可被手机端调试按钮运行时调整（默认值仍与历史常量一致）。
+		// 注意：这里读到的是新建会话的初值；在播会话由 effective* helper 在使用点
+		// 读 override，使按钮切换对当前播放立即生效。
 		return flvSiteTuning{
 			name:                   "huya-yqk",
 			replayWindowMs:         flvProxyReplayWindowMs,
@@ -217,14 +220,14 @@ func siteTuningFor(site string) flvSiteTuning {
 			pacerMaxDelay:          flvProxyPacerMaxDelay,
 			maxFastReconnectStreak: huyaMaxFastReconnectStreak,
 			shortSessionMs:         huyaShortSessionMs,
-			maxShortStreak:         huyaMaxShortStreak,
-			shortBackoffBase:       huyaShortBackoffBase,
-			shortBackoffMax:        huyaShortBackoffMax,
+			maxShortStreak:         huyaMaxShortStreakCurrent(),
+			shortBackoffBase:       huyaShortBackoffBaseCurrent(),
+			shortBackoffMax:        huyaShortBackoffMaxCurrent(),
 			timelineContinuous:     false,
 			timelineAuto:           false,
 			leaseAware:             false,
-			plannedRefreshLeadMs:   huyaPlannedRefreshLeadMs,
-			nominalSessionMs:       huyaNominalSessionMs,
+			plannedRefreshLeadMs:   huyaPlannedRefreshLead(),
+			nominalSessionMs:       huyaNominalSession(),
 		}
 	default:
 		// 其它平台（B站 / 抖音 / 快手 / 自定义源等）：**通用中性档**。
@@ -455,6 +458,15 @@ type flvProxy struct {
 
 	clientReady chan struct{}
 
+	// 进度看门狗：只要下游持续有标签写出就认为健康；连续若干秒没有任何
+	// 标签（不论卡在读、写、预建连接还是 pacer）就取消本段上游连接，强制
+	// 走软重连。它不依赖具体故障类型，且必须早于 Kotlin 12s 硬看门狗。
+	progressMu      sync.Mutex
+	lastProgressAt  time.Time
+	segmentCancelMu sync.Mutex
+	segmentCancel   func()
+	progressStalled atomic.Bool
+
 	// pacer 目标缓冲为「每个代理一份」，运行时调整写回全部在播实例。
 	pacerTargetMs atomic.Int64
 	pacerRebase   atomic.Bool
@@ -473,7 +485,7 @@ type flvProxy struct {
 	// 最近已转发帧的内容指纹，用于重连时识别并丢弃 CDN 带回的旧缓冲（回放）。
 	// 只存指纹不存帧体，按输出时间戳淘汰窗口外记录。
 	recentMu   sync.Mutex
-	recent     map[uint64]int64
+	recent     map[uint64]flvReplayEntry
 	recentList []flvReplayEntry
 
 	statsMu           sync.Mutex
@@ -482,6 +494,7 @@ type flvProxy struct {
 	reconnects        int64
 	plannedHandovers  int64
 	idleTimeouts      int64
+	malformedTags     int64
 	clientTakeovers   int64
 	candidateSwitches int64
 	tagsWritten       int64
@@ -512,11 +525,11 @@ type flvProxy struct {
 	dropReplayActive     bool
 	guardActiveNow       bool
 	// 双轨时间戳过滤实际拦下的帧数、pacer 累计等待时长（现场定位掉帧用）。
-	tsRejectedVideo      int64
-	tsRejectedAudio      int64
-	pacerWaitMs          int64
+	tsRejectedVideo int64
+	tsRejectedAudio int64
+	pacerWaitMs     int64
 	// 交接后积压追帧 / 时间戳跳变导致 pacer 重新对齐的次数（真机定位卡顿用）。
-	pacerRebases int64
+	pacerRebases         int64
 	lastVideoForwardedAt time.Time
 	lastAudioForwardedAt time.Time
 	recentEvents         []string
@@ -542,10 +555,12 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	tuning := siteTuningFor(site)
-	// 斗鱼空闲读超时可被手机端调试按钮运行时调整；其它平台沿用固定 15s。
+	// 斗鱼/虎牙空闲读超时可被手机端调试按钮运行时调整；其它平台沿用固定 15s。
 	idleReadTimeout := flvProxyIdleReadTimeout
 	if strings.EqualFold(strings.TrimSpace(site), "douyu") {
 		idleReadTimeout = douyuIdleReadTimeout()
+	} else if strings.EqualFold(strings.TrimSpace(site), "huya") {
+		idleReadTimeout = huyaIdleReadTimeout()
 	}
 	// 只有启用租约语义的档位（当前仅斗鱼）才改写首段地址：ws 短租线打
 	// expire=0 补丁，避免 5 分钟租约到期后被 CDN 强杀。虎牙与通用档的
@@ -575,8 +590,8 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 				ResponseHeaderTimeout: 12 * time.Second,
 				// 每次 Read 前刷新截止时刻：CDN 半开连接时自行断开重连，
 				// 而不是让 consume 永久卡在 io.ReadFull（画面冻结且无兜底）。
-				// 斗鱼该值可运行时调整，其它平台固定 15s。
-				DialContext:     dialWithIdleReadTimeout(idleReadTimeout),
+				// 斗鱼/虎牙该值可运行时调整，其它平台固定 15s。
+				DialContext:       dialWithIdleReadTimeout(idleReadTimeout, site),
 				DisableKeepAlives: true,
 			},
 		},
@@ -783,7 +798,8 @@ func (p *flvProxy) streamLoop() {
 			}
 			// 仅虎牙：在预期关流前预解析 + 预建第二条连接，消除 EOF 后的解析空窗。
 			// 斗鱼（租约）与通用档 plannedRefreshLeadMs=0，不进这条路径。
-			if p.tuning.plannedRefreshLeadMs > 0 && !fastReconnect {
+			plannedLeadMs := p.effectivePlannedLeadMs()
+			if plannedLeadMs > 0 && !fastReconnect {
 				prepareCtx, cancel := context.WithCancel(p.ctx)
 				stopPrepare = cancel
 				preparedCh = make(chan *preparedStream, 1)
@@ -791,7 +807,8 @@ func (p *flvProxy) streamLoop() {
 				// 若把缩短后的时长再喂回下一轮，预建时刻会逐轮前移形成正反馈
 				// （125s → 113s → 101s …），反而制造更频繁的切换。
 				// 虎牙 120~137s 的关流周期是 CDN 固有上限，用固定标称值即可。
-				delayMs := p.tuning.nominalSessionMs - p.tuning.plannedRefreshLeadMs
+				// 两个值都在使用点读运行时 override，按钮切换对在播会话下一段立即生效。
+				delayMs := p.effectiveNominalSessionMs() - plannedLeadMs
 				if delayMs < 1000 {
 					delayMs = 1000
 				}
@@ -819,7 +836,14 @@ func (p *flvProxy) streamLoop() {
 		}
 
 		beforeTags := p.tagCount()
+		// 每段都重置进度基准并启动看门狗：连续 8s 没有标签写出就取消本段，
+		// 让「既不报错也不吐数据」的半开/交接冻结在 Kotlin 12s 硬恢复前自愈。
+		p.resetProgress()
+		stopProgress := make(chan struct{})
+		go p.watchProgress(stopProgress)
 		leaseExpired, handover, err := p.pullSegment(candidate, headers, leaseDeadline, opts)
+		close(stopProgress)
+		p.setSegmentCancel(nil)
 		if stopPrepare != nil {
 			stopPrepare()
 		}
@@ -887,13 +911,14 @@ func (p *flvProxy) streamLoop() {
 				if shift > 6 {
 					shift = 6
 				}
-				backoff := p.tuning.shortBackoffBase * time.Duration(1<<shift)
-				if backoff > p.tuning.shortBackoffMax {
-					backoff = p.tuning.shortBackoffMax
+				backoffBase, backoffMax := p.effectiveShortBackoff()
+				backoff := backoffBase * time.Duration(1<<shift)
+				if backoff > backoffMax {
+					backoff = backoffMax
 				}
 				p.event(fmt.Sprintf("shortSession sessionMs=%d streak=%d backoff=%s site=%s",
 					p.lastSessionMs, shortStreak, backoff, p.tuning.name))
-				if p.tuning.maxShortStreak > 0 && shortStreak >= p.tuning.maxShortStreak {
+				if maxStreak := p.effectiveMaxShortStreak(); maxStreak > 0 && shortStreak >= maxStreak {
 					shortStreak = 0
 					failures = 0
 					candidateIndex++
@@ -907,6 +932,19 @@ func (p *flvProxy) streamLoop() {
 				continue
 			}
 			shortStreak = 0
+			continue
+		}
+		if err == errMalformedFLVTag {
+			// 上游 FLV 标签损坏：立即重新解析拿新签名重连，不计硬失败、不换线路、
+			// 不做 600ms 固定等待。关键是不复用坏地址（清空快速续拉候选），
+			// 否则同一条已损坏的上游会话会被反复重放错误 tag。
+			p.bumpReconnect()
+			shortStreak = 0
+			failures = 0
+			fastReconnectCandidate = nil
+			fastReconnectHeaders = nil
+			fastReconnectStreak = 0
+			p.event("malformedTagSoftReconnect")
 			continue
 		}
 		if fastReconnect {
@@ -979,20 +1017,37 @@ func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string
 		stream := opts.usePrepared
 		stream.take()
 		defer stream.close()
+		// 看门狗需要能立即打断预建连接上的阻塞读取。
+		p.setSegmentCancel(stream.cancel)
+		defer p.setSegmentCancel(nil)
 		err := p.consumeWithOptions(stream.reader(), nil)
+		if p.progressStalled.Load() && p.ctx.Err() == nil {
+			p.statsMu.Lock()
+			p.idleTimeouts++
+			p.statsMu.Unlock()
+			p.event("progressStallReconnect")
+			return false, nil, nil
+		}
 		if err == errHandover {
 			err = nil
+		}
+		if err == errMalformedFLVTag {
+			// 预建连接也可能遇到坏 tag：同样计入软错误，由 streamLoop 立即重解析。
+			p.statsMu.Lock()
+			p.malformedTags++
+			p.statsMu.Unlock()
+			p.event("malformedFlvTagPrepared")
 		}
 		return false, nil, err
 	}
 
-	requestCtx := p.ctx
+	requestCtx, cancel := context.WithCancel(p.ctx)
+	defer cancel()
+	p.setSegmentCancel(cancel)
+	defer p.setSegmentCancel(nil)
 	var leaseExpired atomic.Bool
-	var cancel context.CancelFunc
 	var leaseTimer *time.Timer
 	if !leaseDeadline.IsZero() && leaseDeadline.After(time.Now()) {
-		requestCtx, cancel = context.WithCancel(p.ctx)
-		defer cancel()
 		leaseTimer = time.AfterFunc(time.Until(leaseDeadline), func() {
 			// 租约到期：主动取消本次上游读取（计划内切换，不是故障）。
 			leaseExpired.Store(true)
@@ -1019,6 +1074,9 @@ func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string
 
 	response, err := p.httpClient.Do(request)
 	if err != nil {
+		if p.progressStalled.Load() && p.ctx.Err() == nil && !leaseExpired.Load() {
+			return false, nil, nil
+		}
 		if leaseExpired.Load() && p.ctx.Err() == nil {
 			return true, nil, nil
 		}
@@ -1030,6 +1088,14 @@ func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string
 	}
 	reader := bufio.NewReaderSize(response.Body, 128*1024)
 	consumeErr := p.consumeWithOptions(reader, state)
+	if p.progressStalled.Load() && p.ctx.Err() == nil && !leaseExpired.Load() {
+		// 看门狗判定长时间无标签写出：无论底层报什么错，都按软重连处理。
+		p.statsMu.Lock()
+		p.idleTimeouts++
+		p.statsMu.Unlock()
+		p.event("progressStallReconnect")
+		return false, nil, nil
+	}
 	if consumeErr == errHandover {
 		// 交接已发生，立刻标记为「已取用」，避免 20s hold timeout 的定时器
 		// 在 streamLoop 拿到它之前把这条连接关掉。
@@ -1046,6 +1112,16 @@ func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string
 		p.statsMu.Unlock()
 		p.event("upstreamIdleTimeout")
 		return false, nil, nil
+	}
+	if consumeErr == errMalformedFLVTag {
+		// 非法 FLV tag 长度：与上游静默同级的软错误。保留 sentinel 交给
+		// streamLoop 做「立即重新解析」处理；不在这里设置 lastError，
+		// 避免监控把它误判为未恢复的线路故障。
+		p.statsMu.Lock()
+		p.malformedTags++
+		p.statsMu.Unlock()
+		p.event("malformedFlvTag")
+		return false, nil, errMalformedFLVTag
 	}
 	if consumeErr == nil && leaseExpired.Load() && p.ctx.Err() == nil {
 		return true, nil, nil
@@ -1066,6 +1142,11 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverState) error {
 	header := make([]byte, flvProxyHeaderSize+flvProxyPrevTagSizeLen)
 	if _, err := io.ReadFull(reader, header); err != nil {
+		// 上游在 FLV 头之前就关闭：直播会话的正常结束形态之一（空段），
+		// 交给 streamLoop 走短段退避/快速续拉，不能计入硬失败。
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			return nil
+		}
 		if isNetworkTimeout(err) {
 			return errUpstreamIdle
 		}
@@ -1097,13 +1178,18 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 	var haveBase bool
 	// 被丢弃的回放帧在源时间轴上占了几毫秒：转发新内容时必须扣掉，
 	// 否则输出时间轴会撕出与回放等长的空洞（播放器表现为卡住几秒）。
-	var droppedSourceMs int64
+	// 必须按音/视频轨道分别统计：视频回放通常比音频长，若用同一个全局扣减量，
+	// 会额外压低某一轨的时间戳，形成持续累积的音画偏移。
+	var droppedSourceMs [2]int64
 	// offset 锁定之前已累计的丢弃量。这段时间轴已经在 spliceBase 里被
 	// 平移吸收，若后续帧再把它扣一遍，输出时间戳会被拉回上一段交付位置之前，
 	// 触发 validateTs 拒绝 / controlledTs 钳制，续段表现为卡住数秒。
-	var droppedAtBase int64
-	var prevSourceTs int64
-	var havePrevSourceTs bool
+	var droppedAtBase [2]int64
+	var prevSourceByTrack [2]int64
+	var havePrevSourceByTrack [2]bool
+	var prevFp uint64
+	var prevFpType byte
+	var havePrevFp bool
 	// pacer 的墙钟基准保存在 p.pacer，跨上游会话保持，这里不再有
 	// 任何「每段重新预填」的局部状态。
 
@@ -1132,17 +1218,30 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 		}
 		size := int(tagHeader[1])<<16 | int(tagHeader[2])<<8 | int(tagHeader[3])
 		if size <= 0 || size > flvProxyMaxTagSize {
-			return newError("上游 FLV 标签长度异常：%d", size)
+			// 上游偶发非法 tag 长度（真机实测 14~16MB）属于流损坏，不是线路故障。
+			// 返回专用软错误，由 pullSegment/streamLoop 立即重新解析续流，
+			// 避免落入通用硬失败路径等待 600ms 并让播放器缓冲耗尽。
+			return errMalformedFLVTag
 		}
 		sourceTs := int64(tagHeader[4])<<16 | int64(tagHeader[5])<<8 | int64(tagHeader[6]) | int64(tagHeader[7])<<24
 		data := make([]byte, size)
 		if _, err := io.ReadFull(reader, data); err != nil {
+			// 虎牙 CDN 常在一个 tag 中途直接关连接（真机观测到 unexpected EOF），
+			// 这是会话结束而非线路故障；当普通错误处理会白等 600ms 并累计失败，
+			// 叠加后播放器缓冲耗尽。按干净 EOF 交给 streamLoop 立即续拉。
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return nil
+			}
 			if isNetworkTimeout(err) {
 				return errUpstreamIdle
 			}
 			return newError("上游 FLV 数据读取失败：%s", err.Error())
 		}
 		if _, err := io.ReadFull(reader, make([]byte, flvProxyPrevTagSizeLen)); err != nil {
+			// 同上：尾部 4 字节 PreviousTagSize 缺失也是常见的会话截断形态。
+			if err == io.EOF || err == io.ErrUnexpectedEOF {
+				return nil
+			}
 			if isNetworkTimeout(err) {
 				return errUpstreamIdle
 			}
@@ -1150,22 +1249,59 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 		}
 
 		tagType := tagHeader[0] & 0x1f
+		trackIdx := -1
+		switch tagType {
+		case flvTagTypeAudio:
+			trackIdx = 0
+		case flvTagTypeVideo:
+			trackIdx = 1
+		}
+		noteDropped := func() {
+			if trackIdx < 0 || !havePrevSourceByTrack[trackIdx] || sourceTs <= prevSourceByTrack[trackIdx] {
+				return
+			}
+			droppedSourceMs[trackIdx] += sourceTs - prevSourceByTrack[trackIdx]
+		}
 		isSeq := tagType == flvTagTypeVideo && isAvcSequenceHeader(data)
 		isKey := tagType == flvTagTypeVideo && isVideoKeyframe(data)
 		fp := flvFrameFingerprint(tagType, data)
-		replayed := guardActive && !isSeq && p.isReplayedFrame(fp)
-		// 被丢弃帧所占的源时间要从后续输出里扣掉（音视频同 ts 时 delta=0，自然跳过）。
-		if havePrevSourceTs && sourceTs > prevSourceTs && replayed {
-			droppedSourceMs += sourceTs - prevSourceTs
+		// 回放判定不能只看「这一帧指纹是否出现过」：真实直播里的静音 AAC 帧、
+		// 静止画面的编码帧都可能逐字节相同，单帧命中会把正常帧当回放丢掉，
+		// 再把这段时间从输出时间轴里扣掉，最终表现为丢帧 + 音画不同步。
+		// 连续命中 3 帧才确认为 CDN 回放；续段开头的严格去重叠阶段（dropReplay）
+		// 仍然首帧即丢，避免把已知的 6 秒旧缓冲放回直播线。
+		framePrevFp := uint64(0)
+		if havePrevFp && prevFpType == tagType {
+			framePrevFp = prevFp
 		}
-		prevSourceTs = sourceTs
-		havePrevSourceTs = true
+		// dropReplay 阶段（续段开头）执行严格去重：见过的帧一律丢，包括
+		// 「新关键帧 + 旧缓冲」里前驱无法对齐的旧帧；阶段结束后改用序列判定，
+		// 避免把正常重复的静音/静止帧误删。
+		replayed := false
+		if guardActive && !isSeq {
+			seen := p.wasFrameSeen(fp)
+			if tagType == flvTagTypeVideo {
+				// 视频帧逐字节重复几乎只可能是 CDN 回放；静止画面即使误判，
+				// 丢一帧的代价也远小于让旧缓冲漏回直播线造成数秒画面冻结。
+				replayed = seen
+			} else {
+				// 音频（尤其静音 AAC）会自然逐字节重复，必须按连续历史序列判定，
+				// 否则会把正常声音删掉并压缩时间轴，表现为丢帧 + 音画不同步。
+				replayed = (dropReplay && seen) || p.isReplayedFrame(fp, framePrevFp)
+			}
+		}
+		prevFp, prevFpType, havePrevFp = fp, tagType, true
 
 		// 1) 指纹去重贯穿整个续段：对每一帧（含音频、含新关键帧之后）都检查，
 		//    命中即丢弃。AVC 序列头是解码参数、内容可能与上一段完全相同，单独放行。
 		if guardActive && !isSeq {
 			guardFrames++
 			if replayed {
+				noteDropped()
+				if trackIdx >= 0 {
+					prevSourceByTrack[trackIdx] = sourceTs
+					havePrevSourceByTrack[trackIdx] = true
+				}
 				p.statsMu.Lock()
 				if tagType == flvTagTypeVideo {
 					p.videoDroppedReplay++
@@ -1185,6 +1321,19 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 		}
 
 		if dropReplay {
+			// 视频在等一个未见过的 keyframe 才能解码；这段时间若继续转发音频，
+			// 画面恢复时声音已经领先 1~2 秒，正是真机观测到的音画不同步。
+			// 因此视频黑窗期间的音频同样丢弃，并在各自轨道上压缩源时间轴，
+			// 两个轨道一起从新关键帧处恢复。
+			if tagType == flvTagTypeAudio {
+				noteDropped()
+				prevSourceByTrack[0] = sourceTs
+				havePrevSourceByTrack[0] = true
+				p.statsMu.Lock()
+				p.audioDroppedReplay++
+				p.statsMu.Unlock()
+				continue
+			}
 			// 2) AVC 序列头：编码参数变化时才转发一次（解码前提）。用受控时间戳，
 			//    不让它成为 spliceBase 锚点，避免时间轴上撕出回放长度的空洞。
 			if isSeq {
@@ -1196,12 +1345,15 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 					return err
 				}
 				p.commitTs(1, ts)
-				p.rememberFrame(fp, ts)
+				p.rememberFrame(fp, ts, framePrevFp)
 				p.incForwarded(tagType, sourceTs)
 				continue
 			}
 			// 3) 未见过的视频帧仍须等关键帧才能独立解码。
 			if tagType == flvTagTypeVideo && !isKey {
+				noteDropped()
+				prevSourceByTrack[1] = sourceTs
+				havePrevSourceByTrack[1] = true
 				p.statsMu.Lock()
 				p.videoDroppedAwaitKey++
 				p.statsMu.Unlock()
@@ -1217,6 +1369,10 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			}
 		}
 
+		if trackIdx >= 0 {
+			prevSourceByTrack[trackIdx] = sourceTs
+			havePrevSourceByTrack[trackIdx] = true
+		}
 		adjusted := sourceTs
 		if !haveBase {
 			prefixLastTs := lastOutBefore
@@ -1270,26 +1426,27 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			// 虎牙 / 通用档：丢弃回放帧后压缩源时间轴，避免输出时间轴出现数秒
 			// 空洞导致播放器卡住。这是 FLV 续流的通用正确性保证，不是任何平台
 			// 的专属假设；两档真正的差异在首帧对齐方式与全局钳制策略。
-			// 只扣基准之后的增量（droppedAtBase 见上方说明）。
-			adjusted = sourceTs - (droppedSourceMs - droppedAtBase) + offset
-		}
-		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差；
-		// 兜底保证输出严格不回退（acceptTs 只允许相等，这里保证至少 +1ms）。
-		// 仅续段启用：首段没有「上一帧」，不能把首帧 0 抬成 1。
-		// 斗鱼连续时间轴与通用自适应时间轴都不走该钳制：全局钳制会把音/视频
-		// 同 ts 的帧错开 1ms，且真正的同轨回退已由 acceptTs 守住。
-		// 该钳制是虎牙归零重置路径的历史行为，逐字保留、不外借给其它平台。
-		if isContinuation && !p.tuning.timelineContinuous && !p.tuning.timelineAuto {
-			if minimum := p.controlledTs(); adjusted < minimum {
-				adjusted = minimum
+			// 只扣本轨在基准之后的增量（droppedAtBase 见上方说明）。
+			// 两轨分开扣减是音画同步的关键：视频回放通常比音频长，用全局
+			// 扣减量会把音频时间戳一起拉回，形成持续累积的 A/V 偏移。
+			if trackIdx >= 0 {
+				adjusted = sourceTs - (droppedSourceMs[trackIdx] - droppedAtBase[trackIdx]) + offset
 			}
 		}
-		track := -1
-		switch tagType {
-		case flvTagTypeAudio:
-			track = 0
-		case flvTagTypeVideo:
-			track = 1
+		track := trackIdx
+		// 丢弃整段回放后，源时间轴被压缩，扣除量可能与帧间隔有 1~2ms 误差。
+		// 旧实现用「两轨最大时间戳 + 1」做全局钳制，同刻的音频/视频会被强行
+		// 错开，且误差会逐帧累积成音画不同步。这里改为只在本轨内钳到上一帧：
+		// 同轨仍严格单调（允许相等），两轨相对偏移保持上游原始关系。
+		// 斗鱼同轴与通用自适应档本来就不走全局钳制，这里统一只处理虎牙归零档。
+		if isContinuation && !p.tuning.timelineContinuous && !p.tuning.timelineAuto &&
+			track >= 0 && track < 2 {
+			p.tsMu.Lock()
+			last, have := p.lastOutTs[track], p.haveOut[track]
+			p.tsMu.Unlock()
+			if have && adjusted < last {
+				adjusted = last
+			}
 		}
 		if !p.validateTs(track, adjusted) {
 			p.statsMu.Lock()
@@ -1338,7 +1495,7 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			return err
 		}
 		p.commitTs(track, adjusted)
-		p.rememberFrame(fp, adjusted)
+		p.rememberFrame(fp, adjusted, framePrevFp)
 		p.incForwarded(tagType, sourceTs)
 		// 计划内交接：只在成功写出一个关键帧之后离开，保证新段起点可独立解码。
 		if isKey && handover.shouldHandover() {
@@ -1370,6 +1527,9 @@ func (p *flvProxy) maxOutTsLocked() int64 {
 type flvReplayEntry struct {
 	fp uint64
 	ts int64
+	// prevFp 是该帧首次出现时「上一帧不同内容」的指纹。用它可以确认回放
+	// 是否为一段连续历史帧序列，而不是把正常重复帧（静音/静止）误删。
+	prevFp uint64
 }
 
 // flvFrameFingerprint 用 tag 类型 + 帧体做 FNV-1a 指纹；tag 类型参与哈希，
@@ -1384,31 +1544,55 @@ func flvFrameFingerprint(tagType byte, data []byte) uint64 {
 }
 
 // rememberFrame 登记一帧已转发，并淘汰回放窗口外的旧记录。
-func (p *flvProxy) rememberFrame(fp uint64, ts int64) {
+// prevFp 是本帧之前最近一帧的指纹；连续相同内容的帧保留首次出现时的前驱，
+// 这样静音 AAC 不会被误判为回放序列。
+func (p *flvProxy) rememberFrame(fp uint64, ts int64, prevFp uint64) {
 	p.recentMu.Lock()
 	defer p.recentMu.Unlock()
 	if p.recent == nil {
-		p.recent = make(map[uint64]int64)
+		p.recent = make(map[uint64]flvReplayEntry)
 	}
-	p.recent[fp] = ts
-	p.recentList = append(p.recentList, flvReplayEntry{fp: fp, ts: ts})
+	predecessor := prevFp
+	if predecessor == fp {
+		if old, ok := p.recent[fp]; ok {
+			predecessor = old.prevFp
+		} else {
+			predecessor = 0
+		}
+	}
+	entry := flvReplayEntry{fp: fp, ts: ts, prevFp: predecessor}
+	p.recent[fp] = entry
+	p.recentList = append(p.recentList, entry)
 	cutoff := ts - p.tuning.replayWindowMs
 	for len(p.recentList) > 0 && p.recentList[0].ts < cutoff {
-		entry := p.recentList[0]
+		oldest := p.recentList[0]
 		// 同一指纹若在窗口内被更新过，保留较新的那条记录。
-		if p.recent[entry.fp] <= entry.ts {
-			delete(p.recent, entry.fp)
+		if cur, ok := p.recent[oldest.fp]; ok && cur.ts <= oldest.ts {
+			delete(p.recent, oldest.fp)
 		}
 		p.recentList = p.recentList[1:]
 	}
 }
 
-// isReplayedFrame 判断该帧是否已在窗口内转发过（即 CDN 重连带回的旧缓冲）。
-func (p *flvProxy) isReplayedFrame(fp uint64) bool {
+// wasFrameSeen 只判断指纹是否在窗口内出现过，供续段开头严格去重使用。
+func (p *flvProxy) wasFrameSeen(fp uint64) bool {
 	p.recentMu.Lock()
 	defer p.recentMu.Unlock()
 	_, ok := p.recent[fp]
 	return ok
+}
+
+// isReplayedFrame 判断当前帧是否是 CDN 重连带回的连续历史帧。
+// 只有「本帧见过」且「上一帧正好是历史里本帧的前驱」才成立：
+// 单独重复的静音/静止帧 prevFp 会等于自身，不会被误判。
+func (p *flvProxy) isReplayedFrame(fp uint64, prevFp uint64) bool {
+	p.recentMu.Lock()
+	defer p.recentMu.Unlock()
+	entry, ok := p.recent[fp]
+	if !ok || entry.prevFp == 0 {
+		return false
+	}
+	return entry.prevFp == prevFp
 }
 
 // controlledTs 给「重连后编码参数变化的 AVC 序列头」一个受控时间戳：
@@ -1516,6 +1700,7 @@ func (p *flvProxy) writeTag(tagHeader []byte, data []byte, ts int64) error {
 	p.tagsWritten++
 	p.bytesWritten += int64(len(frame))
 	p.statsMu.Unlock()
+	p.markProgress()
 	return nil
 }
 
@@ -1606,7 +1791,13 @@ func (p *flvProxy) bumpCandidateSwitch(err error) {
 }
 
 func (p *flvProxy) statsJSON() string {
+	// 锁顺序与写入侧一致：先 tsMu 再 statsMu，避免监控采样与转发线程互相持锁。
+	p.tsMu.Lock()
+	lastAudioOutTs, lastVideoOutTs := p.lastOutTs[0], p.lastOutTs[1]
+	haveAudioOut, haveVideoOut := p.haveOut[0], p.haveOut[1]
+	p.tsMu.Unlock()
 	p.statsMu.Lock()
+	backoffBase, backoffMax := p.effectiveShortBackoff()
 	payload := map[string]interface{}{
 		"url":    p.url,
 		"client": p.hasClient(),
@@ -1620,27 +1811,41 @@ func (p *flvProxy) statsJSON() string {
 		// 重连策略分档：真机监控可直接确认斗鱼/虎牙各走各的策略。
 		"fastReconnectMax":     p.tuning.maxFastReconnectStreak,
 		"shortSessionMs":       p.tuning.shortSessionMs,
-		"shortStreakMax":       p.tuning.maxShortStreak, // <=0 表示不因短段换线
-		"shortBackoffMs":       p.tuning.shortBackoffBase.Milliseconds(),
+		"shortStreakMax":       p.effectiveMaxShortStreak(), // <=0 表示不因短段换线；虎牙读运行时值
+		"shortBackoffMs":       backoffBase.Milliseconds(),
 		"uptimeSec":            int64(time.Since(p.startedAt).Seconds()),
 		"upstreamSessions":     p.upstreamSessions,
 		"reconnects":           p.reconnects,
 		"plannedHandovers":     p.plannedHandovers,
 		"idleTimeouts":         p.idleTimeouts,
+		"malformedTags":        p.malformedTags,
 		"clientTakeovers":      p.clientTakeovers,
 		"candidateSwitches":    p.candidateSwitches,
 		"pacerTargetBufferMs":  p.pacerTargetMs.Load(),
-		"plannedRefreshLeadMs": p.tuning.plannedRefreshLeadMs,
-		"tagsWritten":          p.tagsWritten,
-		"bytesWritten":         p.bytesWritten,
-		"lastSessionMs":        p.lastSessionMs,
-		"lastError":            p.lastError,
-		"videoForwarded":       p.videoForwarded,
-		"audioForwarded":       p.audioForwarded,
-		"videoDroppedReplay":   p.videoDroppedReplay,
-		"audioDroppedReplay":   p.audioDroppedReplay,
-		"videoDroppedAwaitKey": p.videoDroppedAwaitKey,
-		"videoBackwardInSeg":   p.videoBackwardInSeg,
+		"plannedRefreshLeadMs": p.effectivePlannedLeadMs(),
+		// 虎牙档位即时生效字段：监控脚本据此关联「当前档位参数 ↔ 重连指标」。
+		"nominalSessionMs":           p.effectiveNominalSessionMs(),
+		"effectiveShortBackoffMaxMs": backoffMax.Milliseconds(),
+		"huyaIdleReadTimeoutMs":      huyaIdleReadTimeout().Milliseconds(),
+		"tagsWritten":                p.tagsWritten,
+		"bytesWritten":               p.bytesWritten,
+		"lastSessionMs":              p.lastSessionMs,
+		"lastError":                  p.lastError,
+		"videoForwarded":             p.videoForwarded,
+		"audioForwarded":             p.audioForwarded,
+		"videoDroppedReplay":         p.videoDroppedReplay,
+		"audioDroppedReplay":         p.audioDroppedReplay,
+		"videoDroppedAwaitKey":       p.videoDroppedAwaitKey,
+		"videoBackwardInSeg":         p.videoBackwardInSeg,
+		// 输出轨时间戳快照：avOutOffsetMs 持续增大即说明音画偏移在累积。
+		"lastAudioOutTs": lastAudioOutTs,
+		"lastVideoOutTs": lastVideoOutTs,
+		"avOutOffsetMs": func() int64 {
+			if !haveAudioOut || !haveVideoOut {
+				return 0
+			}
+			return lastVideoOutTs - lastAudioOutTs
+		}(),
 		// 双轨时间戳过滤拦下的帧数：旧版全局时间戳会在这里大量丢帧。
 		"tsRejectedVideo": p.tsRejectedVideo,
 		"tsRejectedAudio": p.tsRejectedAudio,

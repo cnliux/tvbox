@@ -390,7 +390,6 @@ func TestFlvProxyReplayAfterFreshKeyframe(t *testing.T) {
 		}
 	}
 	intervals, duplicates, maxDurationMs := analyzeReplay(tags, 2)
-
 	fmt.Println("──────── 真实回放形态回归（新关键帧 + 6 秒旧缓冲）────────")
 	fmt.Printf("代理输出 tag 数       : %d\n", len(tags))
 	fmt.Printf("输出时间戳回退次数    : %d\n", rollback)

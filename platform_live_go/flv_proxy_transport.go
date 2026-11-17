@@ -31,21 +31,28 @@ const (
 type idleReadConn struct {
 	net.Conn
 	idle time.Duration
+	site string
 }
 
 func (c *idleReadConn) Read(buffer []byte) (int, error) {
-	_ = c.Conn.SetReadDeadline(time.Now().Add(c.idle))
+	idle := c.idle
+	// 虎牙的空闲读超时可被手机端调试按钮运行时调整：每次 Read 动态取值，
+	// 对在播会话的下一次读立即生效。其它平台沿用构造时的固定值，行为不变。
+	if c.site == "huya" {
+		idle = huyaIdleReadTimeout()
+	}
+	_ = c.Conn.SetReadDeadline(time.Now().Add(idle))
 	return c.Conn.Read(buffer)
 }
 
-func dialWithIdleReadTimeout(idle time.Duration) func(context.Context, string, string) (net.Conn, error) {
+func dialWithIdleReadTimeout(idle time.Duration, site string) func(context.Context, string, string) (net.Conn, error) {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		conn, err := dialer.DialContext(ctx, network, address)
 		if err != nil {
 			return nil, err
 		}
-		return &idleReadConn{Conn: conn, idle: idle}, nil
+		return &idleReadConn{Conn: conn, idle: idle, site: site}, nil
 	}
 }
 
@@ -57,6 +64,13 @@ func isNetworkTimeout(err error) bool {
 
 // errUpstreamIdle 是「上游静默」的软错误：不记入线路硬失败、不触发换线。
 var errUpstreamIdle = errors.New("upstream idle read timeout")
+
+// errMalformedFLVTag 是「上游 FLV 标签长度非法」的软错误。
+// 真机监控（虎牙·一起看）观测到上游偶发 14~16MB 的非法 tag 长度（正常几十 KB），
+// 这是流损坏而非线路故障。旧实现把它当普硬失败：等 600ms 再重试、计入失败次数，
+// 连续发生时播放器缓冲耗尽，Kotlin 12s 看门狗强制重建播放器/代理，表现为可见断流。
+// 现在把它归类为可恢复的软错误：立即重新解析新签名续流，不计失败、不换线。
+var errMalformedFLVTag = errors.New("malformed FLV tag length")
 
 // flvProxyClient 代表一个下游播放器连接。gen 用于「新连接接管」时辨认旧连接，
 // done 被关闭后旧 ServeHTTP 立即返回，net/http 随即结束旧响应，避免两个连接
@@ -106,7 +120,7 @@ func isAacSequenceHeader(data []byte) bool {
 	if len(data) < 2 {
 		return false
 	}
-	return (data[0] >> 4) == flvAudioCodecAAC && data[1] == 0
+	return (data[0]>>4) == flvAudioCodecAAC && data[1] == 0
 }
 
 // isConfigTag 判断一个标签是否是新播放器连接解码前必须拿到的配置标签：

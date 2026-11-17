@@ -12,6 +12,27 @@
     "site": "douyu",
     "roomId": "4258555",
     "group": "测试"
+  },
+  {
+    "id": "huya-816515",
+    "name": "虎牙测试·天天吃鸡",
+    "site": "huya",
+    "roomId": "816515",
+    "group": "测试"
+  },
+  {
+    "id": "huya-298039",
+    "name": "虎牙测试·星秀",
+    "site": "huya",
+    "roomId": "298039",
+    "group": "测试"
+  },
+  {
+    "id": "huya-520088",
+    "name": "虎牙测试·问道手游",
+    "site": "huya",
+    "roomId": "520088",
+    "group": "测试"
   }
 ]
 
