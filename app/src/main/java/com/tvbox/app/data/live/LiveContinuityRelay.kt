@@ -65,6 +65,9 @@ class LiveContinuityRelay private constructor(
         /** 小于该时长的上游会话视为异常，需要退避并考虑换线。 */
         private const val SHORT_SESSION_MS = 5_000L
 
+        /** 大于该时长视为健康会话：把候选下标复位到首选线路。 */
+        private const val HEALTHY_SESSION_MS = 30_000L
+
         private const val CONNECT_TIMEOUT_MS = 15_000
 
         /** FLV 文件头 + PreviousTagSize0；标志位 0x05 = 有音有视频。 */
@@ -176,6 +179,10 @@ class LiveContinuityRelay private constructor(
         var line = initialLine
         var fastStreak = 0
         var shortStreak = 0
+        // 当前候选线路下标。连续失败/短会话时递增以轮换到下一条 CDN：
+        // 实测斗鱼第二条候选（*.edgesrv.com:443）会持续 SSL 握手失败，
+        // 若恒用 renew(0) 就会在同一条坏线路上无限重试（长跑观测到 149 次）。
+        var candidateIndex = 0
         // HTTP 响应头必须**直接**写到 socket：它不属于 chunked 正文。
         // 若把响应头交给 ChunkedOutputStream，头部会被当成一个 chunk 加长度前缀，
         // 播放器解析首行失败并抛 "Invalid Http response"（实测），表现为完全无法起播。
@@ -193,9 +200,10 @@ class LiveContinuityRelay private constructor(
                 val handover = prepared.getAndSet(null)
                 val segment = handover ?: openSegment(line)
                 if (segment == null) {
-                    // 连不上：退避后重新解析，避免在失效地址上空转。
+                    // 连不上：退避后换下一条候选，避免在同一条坏线路上空转。
                     Thread.sleep(600)
-                    renew(0)?.let { line = it }
+                    candidateIndex++
+                    renew(candidateIndex)?.let { line = it }
                     continue
                 }
                 if (handover != null) plannedHandovers.incrementAndGet()
@@ -215,6 +223,9 @@ class LiveContinuityRelay private constructor(
                 }
                 reconnects.incrementAndGet()
 
+                // 一次正常长度的会话说明当前候选可用：回到首选，避免下标只增不减。
+                if (sessionMs >= HEALTHY_SESSION_MS) candidateIndex = 0
+
                 // 预备连接已就绪：直接接上，不走解析。
                 if (prepared.get() != null) {
                     fastStreak = 0
@@ -222,10 +233,11 @@ class LiveContinuityRelay private constructor(
                 }
 
                 if (shortStreak >= 2) {
-                    // 连续秒级会话说明这条线不可用：退避后重新解析并换线。
+                    // 连续秒级会话说明这条线不可用：退避后换下一条候选。
                     Thread.sleep(minOf(500L * shortStreak, 4_000L))
                     fastStreak = 0
-                    renew(0)?.let { line = it }
+                    candidateIndex++
+                    renew(candidateIndex)?.let { line = it }
                     continue
                 }
 
@@ -236,15 +248,18 @@ class LiveContinuityRelay private constructor(
                         // 必须每次重签；可复用平台才允许有限次同地址续拉。
                         if (!reusableAddress() || fastStreak >= MAX_FAST_RECONNECT) {
                             fastStreak = 0
-                            renew(0)?.let { line = it }
+                            candidateIndex++
+                            renew(candidateIndex)?.let { line = it }
                         } else {
                             fastStreak++
                         }
                     }
-                    // 403/401 或空闲超时：签名或连接已失效，必须重新解析。
+                    // 403/401 或空闲超时：签名或连接已失效，换一条候选重新解析。
+                    // 虎牙的 403 是「地址被消费」，换候选后仍会重签，故两者都覆盖。
                     ForwardResult.Forbidden, ForwardResult.Idle, ForwardResult.Failed -> {
                         fastStreak = 0
-                        renew(0)?.let { line = it }
+                        candidateIndex++
+                        renew(candidateIndex)?.let { line = it }
                     }
                     ForwardResult.ClientGone -> return
                 }
