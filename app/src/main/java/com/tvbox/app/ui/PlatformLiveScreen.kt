@@ -2013,7 +2013,12 @@ private fun PlatformLiveRoomListPanel(
         modifier = modifier
             .focusRequester(panelFocus)
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                // 抢在可聚焦的房间按钮之前消费按下事件；否则 Compose 会先执行默认
+                // 焦点移动，松开时才更新 focusedIndex，视觉选中行与实际焦点便会错位。
+                val roomKey = event.key == ComposeKey.DirectionUp ||
+                    event.key == ComposeKey.DirectionDown ||
+                    event.key == ComposeKey.DirectionCenter || event.key == ComposeKey.Enter
+                if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent roomKey
                 when (event.key) {
                     ComposeKey.DirectionUp -> {
                         focusedIndex = (focusedIndex - 1).coerceAtLeast(0)

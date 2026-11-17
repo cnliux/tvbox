@@ -66,6 +66,11 @@ const (
 	// 只保护开头一段会在后续漏掉（实测 330 帧 / 5.16 秒）。这里只保留一个很大的
 	// 硬上限防止异常流不退出，正常 120 秒会话（约 3600 帧）不会触及。
 	flvProxyReplayGuardMaxFrames = 7200
+	// 自适应回放窗口的硬上限：再长收益递减，且内存与每帧查重成本要有界。
+	flvReplayWindowCapMs = int64(24000)
+	// 音画允许的最大领先量：超过就把音频整体回拉。实测个别房间累积到
+	// 1.6~2.2 秒口型错位，持续偏移远比丢几帧音频严重。
+	flvAvMaxDriftMs = int64(700)
 	// 同地址快速续拉最多连续 N 次，之后强制重新解析并退避，避免 CDN 短会话
 	// 时在同地址上每秒重连多次（PC 侧曾观测到 200 秒 51 次会话）。
 	// 短/空段退避与换线：监控曾出现 3 分钟 48 次重连的风暴，根因是短段 EOF
@@ -487,6 +492,25 @@ type flvProxy struct {
 	recentMu   sync.Mutex
 	recent     map[uint64]flvReplayEntry
 	recentList []flvReplayEntry
+
+	// 自适应回放窗口：真实「一起看」房间出现过比默认窗口更长的回吐缓冲
+	// （实测 133 帧回放），固定 12s/8s 会漏掉最早一段旧画面。命中回放时
+	// 记录其时间跨度，接近窗口上限就翻倍（封顶 flvReplayWindowCapMs）。
+	// 只增不减，避免窗口抖动导致已认定的回放序列被漏过。
+	replayWindowMu   sync.Mutex
+	replayWindowEff  int64
+	replaySpanMin    int64
+	replaySpanMax    int64
+	replaySpanSeen   bool
+	replayExpansions int64
+
+	// 音频独立偏移：续段等关键帧的黑窗期音频被丢弃，恢复后 CDN 送来的音频
+	// 时间戳可能持续领先视频，累积成 1.6~2.2 秒的口型错位。用一个跨段保持的
+	// 偏移把音频整体回拉，比逐帧丢音频更平滑。
+	// 用 atomic：只有转发线程写，监控统计线程会读。
+	audioShiftMs     atomic.Int64
+	audioResyncDrops atomic.Int64
+	audioResyncShifts atomic.Int64
 
 	statsMu           sync.Mutex
 	startedAt         time.Time
@@ -1298,6 +1322,8 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 			guardFrames++
 			if replayed {
 				noteDropped()
+				// 记录回放帧在源时间轴上的跨度，供自适应放宽指纹窗口。
+				p.noteReplaySpan(sourceTs)
 				if trackIdx >= 0 {
 					prevSourceByTrack[trackIdx] = sourceTs
 					havePrevSourceByTrack[trackIdx] = true
@@ -1448,6 +1474,11 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 				adjusted = last
 			}
 		}
+		// 音频轨做音画回拉：只影响音频，视频轨时间轴不动。
+		// 必须在 validateTs 之前完成，否则回拉后的帧会被旧位置判为回退并丢弃。
+		if track == 0 {
+			adjusted = p.resyncAudio(adjusted)
+		}
 		if !p.validateTs(track, adjusted) {
 			p.statsMu.Lock()
 			if track == 1 {
@@ -1563,7 +1594,7 @@ func (p *flvProxy) rememberFrame(fp uint64, ts int64, prevFp uint64) {
 	entry := flvReplayEntry{fp: fp, ts: ts, prevFp: predecessor}
 	p.recent[fp] = entry
 	p.recentList = append(p.recentList, entry)
-	cutoff := ts - p.tuning.replayWindowMs
+	cutoff := ts - p.effectiveReplayWindowMs()
 	for len(p.recentList) > 0 && p.recentList[0].ts < cutoff {
 		oldest := p.recentList[0]
 		// 同一指纹若在窗口内被更新过，保留较新的那条记录。
@@ -1593,6 +1624,104 @@ func (p *flvProxy) isReplayedFrame(fp uint64, prevFp uint64) bool {
 		return false
 	}
 	return entry.prevFp == prevFp
+}
+
+// effectiveReplayWindowMs 返回当前生效的回放指纹窗口。
+//
+// 起点是平台档位里的默认值（虎牙 12s / 斗鱼 8s / 通用 10s），运行中按实测
+// 回放跨度自适应放宽，封顶 flvReplayWindowCapMs。只增不减：窗口一旦收窄，
+// 已经确认过的回放序列会在下一段被漏过。
+func (p *flvProxy) effectiveReplayWindowMs() int64 {
+	p.replayWindowMu.Lock()
+	defer p.replayWindowMu.Unlock()
+	if p.replayWindowEff <= 0 {
+		p.replayWindowEff = p.tuning.replayWindowMs
+	}
+	return p.replayWindowEff
+}
+
+// noteReplaySpan 记录被判定为回放的帧在源时间轴上的跨度。
+// 用源时间戳而非输出时间戳：输出侧被压缩过，跨度的相对关系会失真。
+func (p *flvProxy) noteReplaySpan(ts int64) {
+	p.replayWindowMu.Lock()
+	if !p.replaySpanSeen {
+		p.replaySpanMin, p.replaySpanMax, p.replaySpanSeen = ts, ts, true
+	} else {
+		if ts < p.replaySpanMin {
+			p.replaySpanMin = ts
+		}
+		if ts > p.replaySpanMax {
+			p.replaySpanMax = ts
+		}
+	}
+	p.replayWindowMu.Unlock()
+	p.adaptReplayWindow()
+}
+
+// adaptReplayWindow 按实测回放跨度放宽指纹窗口。
+//
+// 判定依据：跨度接近当前窗口（>= 60%）说明窗口即将不够用，此时翻倍。
+// 阈值不能设成"命中就扩"，否则个别抖动会把窗口无谓撑大，拖慢后续每帧查重。
+func (p *flvProxy) adaptReplayWindow() {
+	p.replayWindowMu.Lock()
+	defer p.replayWindowMu.Unlock()
+	if !p.replaySpanSeen {
+		return
+	}
+	span := p.replaySpanMax - p.replaySpanMin
+	if span <= 0 {
+		return
+	}
+	if p.replayWindowEff <= 0 {
+		p.replayWindowEff = p.tuning.replayWindowMs
+	}
+	if span*10 < p.replayWindowEff*6 {
+		return
+	}
+	if p.replayWindowEff >= flvReplayWindowCapMs {
+		return
+	}
+	next := p.replayWindowEff * 2
+	if span*2 > next {
+		next = span * 2
+	}
+	if next > flvReplayWindowCapMs {
+		next = flvReplayWindowCapMs
+	}
+	if next > p.replayWindowEff {
+		p.replayWindowEff = next
+		p.replayExpansions++
+	}
+}
+
+// resyncAudio 在音频轨上做音画回拉。
+//
+// 背景：续段等关键帧期间音频被整段丢弃，恢复后 CDN 送来的音频时间戳本身
+// 就可能领先视频，代理侧的时间轴压缩又会放大这个差值，实测个别房间累积到
+// 1.6~2.2 秒。相比逐帧丢音频（会造成断续），把音频整体回拉更平滑：
+// 一次性减去 (领先量 - 阈值/2)，之后的帧沿用同一个偏移。
+//
+// 回拉后若低于已交付的音频位置，直接钳到该位置而不是丢帧——丢帧会让
+// 时间轴停住，后面几帧继续被拒，表现为短促断音。
+func (p *flvProxy) resyncAudio(adjusted int64) int64 {
+	if shift := p.audioShiftMs.Load(); shift != 0 {
+		adjusted += shift
+	}
+	p.tsMu.Lock()
+	videoLast, haveVideo := p.lastOutTs[1], p.haveOut[1]
+	audioLast, haveAudio := p.lastOutTs[0], p.haveOut[0]
+	p.tsMu.Unlock()
+	if haveVideo && adjusted-videoLast > flvAvMaxDriftMs {
+		delta := adjusted - videoLast - flvAvMaxDriftMs/2
+		adjusted -= delta
+		p.audioShiftMs.Add(-delta)
+		p.audioResyncShifts.Add(1)
+		p.event(fmt.Sprintf("audioResync shift=%d", -delta))
+	}
+	if haveAudio && adjusted < audioLast {
+		adjusted = audioLast
+	}
+	return adjusted
 }
 
 // controlledTs 给「重连后编码参数变化的 AVC 序列头」一个受控时间戳：
