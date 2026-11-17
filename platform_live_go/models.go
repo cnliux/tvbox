@@ -316,14 +316,3 @@ func extractJSONValue(source string, start int) (string, bool) {
 	return "", false
 }
 
-// mapKeys 保序返回 map 的键（等价 Python dict 迭代顺序：插入序）。
-// 仅用于需要与 Python 输出顺序保持一致的地方。
-func sortedStable(originalOrder []string, present map[string]bool) []string {
-	result := make([]string, 0, len(originalOrder))
-	for _, key := range originalOrder {
-		if present[key] {
-			result = append(result, key)
-		}
-	}
-	return result
-}

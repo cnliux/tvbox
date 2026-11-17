@@ -98,10 +98,6 @@ func liveSiteForHost(host string) string {
 	return ""
 }
 
-func liveHostSupported(host string) bool {
-	return liveSiteForHost(host) != ""
-}
-
 func isLiveShortLinkHost(host string) bool {
 	return liveShortLinkHosts[strings.ToLower(host)]
 }

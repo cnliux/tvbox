@@ -16,11 +16,12 @@ import platformlive.Platformlive
  * （房间 11342412 实测 120.7s 被服务端正常关闭），斗鱼则用 `expire` 租约到期断流。
  * 播放器直接用平台地址时，每次都会经历 ENDED → 重新解析 → 重新 prepare 的可见断流。
  *
- * 现在的优先级：
- *  1. **Kotlin 本机中继**（[LiveContinuityRelay]）——不依赖重新编译 Go 侧 AAR，
- *     可随时改参数；换了新签名就续拉，播放器只看到一条永不结束的本地 FLV；
- *  2. Go 侧代理（`platform_live_go` 的 gomobile 实现）——Kotlin 中继启动失败时兜底，
- *     保留原有现场调参能力。
+ * 优先级（与 [start] 的实际调用顺序一致）：
+ *  1. **Go 侧代理**（`platform_live_go` 的 gomobile 实现）——默认生产路径，
+ *     经真机长跑验证（预建双连接 + 指纹去重 + 自适应扩窗 + 音频回拉 + 进度看门狗）；
+ *  2. **Kotlin 本机中继**（[LiveContinuityRelay]）——仅在 Go 代理返回 null 时兜底。
+ *     注意：该路径在 Android 真机上仍会报 `ERROR_CODE_IO_UNSPECIFIED`（JVM 端到端
+ *     测试可过，差异在 Android 的 HTTP 响应处理上），**不能当作已验证的播放路径**。
  *
  * 只对虎牙/斗鱼启用是刻意的产品约束：B 站/抖音/快手等平台的签名与会话语义不同，
  * 把这两家的假设套过去反而会引入新问题。

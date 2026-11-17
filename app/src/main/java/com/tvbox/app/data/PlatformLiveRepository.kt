@@ -26,8 +26,8 @@ typealias PlatformLiveCategoryTree = com.tvbox.app.domain.PlatformLiveCategoryTr
  * APK 内置的平台直播解析器。
  *
  * 解析逻辑由 Go 实现（platform_live_go），通过 gomobile bind 产出的
- * `libs/platformlive.aar` 提供，不再依赖外部 platform_live_server 服务。
- * Go 侧接口返回的 JSON 结构与旧版 Python 桥接一致。
+ * `libs/platformlive.aar` 提供，安装即可用，无需部署任何服务端。
+ * 同一份 Go 源码另提供 `cmd/platform-live-server` HTTP 形态，供局域网排查与工具复用。
  */
 class EmbeddedPlatformLiveRepository(
     context: Context? = null,

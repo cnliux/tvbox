@@ -507,9 +507,8 @@ type flvProxy struct {
 	// 音频独立偏移：续段等关键帧的黑窗期音频被丢弃，恢复后 CDN 送来的音频
 	// 时间戳可能持续领先视频，累积成 1.6~2.2 秒的口型错位。用一个跨段保持的
 	// 偏移把音频整体回拉，比逐帧丢音频更平滑。
-	// 用 atomic：只有转发线程写，监控统计线程会读。
-	audioShiftMs     atomic.Int64
-	audioResyncDrops atomic.Int64
+	// 用 atomic：转发线程写，监控统计线程读。
+	audioShiftMs      atomic.Int64
 	audioResyncShifts atomic.Int64
 
 	statsMu           sync.Mutex
@@ -1229,6 +1228,8 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 	p.dropReplayActive = dropReplay
 	p.guardActiveNow = guardActive
 	p.statsMu.Unlock()
+	// 回放跨度按段统计，避免跨会话累积把窗口永久顶到上限。
+	p.resetReplaySpan()
 	for {
 		tagHeader := make([]byte, flvProxyTagHeaderSize)
 		if _, err := io.ReadFull(reader, tagHeader); err != nil {
@@ -1656,6 +1657,18 @@ func (p *flvProxy) noteReplaySpan(ts int64) {
 	}
 	p.replayWindowMu.Unlock()
 	p.adaptReplayWindow()
+}
+
+// resetReplaySpan 在每个上游会话开始时清空回放跨度统计。
+//
+// 跨度必须按**单段**统计：若跨段累积，min/max 会随会话无限拉大，
+// 「跨度达到窗口 60%」将恒成立，窗口一路顶到上限后不再回落——自适应退化成
+// 「永久最大窗口」，每帧查重成本最高且失去按实测调节的意义。
+func (p *flvProxy) resetReplaySpan() {
+	p.replayWindowMu.Lock()
+	p.replaySpanSeen = false
+	p.replaySpanMin, p.replaySpanMax = 0, 0
+	p.replayWindowMu.Unlock()
 }
 
 // adaptReplayWindow 按实测回放跨度放宽指纹窗口。

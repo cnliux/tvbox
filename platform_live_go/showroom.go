@@ -212,10 +212,6 @@ func parseShowroomStreams(value interface{}) []showroomStream {
 	return streams
 }
 
-func showroomStreamsFromLive(row map[string]interface{}) []showroomStream {
-	return parseShowroomStreams(row["streaming_url_list"])
-}
-
 func showroomQualityLabel(streams []showroomStream) string {
 	best := int64(-1)
 	for _, stream := range streams {

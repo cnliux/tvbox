@@ -33,12 +33,16 @@ import time
 import requests
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SERVER_DIR = os.path.join(REPO_ROOT, "platform_live_server")
+# 签名服务用仓库内的 Go 解析服务（cmd/platform-live-server），与 APK 内置解析同一条代码路径；
+# 旧的 Python 服务已删除，不要在此处重新引入。
+GO_MODULE_DIR = os.path.join(REPO_ROOT, "platform_live_go")
 SIGN_PORT = 8899
-SIGN_URL = "http://127.0.0.1:%d/resolve" % SIGN_PORT
-SERVICE = os.path.join(REPO_ROOT, ".tmp_dbg", "renew_server.py")
+SIGN_URL = "http://127.0.0.1:%d/v1/live/resolve" % SIGN_PORT
+SERVICE = os.path.join(
+    REPO_ROOT, ".tmp_dbg", "platform-live-server.exe"
+    if os.name == "nt" else "platform-live-server")
 OUT_DIR = os.path.join(REPO_ROOT, ".tmp_dbg", "longrun")
-PY = os.environ.get("BOX_AGENT_PYTHON") or sys.executable
+GO_BIN = os.environ.get("GO_BIN") or "go"
 
 MOBILE_UA = (
     "Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 "
@@ -59,13 +63,25 @@ def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+def _build_service() -> None:
+    """首次运行时编译 Go 解析服务（gomobile AAR 之外的可执行形态）。"""
+    if os.path.exists(SERVICE):
+        return
+    os.makedirs(os.path.dirname(SERVICE), exist_ok=True)
+    subprocess.run(
+        [GO_BIN, "build", "-o", SERVICE, "./cmd/platform-live-server"],
+        cwd=GO_MODULE_DIR, check=True,
+    )
+
+
 def _start_service() -> None:
     with _restart_lock:
         if _port_open("127.0.0.1", SIGN_PORT):
             return
+        _build_service()
         log = open(os.path.join(REPO_ROOT, ".tmp_dbg", "sign_service.log"), "ab")
         subprocess.Popen(
-            [PY, "-u", SERVICE],
+            [SERVICE, "-host", "127.0.0.1", "-port", str(SIGN_PORT)],
             cwd=REPO_ROOT,
             stdout=log,
             stderr=log,
@@ -78,17 +94,23 @@ def _start_service() -> None:
             time.sleep(0.5)
 
 
+def _resolve_params(site: str, rid: str) -> dict:
+    """Go 服务的解析接口参数名（roomId）；旧 Python 服务用 room。"""
+    return {"site": site, "roomId": rid}
+
+
 def ensure_service() -> bool:
     """确保签名服务可用；不可用则重启。返回是否最终可用。"""
+    probe = _resolve_params("huya", "11336726")
     try:
-        r = requests.get(SIGN_URL, params={"site": "huya", "room": "11336726"}, timeout=25)
-        if r.status_code == 200 and "candidates" in r.json():
+        r = requests.get(SIGN_URL, params=probe, timeout=25)
+        if r.status_code == 200 and "streams" in r.json():
             return True
     except Exception:
         pass
     _start_service()
     try:
-        r = requests.get(SIGN_URL, params={"site": "huya", "room": "11336726"}, timeout=25)
+        r = requests.get(SIGN_URL, params=probe, timeout=25)
         return r.status_code == 200
     except Exception:
         return False
@@ -103,12 +125,18 @@ def sign(site: str, rid: str, idx: int = 0, retries: int = 3):
     last = None
     for _ in range(retries):
         try:
-            d = requests.get(SIGN_URL, params={"site": site, "room": rid}, timeout=45).json()
+            r = requests.get(SIGN_URL, params=_resolve_params(site, rid), timeout=45)
+            if r.status_code != 200:
+                raise RuntimeError("http%d %s" % (r.status_code, r.text[:120]))
+            d = r.json()
             if "error" in d:
                 raise RuntimeError(d["error"])
-            cands = d["candidates"]
+            # Go 服务：候选线路在 streams（含 cdn/url/protocol），与 APK 内置解析一致。
+            cands = d.get("streams") or []
+            if not cands:
+                raise RuntimeError("无候选线路")
             c = cands[idx % len(cands)]
-            return d["headers"], c["url"], d.get("title", ""), len(cands)
+            return d.get("headers") or {}, c["url"], d.get("title", ""), len(cands)
         except Exception as error:  # noqa: BLE001 - 需要捕获所有网络/解析异常
             last = error
             ensure_service()

@@ -95,11 +95,6 @@ func flvProxyFileHeaderWithFlags(flags byte) []byte {
 	return append(header, 0x00, 0x00, 0x00, 0x00)
 }
 
-func flvProxyFileHeader() []byte {
-	// 首帧之前还不知道有几条轨道，保守按音视频都有；重连时改用 currentHeaderFlags()。
-	return flvProxyFileHeaderWithFlags(0x05)
-}
-
 // currentHeaderFlags 按已实际转发的轨道推导 FLV header flags。
 func (p *flvProxy) currentHeaderFlags() byte {
 	p.tsMu.Lock()
