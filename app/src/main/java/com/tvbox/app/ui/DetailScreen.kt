@@ -36,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -208,6 +209,17 @@ fun DetailScreen(
                                 onToggleSort = { actions.toggleEpisodeSortReverse() },
                                 onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
                                 modifier = Modifier.weight(1f),
+                                restoreScrollIndex = actions.detailScrollIndexFor(
+                                    movie.id,
+                                    state.selectedSourceIndex,
+                                ),
+                                onScrollIndexChanged = { index ->
+                                    actions.rememberDetailScrollIndex(
+                                        movie.id,
+                                        state.selectedSourceIndex,
+                                        index,
+                                    )
+                                },
                             )
                         }
                     }
@@ -306,6 +318,10 @@ private fun MobileDetailContent(
         },
         onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
         modifier = Modifier.fillMaxSize(),
+        restoreScrollIndex = actions.detailScrollIndexFor(movie.id, state.selectedSourceIndex),
+        onScrollIndexChanged = { index ->
+            actions.rememberDetailScrollIndex(movie.id, state.selectedSourceIndex, index)
+        },
     )
 }
 
@@ -318,6 +334,9 @@ private fun EpisodeGrid(
     header: (@Composable () -> Unit)? = null,
     onEpisode: (Int) -> Unit,
     modifier: Modifier = Modifier,
+    /** 上次离开详情页时的滚动位置；-1 表示无记忆，回落到"滚到选中集"。 */
+    restoreScrollIndex: Int = -1,
+    onScrollIndexChanged: (Int) -> Unit = {},
 ) {
     val episodes = source?.episodes.orEmpty()
     if (episodes.isEmpty()) {
@@ -373,7 +392,13 @@ private fun EpisodeGrid(
         withFrameNanos { }
         // LazyVerticalGrid 里「选集/排序」标题行占一个 item；手机端头部信息再多占一个 item，
         // 选集下标要加上这些前置项才是网格 item 下标。
-        val targetItemIndex = safeSelectedEpisodeIndex + leadingItemCount
+        // 优先恢复上次离开详情页时的滚动位置：否则用户浏览到第 40 集再进播放页返回，
+        // 会被"滚到选中集"强制拉回第 1 集附近（#6 详情页位置记忆）。
+        val remembered = restoreScrollIndex
+        val targetItemIndex = when {
+            remembered >= leadingItemCount -> remembered
+            else -> safeSelectedEpisodeIndex + leadingItemCount
+        }.coerceAtLeast(0)
         if (gridState.layoutInfo.visibleItemsInfo.none { it.index == targetItemIndex }) {
             gridState.scrollToItem(targetItemIndex)
         }
@@ -381,6 +406,12 @@ private fun EpisodeGrid(
         runCatching {
             focusRequesters.getOrNull(safeSelectedEpisodeIndex)?.requestFocus()
         }
+    }
+
+    // 持续把"首个可见项"回报给上层：返回详情页时据此恢复，而不是每次都被拉回选中集。
+    LaunchedEffect(gridState, episodes) {
+        snapshotFlow { gridState.firstVisibleItemIndex }
+            .collect { index -> onScrollIndexChanged(index) }
     }
 
     LazyVerticalGrid(
@@ -417,6 +448,7 @@ private fun EpisodeGrid(
             val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
             EpisodeButton(
                 episode = episode,
+                realIndex = realIndex,
                 selected = realIndex == selectedEpisodeIndex,
                 focusRequester = focusRequesters[index],
                 onClick = { onEpisode(realIndex) },
@@ -428,6 +460,7 @@ private fun EpisodeGrid(
 @Composable
 private fun EpisodeButton(
     episode: PlayEpisode,
+    realIndex: Int,
     selected: Boolean,
     focusRequester: FocusRequester,
     onClick: () -> Unit,
@@ -467,7 +500,9 @@ private fun EpisodeButton(
             contentAlignment = Alignment.Center,
         ) {
             Text(
-                text = episode.title,
+                // 去掉「1.」「第01集」这类纯编号前缀：各源标题风格不一，
+                // 直接显示会让选集网格变成一排没有意义的数字。
+                text = com.tvbox.app.domain.displayEpisodeTitle(episode.title, realIndex),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

@@ -37,6 +37,8 @@ plan/
 tools/*
 !tools/bind-platform-live.sh
 !tools/bind-platform-live.ps1
+# 一起看长跑监控（签名服务自愈 + 随机多轮），需要随仓库复用，避免每次重写。
+!tools/live_longrun_monitor.py
 web/
 *.stackdump
 

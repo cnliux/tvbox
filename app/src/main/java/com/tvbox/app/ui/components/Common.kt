@@ -866,7 +866,10 @@ fun HistoryItemCard(
         onClick = onClick,
         modifier = modifier,
         // 导入/迁移的历史可能没有来源名，过滤空段避免副标题以 " / " 开头。
-        subtitle = listOf(item.sourceName, progressText)
+        // 更新提示（「还有 N 集」）接在副标题末尾：电视卡片空间有限，
+        // 单独占一行会把海报压小，跟在进度后面最省地方又能一眼看到。
+        subtitle = listOf(item.sourceName, progressText, item.updateHint)
+            .filterNotNull()
             .filter { it.isNotBlank() }
             .joinToString(" / "),
         badge = "继续观看",

@@ -149,7 +149,17 @@ data class PlatformLiveStreamCandidate(
     val cdn: String,
     val protocol: String,
     val url: String,
-)
+    /** 实测首字节延迟（毫秒）；-1 表示未测/测速失败，UI 不显示副标题。 */
+    val latencyMs: Int = -1,
+) {
+    /** 线路列表的副标题：把延迟作为可选信息展示，避免占用主标题宽度。 */
+    val latencyLabel: String?
+        get() = when {
+            latencyMs < 0 -> null
+            latencyMs < 1000 -> "${latencyMs}ms"
+            else -> "${latencyMs / 1000}.${(latencyMs % 1000) / 100}s"
+        }
+}
 
 data class ResolvedPlatformLiveStream(
     val channelId: String,

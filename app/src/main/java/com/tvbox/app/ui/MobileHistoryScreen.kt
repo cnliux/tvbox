@@ -255,11 +255,30 @@ private fun MobileHistoryRow(
                     )
                 }
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = "$timeText 观看",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "$timeText 观看",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    // 更新提示紧跟在观看时间后面，不单独占一行：
+                    // 历史行本来就不高，再加一行会把列表压得很松散。
+                    item.updateHint?.let { hint ->
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                        ) {
+                            Text(
+                                text = hint,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
             }
             Spacer(modifier = Modifier.width(2.dp))
             IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {

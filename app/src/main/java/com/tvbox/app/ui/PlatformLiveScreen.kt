@@ -1292,7 +1292,9 @@ private fun PlatformLivePlayerScreen(
         actions.consumePlatformLiveNotice()
     }
 
-    var showUrlOverlay by remember { mutableStateOf(false) }
+    // #3 少用弹出层：URL 不再单独开一层全屏浮层，改为在线路面板内展开/收起。
+    // 原先"线路面板 → 查看完整 URL"要连开两层，返回键也要按两次，既挡画面又费操作。
+    var showUrlInPanel by remember { mutableStateOf(false) }
     var showLineControl by remember { mutableStateOf(false) }
     // 确认键打开的「节目列表」：列出当前分类下的房间（带封面图），与电视直播的频道列表同语义。
     var showRoomList by remember { mutableStateOf(false) }
@@ -1380,14 +1382,6 @@ private fun PlatformLivePlayerScreen(
             {
                 if (showRoomList) {
                     showRoomList = false
-                    true
-                } else {
-                    false
-                }
-            },
-            {
-                if (showUrlOverlay) {
-                    showUrlOverlay = false
                     true
                 } else {
                     false
@@ -1694,53 +1688,15 @@ private fun PlatformLivePlayerScreen(
             }
         }
 
-        if (showUrlOverlay && stream != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.9f))
-                    .pointerInput(Unit) { detectTapGestures { showUrlOverlay = false } }
-                    .padding(40.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text("当前实际取流 URL", color = Color.White, style = MaterialTheme.typography.titleLarge)
-                    Text(
-                        text = playbackUrl ?: stream.url,
-                        color = Color(0xFF7AE2BA),
-                        style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier
-                            .clip(MaterialTheme.shapes.small)
-                            .background(Color.White.copy(alpha = 0.1f))
-                            .padding(16.dp)
-                    )
-                    if (continuityProxy != null && playbackUrl != stream.url) {
-                        Text(
-                            text = "原始地址：${middleEllipsis(stream.url)}",
-                            color = Color.White.copy(alpha = 0.7f),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Text(
-                        text = "房间：${room.title} | 站点：${room.site} | 质量：${stream.quality} | 协议：${stream.protocol}",
-                        color = Color.White.copy(alpha = 0.7f),
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Text("点击屏幕关闭", color = Color.White.copy(alpha = 0.5f), style = MaterialTheme.typography.labelSmall)
-                }
-            }
-        }
-
         if (showLineControl && stream?.hasCandidates == true) {
             val lineStream = stream
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.7f))
-                    .pointerInput(Unit) { detectTapGestures { showLineControl = false } }
+                    .pointerInput(Unit) {
+                        detectTapGestures { showLineControl = false; showUrlInPanel = false }
+                    }
             ) {
                 Surface(
                     modifier = Modifier
@@ -1797,6 +1753,7 @@ private fun PlatformLivePlayerScreen(
                                                 append(index + 1).append("，")
                                                 append(candidate.cdn).append("，")
                                                 append(candidate.protocol.uppercase())
+                                                candidate.latencyLabel?.let { append("，延迟").append(it) }
                                                 if (selected) append("，当前线路")
                                             }
                                         }
@@ -1804,19 +1761,68 @@ private fun PlatformLivePlayerScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f))
-                                    Text(
-                                        text = "${candidate.cdn} | ${candidate.protocol.uppercase()}",
-                                        modifier = Modifier.weight(1f),
-                                        color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
-                                        // CDN 名称较长时单行省略，避免每行高度不一致、挤占线路列表。
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "${candidate.cdn} | ${candidate.protocol.uppercase()}",
+                                            color = if (selected) Color.White else Color.White.copy(alpha = 0.8f),
+                                            // CDN 名称较长时单行省略，避免每行高度不一致、挤占线路列表。
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        // 延迟作为副标题：让用户在切换前就能判断哪条线路快。
+                                        // 未测速/失败时为 -1，此处不渲染，避免出现「--ms」噪声。
+                                        candidate.latencyLabel?.let { label ->
+                                            Text(
+                                                text = label,
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = when {
+                                                    candidate.latencyMs in 0..300 -> Color(0xFF7AE2BA)
+                                                    candidate.latencyMs in 301..800 -> Color(0xFFFFD54F)
+                                                    else -> Color(0xFFFF8A80)
+                                                },
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
                                     if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
                                 }
                             }
                         }
                         Spacer(modifier = Modifier.height(16.dp))
+                        // 地址在线路面板内展开，不再叠一层全屏浮层（#3 少用弹出层）。
+                        if (showUrlInPanel) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "实际播放地址",
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                )
+                                Text(
+                                    text = playbackUrl ?: lineStream.url,
+                                    color = Color(0xFF7AE2BA),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (continuityProxy != null && playbackUrl != lineStream.url) {
+                                    Text(
+                                        text = "原始地址：${middleEllipsis(lineStream.url)}",
+                                        color = Color.White.copy(alpha = 0.6f),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(onClick = {
                                 val url = lineStream.activeCandidateOrNull?.url.orEmpty()
@@ -1825,8 +1831,10 @@ private fun PlatformLivePlayerScreen(
                                     (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
                                 }
                             }) { Text("复制 URL") }
-                            TextButton(onClick = { showUrlOverlay = true; showLineControl = false }) { Text("查看完整 URL") }
-                            TextButton(onClick = { showLineControl = false }) { Text("关闭") }
+                            TextButton(onClick = { showUrlInPanel = !showUrlInPanel }) {
+                                Text(if (showUrlInPanel) "收起地址" else "查看地址")
+                            }
+                            TextButton(onClick = { showLineControl = false; showUrlInPanel = false }) { Text("关闭") }
                         }
                     }
                 }
@@ -1892,18 +1900,21 @@ private fun PlatformLivePlayerScreen(
         }
 
         // 节目列表浮层盖住左下角时，调试面板让位，避免两层文字叠在一起。
+        // 调试信息固定在**顶部**：底部是播放控制条与进度条的位置，压在下面会挡住
+        // 操作并被误触；顶部也符合"看指标先看最上面"的阅读顺序。
         if (showDebugMonitor && !showRoomList && debugMonitorText.isNotBlank()) {
             Box(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
+                    .align(Alignment.TopEnd)
                     // 手机竖屏太窄，0.62f 会把续流统计折成多行；调试面板按屏宽自适应。
-                    .fillMaxWidth(if (isMobile) 0.9f else 0.62f)
-                    .fillMaxHeight(if (isMobile) 0.42f else 0.5f)
+                    .fillMaxWidth(if (isMobile) 0.9f else 0.46f)
+                    // 高度压制到 30%：调试信息只做参考，不能盖住画面主体与控制条。
+                    .fillMaxHeight(if (isMobile) 0.3f else 0.34f)
                     .windowInsetsPadding(WindowInsets.safeDrawing)
-                    .padding(16.dp)
+                    .padding(12.dp)
                     .clip(MaterialTheme.shapes.small)
                     .background(Color(0xCC000000))
-                    .padding(14.dp)
+                    .padding(10.dp)
             ) {
                 Text(
                     text = debugMonitorText,

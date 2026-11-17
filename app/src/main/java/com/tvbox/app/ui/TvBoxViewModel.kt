@@ -89,6 +89,7 @@ import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
+import com.tvbox.app.domain.correspondingEpisodeIndex
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
 import com.tvbox.app.domain.WatchHistoryItem
@@ -408,6 +409,10 @@ class TvBoxViewModel(
     private var platformLiveRecoveryWindowAttempts = 0
     // 同一条候选线路的原地重连次数（缓冲卡死/被服务端正常关流时先用完再换线路）。
     private var platformLiveSameLineRetries = 0
+    // 详情页选集滚动位置记忆（影片 id + 线路 -> 首个可见项下标）。
+    // 返回详情页时恢复用户上次滚动到的位置，而不是被"滚到选中集"逻辑拉回去。
+    private val detailEpisodeScrollIndex = HashMap<String, Int>()
+
     // 电视直播：缓冲/卡死类失败在当前线路上的原地重连次数。
     private var liveStallRetries = 0
     /** 自动换线的退避状态；用户主动切线路 / 切频道时清零。 */
@@ -1613,10 +1618,30 @@ class TvBoxViewModel(
 
     fun selectPlaySource(index: Int) {
         _state.update { state ->
-            val maxIndex = (state.detailMovie?.playSources?.lastIndex ?: 0).coerceAtLeast(0)
+            val movie = state.detailMovie
+            val maxIndex = (movie?.playSources?.lastIndex ?: 0).coerceAtLeast(0)
+            val targetIndex = index.coerceIn(0, maxIndex)
+            val current = movie?.playSources?.getOrNull(state.selectedSourceIndex)
+            val target = movie?.playSources?.getOrNull(targetIndex)
+            // 换源必须停在**同一集**，不能回到第 1 集。
+            // 旧实现直接写 selectedEpisodeIndex = 0，用户换到另一条线路后要重新
+            // 拖动到原来那一集，正是「剧集切换不跟随」的直接原因。
+            val currentEpisode = current?.episodes?.getOrNull(state.selectedEpisodeIndex)
+            val preservedEpisodeIndex = if (currentEpisode != null && target != null) {
+                correspondingEpisodeIndex(
+                    source = target,
+                    title = currentEpisode.title,
+                    fallbackIndex = state.selectedEpisodeIndex,
+                ) ?: state.selectedEpisodeIndex.coerceIn(0, target.episodes.lastIndex.coerceAtLeast(0))
+            } else {
+                0
+            }
             state.copy(
-                selectedSourceIndex = index.coerceIn(0, maxIndex),
-                selectedEpisodeIndex = 0,
+                selectedSourceIndex = targetIndex,
+                selectedEpisodeIndex = preservedEpisodeIndex.coerceIn(
+                    0,
+                    (target?.episodes?.lastIndex ?: 0).coerceAtLeast(0),
+                ),
             )
         }
     }
@@ -2913,6 +2938,9 @@ class TvBoxViewModel(
             ).positionMs,
             durationMs = durationMs.coerceAtLeast(0L),
             updatedAtEpochMs = System.currentTimeMillis(),
+            // 记录当时的线路总集数：历史列表据此提示「还有 N 集」，
+            // 用户不用再进详情页确认是不是更新了。
+            episodeCount = source.episodes.size,
         )
         val maxItems = _state.value.appSettings.historyMaxItems
         viewModelScope.launch {
@@ -3692,6 +3720,16 @@ class TvBoxViewModel(
     }
 
     /** 切换剧集排序顺序（正序 ↔ 倒序），持久化到 SharedPreferences。 */
+    /** 读取详情页选集滚动位置；没有记录返回 -1（调用方回落到"滚到选中集"）。 */
+    fun detailScrollIndexFor(movieId: Int, sourceIndex: Int): Int =
+        detailEpisodeScrollIndex["$movieId:$sourceIndex"] ?: -1
+
+    /** 记录详情页选集滚动位置；离开详情页/切换线路时都会调用。 */
+    fun rememberDetailScrollIndex(movieId: Int, sourceIndex: Int, index: Int) {
+        val key = "$movieId:$sourceIndex"
+        if (index <= 0) detailEpisodeScrollIndex.remove(key) else detailEpisodeScrollIndex[key] = index
+    }
+
     fun toggleEpisodeSortReverse() {
         val current = _state.value
         val settings = current.appSettings.copy(episodeSortReverse = !current.appSettings.episodeSortReverse)

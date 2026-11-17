@@ -8,6 +8,7 @@ import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.PlatformLiveStreamCandidate
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
+import com.tvbox.app.data.live.LiveLineLatency
 import com.tvbox.app.data.live.LiveLineNormalizer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -136,8 +137,25 @@ class EmbeddedPlatformLiveRepository(
         if (repaired.isEmpty()) {
             throw IOException("解析服务未返回有效播放地址")
         }
-        val candidates = repaired.map { (cdn, url) ->
-            PlatformLiveStreamCandidate(cdn = cdn, protocol = response.protocol, url = url)
+        // 并发测各线路首字节延迟（TTFB），供线路列表显示「AL · 220ms」副标题。
+        // 只读约 2KB 就断开，对 CDN 与流量几乎无成本；失败记 -1，UI 不显示副标题。
+        val probeHeaders = LiveLineNormalizer.headersFor(
+            site = room.site,
+            url = repaired.first().second,
+            baseHeaders = baseHeaders,
+        )
+        val latencies = LiveLineLatency.measure(
+            repaired.map { (_, url) ->
+                url to LiveLineNormalizer.headersFor(room.site, url, baseHeaders)
+            },
+        )
+        val candidates = repaired.mapIndexed { index, (cdn, url) ->
+            PlatformLiveStreamCandidate(
+                cdn = cdn,
+                protocol = response.protocol,
+                url = url,
+                latencyMs = latencies.getOrElse(index) { -1 },
+            )
         }
         ResolvedPlatformLiveStream(
             channelId = room.id,
