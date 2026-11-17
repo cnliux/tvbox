@@ -8,6 +8,7 @@ import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.PlatformLiveStreamCandidate
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
+import com.tvbox.app.data.live.LiveLineNormalizer
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -105,7 +106,7 @@ class EmbeddedPlatformLiveRepository(
         val response = runCatching { json.decodeFromString<PlatformLiveResolveResponse>(body) }
             .getOrElse { throw IOException("平台直播解析结果格式错误", it) }
         if (!response.live) throw IOException("该房间当前未开播")
-        val candidates = response.streams
+        val rawCandidates = response.streams
             .mapNotNull { it.toDomainOrNull(response.protocol) }
             .ifEmpty {
                 listOfNotNull(
@@ -116,21 +117,40 @@ class EmbeddedPlatformLiveRepository(
                     ).toDomainOrNull(response.protocol),
                 )
             }
-        if (candidates.isEmpty()) {
+        val baseHeaders = response.headers
+            .mapNotNull { (key, value) ->
+                val normalizedKey = key.trim()
+                val normalizedValue = value.trim()
+                normalizedKey.takeIf { it.isNotBlank() }?.let { it to normalizedValue }
+            }
+            .toMap()
+        // 线路修复（纯客户端，见 LiveLineNormalizer）：
+        //  - 补/纠正 codec 参数，避免虎牙下发 HEVC 导致「有声音没画面」；
+        //  - 去掉重复查询参数，否则 CDN 会直接返回 HTML（表现为无法连接）；
+        //  - 按规范化地址去重，避免「移动端」候选与 PC 候选实际是同一路流。
+        val repaired = LiveLineNormalizer.normalizeCandidates(
+            site = room.site,
+            protocol = response.protocol,
+            candidates = rawCandidates.map { it.cdn to it.url },
+        )
+        if (repaired.isEmpty()) {
             throw IOException("解析服务未返回有效播放地址")
+        }
+        val candidates = repaired.map { (cdn, url) ->
+            PlatformLiveStreamCandidate(cdn = cdn, protocol = response.protocol, url = url)
         }
         ResolvedPlatformLiveStream(
             channelId = room.id,
             title = response.title.trim().ifBlank { room.title },
             anchor = response.anchor.trim(),
             quality = response.quality.trim().ifBlank { "自动" },
-            headers = response.headers
-                .mapNotNull { (key, value) ->
-                    val normalizedKey = key.trim()
-                    val normalizedValue = value.trim()
-                    normalizedKey.takeIf { it.isNotBlank() }?.let { it to normalizedValue }
-                }
-                .toMap(),
+            // 每条候选的签名参数可能不同（ctype/t 参与 wsSecret），
+            // 因此请求头按「当前首条线路」给出，切线路时由播放页重新取。
+            headers = LiveLineNormalizer.headersFor(
+                site = room.site,
+                url = candidates.first().url,
+                baseHeaders = baseHeaders,
+            ),
             candidates = candidates,
         )
     }

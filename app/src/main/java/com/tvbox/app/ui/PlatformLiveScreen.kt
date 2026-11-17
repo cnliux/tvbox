@@ -875,7 +875,7 @@ private fun PlatformLivePlayerScreen(
     // 虎牙单次 FLV 拉流约 2 分钟被 CDN 关闭：改由 Go 侧本机连续代理续流，
     // 播放器只连本地一条永不结束的 FLV，避免每 2 分钟一次 ENDED 断流。
     // Go 桥接可能耗时或阻塞，必须在 IO 线程启动，避免 Compose 主线程卡死/ANR。
-    val continuityProxyState = androidx.compose.runtime.produceState<FlvProxyHandle?>(
+    val continuityProxyState = androidx.compose.runtime.produceState<com.tvbox.app.data.live.LiveProxyHandle?>(
         initialValue = null,
         key1 = room.id,
         key2 = stream?.url,
@@ -899,6 +899,8 @@ private fun PlatformLivePlayerScreen(
                 candidateIndex = resolved.safeActiveCandidateIndex,
                 url = candidateUrl,
                 headers = resolved.headers,
+                // 传入续流回调才会启用 Kotlin 本机中继；为 null 时退回 Go 代理。
+                renew = actions::renewPlatformLiveLine,
             )
         }
         value = handle

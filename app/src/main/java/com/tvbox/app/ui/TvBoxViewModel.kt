@@ -24,6 +24,8 @@ import com.tvbox.app.data.DefaultSearchKeywordExpander
 import com.tvbox.app.data.EmbeddedPlatformLiveRepository
 import com.tvbox.app.data.PlatformLiveCategoryTree
 import com.tvbox.app.data.PlatformLiveRepository
+import com.tvbox.app.data.live.LiveLine
+import com.tvbox.app.data.live.LiveLineNormalizer
 import com.tvbox.app.data.PlatformLiveFavoritesRepository
 import com.tvbox.app.data.LiveLinePreference
 import com.tvbox.app.data.LiveDomainScoreStore
@@ -4511,6 +4513,34 @@ class TvBoxViewModel(
 
     private fun resolveHistoryPosition(movie: Movie, item: WatchHistoryItem): Pair<Int, Int> =
         com.tvbox.app.domain.resolveHistoryPosition(movie, item)
+
+    /**
+     * 供本机连续中继续流时**同步**取一条新签名线路（在后台线程调用）。
+     *
+     * 为什么需要它：虎牙/斗鱼的播放地址会过期（虎牙一次性签名、斗鱼 expire 租约），
+     * 而中继在 lcoalhost 内部续拉时无法回调协程，只能同步拿结果。
+     * 失败返回 null，中继会保留旧线路继续用同一地址续拉，不会中断播放。
+     */
+    fun renewPlatformLiveLine(candidateIndex: Int): LiveLine? {
+        val state = _state.value
+        val room = state.platformLive.rooms.getOrNull(state.platformLive.roomIndex) ?: return null
+        val resolved = runCatching {
+            kotlinx.coroutines.runBlocking { platformLiveRepository.resolve(room, forceRefresh = true) }
+        }.getOrElse { error ->
+            android.util.Log.w("TVBoxLiveRelay", "续流解析失败：${error.message}")
+            return null
+        }
+        if (resolved.candidates.isEmpty()) return null
+        // 候选轮换：签名失效时换下一条 CDN，避免在同一条坏线路上空转。
+        val candidate = resolved.candidates[candidateIndex.mod(resolved.candidates.size)]
+        return LiveLine(
+            url = candidate.url,
+            cdn = candidate.cdn,
+            // 每条候选的 ctype/t 不同，请求头必须按该候选重新推导，
+            // 否则会因 UA 与签名不匹配被 CDN 403 或十几秒后掐流。
+            headers = LiveLineNormalizer.headersFor(room.site, candidate.url, resolved.headers),
+        )
+    }
 
     private fun resolveBestPlaybackSourceIndex(
         state: TvBoxUiState,
