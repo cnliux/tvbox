@@ -29,6 +29,8 @@ data class MovieDetailUpdate(
     val movie: Movie,
     val completedSources: Int,
     val totalSources: Int,
+    /** 非空表示主线路获取失败，已降级/继续尝试备用源；供 UI 展示降级提示而非空白。 */
+    val error: String? = null,
 )
 
 interface MovieRepository {

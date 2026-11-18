@@ -1,3 +1,19 @@
+## v1.0.24 - 2026-11-19
+
+代码审查修复（历史/弹幕/直播源/详情/健康/续播/历史分组健壮性）：
+
+- **历史数据丢失保护（最高优先级）**：`HistoryRepository.readHistory` 原在历史 JSON 解码失败（数据损坏/版本升级新增必填字段）时静默返回空表，随后任意一次 `saveProgress`/`removeHistoryItem` 会把空表写回 → 整段观看历史被永久清空。改为解码失败返回失败标记，写路径拒绝用空表覆盖非空存量。
+- **弹幕可复用重连**：`DanmakuClient.close()` 原取消顶层协程 scope，同一实例（UI 按房间 remember 复用）再次 `start()` 时心跳/重连永久失效。改为 `close()` 只停连接不动 scope，新增 `dispose()` 彻底释放；修复同房间弹幕开关后无法恢复。
+- **弹幕重连上限与退避**：断线原固定 3s 无限重连，房间不存在/风控时无限打平台服务器。改为连续重连上限 8 次 + 指数退避（3s→48s，封顶 60s），连接成功后重置计数。
+- **直播源配置跨线程竞态**：`LiveRepository` 源配置字段（`customSourceUrls`/`defaultGroup`/`defaultIndex`/`selectionIndex`）原为普通 var，设置页（UI）写、`getChannels`（IO）读无同步。改为 `@Volatile` + `getChannels` 开头一次性快照，避免读到不一致组合。
+- **详情主源失败降级提示**：`getDetailProgressively` 主源失败原静默结束，详情页永久 loading。改为发 `error` 降级信号，UI 展示「获取失败」而非空白。
+- **历史并发检查写回归并**：`checkHistoryUpdates` 多条并发完成时原各用旧表整体替换 `historyItems`，会相互覆盖。改为只 patch 本条，避免覆盖并发写入的其他条目。
+- **片名模糊匹配收紧**：`findSameMovie` 原纯子串 `contains` 模糊匹配，易把「XX2023」误判成「XX2024」污染探测集数。改为覆盖率 >= 0.85 + 较短名 >= 4 字符。
+- **健康快照跳过冗余写盘**：`PlaybackHealthRepository.getSnapshot` 每次读都全量重写 SharedPreferences，改为内容无变化时跳过。
+- **续播越界钳到片尾余量**：`resolveResumePosition` 非切源且进度超过片长时钳到片尾（可能贴片尾误触发自动下一集），改为钳到片尾 98% 余量。
+- **历史分组格式化增强**：`buildHistorySections` 每次重建 `SimpleDateFormat`，改为 ThreadLocal 复用；跨年日期补年份（`yyyy年M月d日`）。
+- 验证：`compileDebugKotlin` + `testDebugUnitTest` 通过。
+
 ## v1.0.23 - 2026-11-19
 
 审查修复与历史更新检查健壮性：

@@ -379,12 +379,16 @@ internal fun buildHistorySections(
 ): List<HistorySection> {
     val todayStart = startOfDayMs(nowMs)
     val yesterdayStart = todayStart - 24L * 60L * 60L * 1000L
-    val dayFormat = SimpleDateFormat("M月d日", Locale.getDefault())
+    val currentYear = yearOf(nowMs)
 
     fun labelOf(epochMs: Long): String = when {
         epochMs >= todayStart -> "今天"
         epochMs >= yesterdayStart -> "昨天"
-        else -> dayFormat.format(Date(epochMs))
+        else -> if (yearOf(epochMs) == currentYear) {
+            SAME_YEAR_DAY_FORMAT.get().format(Date(epochMs))
+        } else {
+            CROSS_YEAR_DAY_FORMAT.get().format(Date(epochMs))
+        }
     }
 
     val grouped = LinkedHashMap<String, MutableList<WatchHistoryItem>>()
@@ -392,4 +396,19 @@ internal fun buildHistorySections(
         grouped.getOrPut(labelOf(item.updatedAtEpochMs)) { mutableListOf() }.add(item)
     }
     return grouped.map { (label, group) -> HistorySection(label, group) }
+}
+
+/** 取 [epochMs] 所属自然年份。 */
+private fun yearOf(epochMs: Long): Int {
+    val calendar = Calendar.getInstance()
+    calendar.timeInMillis = epochMs
+    return calendar.get(Calendar.YEAR)
+}
+
+// ThreadLocal 避免跨线程共享 SimpleDateFormat（不线程安全）；且避免每次 build 重建。
+private val SAME_YEAR_DAY_FORMAT = ThreadLocal.withInitial {
+    SimpleDateFormat("M月d日", Locale.getDefault())
+}
+private val CROSS_YEAR_DAY_FORMAT = ThreadLocal.withInitial {
+    SimpleDateFormat("yyyy年M月d日", Locale.getDefault())
 }

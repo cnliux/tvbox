@@ -27,7 +27,7 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
     }
 
     override suspend fun getHistory(): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
-        mutex.withLock { readHistory() }
+        mutex.withLock { readHistory() ?: emptyList() }
     }
 
     override suspend fun saveProgress(
@@ -35,7 +35,7 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         maxItems: Int,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val history = readHistory()
+            val history = readHistory() ?: return@withLock emptyList()
             // 播放器尚未 READY 时保存会带 duration=0；若直接覆盖，历史进度条会归零且
             // 提前退出时永久丢失总时长。此时沿用同一集已有记录的时长。
             val previousSameEpisode = history.firstOrNull {
@@ -81,7 +81,7 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         checkedAtEpochMs: Long,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val history = readHistory()
+            val history = readHistory() ?: return@withLock emptyList()
             val index = history.indexOfFirst { it.apiLineId == apiLineId && it.movieId == movieId }
             if (index < 0) return@withLock history
             val current = history[index]
@@ -121,7 +121,8 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         movieId: Int,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val updated = readHistory().filterNot {
+            val history = readHistory() ?: return@withLock emptyList()
+            val updated = history.filterNot {
                 it.apiLineId == apiLineId && it.movieId == movieId
             }
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
@@ -131,12 +132,16 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
         }
     }
 
-    private fun readHistory(): List<WatchHistoryItem> {
+    /**
+     * 读取历史。返回 null 表示「存量数据存在但解码失败」（数据损坏/字段变更），
+     * 调用方必须拒绝用空表覆盖，避免整段历史被误清空。
+     */
+    private fun readHistory(): List<WatchHistoryItem>? {
         val raw = prefs.getString(KEY_ITEMS, null) ?: return emptyList()
         return runCatching {
             json.decodeFromString<List<WatchHistoryItem>>(raw)
-        }.getOrDefault(emptyList())
-            .filterNot {
+        }.getOrNull()
+            ?.filterNot {
                 isBlockedContent(
                     it.movieName,
                     it.typeName,
@@ -144,7 +149,7 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
                     it.episodeTitle,
                 )
             }
-            .sortedByDescending { it.updatedAtEpochMs }
+            ?.sortedByDescending { it.updatedAtEpochMs }
     }
 
     private companion object {

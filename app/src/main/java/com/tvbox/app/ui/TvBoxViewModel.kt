@@ -1565,6 +1565,17 @@ class TvBoxViewModel(
                 repository.getDetailProgressively(apiLineId = apiLineId, id = movieId).collect { update ->
                     // 渐进补线的迟到结果只属于本次请求；换片/返回后不得覆盖新详情。
                     if (lastDetailRequest != requestKey || _state.value.screen != TvScreen.Detail) return@collect
+                    // 主源获取失败（repository 发出降级 error 信号）：直接展示错误，不进入正常渲染。
+                    if (update.error != null) {
+                        _state.update {
+                            it.copy(
+                                detailLoading = false,
+                                detailError = update.error,
+                                detailMovie = null,
+                            )
+                        }
+                        return@collect
+                    }
                     receivedPrimary = true
                     val isFirstDetail = _state.value.detailMovie == null
                     val historyForResume = if (isFirstDetail) {
@@ -4160,10 +4171,23 @@ class TvBoxViewModel(
                                             checkedAtEpochMs = checkedAt,
                                         )
                                     }.onSuccess { updated ->
-                                        val maxItems = _state.value.appSettings.historyMaxItems
+                                        // 用 repository 权威结果 patch「本条」，而非整体替换 historyItems：
+                                        // 多条历史并发检查时，各自只更新自己的条目，避免旧表覆盖刚写入的其他条。
                                         _state.update { state ->
+                                            val maxItems = state.appSettings.historyMaxItems
+                                            val patched = state.historyItems.map { h ->
+                                                if (h.apiLineId == item.apiLineId && h.movieId == item.movieId) {
+                                                    val newest = updated.firstOrNull {
+                                                        it.apiLineId == item.apiLineId && it.movieId == item.movieId
+                                                    }
+                                                    if (newest == null) h else newest.copy(
+                                                        latestEpisodeCount = maxOf(h.latestEpisodeCount, newest.latestEpisodeCount),
+                                                        lastUpdateCheckEpochMs = maxOf(h.lastUpdateCheckEpochMs, newest.lastUpdateCheckEpochMs),
+                                                    )
+                                                } else h
+                                            }
                                             state.copy(
-                                                historyItems = updated.take(maxItems),
+                                                historyItems = patched.take(maxItems),
                                                 historyUpdateCheckedAtEpochMs = checkedAt,
                                             )
                                         }

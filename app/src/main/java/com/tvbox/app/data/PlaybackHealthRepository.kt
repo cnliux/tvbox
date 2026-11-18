@@ -99,12 +99,22 @@ class DefaultPlaybackHealthRepository(
     private val nowMs: () -> Long = System::currentTimeMillis,
 ) : PlaybackHealthRepository {
     private val mutex = Mutex()
+    /** 上次写入的条目指纹：用于 getSnapshot 无变化时跳过全量重写。 */
+    private var lastWrittenEntries: List<StoredPlaybackHealthEntry> = emptyList()
+
+    /** 有变化才写盘，并同步更新指纹；避免读快照也触发全量 I/O。 */
+    private fun writeIfChanged(stored: List<StoredPlaybackHealthEntry>) {
+        if (stored != lastWrittenEntries) {
+            store.write(stored)
+            lastWrittenEntries = stored
+        }
+    }
 
     override suspend fun getSnapshot(): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
         mutex.withLock {
             val now = nowMs()
             val entries = readPruned(now)
-            store.write(entries.map { it.toStored() })
+            writeIfChanged(entries.map { it.toStored() })
             entries.toSnapshot()
         }
     }
@@ -128,7 +138,7 @@ class DefaultPlaybackHealthRepository(
                 )
             }
             val entries = prunePlaybackHealthEntries(current.values, nowMs)
-            store.write(entries.map { it.toStored() })
+            writeIfChanged(entries.map { it.toStored() })
             entries.toSnapshot()
         }
     }
@@ -139,7 +149,7 @@ class DefaultPlaybackHealthRepository(
             val entry = current[key] ?: PlaybackHealthEntry(key = key)
             current[key] = entry.copy(lastSuccessAtMs = nowMs, successCount = entry.successCount + 1)
             val entries = prunePlaybackHealthEntries(current.values, nowMs)
-            store.write(entries.map { it.toStored() })
+            writeIfChanged(entries.map { it.toStored() })
             entries.toSnapshot()
         }
     }
@@ -147,6 +157,7 @@ class DefaultPlaybackHealthRepository(
     override suspend fun clear(): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
         mutex.withLock {
             store.clear()
+            lastWrittenEntries = emptyList()
             PlaybackHealthSnapshot()
         }
     }

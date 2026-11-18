@@ -25,9 +25,15 @@ internal const val LIVE_SOURCE_MAX_BYTES = 20L * 1024L * 1024L
 typealias LiveRepository = com.tvbox.app.domain.LiveRepository
 
 class DefaultLiveRepository : LiveRepository {
+    // setSourceConfig/setSourceSelection（UI 线程）与 getChannels（IO 线程）跨线程访问，
+    // 必须 volatile + 读时一次性快照，避免读到不一致组合（如 selectionIndex 指到旧列表）。
+    @Volatile
     private var customSourceUrls: List<String> = emptyList()
+    @Volatile
     private var defaultGroup: String = ""
+    @Volatile
     private var defaultIndex: Int = -1
+    @Volatile
     private var selectionIndex: Int = -1
 
     override fun setSourceConfig(customUrls: List<String>, defaultGroup: String, defaultIndex: Int) {
@@ -49,16 +55,21 @@ class DefaultLiveRepository : LiveRepository {
 
     override val sourceUrls: List<String> get() = customSourceUrls
 
+    @Volatile
     private var lastBundledEpgUrl: String? = null
 
     override val bundledEpgUrl: String? get() = lastBundledEpgUrl
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
+        // 一次性快照全部配置字段，避免循环中途读到 UI 线程写入的半更新组合。
         val allUrls = customSourceUrls
+        val snapshotDefaultIndex = defaultIndex
+        val snapshotSelectionIndex = selectionIndex
+        val snapshotDefaultGroup = defaultGroup
         if (allUrls.isEmpty()) {
             throw IOException("请添加自定义直播源地址后重试")
         }
-        val orderedUrls = resolveSourceOrder(allUrls, defaultIndex, selectionIndex)
+        val orderedUrls = resolveSourceOrder(allUrls, snapshotDefaultIndex, snapshotSelectionIndex)
         var lastError: Throwable? = null
         var lastLoadError: String? = null
 
@@ -80,7 +91,7 @@ class DefaultLiveRepository : LiveRepository {
                 lastBundledEpgUrl = runCatching { extractM3uEpgUrl(rawText) }.getOrNull()
                 val channels = parseLiveChannels(rawText)
                     .map { ch ->
-                        if (ch.groupName == "电视直播" && defaultGroup.isNotBlank()) ch.copy(groupName = defaultGroup) else ch
+                        if (ch.groupName == "电视直播" && snapshotDefaultGroup.isNotBlank()) ch.copy(groupName = snapshotDefaultGroup) else ch
                     }
                     .withIndex()
                     .map { (i, ch) -> ch.copy(number = i + 1) }

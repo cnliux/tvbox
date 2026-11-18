@@ -81,6 +81,7 @@ internal abstract class BaseDanmakuClient(
     private var socket: WebSocket? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
+    private var reconnectAttempts = 0
 
     @Volatile
     private var stopped = false
@@ -100,12 +101,18 @@ internal abstract class BaseDanmakuClient(
     override fun start() {
         if (stopped) {
             stopped = false
+            // 重新开始后允许再次重连（重置重连计数）。
+            reconnectAttempts = 0
         } else if (connected || socket != null || reconnectJob?.isActive == true) {
             return
         }
         connect()
     }
 
+    /**
+     * 停止当前连接但不销毁顶层 scope：同一实例之后可再次 [start] 重连
+     * （UI 层按房间 remember 复用实例，close→start 必须可用）。
+     */
     override fun close() {
         stopped = true
         connected = false
@@ -113,6 +120,11 @@ internal abstract class BaseDanmakuClient(
         reconnectJob?.cancel()
         runCatching { socket?.close(1000, null) }
         socket = null
+    }
+
+    /** 彻底释放：销毁顶层 scope。仅当实例确认不再使用时调用，之后不可再 [start]。 */
+    fun dispose() {
+        close()
         scope.cancel()
     }
 
@@ -140,6 +152,7 @@ internal abstract class BaseDanmakuClient(
                     return
                 }
                 connected = true
+                reconnectAttempts = 0
                 Log.i(logTag, "【弹幕已连接】$url")
                 runCatching { onConnected(webSocket) }
                 startHeartbeat(webSocket)
@@ -184,11 +197,19 @@ internal abstract class BaseDanmakuClient(
 
     private fun scheduleReconnect() {
         if (stopped || reconnectJob?.isActive == true) return
+        if (reconnectAttempts >= MAX_CONSECUTIVE_RECONNECTS) {
+            log("【弹幕重连】已达 ${MAX_CONSECUTIVE_RECONNECTS} 次上限，停止重试")
+            return
+        }
+        reconnectAttempts += 1
         socket = null
+        // 指数退避：3s → 6s → 12s → 24s → 48s（封顶 60s）。
+        val backoffMs = (RECONNECT_DELAY_MS shl (reconnectAttempts - 1).coerceAtMost(4))
+            .coerceAtMost(MAX_RECONNECT_BACKOFF_MS)
         reconnectJob = scope.launch {
-            delay(RECONNECT_DELAY_MS)
+            delay(backoffMs)
             if (stopped) return@launch
-            log("【弹幕重连】$url")
+            log("【弹幕重连 #$reconnectAttempts】$url")
             connect()
         }
     }
@@ -197,6 +218,10 @@ internal abstract class BaseDanmakuClient(
         const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
         private const val RECONNECT_DELAY_MS = 3_000L
+        /** 连续重连次数上限，超过即停止，避免房间不存在/风控时无限打平台服务器。 */
+        private const val MAX_CONSECUTIVE_RECONNECTS = 8
+        /** 重连退避封顶（60s）。 */
+        private const val MAX_RECONNECT_BACKOFF_MS = 60_000L
     }
 }
 

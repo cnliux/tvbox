@@ -39,10 +39,16 @@ fun resolveResumePosition(
     if (durationMs <= 0L) return ResumePosition(candidate, clampedToDuration = false)
 
     val tailGuard = durationMs * TAIL_GUARD_NUMERATOR / TAIL_GUARD_DENOMINATOR
+    // 越界判定：进度超过片长视为片源变化/片变短。
+    val clamped = candidate > durationMs
     // 切来源时新片长可能更短：必须 clamp，否则 seek 到片尾。
-    val upperBound = if (sourceChanged) tailGuard else durationMs.coerceAtLeast(0L)
-    val clamped = candidate > upperBound
-    return ResumePosition(candidate.coerceAtMost(upperBound.coerceAtLeast(0L)), clamped)
+    // 越界钳制统一落到 tailGuard（片尾 98% 余量），而不是恰好片尾——避免进度贴片尾触发「自动下一集」。
+    val target = when {
+        sourceChanged -> candidate.coerceAtMost(tailGuard.coerceAtLeast(0L))
+        clamped -> tailGuard.coerceAtLeast(0L)
+        else -> candidate.coerceAtLeast(0L)
+    }
+    return ResumePosition(target, clamped)
 }
 
 /**

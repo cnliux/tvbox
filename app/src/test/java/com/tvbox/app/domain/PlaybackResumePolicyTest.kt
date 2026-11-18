@@ -94,6 +94,21 @@ class PlaybackResumePolicyTest {
     }
 
     @Test
+    fun nonSwitchedSourceOverflowClampsBeforeTailNotAtTail() {
+        // 非切源，但历史进度超过新片长（片源变化/片变短）：应钳到片尾余量（98%）而非片尾本身，
+        // 避免进度恰好贴片尾触发「自动下一集」。
+        val result = resolveResumePosition(
+            savedPositionMs = 150_000L,
+            playerPositionMs = 0L,
+            durationMs = 100_000L,
+            isPrepared = false,
+            sourceChanged = false,
+        )
+        assertEquals(98_000L, result.positionMs)
+        assertTrue(result.clampedToDuration)
+    }
+
+    @Test
     fun retryKeepsTheLargerValidPosition() {
         assertEquals(90_000L, positionForRetry(savedPositionMs = 90_000L, playerPositionMs = 0L))
         assertEquals(95_000L, positionForRetry(savedPositionMs = 90_000L, playerPositionMs = 95_000L))

@@ -333,7 +333,38 @@ class DefaultMovieRepository(
     override fun getDetailProgressively(apiLineId: String, id: Int): Flow<MovieDetailUpdate> = channelFlow {
         val primary = withContext(Dispatchers.IO) {
             loadPrimaryDetail(apiLineId = apiLineId, id = id)
-        } ?: return@channelFlow
+        }
+        if (primary == null) {
+            // 主源失败：不再静默结束（否则 UI 永久 loading），发一个降级 error 信号，
+            // 让调用方展示"获取失败"错误提示。备用源同名匹配依赖主源片名，无法在此继续。
+            val primaryLine = try { requireLine(apiLineId) } catch (e: Throwable) { null }
+            trySend(
+                MovieDetailUpdate(
+                    movie = Movie(
+                        id = id,
+                        apiLineId = apiLineId,
+                        apiLineName = primaryLine?.name.orEmpty(),
+                        name = "",
+                        typeId = 0,
+                        typeName = "",
+                        posterUrl = "",
+                        remarks = "",
+                        year = "",
+                        area = "",
+                        language = "",
+                        actor = "",
+                        director = "",
+                        duration = "",
+                        description = "",
+                        playSources = emptyList(),
+                    ),
+                    completedSources = 0,
+                    totalSources = searchLines(apiLineId).size,
+                    error = "主线路获取失败，请稍后重试或切换线路",
+                ),
+            )
+            return@channelFlow
+        }
         val lines = prioritizedLines(apiLineId)
         val primarySource = primary.toLinePlaySource()
         val sourceMutex = Mutex()
@@ -440,11 +471,7 @@ class DefaultMovieRepository(
                 .mapNotNull { it.toDomainOrNull(line) }
         }
         val matched = candidates.firstOrNull { normalizeTitle(it.name) == normalizedName }
-            ?: candidates.firstOrNull { candidate ->
-                val normalizedCandidate = normalizeTitle(candidate.name)
-                normalizedCandidate.isNotBlank() &&
-                    (normalizedCandidate.contains(normalizedName) || normalizedName.contains(normalizedCandidate))
-            }
+            ?: candidates.firstOrNull { candidate -> isCloseTitleMatch(normalizeTitle(candidate.name), normalizedName) }
             ?: return null
 
         return withFallback(line) { api ->
@@ -453,6 +480,21 @@ class DefaultMovieRepository(
                 .firstOrNull()
                 ?.toDomainOrNull(line)
         }
+    }
+
+    /**
+     * 片名模糊匹配：要求「双向包含」且较短名占比 >= 0.85、较短名至少 4 个字符，
+     * 避免把「XX2023」之类仅年份/后缀不同的片误配成同片（探测集数会被污染）。
+     * 纯子串 contains 太宽松，这里用覆盖率 + 最短长度双重收紧。
+     */
+    private fun isCloseTitleMatch(candidate: String, target: String): Boolean {
+        val a = candidate.trim()
+        val b = target.trim()
+        if (a.isBlank() || b.isBlank()) return false
+        val (shorter, longer) = if (a.length <= b.length) a to b else b to a
+        if (shorter.length < 4) return false
+        if (!longer.contains(shorter)) return false
+        return shorter.length.toDouble() / longer.length.toDouble() >= 0.85
     }
 
     private fun Movie.toLinePlaySource(): com.tvbox.app.domain.PlaySource? {

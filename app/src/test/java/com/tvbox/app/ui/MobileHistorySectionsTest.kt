@@ -99,4 +99,18 @@ class MobileHistorySectionsTest {
         val nextDayNow = localTime(2026, 11, 19, 0, 30, 0)
         assertEquals("昨天", buildHistorySections(listOf(item(1, viewedAt)), nextDayNow)[0].label)
     }
+
+    @Test
+    fun crossYearOlderDateIncludesYear() {
+        // 更早记录与 now 不在同一自然年：日期标签应带年份，避免「1月5日」跨年歧义。
+        val now = localTime(2026, 1, 8, 12, 0, 0)
+        val sameYear = localTime(2026, 1, 5, 9, 0, 0)
+        val crossYear = localTime(2025, 12, 20, 9, 0, 0)
+        val sections = buildHistorySections(
+            listOf(item(1, crossYear), item(2, sameYear)),
+            now,
+        )
+        // 输入顺序即输出顺序（LinkedHashMap）：跨年的在前、同年的在后。
+        assertEquals(listOf("2025年12月20日", "1月5日"), sections.map { it.label })
+    }
 }
