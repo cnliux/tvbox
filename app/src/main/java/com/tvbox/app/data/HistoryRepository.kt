@@ -38,14 +38,28 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
             val history = readHistory()
             // 播放器尚未 READY 时保存会带 duration=0；若直接覆盖，历史进度条会归零且
             // 提前退出时永久丢失总时长。此时沿用同一集已有记录的时长。
-            val previous = history.firstOrNull {
+            val previousSameEpisode = history.firstOrNull {
                 it.apiLineId == item.apiLineId && it.movieId == item.movieId &&
                     (it.episodeIndex == item.episodeIndex || it.episodeUrl == item.episodeUrl)
             }
-            val durationMs = if (item.durationMs > 0L) item.durationMs else previous?.durationMs ?: 0L
+            val previousSameMovie = history.firstOrNull {
+                it.apiLineId == item.apiLineId && it.movieId == item.movieId
+            }
+            val durationMs = if (item.durationMs > 0L) item.durationMs else previousSameEpisode?.durationMs ?: 0L
+            // 播放进度保存不携带跨源检查结果：保留同一影片已有的检查信息，避免被回写覆盖。
+            val latestEpisodeCount = maxOf(
+                item.latestEpisodeCount.coerceAtLeast(0),
+                previousSameMovie?.latestEpisodeCount?.coerceAtLeast(0) ?: 0,
+            )
+            val lastUpdateCheckEpochMs = maxOf(
+                item.lastUpdateCheckEpochMs.coerceAtLeast(0L),
+                previousSameMovie?.lastUpdateCheckEpochMs?.coerceAtLeast(0L) ?: 0L,
+            )
             val updatedItem = item.copy(
                 durationMs = durationMs,
                 updatedAtEpochMs = System.currentTimeMillis(),
+                latestEpisodeCount = latestEpisodeCount,
+                lastUpdateCheckEpochMs = lastUpdateCheckEpochMs,
             )
             val updated = buildList {
                 add(updatedItem)
@@ -55,6 +69,41 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
             }.take(maxItems.coerceAtLeast(1))
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
                 "Unable to save watch history"
+            }
+            updated
+        }
+    }
+
+    override suspend fun updateEpisodeCheck(
+        apiLineId: String,
+        movieId: Int,
+        latestEpisodeCount: Int,
+        checkedAtEpochMs: Long,
+    ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val history = readHistory()
+            val index = history.indexOfFirst { it.apiLineId == apiLineId && it.movieId == movieId }
+            if (index < 0) return@withLock history
+            val current = history[index]
+            val mergedLatest = maxOf(
+                current.latestEpisodeCount.coerceAtLeast(0),
+                latestEpisodeCount.coerceAtLeast(0),
+            )
+            val mergedCheckedAt = maxOf(
+                current.lastUpdateCheckEpochMs.coerceAtLeast(0L),
+                checkedAtEpochMs.coerceAtLeast(0L),
+            )
+            if (mergedLatest == current.latestEpisodeCount && mergedCheckedAt == current.lastUpdateCheckEpochMs) {
+                return@withLock history
+            }
+            val updated = history.toMutableList().also {
+                it[index] = current.copy(
+                    latestEpisodeCount = mergedLatest,
+                    lastUpdateCheckEpochMs = mergedCheckedAt,
+                )
+            }
+            check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
+                "Unable to update watch history episode check"
             }
             updated
         }

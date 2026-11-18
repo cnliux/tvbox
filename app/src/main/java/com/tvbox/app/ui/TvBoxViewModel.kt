@@ -94,9 +94,12 @@ import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.findBestTitleMatchIndex
+import com.tvbox.app.domain.findResumePoint
 import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.domain.toApiLines
 import com.tvbox.app.util.logSafeUrl
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -190,6 +193,8 @@ data class TvBoxUiState(
     val historyItems: List<WatchHistoryItem> = emptyList(),
     /** 历史记录是否已完成首次读取：首页「继续观看」据此避免半加载造成的布局跳动。 */
     val historyLoaded: Boolean = false,
+    val historyUpdateChecking: Boolean = false,
+    val historyUpdateCheckedAtEpochMs: Long = 0L,
     val searchQuery: String = "",
     val searchResults: List<Movie> = emptyList(),
     /** 每源原始搜索结果（未跨源去重），供手机端按源分组；key 为 apiLineId。 */
@@ -446,6 +451,8 @@ class TvBoxViewModel(
     private var remoteCategorySourceId: String = ""
     private var remoteCategoryNames: List<String> = emptyList()
     private val playbackAgent = PlaybackAgent()
+    private var historyUpdateCheckJob: Job? = null
+    private var lastHistoryUpdateCheckAtEpochMs: Long = 0L
 
     init {
         recordStartupPhase(StartupPhase.ApplicationInit)
@@ -961,8 +968,8 @@ class TvBoxViewModel(
     }
 
     fun openHistory() {
-        loadHistory()
         _state.update { it.copy(screen = TvScreen.History) }
+        loadHistory(triggerUpdateCheck = true)
     }
 
     fun clearHistory() {
@@ -1559,6 +1566,17 @@ class TvBoxViewModel(
                     // 渐进补线的迟到结果只属于本次请求；换片/返回后不得覆盖新详情。
                     if (lastDetailRequest != requestKey || _state.value.screen != TvScreen.Detail) return@collect
                     receivedPrimary = true
+                    val isFirstDetail = _state.value.detailMovie == null
+                    val historyForResume = if (isFirstDetail) {
+                        val current = _state.value.historyItems
+                        if (current.isNotEmpty() || _state.value.historyLoaded) {
+                            current
+                        } else {
+                            runCatching { historyRepository.getHistory() }.getOrDefault(emptyList())
+                        }
+                    } else {
+                        emptyList()
+                    }
                     _state.update { state ->
                         val sourceIndex = if (state.detailMovie == null) {
                             resolveBestPlaybackSourceIndex(
@@ -1573,17 +1591,36 @@ class TvBoxViewModel(
                                 update.movie.playSources.lastIndex.coerceAtLeast(0),
                             )
                         }
+                        // 本机有这部影片的观看记录时，详情页默认停在上次看到的那条线路与那一集：
+                        // 否则「播放」按钮会从第 1 集开头起播，用户得自己再找回进度。
+                        val resumeHistory = if (state.historyItems.isNotEmpty()) state.historyItems else historyForResume
+                        val resume = if (state.detailMovie == null) {
+                            findResumePoint(update.movie, resumeHistory)
+                        } else {
+                            null
+                        }
+                        val mergedHistory = if (
+                            state.detailMovie == null &&
+                            state.historyItems.isEmpty() &&
+                            historyForResume.isNotEmpty()
+                        ) {
+                            historyForResume.take(state.appSettings.historyMaxItems)
+                        } else {
+                            state.historyItems
+                        }
                         state.copy(
                             detailMovie = update.movie,
                             detailLoading = false,
                             detailError = null,
                             detailCompletedSources = update.completedSources,
                             detailTotalSources = update.totalSources,
-                            selectedSourceIndex = sourceIndex,
-                            selectedEpisodeIndex = 0,
-                            playerSourceIndex = sourceIndex,
-                            playerEpisodeIndex = 0,
-                            playerStartPositionMs = 0L,
+                            selectedSourceIndex = resume?.sourceIndex ?: sourceIndex,
+                            selectedEpisodeIndex = resume?.episodeIndex ?: 0,
+                            playerSourceIndex = resume?.sourceIndex ?: sourceIndex,
+                            playerEpisodeIndex = resume?.episodeIndex ?: 0,
+                            playerStartPositionMs = resume?.positionMs ?: 0L,
+                            historyItems = mergedHistory,
+                            historyLoaded = if (mergedHistory.isNotEmpty()) true else state.historyLoaded,
                         )
                     }
                     if (update.completedSources >= update.totalSources) {
@@ -4058,7 +4095,7 @@ class TvBoxViewModel(
         return movies.getOrNull(matchedIndex)
     }
 
-    private fun loadHistory() {
+    private fun loadHistory(triggerUpdateCheck: Boolean = false) {
         viewModelScope.launch {
             // 同样串行化：若此前有进度保存在排队，先等它写完再读，
             // 避免历史页短暂显示缺一条/旧位置的列表。
@@ -4074,6 +4111,78 @@ class TvBoxViewModel(
             }
             // 无论成功与否都标记完成，首页据此一次性渲染「继续观看」，避免列表下移。
             _state.update { it.copy(historyLoaded = true) }
+            if (triggerUpdateCheck) {
+                checkHistoryUpdates()
+            }
+        }
+    }
+
+    private fun checkHistoryUpdates(force: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastHistoryUpdateCheckAtEpochMs < HISTORY_UPDATE_GLOBAL_COOLDOWN_MS) return
+        val snapshot = _state.value.historyItems
+        if (snapshot.isEmpty()) return
+        val targets = snapshot
+            .sortedByDescending { it.updatedAtEpochMs }
+            .filter { item ->
+                item.movieId > 0 && item.apiLineId.isNotBlank() &&
+                    (force || item.lastUpdateCheckEpochMs <= 0L ||
+                        now - item.lastUpdateCheckEpochMs > HISTORY_UPDATE_ITEM_COOLDOWN_MS)
+            }
+            .take(HISTORY_UPDATE_MAX_ITEMS)
+        if (targets.isEmpty()) return
+        lastHistoryUpdateCheckAtEpochMs = now
+        historyUpdateCheckJob?.cancel()
+        historyUpdateCheckJob = viewModelScope.launch {
+            _state.update { it.copy(historyUpdateChecking = true) }
+            val semaphore = Semaphore(HISTORY_UPDATE_PARALLELISM)
+            try {
+                coroutineScope {
+                    targets.map { item ->
+                        async {
+                            semaphore.withPermit {
+                                ensureActive()
+                                val latest = withTimeoutOrNull(HISTORY_UPDATE_TIMEOUT_MS) {
+                                    var best = item.knownEpisodeCount
+                                    repository.getDetailProgressively(item.apiLineId, item.movieId).collect { update ->
+                                        val maxEpisodes = update.movie.playSources.maxOfOrNull { source ->
+                                            source.episodes.size
+                                        } ?: 0
+                                        if (maxEpisodes > best) best = maxEpisodes
+                                    }
+                                    best
+                                } ?: return@withPermit
+                                if (latest <= 0) return@withPermit
+                                val checkedAt = System.currentTimeMillis()
+                                historyWriteMutex.withLock {
+                                    runCatching {
+                                        historyRepository.updateEpisodeCheck(
+                                            apiLineId = item.apiLineId,
+                                            movieId = item.movieId,
+                                            latestEpisodeCount = latest,
+                                            checkedAtEpochMs = checkedAt,
+                                        )
+                                    }.onSuccess { updated ->
+                                        val maxItems = _state.value.appSettings.historyMaxItems
+                                        _state.update { state ->
+                                            state.copy(
+                                                historyItems = updated.take(maxItems),
+                                                historyUpdateCheckedAtEpochMs = checkedAt,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                // 单次跨源检查失败不影响本地历史展示与后续重试。
+            } finally {
+                _state.update { it.copy(historyUpdateChecking = false) }
+            }
         }
     }
 
@@ -4624,6 +4733,11 @@ private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
 
 /** 详情加载诊断日志：只输出影片 id 与异常类型，不输出任何源地址。 */
 private const val DETAIL_LOG_TAG = "TVBoxDetail"
+private const val HISTORY_UPDATE_MAX_ITEMS = 12
+private const val HISTORY_UPDATE_PARALLELISM = 2
+private const val HISTORY_UPDATE_ITEM_COOLDOWN_MS = 30 * 60 * 1000L
+private const val HISTORY_UPDATE_GLOBAL_COOLDOWN_MS = 10 * 60 * 1000L
+private const val HISTORY_UPDATE_TIMEOUT_MS = 12_000L
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null
