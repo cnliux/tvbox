@@ -32,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -984,6 +985,35 @@ fun SmallMeta(text: String, modifier: Modifier = Modifier) {
             .padding(horizontal = 8.dp, vertical = 5.dp),
     ) {
         Text(text = text, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+/**
+ * 可折叠的文字介绍：默认只显示 [collapsedLines] 行，点「展开」后完整显示。
+ *
+ * 长简介会把下方的选集挤出首屏，所以默认折叠；展开按钮用 TextButton 而不是让整段文字
+ * 可点击——电视端只有可聚焦控件才能用遥控选中，纯文字点击在遥控上完全做不到。
+ */
+@Composable
+fun CollapsibleDescription(
+    text: String,
+    collapsedLines: Int,
+) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (expanded) Int.MAX_VALUE else collapsedLines,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+        ) {
+            Text(if (expanded) "收起介绍" else "展开介绍")
+        }
     }
 }
 

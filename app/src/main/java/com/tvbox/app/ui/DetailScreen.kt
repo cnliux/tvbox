@@ -62,6 +62,7 @@ import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.domain.resumePositionForEpisode
 import com.tvbox.app.ui.components.CategoryPill
+import com.tvbox.app.ui.components.CollapsibleDescription
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.InfoLine
@@ -198,10 +199,10 @@ fun DetailScreen(
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
-                                    InfoLine(label = "主演", value = movie.actor)
-                                    InfoLine(label = "导演", value = movie.director)
-                                    InfoLine(label = "地区", value = movie.area)
-                                    InfoLine(label = "语言", value = movie.language)
+                                    if (movie.actor.isNotBlank()) InfoLine(label = "主演", value = movie.actor)
+                                    if (movie.director.isNotBlank()) InfoLine(label = "导演", value = movie.director)
+                                    if (movie.area.isNotBlank()) InfoLine(label = "地区", value = movie.area)
+                                    if (movie.language.isNotBlank()) InfoLine(label = "语言", value = movie.language)
                                     Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
                                     CollapsibleDescription(
                                         text = movie.description.ifBlank { "暂无简介" },
@@ -318,10 +319,10 @@ private fun MobileDetailContent(
                 }
                 Spacer(modifier = Modifier.height(sectionGap))
                 // 影片信息全宽展示，不再挤在海报右侧的窄列里被省略号截断。
-                InfoLine(label = "主演", value = movie.actor)
-                InfoLine(label = "导演", value = movie.director)
-                InfoLine(label = "地区", value = movie.area)
-                InfoLine(label = "语言", value = movie.language)
+                if (movie.actor.isNotBlank()) InfoLine(label = "主演", value = movie.actor)
+                if (movie.director.isNotBlank()) InfoLine(label = "导演", value = movie.director)
+                if (movie.area.isNotBlank()) InfoLine(label = "地区", value = movie.area)
+                if (movie.language.isNotBlank()) InfoLine(label = "语言", value = movie.language)
                 Spacer(modifier = Modifier.height(8.dp))
                 // 简介默认折叠：长简介会把选集挤出首屏，展开后跟随整页滚动。
                 CollapsibleDescription(
