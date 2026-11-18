@@ -1450,6 +1450,13 @@ private fun PlatformLivePlayerScreen(
         lineListState.scrollToItem(bounded)
         runCatching { lineFocusRequester.requestFocus() }
     }
+    LaunchedEffect(showRoomList) {
+        if (!showRoomList) {
+            // 节目列表（确认键浮层）关闭后焦点同样回到播放器根节点，
+            // 否则焦点遗留在已移除的列表项上，遥控器 OK/上下键全部失效。
+            runCatching { playerFocusRequester.requestFocus() }
+        }
+    }
 
     // 遥控键位收敛到共享 PlayerRoomKeyMap：页面只提供房间/候选/线路浮层语义。
     val roomKeyMap = remember {

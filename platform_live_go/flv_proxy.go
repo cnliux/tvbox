@@ -170,6 +170,12 @@ type flvSiteTuning struct {
 	// 斗鱼（租约语义）与通用档（不预设周期）均为 0，绝不借用虎牙策略。
 	plannedRefreshLeadMs int64
 	nominalSessionMs     int64
+	// —— 房间级自适应重连（当前仅斗鱼启用）——
+	// true 时在档位固定策略之上叠加 flv_proxy_adaptive.go 的房间历史修正：
+	// 短会话但推过数据 → 立即重连（封顶防风暴）；健康房间短段退避减半；
+	// 空闲读超时按房间 tag 间隔自适应抬高。虎牙/通用档必须保持 false，
+	// 重连行为与历史逐字一致。
+	adaptiveReconnect bool
 }
 
 // timelineModeName 返回档位的时间轴语义，供 statsJSON / 真机监控区分三档。
@@ -205,13 +211,16 @@ func siteTuningFor(site string) flvSiteTuning {
 			shortSessionMs:         4000,
 			maxShortStreak:         0,
 			// 短段退避可被手机端调试按钮运行时调整（默认仍为 2s/8s）。
-			shortBackoffBase:     time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
-			shortBackoffMax:      time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
+			shortBackoffBase: time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
+			shortBackoffMax:  time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
 			timelineContinuous:   true,
 			timelineAuto:         false,
 			leaseAware:           true,
 			plannedRefreshLeadMs: 0,
 			nominalSessionMs:     0,
+			// 斗鱼启用房间级自适应修正：各房间 CDN 行为差异大（瞬态短会话、
+			// 稀疏 tag 间隔），固定调参无法同时覆盖，见 flv_proxy_adaptive.go。
+			adaptiveReconnect: true,
 		}
 	case "huya":
 		// 虎牙参数可被手机端调试按钮运行时调整（默认值仍与历史常量一致）。
@@ -556,6 +565,17 @@ type flvProxy struct {
 	lastVideoForwardedAt time.Time
 	lastAudioForwardedAt time.Time
 	recentEvents         []string
+
+	// ── 房间级自适应状态（仅 tuning.adaptiveReconnect 的档位写入/读取）──
+	// 房间历史（URL 健康度 / 立即重连配额），见 flv_proxy_adaptive.go。
+	adaptive roomAdaptive
+	// 自适应「短会话但推过数据 → 立即重连」的累计次数（监控用）。
+	adaptiveInstantReconnects int64
+	// tag 到达间隔采样（statsMu 保护）：本段峰值与跨段 EWMA，用于自适应
+	// 空闲读超时。所有平台都会采样与折叠（开销极小），但只有斗鱼读取。
+	adaptiveTagLastAt time.Time
+	adaptiveGapPeakMs int64
+	adaptiveGapEwmaMs int64
 }
 
 func newFlvProxy(service *Service, site, roomID string, candidateIndex int, initialURL string, initialHeaders map[string]string) (*flvProxy, error) {
@@ -606,17 +626,24 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 		done:           make(chan struct{}),
 		clientReady:    make(chan struct{}, 1),
 		startedAt:      time.Now(),
-		httpClient: &http.Client{
-			Transport: &http.Transport{
-				// FLV 不能被压缩，避免 Accept-Encoding: gzip 导致整段缓冲。
-				DisableCompression:    true,
-				ResponseHeaderTimeout: 12 * time.Second,
-				// 每次 Read 前刷新截止时刻：CDN 半开连接时自行断开重连，
-				// 而不是让 consume 永久卡在 io.ReadFull（画面冻结且无兜底）。
-				// 斗鱼/虎牙该值可运行时调整，其它平台固定 15s。
-				DialContext:       dialWithIdleReadTimeout(idleReadTimeout, site),
-				DisableKeepAlives: true,
-			},
+	}
+	// 斗鱼自适应档：空闲读超时按「每个房间自己的 tag 到达间隔」动态取值
+	//（每次 Read 调 provider，手动 override 优先，未采样时回落默认 15s）。
+	// 其它平台沿用构造时的固定值，行为不变。
+	dialFn := dialWithIdleReadTimeout(idleReadTimeout, site)
+	if tuning.adaptiveReconnect {
+		dialFn = dialWithIdleReadTimeoutProvider(site, proxy.adaptiveIdleReadTimeout)
+	}
+	proxy.httpClient = &http.Client{
+		Transport: &http.Transport{
+			// FLV 不能被压缩，避免 Accept-Encoding: gzip 导致整段缓冲。
+			DisableCompression:    true,
+			ResponseHeaderTimeout: 12 * time.Second,
+			// 每次 Read 前刷新截止时刻：CDN 半开连接时自行断开重连，
+			// 而不是让 consume 永久卡在 io.ReadFull（画面冻结且无兜底）。
+			// 斗鱼/虎牙该值可运行时调整，其它平台固定 15s。
+			DialContext:       dialFn,
+			DisableKeepAlives: true,
 		},
 	}
 	proxy.pacerTargetMs.Store(GetPacerTargetBufferMs())
@@ -907,6 +934,11 @@ func (p *flvProxy) streamLoop() {
 			// 立即重新解析拿新签名；不计入短段/失败/换线任何异常计数。
 			p.bumpReconnect()
 			p.event(fmt.Sprintf("leaseRenewal sessionMs=%d site=%s", p.lastSessionMs, p.tuning.name))
+			if p.tuning.adaptiveReconnect {
+				// 计划内续期是一次正常长度的健康会话：记入房间历史并清零
+				// 立即重连配额。
+				p.adaptive.noteSession(candidate.URL, p.lastSessionMs, p.tuning.shortSessionMs, p.tagCount() > beforeTags)
+			}
 			shortStreak = 0
 			fastReconnectStreak = 0
 			fastReconnectCandidate = nil
@@ -917,16 +949,31 @@ func (p *flvProxy) streamLoop() {
 			p.bumpReconnect()
 			// 只有本段确实推送过数据才允许「同地址快速续拉」；空流立即 EOF 时
 			// 必须重新解析，否则会在无效地址上空转。
-			if p.tagCount() > beforeTags {
+			dataPushed := p.tagCount() > beforeTags
+			if dataPushed {
 				fastReconnectCandidate = &candidate
 				fastReconnectHeaders = headers
+			}
+			if p.tuning.adaptiveReconnect {
+				p.adaptive.noteSession(candidate.URL, p.lastSessionMs, p.tuning.shortSessionMs, dataPushed)
 			}
 			// 短/空段（上游很快关闭）：按三档各自的策略处理，互不相干。
 			// 虎牙：500ms 指数退避、连续 4 次短段换线（CDN 易抖，需主动切）。
 			// 斗鱼：2s 起步的耐心退避、**永不因短段换线**（CDN 稳定，信任线路，
-			// 坏线路由硬失败路径兜底）。
+			// 坏线路由硬失败路径兜底）；自适应修正见下。
 			// 通用档：1s 起步的温和退避、显式禁用短段换线；EOF 后一律重新解析。
 			if p.lastSessionMs < p.tuning.shortSessionMs {
+				// 斗鱼自适应：短会话但确实推过数据，说明地址有效、CDN 只是
+				// 瞬态踢连接（真机观测的开机黑屏正是这种形态被 2s 退避拖长）。
+				// 立即重连通常一次就恢复；连续封顶防风暴，冷房间（从未有过
+				// 长会话）同样受益——地址刚被证明能给数据。
+				if p.tuning.adaptiveReconnect && dataPushed && p.adaptive.beginInstantRetry() {
+					p.statsMu.Lock()
+					p.adaptiveInstantReconnects++
+					p.statsMu.Unlock()
+					p.event(fmt.Sprintf("adaptiveInstantRetry sessionMs=%d url=%s", p.lastSessionMs, candidate.CDN))
+					continue
+				}
 				shortStreak++
 				// 移位封顶防溢出：斗鱼档不换线时 shortStreak 会持续增长，
 				// 1<<(n-1) 超过 63 位会变负数导致退避失效，这里封到 6（64 倍）足够。
@@ -935,6 +982,11 @@ func (p *flvProxy) streamLoop() {
 					shift = 6
 				}
 				backoffBase, backoffMax := p.effectiveShortBackoff()
+				// 斗鱼自适应：房间曾有过健康长会话时，短段退避减半（CDN 瞬态
+				// 踢连接恢复更快）；冷房间保持档位默认的耐心退避。
+				if p.tuning.adaptiveReconnect {
+					backoffBase, backoffMax = p.adaptive.shortBackoffFor(backoffBase, backoffMax)
+				}
 				backoff := backoffBase * time.Duration(1<<shift)
 				if backoff > backoffMax {
 					backoff = backoffMax
@@ -1182,6 +1234,9 @@ func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverSt
 	// 会话时长统一在退出时记录（含租约到期主动断开、读取出错等所有出口），
 	// 保证 streamLoop 的短段判定在任何结束方式下都有 lastSessionMs 可用。
 	defer p.recordSession(startedAt)
+	// tag 间隔采样按段清零：跨段的重连等待时间不算 tag 间隔，
+	// 否则自适应空闲读超时的基线会被重连空窗污染。
+	p.resetTagGap()
 	p.statsMu.Lock()
 	p.upstreamSessions++
 	p.statsMu.Unlock()
@@ -1877,10 +1932,20 @@ func (p *flvProxy) recordSession(startedAt time.Time) {
 	p.statsMu.Lock()
 	p.lastSessionMs = time.Since(startedAt).Milliseconds()
 	p.statsMu.Unlock()
+	// 会话结束：把本段 tag 间隔峰值折叠进房间 EWMA（自适应空闲读超时用）。
+	p.foldTagGap()
 }
 
 // incForwarded 记录一次成功转发，并维护各轨道最近源时间戳用于诊断段内回退。
+// 同时采样本段 tag 到达间隔的峰值（房间自适应空闲读超时的输入；调用方已持 statsMu）。
 func (p *flvProxy) incForwarded(tagType byte, sourceTs int64) {
+	now := time.Now()
+	if !p.adaptiveTagLastAt.IsZero() {
+		if gap := now.Sub(p.adaptiveTagLastAt).Milliseconds(); gap > p.adaptiveGapPeakMs {
+			p.adaptiveGapPeakMs = gap
+		}
+	}
+	p.adaptiveTagLastAt = now
 	p.statsMu.Lock()
 	defer p.statsMu.Unlock()
 	track := int(tagType) - 8
@@ -1965,6 +2030,10 @@ func (p *flvProxy) statsJSON() string {
 		"candidateSwitches":    p.candidateSwitches,
 		"pacerTargetBufferMs":  p.pacerTargetMs.Load(),
 		"plannedRefreshLeadMs": p.effectivePlannedLeadMs(),
+		// 斗鱼房间自适应：立即重连次数 / 房间历史最长会话 / 当前生效空闲超时。
+		"adaptiveInstantReconnects": p.adaptiveInstantReconnects,
+		"roomBestSessionMs":         p.adaptive.bestSession(),
+		"adaptiveIdleReadTimeoutMs": p.adaptiveIdleReadTimeoutLocked().Milliseconds(),
 		// 虎牙档位即时生效字段：监控脚本据此关联「当前档位参数 ↔ 重连指标」。
 		"nominalSessionMs":           p.effectiveNominalSessionMs(),
 		"effectiveShortBackoffMaxMs": backoffMax.Milliseconds(),

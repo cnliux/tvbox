@@ -2,187 +2,285 @@ package platformlive
 
 import (
 	"bufio"
-	"bytes"
+	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
-// ───────────────────── 自适应回放窗口 ─────────────────────
+// ───────────────────── 房间自适应核心状态 ─────────────────────
 
-// TestReplayWindowStartsAtSiteDefault：未命中回放时窗口必须等于平台档位默认值，
-// 不能一上来就放大——窗口越大，每帧查重的内存与 CPU 成本越高。
-func TestReplayWindowStartsAtSiteDefault(t *testing.T) {
-	for _, site := range []string{"huya", "douyu", "generic"} {
-		proxy := &flvProxy{tuning: siteTuningFor(site)}
-		if got, want := proxy.effectiveReplayWindowMs(), proxy.tuning.replayWindowMs; got != want {
-			t.Fatalf("%s 初始窗口 = %d，期望档位默认 %d", site, got, want)
+// TestRoomAdaptiveInstantRetryBudget：短会话但推过数据 → 立即重连有配额
+// （封顶防风暴），配额用尽后回到正常退避。
+func TestRoomAdaptiveInstantRetryBudget(t *testing.T) {
+	var a roomAdaptive
+	for i := 0; i < adaptiveInstantRetryMax; i++ {
+		if !a.beginInstantRetry() {
+			t.Fatalf("第 %d 次立即重连应在配额内", i+1)
 		}
 	}
-}
-
-// TestReplayWindowExpandsWhenSpanNearsWindow：回放跨度接近当前窗口时翻倍。
-// 这正是异常房间（133 帧回放）需要的：固定 12s 窗口装不下更长的回吐缓冲。
-func TestReplayWindowExpandsWhenSpanNearsWindow(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	base := proxy.effectiveReplayWindowMs()
-
-	// 跨度 = 窗口的 80%，应触发扩窗。
-	proxy.noteReplaySpan(1_000)
-	proxy.noteReplaySpan(1_000 + base*8/10)
-
-	got := proxy.effectiveReplayWindowMs()
-	if got <= base {
-		t.Fatalf("跨度接近窗口未扩窗：base=%d got=%d", base, got)
+	if a.beginInstantRetry() {
+		t.Fatal("配额用尽后不应再允许立即重连")
 	}
-	if got > flvReplayWindowCapMs {
-		t.Fatalf("扩窗超出上限：got=%d cap=%d", got, flvReplayWindowCapMs)
-	}
-	if proxy.replayExpansions == 0 {
-		t.Fatal("扩窗计数未增加")
+	// 一次达到正常长度的会话（≥ shortSessionMs）应清零配额。
+	a.noteSession("https://cdn/test.flv?wsSecret=a", 60000, 4000, true)
+	if !a.beginInstantRetry() {
+		t.Fatal("稳定会话后配额应清零")
 	}
 }
 
-// TestReplayWindowStableForSmallSpan：小跨度回放不应把窗口撑大。
-func TestReplayWindowStableForSmallSpan(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	base := proxy.effectiveReplayWindowMs()
-	proxy.noteReplaySpan(0)
-	proxy.noteReplaySpan(1_000) // 跨度 1s，远小于 12s 窗口
-	if got := proxy.effectiveReplayWindowMs(); got != base {
-		t.Fatalf("小跨度不应扩窗：base=%d got=%d", base, got)
+// TestRoomAdaptiveNoteSessionIgnoresEmpty：空段（没推过数据）不记健康度、
+// 也不清零配额（冷房间的 7ms 空段正是这种形态，必须继续走耐心退避）。
+func TestRoomAdaptiveNoteSessionIgnoresEmpty(t *testing.T) {
+	var a roomAdaptive
+	if !a.beginInstantRetry() {
+		t.Fatal("初始应允许立即重连")
+	}
+	a.noteSession("https://cdn/test.flv", 7, 4000, false)
+	if a.bestSession() != 0 {
+		t.Fatalf("空段不应记入房间健康度，实际 %d", a.bestSession())
+	}
+	if !a.beginInstantRetry() {
+		t.Fatal("空段不应清零立即重连配额")
 	}
 }
 
-// TestReplayWindowNeverExceedsCap：连续大跨度回放也不能突破硬上限。
-func TestReplayWindowNeverExceedsCap(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	for i := int64(0); i < 10; i++ {
-		proxy.noteReplaySpan(i * 60_000)
+// TestRoomAdaptiveShortBackoffWarmRoom：房间交付过健康长会话后短段退避减半；
+// 冷房间保持档位默认。
+func TestRoomAdaptiveShortBackoffWarmRoom(t *testing.T) {
+	var a roomAdaptive
+	base, max := 2*time.Second, 8*time.Second
+	gotBase, gotMax := a.shortBackoffFor(base, max)
+	if gotBase != base || gotMax != max {
+		t.Fatalf("冷房间应保持默认退避，实际 base=%s max=%s", gotBase, gotMax)
 	}
-	if got := proxy.effectiveReplayWindowMs(); got > flvReplayWindowCapMs {
-		t.Fatalf("窗口突破上限：got=%d cap=%d", got, flvReplayWindowCapMs)
+	a.noteSession("https://cdn/test.flv", 120000, 4000, true)
+	if !a.roomHealthy() {
+		t.Fatal("120s 会话后房间应视为健康")
 	}
-}
-
-// ───────────────────── 音频回拉 ─────────────────────
-
-// TestAudioResyncPullsBackWhenLeading：音频领先视频超过阈值时回拉，
-// 且回拉后差值落在阈值一半附近（不是一次性拉平造成可闻跳变）。
-func TestAudioResyncPullsBackWhenLeading(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	proxy.haveOut[0], proxy.haveOut[1] = true, true
-	proxy.lastOutTs[0], proxy.lastOutTs[1] = 1_000, 1_000
-
-	// 音频领先 2.2 秒（对应实测最严重的 2247ms）。
-	adjusted := proxy.resyncAudio(1_000 + 2_200)
-	drift := adjusted - proxy.lastOutTs[1]
-	if drift > flvAvMaxDriftMs {
-		t.Fatalf("回拉后仍领先 %dms，超过阈值 %d", drift, flvAvMaxDriftMs)
-	}
-	if drift <= 0 {
-		t.Fatalf("回拉过度，音频跑到视频之后 %dms", drift)
-	}
-	if proxy.audioResyncShifts.Load() != 1 {
-		t.Fatalf("回拉次数 = %d，期望 1", proxy.audioResyncShifts.Load())
-	}
-	if proxy.audioShiftMs.Load() >= 0 {
-		t.Fatalf("音频偏移应为负（回拉），实际 %d", proxy.audioShiftMs.Load())
+	gotBase, gotMax = a.shortBackoffFor(base, max)
+	if gotBase != time.Second || gotMax != 4*time.Second {
+		t.Fatalf("健康房间退避应减半，实际 base=%s max=%s", gotBase, gotMax)
 	}
 }
 
-// TestAudioResyncKeepsOffsetForLaterFrames：回拉是整体偏移，后续帧沿用同一偏移，
-// 不能在每帧上反复重新计算（那会把音频越拉越前）。
-func TestAudioResyncKeepsOffsetForLaterFrames(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	proxy.haveOut[0], proxy.haveOut[1] = true, true
-	proxy.lastOutTs[0], proxy.lastOutTs[1] = 1_000, 1_000
-
-	first := proxy.resyncAudio(3_200)
-	shiftAfterFirst := proxy.audioShiftMs.Load()
-	// 下一帧源时间戳 +20ms，输出也应只 +20ms，偏移不变。
-	second := proxy.resyncAudio(3_220)
-	if proxy.audioShiftMs.Load() != shiftAfterFirst {
-		t.Fatalf("后续帧不应再次调整偏移：%d -> %d", shiftAfterFirst, proxy.audioShiftMs.Load())
+// TestRoomAdaptiveShortBackoffFloor：退避减半有下限，不会低到无意义的值。
+func TestRoomAdaptiveShortBackoffFloor(t *testing.T) {
+	var a roomAdaptive
+	a.noteSession("https://cdn/test.flv", 120000, 4000, true)
+	gotBase, gotMax := a.shortBackoffFor(600*time.Millisecond, 1500*time.Millisecond)
+	if gotBase < adaptiveMinBackoff {
+		t.Fatalf("退避基数不应低于下限，实际 %s", gotBase)
 	}
-	if delta := second - first; delta != 20 {
-		t.Fatalf("后续帧间隔被改动：%d，期望 20", delta)
+	if gotMax < gotBase*2 {
+		t.Fatalf("退避上限不应低于基数的两倍，实际 max=%s base=%s", gotMax, gotBase)
 	}
 }
 
-// TestAudioResyncClampsInsteadOfDropping：回拉后若落到已交付音频之前，
-// 必须钳到已交付位置而不是返回更小值（否则该帧会被 validateTs 丢弃、时间轴停住）。
-func TestAudioResyncClampsInsteadOfDropping(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	proxy.haveOut[0], proxy.haveOut[1] = true, true
-	proxy.lastOutTs[0], proxy.lastOutTs[1] = 5_000, 5_000
-	// 先制造一个较大的负偏移。
-	proxy.audioShiftMs.Store(-3_000)
-
-	got := proxy.resyncAudio(5_010)
-	if got < proxy.lastOutTs[0] {
-		t.Fatalf("回拉后低于已交付音频位置：got=%d last=%d", got, proxy.lastOutTs[0])
+// TestRoomAdaptiveURLHealthLRU：URL 健康历史按 FIFO 淘汰，条目数有界。
+func TestRoomAdaptiveURLHealthLRU(t *testing.T) {
+	var a roomAdaptive
+	for i := 0; i < adaptiveURLHealthMax+3; i++ {
+		a.noteSession("https://cdn/session.flv?n="+string(rune('a'+i)), int64(1000+i), 4000, true)
+	}
+	a.mu.Lock()
+	count := len(a.urlBest)
+	order := len(a.urlOrder)
+	a.mu.Unlock()
+	if count != adaptiveURLHealthMax || order != adaptiveURLHealthMax {
+		t.Fatalf("URL 健康历史应有界（%d 条），实际 map=%d order=%d",
+			adaptiveURLHealthMax, count, order)
 	}
 }
 
-// TestAudioResyncNoopWhenAligned：正常对齐时不得改动音频时间戳。
-func TestAudioResyncNoopWhenAligned(t *testing.T) {
-	proxy := &flvProxy{tuning: siteTuningFor("huya")}
-	proxy.haveOut[0], proxy.haveOut[1] = true, true
-	proxy.lastOutTs[0], proxy.lastOutTs[1] = 1_000, 1_020
+// ───────────────────── tag 间隔采样与自适应空闲超时 ─────────────────────
 
-	got := proxy.resyncAudio(1_030)
-	if got != 1_030 {
-		t.Fatalf("对齐时不应改动时间戳：got=%d want=1030", got)
+// TestAdaptiveTagGapSampling：段内采样峰值、段开始清零、段结束折叠进 EWMA
+//（新峰值立即生效，历史峰值随会话衰减）。
+func TestAdaptiveTagGapSampling(t *testing.T) {
+	p := newManualDouyuProxy("douyu")
+	defer p.cancel()
+	p.resetTagGap()
+	t0 := time.Now()
+	p.noteTagGap(t0)
+	p.noteTagGap(t0.Add(3 * time.Second)) // 段内峰值 3s
+	p.noteTagGap(t0.Add(3500 * time.Millisecond))
+	p.statsMu.Lock()
+	peak := p.adaptiveGapPeakMs
+	p.statsMu.Unlock()
+	if peak != 3000 {
+		t.Fatalf("段内峰值应为 3000ms，实际 %d", peak)
 	}
-	if proxy.audioResyncShifts.Load() != 0 {
-		t.Fatal("对齐时不应触发回拉")
+	// 段结束：峰值 3000 折叠进 EWMA。
+	p.foldTagGap()
+	p.statsMu.Lock()
+	ewma := p.adaptiveGapEwmaMs
+	p.statsMu.Unlock()
+	if ewma != 3000 {
+		t.Fatalf("首段峰值应直接成为 EWMA，实际 %d", ewma)
+	}
+	// 第二段峰值 1s：EWMA 应衰减到 max(1000, 3000×2/3=2000)。
+	p.resetTagGap()
+	t1 := time.Now()
+	p.noteTagGap(t1)
+	p.noteTagGap(t1.Add(time.Second))
+	p.foldTagGap()
+	p.statsMu.Lock()
+	ewma = p.adaptiveGapEwmaMs
+	p.statsMu.Unlock()
+	if ewma != 2000 {
+		t.Fatalf("EWMA 应衰减为 2000ms，实际 %d", ewma)
 	}
 }
 
-// ───────────────────── 端到端：续段音频领先能被收敛 ─────────────────────
-
-// TestContinuationAudioDriftIsCorrected：续段后音频持续领先视频约 2 秒时，
-// 经 consume 输出的音频与视频偏移必须被压回阈值内。这是三个异常房间
-// （A/V 偏移 1636~2247ms）在生产路径上的回归测试。
-func TestContinuationAudioDriftIsCorrected(t *testing.T) {
-	proxy := newManualDouyuProxy("huya")
-	proxy.pacerEnabled = false
-	proxy.pacerTargetMs.Store(0)
-	// 上一段已交付到 1000ms。
-	proxy.haveOut[0], proxy.haveOut[1] = true, true
-	proxy.lastOutTs[0], proxy.lastOutTs[1] = 1_000, 1_000
-
-	var flv bytes.Buffer
-	flv.Write(replayFLVHeader())
-	// 新段：视频从 0 起（关键帧），音频从 2000 起 —— 模拟音频整体领先。
-	flv.Write(replayTagBytes(flvTagTypeVideo, 0, replayAVCSequenceHeader()))
-	flv.Write(replayTagBytes(flvTagTypeVideo, 0, []byte{0x17, 1, 0, 0, 9, 9, 9, 9}))
-	for i := 0; i < 40; i++ {
-		audioTs := int64(2_000 + i*21)
-		videoTs := int64(i * 33)
-		flv.Write(replayTagBytes(flvTagTypeAudio, audioTs, []byte{0xAF, 1, byte(i), 7, 7, 7}))
-		flv.Write(replayTagBytes(flvTagTypeVideo, videoTs, []byte{0x27, 1, 0, 0, byte(i), 8, 8}))
+// TestAdaptiveIdleReadTimeout：默认 15s；房间 tag 间隔大时按 3×EWMA 抬高；
+// 手动 override（调试按钮）永远优先；封顶 40s。
+func TestAdaptiveIdleReadTimeout(t *testing.T) {
+	p := newManualDouyuProxy("douyu")
+	defer p.cancel()
+	// 未采样：默认 15s。
+	if got := p.adaptiveIdleReadTimeout(); got != 15*time.Second {
+		t.Fatalf("未采样应回落默认 15s，实际 %s", got)
 	}
-
-	if err := proxy.consume(bufio.NewReader(bytes.NewReader(flv.Bytes()))); err != nil {
-		t.Fatalf("consume: %v", err)
+	// EWMA 6s → 3×6=18s。
+	p.statsMu.Lock()
+	p.adaptiveGapEwmaMs = 6000
+	p.statsMu.Unlock()
+	if got := p.adaptiveIdleReadTimeout(); got != 18*time.Second {
+		t.Fatalf("EWMA 6s 应抬高到 18s，实际 %s", got)
 	}
-	tags := parseContinuityTags(t, proxy.client.writer.(*fakeResponseWriter).buf.Bytes())
-	var lastAudio, lastVideo int64 = -1, -1
-	for _, tag := range tags {
-		switch {
-		case tag.tagType == flvTagTypeAudio:
-			lastAudio = tag.ts
-		case tag.tagType == flvTagTypeVideo && !isAvcSequenceHeader(tag.data):
-			lastVideo = tag.ts
+	// 封顶 40s。
+	p.statsMu.Lock()
+	p.adaptiveGapEwmaMs = 30000
+	p.statsMu.Unlock()
+	if got := p.adaptiveIdleReadTimeout(); got != 40*time.Second {
+		t.Fatalf("自适应空闲超时应封顶 40s，实际 %s", got)
+	}
+	// 手动 override 优先（且作为下限：override 小于自适应值时仍用 override）。
+	SetDouyuIdleReadTimeoutMs(20000)
+	defer SetDouyuIdleReadTimeoutMs(0)
+	if got := p.adaptiveIdleReadTimeout(); got != 20*time.Second {
+		t.Fatalf("手动 override 应优先生效，实际 %s", got)
+	}
+}
+
+// TestIdleReadConnProvider：idleFn 非空时每次 Read 动态取超时并生效
+//（net.Pipe 上 50ms 内无数据 → 读超时）。
+func TestIdleReadConnProvider(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+	conn := &idleReadConn{Conn: client, idle: time.Hour, idleFn: func() time.Duration {
+		return 50 * time.Millisecond
+	}}
+	started := time.Now()
+	_, err := conn.Read(make([]byte, 16))
+	elapsed := time.Since(started)
+	if err == nil {
+		t.Fatal("无数据时应读超时")
+	}
+	if !isNetworkTimeout(err) {
+		t.Fatalf("应为网络超时错误，实际 %v", err)
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("idleFn 应覆盖静态 idle（50ms 超时），实际 %s", elapsed)
+	}
+}
+
+// ───────────────────── 档位开关 ─────────────────────
+
+// TestAdaptiveTuningFlags：只有斗鱼启用房间自适应；虎牙/通用档绝不借用。
+func TestAdaptiveTuningFlags(t *testing.T) {
+	if !siteTuningFor("douyu").adaptiveReconnect {
+		t.Fatal("douyu 档应启用 adaptiveReconnect")
+	}
+	if siteTuningFor("huya").adaptiveReconnect {
+		t.Fatal("huya 档不应启用 adaptiveReconnect")
+	}
+	if siteTuningFor("bilibili").adaptiveReconnect {
+		t.Fatal("通用档不应启用 adaptiveReconnect")
+	}
+}
+
+// ───────────────────── 端到端：瞬态短会话立即重连 ─────────────────────
+
+// TestDouyuAdaptiveInstantRetryOnTransientSession：第一段正常推数据后很快
+// 被 CDN 关流（短会话但 dataPushed）→ 代理必须立即发起第二段（无 2s 退避），
+// 第二段恢复为长会话。这是斗鱼「开机黑屏 3~6s」的自适应修复路径。
+func TestDouyuAdaptiveInstantRetryOnTransientSession(t *testing.T) {
+	var reqCount int64
+	var req2At atomic.Int64
+	var req1At atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := atomic.AddInt64(&reqCount, 1)
+		w.Header().Set("Content-Type", "video/x-flv")
+		if n == 1 {
+			req1At.Store(time.Now().UnixNano())
+			// 短会话：推 4 个标签后立刻关流（瞬态踢连接）。
+			writeTestFLVEx(w, []testFrame{
+				{ts: 1000, video: true, keyframe: true},
+				{ts: 1000, audio: true},
+				{ts: 1033, video: true},
+				{ts: 1033, audio: true},
+			})
+			return
 		}
+		req2At.Store(time.Now().UnixNano())
+		// 第二段：长会话，保持连接直到客户端离开。
+		writeTestFLVEx(w, []testFrame{
+			{ts: 1200, video: true, keyframe: true},
+			{ts: 1200, audio: true},
+		})
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+	}))
+	defer upstream.Close()
+
+	service := &Service{byID: map[string]Adapter{"douyu": &fakeProxyAdapter{streamURL: upstream.URL}}}
+	proxy, err := newFlvProxy(service, "douyu", "1001", 0, "", nil)
+	if err != nil {
+		t.Fatalf("newFlvProxy: %v", err)
 	}
-	if lastAudio < 0 || lastVideo < 0 {
-		t.Fatalf("输出缺少音视频帧：audio=%d video=%d", lastAudio, lastVideo)
+	defer proxy.close()
+	resp, err := http.Get(proxy.url)
+	if err != nil {
+		t.Fatalf("连接本地代理失败：%v", err)
 	}
-	if drift := lastAudio - lastVideo; drift > flvAvMaxDriftMs {
-		t.Fatalf("音频仍领先 %dms（阈值 %d），回拉未生效", drift, flvAvMaxDriftMs)
+	defer resp.Body.Close()
+	reader := bufio.NewReader(resp.Body)
+	// 读到第二段的帧即证明重连成功。
+	frames, rerr := readTestFLVTagsEx(reader, 6)
+	if rerr != nil && len(frames) < 6 {
+		t.Fatalf("输出不足：%v", rerr)
 	}
-	if proxy.audioResyncShifts.Load() == 0 {
-		t.Fatal("未触发音频回拉")
+	gapNs := req2At.Load() - req1At.Load()
+	if gapNs <= 0 {
+		t.Fatalf("第二段请求未发生：reqCount=%d req1At=%d req2At=%d frames=%d rerr=%v",
+			atomic.LoadInt64(&reqCount), req1At.Load(), req2At.Load(), len(frames), rerr)
+	}
+	if gapNs > int64(1500*time.Millisecond) {
+		t.Fatalf("瞬态短会话应立即重连（自适应），实际第二段距第一段 %dms（≥1500 说明仍在退避）", gapNs/int64(time.Millisecond))
+	}
+	if p := proxy.adaptive.instantStreakSnapshot(); p < 1 {
+		t.Fatalf("立即重连应登记配额使用，实际 %d", p)
+	}
+	// statsJSON 暴露自适应字段。
+	stats := map[string]interface{}{}
+	if err := json.Unmarshal([]byte(proxy.statsJSON()), &stats); err != nil {
+		t.Fatalf("statsJSON 解析失败：%v", err)
+	}
+	if v, _ := stats["adaptiveInstantReconnects"].(float64); v < 1 {
+		t.Fatalf("statsJSON 应有 adaptiveInstantReconnects>=1，实际 %v", stats["adaptiveInstantReconnects"])
+	}
+	if v, _ := stats["adaptiveIdleReadTimeoutMs"].(float64); v != 15000 {
+		t.Fatalf("statsJSON adaptiveIdleReadTimeoutMs 默认应为 15000，实际 %v", stats["adaptiveIdleReadTimeoutMs"])
 	}
 }

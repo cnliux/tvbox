@@ -32,13 +32,18 @@ type idleReadConn struct {
 	net.Conn
 	idle time.Duration
 	site string
+	// 非空时每次 Read 动态取值（斗鱼房间自适应空闲超时）；为空走 site/idle。
+	idleFn func() time.Duration
 }
 
 func (c *idleReadConn) Read(buffer []byte) (int, error) {
 	idle := c.idle
 	// 虎牙的空闲读超时可被手机端调试按钮运行时调整：每次 Read 动态取值，
 	// 对在播会话的下一次读立即生效。其它平台沿用构造时的固定值，行为不变。
-	if c.site == "huya" {
+	// 斗鱼自适应档走 idleFn（按房间 tag 间隔取值，内部已含 override 优先级）。
+	if c.idleFn != nil {
+		idle = c.idleFn()
+	} else if c.site == "huya" {
 		idle = huyaIdleReadTimeout()
 	}
 	_ = c.Conn.SetReadDeadline(time.Now().Add(idle))
@@ -53,6 +58,19 @@ func dialWithIdleReadTimeout(idle time.Duration, site string) func(context.Conte
 			return nil, err
 		}
 		return &idleReadConn{Conn: conn, idle: idle, site: site}, nil
+	}
+}
+
+// dialWithIdleReadTimeoutProvider 与 dialWithIdleReadTimeout 相同，但每次
+// Read 通过 idleFn 动态取空闲超时（斗鱼房间自适应）。
+func dialWithIdleReadTimeoutProvider(site string, idleFn func() time.Duration) func(context.Context, string, string) (net.Conn, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := dialer.DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		return &idleReadConn{Conn: conn, site: site, idleFn: idleFn}, nil
 	}
 }
 
