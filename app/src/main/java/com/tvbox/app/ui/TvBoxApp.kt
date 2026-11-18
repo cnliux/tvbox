@@ -760,11 +760,19 @@ private fun HistoryScreen(
                         text = "历史",
                         style = if (isMobile) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineLarge,
                     )
-                    Text(
-                        text = "观看记录：继续上次的线路、集数和播放进度",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-                    )
+                    if (state.historyUpdateChecking) {
+                        Text(
+                            text = "正在检查各源更新…",
+                            color = MaterialTheme.colorScheme.primary,
+                            style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                        )
+                    } else {
+                        Text(
+                            text = "观看记录：继续上次的线路、集数和播放进度",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                        )
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
@@ -798,6 +806,9 @@ private fun HistoryScreen(
                     onAction = actions::goBack,
                 )
             } else {
+                if (state.historyUpdateChecking) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
                 val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
                 // 手机模式按宽度自适应 3~4 列（与首页信息流同一档密度）；
                 // 原先固定 2 列时一屏只能看到 4 张历史卡，续看命中率低。

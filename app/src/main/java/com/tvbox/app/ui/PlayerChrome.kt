@@ -97,11 +97,23 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DecoderStrategy
+import com.tvbox.app.domain.LineLatencyTier
 import com.tvbox.app.domain.VideoScaleMode
+import com.tvbox.app.domain.displayEpisodeTitle
+import com.tvbox.app.domain.lineLatencyTier
+import com.tvbox.app.domain.lineLatencyTierLabel
+import com.tvbox.app.domain.nextPlaybackSpeed
+import com.tvbox.app.domain.nextVideoScaleMode
+import com.tvbox.app.domain.sortByLatency
 import kotlinx.coroutines.delay
 
-/** 共享面板标识：TV 居中面板与手机内嵌面板共用同一套状态。 */
-internal enum class PlayerPanel { None, Episodes, Sources, Speeds, Picture, Skip, Audio, Subtitle, Info, Url }
+/**
+ * 共享面板标识：TV 居中面板与手机内嵌面板共用同一套状态。
+ *
+ * 倍速与画面比例已改为「按一次切下一档」的直接切换，不再有面板：
+ * 这两个是高频、短反馈的操作，弹层会额外增加一次选择与一次关闭。
+ */
+internal enum class PlayerPanel { None, Episodes, Sources, Skip, Audio, Subtitle, Info, Url }
 
 internal const val PLAYER_CHROME_AUTO_HIDE_MS = 5_000L
 internal const val PLAYER_CHROME_LIVE_AUTO_HIDE_MS = 3_000L
@@ -421,10 +433,8 @@ internal data class PlayerChromeActions(
     val onSelectSubtitleTrack: (String) -> Unit = {},
 )
 
-private val playerSpeeds = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
 private val introSkipOptions = listOf(0, 10, 20, 30, 60)
 private val outroSkipOptions = listOf(0, 15, 30, 60, 90)
-private val LatencyGreen = Color(0xFF4ADE80)
 
 /**
  * 共享控件层：TV 与手机共用同一套状态、面板与能力注入。
@@ -623,10 +633,14 @@ private fun PlayerChromeTv(
                     if (capabilities.sources) ControlButton("线路", { state.openPanel(PlayerPanel.Sources) })
                     if (capabilities.lines) ControlButton("线路", { actions.onOpenLinePanel(); state.interaction++ })
                     if (capabilities.favorite) ControlButton(capabilities.favoriteLabel ?: "收藏", { actions.onFavorite(); state.interaction++ })
-                    if (capabilities.speed) ControlButton("${formatSpeedLabel(data.speed)}x", { state.openPanel(PlayerPanel.Speeds); actions.onInteraction() })
+                    if (capabilities.speed) ControlButton("${formatSpeedLabel(data.speed)}x", {
+                        actions.onSelectSpeed(nextPlaybackSpeed(data.speed)); actions.onInteraction()
+                    })
                     if (capabilities.audioTracks) ControlButton("音轨", { state.openPanel(PlayerPanel.Audio); actions.onInteraction() })
                     if (capabilities.subtitleTracks) ControlButton("字幕", { state.openPanel(PlayerPanel.Subtitle); actions.onInteraction() })
-                    if (capabilities.resize) ControlButton("画面", { state.openPanel(PlayerPanel.Picture); actions.onInteraction() })
+                    if (capabilities.resize) ControlButton("画面", {
+                        actions.onSelectResize(nextVideoScaleMode(data.resizeMode)); actions.onInteraction()
+                    })
                     if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
                     if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info) })
                     if (capabilities.url) ControlButton("地址", { state.openPanel(PlayerPanel.Url) })
@@ -878,8 +892,9 @@ private fun PlayerChromeTouch(
                     if (capabilities.lines) add(ChromeFeature("线路") {
                         actions.onOpenLinePanel(); state.interaction++
                     })
-                    if (capabilities.speed) add(ChromeFeature("${formatSpeedLabel(data.speed)}x", state.panel == PlayerPanel.Speeds) {
-                        state.openPanel(PlayerPanel.Speeds)
+                    if (capabilities.speed) add(ChromeFeature("${formatSpeedLabel(data.speed)}x") {
+                        // 直接切下一档：不再弹层，按钮本身就是档位显示与切换入口。
+                        actions.onSelectSpeed(nextPlaybackSpeed(data.speed)); state.interaction++
                     })
                     if (capabilities.audioTracks) add(ChromeFeature("音轨", state.panel == PlayerPanel.Audio) {
                         state.openPanel(PlayerPanel.Audio)
@@ -887,8 +902,8 @@ private fun PlayerChromeTouch(
                     if (capabilities.subtitleTracks) add(ChromeFeature("字幕", state.panel == PlayerPanel.Subtitle) {
                         state.openPanel(PlayerPanel.Subtitle)
                     })
-                    if (capabilities.resize) add(ChromeFeature("画面", state.panel == PlayerPanel.Picture) {
-                        state.openPanel(PlayerPanel.Picture)
+                    if (capabilities.resize) add(ChromeFeature("画面·${data.resizeMode.displayName}") {
+                        actions.onSelectResize(nextVideoScaleMode(data.resizeMode)); state.interaction++
                     })
                     if (capabilities.skip) add(ChromeFeature("跳过", state.panel == PlayerPanel.Skip) {
                         state.openPanel(PlayerPanel.Skip)
@@ -1019,8 +1034,12 @@ private fun PlayerChromePanel(
         )
         return
     }
-    val orderedSources = remember(data.sources, data.sourceLatencies) {
-        orderSourcesByLatency(data.sources, data.sourceLatencies)
+    // 排序结果只用于「展示顺序」，所有回传都用原始下标：
+    // 线路名可能重复（同为「备用线路」），按对象相等去反查会切错线路。
+    val orderedIndexes = remember(data.sources, data.sourceLatencies) {
+        sortByLatency(data.sources.indices.toList(), data.sourceLatencies) { index ->
+            data.sources[index].lineId
+        }
     }
     val subtitleOptions = remember(data.subtitleTracks) {
         listOf(
@@ -1032,24 +1051,20 @@ private fun PlayerChromePanel(
         ) + data.subtitleTracks
     }
     val labels: List<AnnotatedString> = when (panel) {
-        PlayerPanel.Episodes -> data.episodes.map { AnnotatedString(it) }
-        PlayerPanel.Sources -> orderedSources.map { sourceTabLabel(it.value, data.sourceLatencies) }
-        PlayerPanel.Speeds -> playerSpeeds.map { AnnotatedString("${it}x") }
-        PlayerPanel.Picture -> VideoScaleMode.entries.map { AnnotatedString(it.displayName) }
+        // 选集只显示剧集内容：源标题里的「1.」「第01集」前缀会与网格位置重复，
+        // 显示成「1. 1.」这种编号叠编号。
+        PlayerPanel.Episodes -> data.episodes.mapIndexed { index, title ->
+            AnnotatedString(displayEpisodeTitle(title, index))
+        }
+        PlayerPanel.Sources -> orderedIndexes.map { sourceTabLabel(data.sources[it], data.sourceLatencies) }
         PlayerPanel.Audio -> data.audioTracks.map { AnnotatedString(it.label) }
         PlayerPanel.Subtitle -> subtitleOptions.map { AnnotatedString(it.label) }
-        else -> emptyList()
     }
     val selected = when (panel) {
         PlayerPanel.Episodes -> data.episodeIndex
-        PlayerPanel.Sources -> orderedSources.indexOfFirst { it.index == data.sourceIndex }.coerceAtLeast(0)
-        // 偏好里可能存了非标准倍速（如 1.1f）：严格 indexOf 返回 -1 会被 coerceAtLeast(0)
-        // 误高亮到 0.75x。改为与手机版一致的容差匹配，找不到就返回 -1（不高亮任何档位）。
-        PlayerPanel.Speeds -> playerSpeeds.indexOfFirst { kotlin.math.abs(it - data.speed) < 0.01f }
-        PlayerPanel.Picture -> VideoScaleMode.entries.indexOf(data.resizeMode)
+        PlayerPanel.Sources -> orderedIndexes.indexOf(data.sourceIndex).coerceAtLeast(0)
         PlayerPanel.Audio -> data.audioTracks.indexOfFirst { it.selected }.coerceAtLeast(0)
         PlayerPanel.Subtitle -> subtitleOptions.indexOfFirst { it.selected }.coerceAtLeast(0)
-        else -> 0
     }
     // 轨道面板为空时给出明确提示，而不是留下一个空面板。
     val emptyTrackHint = when (panel) {
@@ -1069,25 +1084,21 @@ private fun PlayerChromePanel(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(when (panel) {
                     PlayerPanel.Episodes -> "选择集数${if (episodeSortReverse) "（倒序）" else ""}"
-                    PlayerPanel.Sources -> "选择线路 · 已按测速排序"
-                    PlayerPanel.Picture -> "画面比例 · ${data.resizeMode.displayName}"
+                    PlayerPanel.Sources -> "选择线路 · 已按延迟排序"
                     PlayerPanel.Audio -> "选择音轨 · 共 ${data.audioTracks.size} 条"
                     PlayerPanel.Subtitle -> "选择字幕 · 共 ${data.subtitleTracks.size} 条"
-                    else -> "播放倍速"
                 }, Modifier.weight(1f))
                 if (panel == PlayerPanel.Episodes) {
                     ControlButton("↕ 倒序", { onSortReverse(); state.interaction++ })
                 }
                 ControlButton("关闭", { state.closePanel() })
             }
-            if (panel == PlayerPanel.Picture) {
-                Text(data.resizeMode.description, style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
-            }
-            if (panel == PlayerPanel.Sources && orderedSources.none { data.sourceLatencies[it.value.lineId] != null }) {
-                Text("可先在详情页测速，线路会按延迟从低到高排列",
+            if (panel == PlayerPanel.Sources) {
+                Text(
+                    "绿 ≤300ms · 黄 ≤800ms · 红 >800ms；未测速线路排在已测线路之后",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(bottom = 12.dp))
+                    color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(vertical = 8.dp),
+                )
             }
             if (emptyTrackHint != null) {
                 Text(
@@ -1100,7 +1111,12 @@ private fun PlayerChromePanel(
                 LazyVerticalGrid(GridCells.Adaptive(130.dp), state = grid,
                     horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     itemsIndexed(labels, key = { index, label -> "$index-$label" }) { index, label ->
-                        val realIndex = if (panel == PlayerPanel.Sources) orderedSources[index].index else index
+                        // 线路面板已按延迟重排：必须按「原下标」回传，否则会切到另一条线路。
+                        val realIndex = if (panel == PlayerPanel.Sources) {
+                            orderedIndexes[index]
+                        } else {
+                            index
+                        }
                         val enabled = when (panel) {
                             PlayerPanel.Sources -> data.sourceEnabled.getOrNull(realIndex) ?: true
                             else -> true
@@ -1110,13 +1126,10 @@ private fun PlayerChromePanel(
                             when (panel) {
                                 PlayerPanel.Episodes -> actions.onSelectEpisode(realIndex)
                                 PlayerPanel.Sources -> actions.onSelectSource(realIndex)
-                                PlayerPanel.Speeds -> actions.onSelectSpeed(playerSpeeds[realIndex])
-                                PlayerPanel.Picture -> actions.onSelectResize(VideoScaleMode.entries[realIndex])
                                 PlayerPanel.Audio -> data.audioTracks.getOrNull(realIndex)
                                     ?.let { actions.onSelectAudioTrack(it.id) }
                                 PlayerPanel.Subtitle -> subtitleOptions.getOrNull(realIndex)
                                     ?.let { actions.onSelectSubtitleTrack(it.id) }
-                                else -> Unit
                             }
                             state.closePanel()
                         }, Modifier.focusRequester(pickerFocus[index]), enabled)
@@ -1384,9 +1397,7 @@ private fun PlayerChromeMobilePanel(
                 Text(
                     text = when (section) {
                         PlayerPanel.Episodes -> "选集（共 ${data.episodes.size} 集）"
-                        PlayerPanel.Sources -> "线路（共 ${data.sources.size} 条）"
-                        PlayerPanel.Speeds -> "播放倍速"
-                        PlayerPanel.Picture -> "画面比例 · ${data.resizeMode.displayName}"
+                        PlayerPanel.Sources -> "线路（共 ${data.sources.size} 条 · 按延迟排序）"
                         PlayerPanel.Audio -> "音轨（共 ${data.audioTracks.size} 条）"
                         PlayerPanel.Subtitle -> "字幕（共 ${data.subtitleTracks.size} 条）"
                         PlayerPanel.Skip -> "跳过片头/片尾"
@@ -1432,7 +1443,9 @@ private fun PlayerChromeMobilePanel(
                             items(epList.size, key = { it }) { index ->
                                 val realIndex = if (episodeSortReverse) data.episodes.lastIndex - index else index
                                 MobileChip(
-                                    text = "${realIndex + 1}. ${epList[index]}",
+                                    // 只显示剧集内容：真实集数下标已由位置表达，
+                                    // 再拼「1.」会和源标题自带的编号叠成「1. 1.」。
+                                    text = displayEpisodeTitle(epList[index], realIndex),
                                     selected = realIndex == data.episodeIndex,
                                     onClick = { actions.onSelectEpisode(realIndex); onClose() },
                                 )
@@ -1440,34 +1453,40 @@ private fun PlayerChromeMobilePanel(
                         }
                     }
                 }
-                PlayerPanel.Sources -> LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(data.sources.size, key = { it }) { index ->
-                        MobileChip(
-                            text = data.sources[index].name,
-                            selected = index == data.sourceIndex,
-                            onClick = { actions.onSelectSource(index); onClose() },
-                        )
+                PlayerPanel.Sources -> {
+                    // 按实测延迟重排：排序结果只在这里用于展示，回传仍用「原下标」，
+                    // 否则按排好的位置去切换会切到另一条线路。
+                    val orderedIndexes = sortByLatency(data.sources.indices.toList(), data.sourceLatencies) { index ->
+                        data.sources[index].lineId
                     }
-                }
-                PlayerPanel.Speeds -> Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    playerSpeeds.forEach { item ->
-                        MobileChip(
-                            text = "${formatSpeedLabel(item)}x",
-                            selected = kotlin.math.abs(item - data.speed) < 0.01f,
-                            onClick = { actions.onSelectSpeed(item); onClose() },
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            "绿 ≤300ms · 黄 ≤800ms · 红 >800ms；未测速线路排在已测线路之后",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.6f),
                         )
-                    }
-                }
-                PlayerPanel.Picture -> Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    VideoScaleMode.entries.forEach { mode ->
-                        MobileChip(
-                            text = mode.displayName,
-                            selected = mode == data.resizeMode,
-                            onClick = { actions.onSelectResize(mode); onClose() },
-                        )
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(orderedIndexes.size, key = { orderedIndexes[it] }) { position ->
+                                val index = orderedIndexes[position]
+                                val source = data.sources[index]
+                                val tier = lineLatencyTier(
+                                    data.sourceLatencies[source.lineId],
+                                    data.sourceLatencies.containsKey(source.lineId),
+                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    MobileChip(
+                                        text = sourceTabLabel(source, data.sourceLatencies),
+                                        selected = index == data.sourceIndex,
+                                        onClick = { actions.onSelectSource(index); onClose() },
+                                    )
+                                    // 阈值标志：颜色 + 读屏文案，色弱用户同样能判断快慢。
+                                    LatencyTierDot(tier)
+                                }
+                            }
+                        }
                     }
                 }
                 PlayerPanel.Skip -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1687,23 +1706,6 @@ internal fun ControlButton(
     }
 }
 
-private fun orderSourcesByLatency(
-    sources: List<PlayerChromeSource>,
-    latencies: Map<String, Long?>,
-): List<IndexedValue<PlayerChromeSource>> {
-    return sources.withIndex().sortedWith(
-        compareBy<IndexedValue<PlayerChromeSource>> { item ->
-            val latency = latencies[item.value.lineId]
-            when {
-                latency != null -> 0
-                item.value.lineId in latencies -> 1
-                else -> 2
-            }
-        }.thenBy { item -> latencies[item.value.lineId] ?: Long.MAX_VALUE }
-            .thenBy { it.index },
-    )
-}
-
 @Composable
 private fun SkipSettingsPanel(
     introSeconds: Int,
@@ -1869,6 +1871,29 @@ private fun MobileChip(
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    MobileChip(
+        text = AnnotatedString(text),
+        modifier = modifier,
+        selected = selected,
+        enabled = enabled,
+        onClick = onClick,
+    )
+}
+
+/**
+ * 富文本版本：线路名后的延迟标注需要按阈值着色。
+ *
+ * 选中态底色是亮绿，此时再叠一层绿/黄标注会看不清，因此选中时统一用深色前景，
+ * 只保留文字信息（阈值本身由文案与圆点表达，不依赖颜色）。
+ */
+@Composable
+private fun MobileChip(
+    text: AnnotatedString,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
     Box(
         modifier = modifier
             .heightIn(min = 48.dp)
@@ -1885,7 +1910,9 @@ private fun MobileChip(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = text,
+            // 选中（亮绿底）或禁用时丢掉分段颜色，只保留纯文本：
+            // 否则绿底上的绿字几乎看不见，阈值信息就丢了。
+            text = if (selected || !enabled) AnnotatedString(text.text) else text,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1902,15 +1929,43 @@ private fun MobileChip(
 private fun sourceTabLabel(source: PlayerChromeSource, latencies: Map<String, Long?>): AnnotatedString {
     val tested = source.lineId.isNotBlank() && latencies.containsKey(source.lineId)
     val latency = latencies[source.lineId]
+    val tier = lineLatencyTier(latency, tested)
     return buildAnnotatedString {
         append(source.name)
         if (tested) {
             append(" · ")
-            withStyle(SpanStyle(color = if (latency != null) LatencyGreen else Color.White.copy(alpha = 0.6f))) {
-                append(latency?.let { "${it}ms" } ?: "测速失败")
+            withStyle(SpanStyle(color = latencyTierColor(tier))) {
+                // 只写毫秒数时用户还得自己记阈值；同时给出档位名，一眼判断快慢。
+                append(latency?.let { "${it}ms · ${lineLatencyTierLabel(tier)}" } ?: lineLatencyTierLabel(tier))
             }
         }
     }
+}
+
+/** 三色阈值标志的颜色：绿 ≤300ms、黄 ≤800ms、红 >800ms；未测速/超时用中性色。 */
+private fun latencyTierColor(tier: LineLatencyTier): Color = when (tier) {
+    LineLatencyTier.Fast -> Color(0xFF4ADE80)
+    LineLatencyTier.Medium -> Color(0xFFFACC15)
+    LineLatencyTier.Slow -> Color(0xFFF87171)
+    LineLatencyTier.Timeout -> Color.White.copy(alpha = 0.6f)
+    LineLatencyTier.Untested -> Color.White.copy(alpha = 0.6f)
+}
+
+/**
+ * 线路行前的圆形阈值标志。
+ * 颜色只是辅助：读屏与色弱用户通过 [LineLatencyTier] 的语义标签判断，
+ * 因此这里补一条 contentDescription，而不是画个色块了事。
+ */
+@Composable
+private fun LatencyTierDot(tier: LineLatencyTier) {
+    val color = latencyTierColor(tier)
+    Box(
+        modifier = Modifier
+            .size(10.dp)
+            .clip(CircleShape)
+            .background(color)
+            .semantics { contentDescription = lineLatencyTierLabel(tier) },
+    )
 }
 
 private fun AnnotatedString.withSuffix(suffix: String): AnnotatedString = buildAnnotatedString {

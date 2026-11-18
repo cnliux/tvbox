@@ -33,6 +33,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,6 +59,8 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlayEpisode
 import com.tvbox.app.domain.PlaySource
+import com.tvbox.app.domain.displayEpisodeTitle
+import com.tvbox.app.domain.resumePositionForEpisode
 import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
@@ -169,16 +172,24 @@ fun DetailScreen(
                                             }
                                         }
                                         Column(horizontalAlignment = Alignment.End) {
+                                            val resumeMs = resumePositionForEpisode(
+                                                movie = movie,
+                                                historyItems = state.historyItems,
+                                                sourceIndex = state.selectedSourceIndex,
+                                                episodeIndex = state.selectedEpisodeIndex,
+                                            )
                                             Button(
                                                 onClick = {
                                                     actions.openPlayer(
                                                         state.selectedSourceIndex,
                                                         state.selectedEpisodeIndex,
+                                                        resumeMs,
                                                     )
                                                 },
                                                 enabled = canPlay,
                                             ) {
-                                                Text("立即播放")
+                                                // 有进度时直接告诉用户会从哪里接着播，避免"点了却从头上开始"的困惑。
+                                                Text(if (resumeMs > 0L) "继续播放 ${formatPlayerTime(resumeMs)}" else "立即播放")
                                             }
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Button(onClick = actions::goBack) {
@@ -192,12 +203,9 @@ fun DetailScreen(
                                     InfoLine(label = "地区", value = movie.area)
                                     InfoLine(label = "语言", value = movie.language)
                                     Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
-                                    Text(
+                                    CollapsibleDescription(
                                         text = movie.description.ifBlank { "暂无简介" },
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        maxLines = descriptionLines,
-                                        overflow = TextOverflow.Ellipsis,
+                                        collapsedLines = descriptionLines,
                                     )
                                 }
                             }
@@ -284,16 +292,23 @@ private fun MobileDetailContent(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
+                            val resumeMs = resumePositionForEpisode(
+                                movie = movie,
+                                historyItems = state.historyItems,
+                                sourceIndex = state.selectedSourceIndex,
+                                episodeIndex = state.selectedEpisodeIndex,
+                            )
                             Button(
                                 onClick = {
                                     actions.openPlayer(
                                         state.selectedSourceIndex,
                                         state.selectedEpisodeIndex,
+                                        resumeMs,
                                     )
                                 },
                                 enabled = canPlay,
                             ) {
-                                Text("立即播放")
+                                Text(if (resumeMs > 0L) "继续播放 ${formatPlayerTime(resumeMs)}" else "立即播放")
                             }
                             Button(onClick = actions::goBack) {
                                 Text("返回")
@@ -308,11 +323,10 @@ private fun MobileDetailContent(
                 InfoLine(label = "地区", value = movie.area)
                 InfoLine(label = "语言", value = movie.language)
                 Spacer(modifier = Modifier.height(8.dp))
-                // 简介跟随整页滚动，不再用 maxLines 截断。
-                Text(
+                // 简介默认折叠：长简介会把选集挤出首屏，展开后跟随整页滚动。
+                CollapsibleDescription(
                     text = movie.description.ifBlank { "暂无简介" },
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyMedium,
+                    collapsedLines = 3,
                 )
             }
         },
@@ -506,6 +520,35 @@ private fun EpisodeButton(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+        }
+    }
+}
+
+/**
+ * 可折叠的文字介绍：默认只显示 [collapsedLines] 行，点「展开」后完整显示。
+ *
+ * 长简介会把下方的选集挤出首屏，所以默认折叠；展开按钮用 TextButton 而不是让整段文字
+ * 可点击——电视端只有可聚焦控件才能用遥控选中，纯文字点击在遥控上完全做不到。
+ */
+@Composable
+private fun CollapsibleDescription(
+    text: String,
+    collapsedLines: Int,
+) {
+    var expanded by remember(text) { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            text = text,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = if (expanded) Int.MAX_VALUE else collapsedLines,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(
+            onClick = { expanded = !expanded },
+            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp),
+        ) {
+            Text(if (expanded) "收起介绍" else "展开介绍")
         }
     }
 }

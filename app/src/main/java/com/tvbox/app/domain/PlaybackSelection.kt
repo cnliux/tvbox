@@ -17,6 +17,10 @@ private val EPISODE_PREFIX_REGEX =
         RegexOption.IGNORE_CASE,
     )
 
+// 去掉「1.第1集」「01-第01集」这类重复编号层：先剥一层数字前缀后，若剩余仍是独立编号则继续剥。
+private val EPISODE_LEADING_NUMBER_SEPARATOR_REGEX =
+    Regex("^[0-9]+\\s*[.、,，:：\\-–—]\\s*")
+
 fun correspondingEpisodeIndex(source: PlaySource, title: String, fallbackIndex: Int): Int? {
     val exact = source.episodes.indexOfFirst { it.title == title }
     if (exact >= 0) return exact
@@ -59,8 +63,7 @@ fun resolveHistoryPosition(movie: Movie, item: WatchHistoryItem): Pair<Int, Int>
 private fun episodeNumber(title: String): Int? =
     EPISODE_NUMBER_REGEX.matchEntire(title.trim())?.groupValues?.get(1)?.toIntOrNull()
 
-/**
- * 展示用的剧集标题：去掉源里的「1.」「第01集」「EP12」这类编号。
+/** 展示用的剧集标题：去掉源里的「1.」「第01集」「EP12」这类编号。
  *
  * 各源给同一集的标题五花八门（`1.`、`第01集`、`EP12`），直接显示会让选集网格
  * 变成一排没有意义的数字。但**不能**把编号整段删掉：`第1集 上` 这种标题里编号
@@ -71,6 +74,72 @@ fun displayEpisodeTitle(title: String, index: Int): String {
     if (trimmed.isEmpty()) return "${index + 1}"
     // 整条标题只是编号：保留编号（否则删成空串）。
     episodeNumber(trimmed)?.let { return "$it" }
-    val stripped = EPISODE_PREFIX_REGEX.replace(trimmed, "").trim()
-    return stripped.ifEmpty { trimmed }
+    var stripped = EPISODE_PREFIX_REGEX.replace(trimmed, "").trim()
+    // 处理「1.第一集」「01.第01集」等叠加编号：剥掉外层数字前缀后若仍有冗余编号前缀则继续剥。
+    repeat(2) {
+        if (stripped.isEmpty()) return@repeat
+        if (episodeNumber(stripped) != null) return@repeat
+        val next = EPISODE_PREFIX_REGEX.replace(stripped, "").trim()
+        val next2 = if (next == stripped) {
+            EPISODE_LEADING_NUMBER_SEPARATOR_REGEX.replace(stripped, "").trim()
+        } else {
+            next
+        }
+        if (next2.isEmpty() || next2 == stripped) return@repeat
+        stripped = next2
+    }
+    // 剩余内容若仅是编号，优先展示有意义文本；否则回退到编号。
+    if (stripped.isEmpty()) return episodeNumber(trimmed)?.toString() ?: trimmed
+    episodeNumber(stripped)?.let { number ->
+        // 「1. 2」这类纯编号叠加，保留单一编号；「1.第1集」应已被剥成「第1集」再按需处理。
+        if (stripped == "$number") return "$number"
+    }
+    return stripped
+}
+
+/** 详情页「播放」按钮的续播目标：线路、集数，以及该集已看到的毫秒数。 */
+data class PlaybackResumePoint(
+    val sourceIndex: Int,
+    val episodeIndex: Int,
+    val positionMs: Long,
+)
+
+/** 看完的判定：进度已到 95% 以上视为看完，再点播放应从本集开头开始。 */
+private const val RESUME_FINISHED_RATIO = 0.95
+
+/**
+ * 从本机观看历史里找出这部影片的续播点。
+ *
+ * 只看同一部影片（同源同 id），并按地址反查线路/集数——线路顺序或剧集顺序
+ * 变了（源站重排、备用线路补齐）也能落到正确的一集，而不是按过期下标串集。
+ * 找不到记录、进度无效（<=0）或已看完时返回 null，由调用方按「从头播放」处理。
+ */
+fun findResumePoint(
+    movie: Movie,
+    historyItems: List<WatchHistoryItem>,
+): PlaybackResumePoint? {
+    val item = historyItems.firstOrNull {
+        it.movieId == movie.id && it.apiLineId == movie.apiLineId
+    } ?: return null
+    if (item.positionMs <= 0L) return null
+    // 已看到片尾：续播会立刻触发「自动下一集」，不如从头开始。
+    if (item.durationMs > 0L && item.positionMs.toDouble() / item.durationMs >= RESUME_FINISHED_RATIO) return null
+    val (sourceIndex, episodeIndex) = resolveHistoryPosition(movie, item)
+    if (movie.playSources.getOrNull(sourceIndex)?.episodes?.getOrNull(episodeIndex) == null) return null
+    return PlaybackResumePoint(sourceIndex, episodeIndex, item.positionMs)
+}
+
+/**
+ * 详情页「播放」按钮的续播进度：只在选中的正好是历史记录那一集时返回已看进度，
+ * 否则返回 0（用户主动点了别的集，应当从这一集开头播放）。
+ */
+fun resumePositionForEpisode(
+    movie: Movie,
+    historyItems: List<WatchHistoryItem>,
+    sourceIndex: Int,
+    episodeIndex: Int,
+): Long {
+    val point = findResumePoint(movie, historyItems) ?: return 0L
+    if (point.sourceIndex != sourceIndex || point.episodeIndex != episodeIndex) return 0L
+    return point.positionMs
 }

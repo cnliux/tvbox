@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.domain
+package com.tvbox.app.domain
 
 import kotlinx.serialization.Serializable
 
@@ -26,14 +26,37 @@ data class WatchHistoryItem(
      * 只依赖本机记录，不需要每次进历史都去请求片源。
      */
     val episodeCount: Int = 0,
+    /**
+     * 跨多个播放源检查后已知的最大总集数；0 表示尚未检查或未知。
+     * 与 [episodeCount] 取较大值作为有效集数，用于发现新增剧集。
+     */
+    val latestEpisodeCount: Int = 0,
+    /** 最近一次跨源更新检查时间（epoch ms）；0 表示从未检查。 */
+    val lastUpdateCheckEpochMs: Long = 0,
 ) {
+    /** 本机已知的最大总集数（保存时线路集数与跨源检查结果取并集）。 */
+    val knownEpisodeCount: Int
+        get() = maxOf(episodeCount.coerceAtLeast(0), latestEpisodeCount.coerceAtLeast(0))
+
     /** 上次观看之后还有多少集没看；0 表示没有更多可看（或集数未知）。 */
     val unwatchedEpisodes: Int
-        get() = if (episodeCount <= 0) 0 else (episodeCount - episodeIndex - 1).coerceAtLeast(0)
+        get() {
+            val total = knownEpisodeCount
+            if (total <= 0) return 0
+            return (total - episodeIndex - 1).coerceAtLeast(0)
+        }
 
     /** 历史行的更新提示文案；null 表示不需要提示。 */
     val updateHint: String?
-        get() = unwatchedEpisodes.takeIf { it > 0 }?.let { "还有 $it 集" }
+        get() {
+            val remaining = unwatchedEpisodes
+            if (remaining <= 0) return null
+            // 跨源检查发现的总集数高于保存时记录，明确提示已更新到的总集数。
+            if (latestEpisodeCount > episodeCount.coerceAtLeast(0) && latestEpisodeCount > 0) {
+                return "更新至 $latestEpisodeCount 集"
+            }
+            return "还有 $remaining 集"
+        }
 
     val progressPercent: Int
         get() {

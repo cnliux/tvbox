@@ -70,4 +70,21 @@ class WatchHistoryTest {
         val list = listOf(item(1, updatedAt = 100, positionMs = 0, durationMs = 1000))
         assertTrue(list.continueWatching().isEmpty())
     }
+
+    @Test
+    fun updateHintUsesKnownEpisodeCountAcrossSources() {
+        val base = item(1, updatedAt = 100, positionMs = 100, durationMs = 1000).copy(
+            episodeIndex = 2,
+            episodeCount = 3,
+        )
+        assertEquals(null, base.updateHint)
+
+        val withLatest = base.copy(latestEpisodeCount = 5)
+        assertEquals(5, withLatest.knownEpisodeCount)
+        assertEquals(2, withLatest.unwatchedEpisodes)
+        assertEquals("更新至 5 集", withLatest.updateHint)
+
+        val onlyLocal = base.copy(episodeCount = 5, latestEpisodeCount = 0)
+        assertEquals("还有 2 集", onlyLocal.updateHint)
+    }
 }

@@ -63,6 +63,13 @@ interface HistoryRepository {
         item: WatchHistoryItem,
         maxItems: Int = DEFAULT_HISTORY_MAX_ITEMS,
     ): List<WatchHistoryItem>
+    /** 合并跨源更新检查结果：仅提升已知最大集数与检查时间，不改动播放进度。 */
+    suspend fun updateEpisodeCheck(
+        apiLineId: String,
+        movieId: Int,
+        latestEpisodeCount: Int,
+        checkedAtEpochMs: Long = System.currentTimeMillis(),
+    ): List<WatchHistoryItem> = getHistory()
     suspend fun clearHistory(): List<WatchHistoryItem>
     /** 删除单条观看记录（按来源 + 影片 id），返回删除后的最新列表。 */
     suspend fun removeHistoryItem(apiLineId: String, movieId: Int): List<WatchHistoryItem>
