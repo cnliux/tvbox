@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import com.tvbox.app.domain.ApiLine
 import kotlinx.coroutines.delay
@@ -252,6 +252,35 @@ class MovieRepositoryTest {
         assertEquals(1, released.get())
     }
 
+    @Test
+    fun probeLatestEpisodeCountUsesFastestSourceNotBlockedBySlowPrimary() = runBlocking {
+        val primary = line("primary")
+        val backup = line("backup")
+        val repo = repository(listOf(primary, backup), mapOf(
+            // 原记录源（primary）很慢/挂了：直接按 id 取详情迟迟不返回。
+            primary.baseUrls.single() to fakeApi { _, _, _, _, _, _ -> delay(60_000); response() },
+            // 备用源按片名匹配能秒回 10 集。
+            backup.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                response(multiEpisodeVod(id = 1, name = "更新检查", episodes = 10))
+            },
+        ))
+        // 若依赖主源，会等满超时甚至失败；这里应通过最快响应的备用源拿到 10。
+        val latest = withTimeout(2_500) { repo.probeLatestEpisodeCount("primary", 1, "更新检查") }
+        assertEquals(10, latest)
+    }
+
+    @Test
+    fun probeLatestEpisodeCountReturnsZeroWhenAllSourcesUnknown() = runBlocking {
+        val primary = line("primary")
+        val repo = repository(listOf(primary), mapOf(
+            primary.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                response(multiEpisodeVod(id = 1, name = "无关片名", episodes = 0))
+            },
+        ))
+        val latest = withTimeout(2_500) { repo.probeLatestEpisodeCount("primary", 1, "无关片名") }
+        assertEquals(0, latest)
+    }
+
     private fun repository(
         lines: List<ApiLine>,
         apiByBaseUrl: Map<String, MacCmsApi>,
@@ -308,6 +337,21 @@ class MovieRepositoryTest {
             typeName = "剧情",
             vodPlayFrom = sourceName,
             vodPlayUrl = episodeUrl.takeIf { it.isNotBlank() }?.let { "第01集\$$it" }.orEmpty(),
+        )
+    }
+
+    /** 构造含 [episodes] 集的标准剧集串；episodes<=0 时无播放地址（即未知集数）。 */
+    private fun multiEpisodeVod(id: Int, name: String, episodes: Int): VodDto {
+        val playUrl = (1..episodes).joinToString("#") { ep ->
+            "第%02d集\$https://example.test/$id/$ep.m3u8".format(ep)
+        }
+        return VodDto(
+            vodId = id,
+            vodName = name,
+            vodYear = "2026",
+            typeName = "剧情",
+            vodPlayFrom = "m3u8",
+            vodPlayUrl = playUrl,
         )
     }
 }

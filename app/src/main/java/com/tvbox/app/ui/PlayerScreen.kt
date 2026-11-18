@@ -69,6 +69,7 @@ import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
 import com.tvbox.app.ui.components.EmptyState
+import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -149,6 +150,12 @@ fun PlayerScreen(
         actions.savePlaybackProgress(position, durationMs,
             loadedState.copy(playerEpisodeIndex = player.currentMediaItemIndex.coerceAtLeast(0)))
     }
+    // 退出播放页的统一出口：先保存当前进度，再返回详情页。
+    // 屏幕上的「返回」按钮与硬件返回键（控件已隐藏时）共用同一逻辑，避免分散保存/返回路径。
+    fun exitPlayer() {
+        saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
+        actions.goBack()
+    }
     BindPlaybackSession(session, player) {
         saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
     }
@@ -162,11 +169,8 @@ fun PlayerScreen(
     PlayerChromeBackHandler(
         state = chrome,
         onExit = {
-            // 控件已隐藏时单次返回直接退出；退出前保存进度，避免少一次确认后漏存。
-            if (isMobile) {
-                saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0)
-            }
-            actions.goBack()
+            // 控件已隐藏时单次返回直接退出；退出前统一保存进度，避免少一次确认后漏存。
+            exitPlayer()
         },
         onLockedHint = {
             android.widget.Toast.makeText(
@@ -965,10 +969,7 @@ fun PlayerScreen(
                 onSelectResize = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
                 onSelectAudioTrack = { player.selectAudioTrack(it) },
                 onSelectSubtitleTrack = { player.selectSubtitleTrack(it) },
-                onBack = {
-                    saveCurrentProgress(player.currentPosition, uiDuration)
-                    actions.goBack()
-                },
+                onBack = { exitPlayer() },
                 onCast = {
                     if (castingDevice != null) stopCasting() else castDialogVisible = true
                 },
@@ -994,7 +995,7 @@ fun PlayerScreen(
         if (playbackStatus != null) {
             GesturePrompt(
                 text = playbackStatus,
-                textColor = if (playbackIssue != null) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                textColor = if (playbackIssue != null) TvColors.Warning else TvColors.Accent,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(start = 24.dp, end = 24.dp, bottom = 112.dp),
@@ -1023,7 +1024,7 @@ fun PlayerScreen(
                             Text("正在搜索 DLNA/UPnP 设备…")
                         }
                         castError?.let { message ->
-                            Text(message, color = MaterialTheme.colorScheme.error)
+                            Text(message, color = TvColors.Danger)
                         }
                         if (castDevices.isNotEmpty()) {
                             castDevices.forEach { device ->
@@ -1052,7 +1053,7 @@ fun PlayerScreen(
 @Composable
 private fun GesturePrompt(
     text: String,
-    textColor: Color = MaterialTheme.colorScheme.primary,
+    textColor: Color = TvColors.Accent,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)

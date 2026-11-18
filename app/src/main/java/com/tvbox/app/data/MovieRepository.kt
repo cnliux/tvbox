@@ -10,6 +10,7 @@ import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.fanOutIncrementally
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.lastOrNull
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
@@ -180,8 +182,69 @@ class DefaultMovieRepository(
     }
 
     override suspend fun getResumeDetail(apiLineId: String, id: Int): Movie? = withContext(Dispatchers.IO) {
-        require(apiLines.any { it.id == apiLineId }) { "原影视接口已不可用，请从搜索重新打开影片" }
-        loadPrimaryDetail(apiLineId, id)
+        // FIX: 原实现用 require 在「历史源已被移除/禁用」时直接抛 IllegalArgumentException，
+        // 导致 resumeHistory 续播崩溃。与 requireLine 同款兜底：回退到第一个可用源，
+        // 只在该源按 id 取不到时返回 null（由调用方降级为“无法获取播放地址”）。
+        val target = requireLine(apiLineId)
+        loadPrimaryDetail(target.id, id)
+    }
+
+    override suspend fun probeLatestEpisodeCount(apiLineId: String, movieId: Int, movieName: String): Int = coroutineScope {
+        // 覆盖全部已启用源（含主源），按健康分排序；不剔除冷却中的线路——
+        // 更新检查应当用「最快能回答的源」，而不是被某个慢/挂的主源卡住。
+        val lines = searchLines(apiLineId)
+        if (lines.isEmpty() || movieName.isBlank()) return@coroutineScope 0
+
+        // 每条源做同名匹配会发 1~2 个请求；给探测内部也限流，避免一次性把所有源打满
+        // （checkHistoryUpdates 的 HISTORY_UPDATE_PARALLELISM 只管“几条历史并行”，不管每条内部的源并发）。
+        val sourceGate = Semaphore(MAX_PROBE_PARALLEL_SOURCES)
+        val deferreds = lines.map { line ->
+            async {
+                sourceGate.withPermit {
+                    val movie = withContext(Dispatchers.IO) {
+                        withTimeoutOrNull(DETAIL_SOURCE_TIMEOUT_MS) {
+                            // 主源尽量按 id 直接取（最准）；任一条源都可用传入的片名做同名匹配，
+                            // 不依赖「主源必须先响」——这正是「不被主源阻塞」的关键。
+                            // 单源抛错（withFallback 在全 baseUrl 失败时会 throw）只让该源计 0，
+                            // 不让异常冒泡中止整批更新检查；但 CancellationException 必须原样上抛，
+                            // 不能误吞（否则会影响外层 withTimeoutOrNull 的取消状态）。
+                            try {
+                                if (line.id == apiLineId) {
+                                    loadPrimaryDetail(line.id, movieId) ?: findSameMovie(line, movieName)
+                                } else {
+                                    findSameMovie(line, movieName)
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Throwable) {
+                                null
+                            }
+                        }
+                    }
+                    movie?.playSources?.maxOfOrNull { it.episodes.size } ?: 0
+                }
+            }
+        }
+
+        // 「最快响应优先」：任一源返回了有效集数（>0）即采纳，不必等所有源跑完。
+        // 全部源都跑完仍无正数时，由 finisher 用 0 收尾，避免 select 永久挂起。
+        val firstHit = CompletableDeferred<Int>()
+        deferreds.forEach { d ->
+            launch {
+                val value = d.await()
+                if (value > 0) firstHit.complete(value)
+            }
+        }
+        launch {
+            deferreds.awaitAll() // 每个 async 内部都有单源超时，必然能在有限时间内结束
+            if (!firstHit.isCompleted) firstHit.complete(0)
+        }
+        val result = firstHit.await()
+        // FIX: coroutineScope 默认会等「所有子协程都完成」才返回，即使块已算出返回值。
+        // 若不主动取消，最快源命中后仍会等慢/挂主源跑完（最坏 DETAIL_SOURCE_TIMEOUT_MS），
+        // 违背「不被慢源阻塞」的语义。命中正数后立即取消其余源。
+        if (result > 0) deferreds.forEach { it.cancel() }
+        result
     }
 
     override fun searchProgressively(apiLineId: String, page: Int, keyword: String): Flow<MultiSourceSearchUpdate> = channelFlow {
@@ -529,6 +592,8 @@ class DefaultMovieRepository(
 
     private companion object {
         const val MAX_PARALLEL_SOURCE_REQUESTS = 6
+        /** 历史跨源更新检查里，每条历史对「各源」探测的最大并发源数（内部限流，避免打满全部源）。 */
+        const val MAX_PROBE_PARALLEL_SOURCES = 3
         const val SEARCH_TIMEOUT_MS = 6_000L
         const val DETAIL_SOURCE_TIMEOUT_MS = 4_000L
         const val SPEED_TEST_TIMEOUT_MS = 10_000L

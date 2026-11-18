@@ -48,6 +48,7 @@ import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.rememberTvImageLoader
+import com.tvbox.app.ui.theme.TvColors
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -106,7 +107,7 @@ internal fun MobileHistoryScreen(
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.background,
+        color = TvColors.Background,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // 顶部只有标题与清空按钮，不再显示“观看记录：...”这类说明提示。
@@ -134,7 +135,7 @@ internal fun MobileHistoryScreen(
                             Text(
                                 text = "正在检查各源更新…",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = TvColors.TextSecondary,
                             )
                         }
                     }
@@ -154,21 +155,26 @@ internal fun MobileHistoryScreen(
                     onAction = actions::openHome,
                 )
             } else {
-                val sections = remember(state.historyItems) {
-                    buildHistorySections(state.historyItems, System.currentTimeMillis())
+                // 分组计算依赖「本地自然日」：跨过午夜（或跨年）后若列表未变，首次计算时冻结的
+                // 「今天/昨天」标签会错误地停留在旧日期。这里把本地日零点时间戳纳入 remember key，
+                // 使页面在午夜之后任意一次重组（回到 Tab / 数据变化）时都按新日期重新分组。
+                val dayStartMs = startOfDayMs(System.currentTimeMillis())
+                val sections = remember(state.historyItems, dayStartMs) {
+                    buildHistorySections(state.historyItems, dayStartMs)
                 }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    sections.forEach { section ->
+                    sections.forEachIndexed { sectionIndex, section ->
                         // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
                         // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
-                        item(key = "header_${section.label}") {
+                        // 分组头不用 label 作 key：日期标签（如「M月d日」）跨年会重复，改用分组序号保证唯一。
+                        item(key = "header_$sectionIndex") {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
+                                color = TvColors.AccentStrong.copy(alpha = 0.22f),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .padding(vertical = 2.dp),
@@ -177,7 +183,7 @@ internal fun MobileHistoryScreen(
                                     text = section.label,
                                     style = MaterialTheme.typography.titleSmall,
                                     fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    color = TvColors.AccentStrong,
                                     modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 4.dp, end = 10.dp),
                                 )
                             }
@@ -216,7 +222,7 @@ private fun MobileHistoryRow(
 
     Surface(
         shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        color = TvColors.SurfaceRaised.copy(alpha = 0.6f),
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick),
@@ -229,7 +235,7 @@ private fun MobileHistoryRow(
                 modifier = Modifier
                     .size(width = 60.dp, height = 82.dp)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                    .background(TvColors.SurfaceRaised),
                 contentAlignment = Alignment.Center,
             ) {
                 if (item.posterUrl.isNotBlank() && !posterFailed) {
@@ -245,7 +251,7 @@ private fun MobileHistoryRow(
                     Text(
                         text = "无图",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TvColors.TextSecondary,
                     )
                 }
             }
@@ -267,13 +273,13 @@ private fun MobileHistoryRow(
                     if (item.sourceName.isNotBlank()) {
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.8f),
+                            color = TvColors.Accent.copy(alpha = 0.18f),
                         ) {
                             Text(
                                 text = item.sourceName,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                color = TvColors.Accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -288,7 +294,7 @@ private fun MobileHistoryRow(
                         Text(
                             text = displayTitle,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = TvColors.TextSecondary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -308,7 +314,7 @@ private fun MobileHistoryRow(
                     Text(
                         text = progressText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TvColors.TextSecondary,
                         maxLines = 1,
                     )
                 }
@@ -317,7 +323,7 @@ private fun MobileHistoryRow(
                     Text(
                         text = "$timeText 观看",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = TvColors.TextSecondary,
                     )
                     // 更新提示紧跟在观看时间后面，不单独占一行：
                     // 历史行本来就不高，再加一行会把列表压得很松散。
@@ -325,13 +331,13 @@ private fun MobileHistoryRow(
                         Spacer(modifier = Modifier.width(8.dp))
                         Surface(
                             shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                            color = TvColors.Accent.copy(alpha = 0.16f),
                         ) {
                             Text(
                                 text = hint,
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = TvColors.Accent,
                                 maxLines = 1,
                             )
                         }
@@ -343,30 +349,35 @@ private fun MobileHistoryRow(
                 Icon(
                     imageVector = Icons.Default.Delete,
                     contentDescription = "删除记录",
-                    tint = Color(0xFFFF8A80),
+                    tint = TvColors.Danger,
                 )
             }
         }
     }
 }
 
-private data class HistorySection(
+internal data class HistorySection(
     val label: String,
     val items: List<WatchHistoryItem>,
 )
 
-/** 按日历日分组（今天 / 昨天 / M月d日），保持仓库返回的倒序（最近在前）。 */
-private fun buildHistorySections(
-    items: List<WatchHistoryItem>,
-    nowMs: Long,
-): List<HistorySection> {
+/** 返回 [epochMs] 所在本地自然日的零点时间戳（时/分/秒/毫秒清零）。 */
+internal fun startOfDayMs(epochMs: Long): Long {
     val calendar = Calendar.getInstance()
-    calendar.timeInMillis = nowMs
+    calendar.timeInMillis = epochMs
     calendar.set(Calendar.HOUR_OF_DAY, 0)
     calendar.set(Calendar.MINUTE, 0)
     calendar.set(Calendar.SECOND, 0)
     calendar.set(Calendar.MILLISECOND, 0)
-    val todayStart = calendar.timeInMillis
+    return calendar.timeInMillis
+}
+
+/** 按日历日分组（今天 / 昨天 / M月d日），保持仓库返回的倒序（最近在前）。 */
+internal fun buildHistorySections(
+    items: List<WatchHistoryItem>,
+    nowMs: Long,
+): List<HistorySection> {
+    val todayStart = startOfDayMs(nowMs)
     val yesterdayStart = todayStart - 24L * 60L * 60L * 1000L
     val dayFormat = SimpleDateFormat("M月d日", Locale.getDefault())
 

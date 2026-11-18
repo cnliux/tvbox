@@ -4137,21 +4137,18 @@ class TvBoxViewModel(
             _state.update { it.copy(historyUpdateChecking = true) }
             val semaphore = Semaphore(HISTORY_UPDATE_PARALLELISM)
             try {
-                coroutineScope {
+                // 整批总预算：单条超时之外，还要给整批兜底，避免源全挂时检查串行拖到 20s+ 的 spinner。
+                withTimeoutOrNull(HISTORY_UPDATE_BATCH_TIMEOUT_MS) {
+                    coroutineScope {
                     targets.map { item ->
                         async {
                             semaphore.withPermit {
                                 ensureActive()
+                                // 跨源探测用「最快响应的源」：并发扇出到全部已启用源，任一源返回有效集数即采纳，
+                                // 不被原记录源（慢/挂）阻塞。这样即使原源不可用，只要还有可用源就能判断是否更新。
                                 val latest = withTimeoutOrNull(HISTORY_UPDATE_TIMEOUT_MS) {
-                                    var best = item.knownEpisodeCount
-                                    repository.getDetailProgressively(item.apiLineId, item.movieId).collect { update ->
-                                        val maxEpisodes = update.movie.playSources.maxOfOrNull { source ->
-                                            source.episodes.size
-                                        } ?: 0
-                                        if (maxEpisodes > best) best = maxEpisodes
-                                    }
-                                    best
-                                } ?: return@withPermit
+                                    repository.probeLatestEpisodeCount(item.apiLineId, item.movieId, item.movieName)
+                                } ?: 0
                                 if (latest <= 0) return@withPermit
                                 val checkedAt = System.currentTimeMillis()
                                 historyWriteMutex.withLock {
@@ -4175,11 +4172,13 @@ class TvBoxViewModel(
                             }
                         }
                     }.awaitAll()
-                }
+                    }
+                } // withTimeoutOrNull(HISTORY_UPDATE_BATCH_TIMEOUT_MS)
             } catch (cancelled: CancellationException) {
                 throw cancelled
-            } catch (_: Throwable) {
-                // 单次跨源检查失败不影响本地历史展示与后续重试。
+            } catch (t: Throwable) {
+                // 单次跨源检查失败不影响本地历史展示与后续重试；但至少留日志便于排查“历史没更新”的原因。
+                android.util.Log.w("TVBoxHistory", "checkHistoryUpdates 整批中止：${t.message}", t)
             } finally {
                 _state.update { it.copy(historyUpdateChecking = false) }
             }
@@ -4738,6 +4737,8 @@ private const val HISTORY_UPDATE_PARALLELISM = 2
 private const val HISTORY_UPDATE_ITEM_COOLDOWN_MS = 30 * 60 * 1000L
 private const val HISTORY_UPDATE_GLOBAL_COOLDOWN_MS = 10 * 60 * 1000L
 private const val HISTORY_UPDATE_TIMEOUT_MS = 12_000L
+/** 整批历史更新检查的总兜底预算：即使多条历史、源全挂也不让 spinner 拖过该时长。 */
+private const val HISTORY_UPDATE_BATCH_TIMEOUT_MS = 15_000L
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null

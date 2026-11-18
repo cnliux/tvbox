@@ -1,3 +1,41 @@
+## v1.0.23 - 2026-11-19
+
+审查修复与历史更新检查健壮性：
+
+- **历史更新检查逐源失败隔离**：`probeLatestEpisodeCount` 单源全 baseUrl 抛错只让该源计 0，不再中止整批检查；`CancellationException` 仍原样上抛。
+- **探测并发限流**：`probeLatestEpisodeCount` 内部用 `Semaphore(3)` 限制每条的源并发，避免绕过 `HISTORY_UPDATE_PARALLELISM` 一次性打满全部源。
+- **整批总预算**：`checkHistoryUpdates` 增加整批 15s 兜底（`HISTORY_UPDATE_BATCH_TIMEOUT_MS`）+ 失败留日志（`TVBoxHistory`）。
+- **续播兜底**：`getResumeDetail` 原在「历史源被移除/禁用」时 `require` 抛 `IllegalArgumentException` 崩溃，改为回退第一个可用源，取不到才返回 null 降级提示。
+
+## v1.0.22 - 2026-11-18
+
+手机版播放控件与历史列表优化：
+
+- **手机历史页**：新增 `MobileHistoryScreen.kt` 移动端专属列表页（单列卡片、按今天/昨天/日期分组、单条删除、空态引导去首页），替代手机端复用电视网格与焦点体系的旧实现。
+- **历史数据增强**：`WatchHistoryItem` 增加跨源更新检查字段（`latestEpisodeCount`/`lastUpdateCheckEpochMs`），派生 `updateHint`（「更新至 N 集」/「还有 N 集」），历史页展示更新徽标；仓储新增 `updateEpisodeCheck`/`removeHistoryItem`，删除与进度保存共用写锁避免竞态。
+- **历史更新检查改用最快响应源**：新增 `MovieRepository.probeLatestEpisodeCount`，并发扇出到全部已启用源、任一源返回有效集数即采纳（先到先得），不再被「原记录源先按 id 取详情拿片名」这条阻塞链卡住——原源慢/挂时也能靠最快的可用源判定是否更新。
+- **更新检查健壮性（审查修复）**：`probeLatestEpisodeCount` 逐源失败隔离——某源整条链路抛错（全 baseUrl 失败）只让该源计 0，不再中止整批；内部用 `Semaphore(3)` 限制每条的源并发，避免绕过 `HISTORY_UPDATE_PARALLELISM` 打满全部源；`checkHistoryUpdates` 增加整批 15s 总预算兜底 + 失败留日志（`TVBoxHistory`）。
+- **续播健壮性（审查修复）**：`getResumeDetail` 原在「历史源被移除/禁用」时 `require` 抛 `IllegalArgumentException` 导致续播崩溃，改为与 `requireLine` 同款兜底（回退第一个可用源，取不到才返回 null 降级提示）。
+- **手机播放控件**：点播页移动端返回退出统一走 `exitPlayer()` 单入口（先保存进度再返回），与硬件返回键/屏幕返回按钮保持一致。
+- **历史分组跨天修复**：分组标签「今天/昨天」纳入本地自然日 key，页面跨午夜后任一重组即按新日期重新分组；分组头改用序号 key，避免跨年日期标签重复碰撞。
+- **历史分组单测**：新增 `MobileHistorySectionsTest` 锁定「今天/昨天/更早」归类、同日合并、空列表与跨午夜刷新语义。
+- 验证：`compileDebugKotlin` + `testDebugUnitTest` 通过。
+
+## v1.0.21 - 2026-11-18
+
+手机历史跨源更新提示与播放控件优化：
+
+- **历史跨源更新提示**：历史记录新增「还有 N 集 / 更新至 N 集」徽标，依据本机保存的线路总集数与跨源检查结果，无需进详情即可发现新更新。
+- **播放控件优化**：手机端播放控件交互细节完善（竖屏精简保留调试/重连档位等关键入口）。
+
+## v1.0.20 - 2026-11-18
+
+斗鱼房间级自适应重连、TV 焦点修复与 Go 崩溃栈落盘：
+
+- **斗鱼房间级自适应重连**：重连策略按房间运行情况自适应，避免固定参数误伤稳定线路。
+- **TV 焦点修复**：修复电视端遥控焦点移动错位。
+- **Go 崩溃栈落盘**：`platform_live_go` 侧崩溃栈写入本地文件，便于现场定位续流代理异常。
+
 ## v1.0.19 - 2026-11-18
 
 工程清理：删除已废弃的 Python 解析服务，移除从未可用的 Kotlin 兜底中继，重写 README。

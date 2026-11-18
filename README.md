@@ -4,7 +4,7 @@
 使用 Kotlin、Jetpack Compose 与 Media3 ExoPlayer 构建。同一份 APK 通过运行时设备模式
 在电视与手机之间切换布局与交互：电视端以遥控器操作优先，手机端提供触屏手势与竖屏布局。
 
-当前版本 `1.0.18`（`versionCode=20018`）。Release 原生库只保留 `arm64-v8a`，
+当前版本 `1.0.23`（`versionCode=20023`）。Release 原生库只保留 `arm64-v8a`，
 启用 R8 full mode 与资源压缩。
 
 > 本项目只提供客户端播放能力，不内置、不托管任何影视内容。请确保所使用的接口与
@@ -177,8 +177,8 @@ python tools/live_longrun_monitor.py --rounds 6 --rooms 10 --seconds 600
 2. 提交并推送 `main`，然后打 tag：
 
 ```powershell
-git tag -a v1.0.19 -m "聚合视频 v1.0.19"
-git push origin v1.0.19
+git tag -a v1.0.23 -m "聚合视频 v1.0.23"
+git push origin v1.0.23
 ```
 
 3. `.github/workflows/release.yml` 由 `v*` tag 触发，构建 `juhe-video-v<version>.apk`

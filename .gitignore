@@ -60,3 +60,6 @@ platform_live_go/flv_proxy_diag_test.go
 .ref/
 .trae/
 *.png
+
+# 本地 UI 调参/预览页（如 mobile-history-preview.html），不入库
+mobile-history-preview.html

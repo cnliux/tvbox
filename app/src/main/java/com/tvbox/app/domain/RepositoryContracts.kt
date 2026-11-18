@@ -45,6 +45,25 @@ interface MovieRepository {
     suspend fun getDetail(apiLineId: String, id: Int): Movie?
     suspend fun getResumeDetail(apiLineId: String, id: Int): Movie? = getDetail(apiLineId, id)
 
+    /**
+     * 探测该影片在「任一已启用源」中的已知最大集数，供历史跨源更新检查使用。
+     *
+     * 语义与 [getDetailProgressively] 不同：**不被主源（保存该记录的源）阻塞**，
+     * 而是并发扇出到全部已启用源，取**最快成功返回**的那一条作为结果（先到先得），
+     * 而不是等所有源 / 等主源先响。这样即使原记录源挂了或很慢，只要还有任意一个
+     * 可用源能给出集数，就能正确判断「是否更新了」。返回 0 表示所有源都失败/未知。
+     *
+     * @param movieName 该影片的片名，来自历史记录；各源据它做同名匹配，
+     *   避免探测结果依赖「主源必须先能按 id 取到详情才能拿到片名」这条阻塞链。
+     */
+    suspend fun probeLatestEpisodeCount(
+        apiLineId: String,
+        movieId: Int,
+        movieName: String,
+    ): Int = runCatching {
+        getDetail(apiLineId = apiLineId, id = movieId)
+    }.getOrNull()?.playSources?.maxOfOrNull { it.episodes.size } ?: 0
+
     fun searchProgressively(apiLineId: String, page: Int, keyword: String): Flow<MultiSourceSearchUpdate> = flow {
         val result = getMovies(apiLineId = apiLineId, page = page, keyword = keyword)
         emit(MultiSourceSearchUpdate(result.movies, completedSources = 1, totalSources = 1))
