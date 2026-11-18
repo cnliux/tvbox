@@ -191,7 +191,10 @@ fun PlayerScreen(
             }
         }
     }
-    PlayerChromeAutoHide(chrome, uiPlaying, autoHideMs = PLAYER_CHROME_AUTO_HIDE_MS)
+    // 手机触摸模式下控件保留更久（4s vs 5s 电视模式），避免误触后立刻消失让用户来不及操作。
+    // PLAYER_CHROME_TOUCH_AUTO_HIDE_MS 是专门为触摸设备预置的超时，与 TvBoxApp 中的直播页逻辑保持一致。
+    val chromeAutoHideMs = if (isMobile) PLAYER_CHROME_TOUCH_AUTO_HIDE_MS else PLAYER_CHROME_AUTO_HIDE_MS
+    PlayerChromeAutoHide(chrome, uiPlaying, autoHideMs = chromeAutoHideMs)
     LaunchedEffect(session.interrupted) {
         if (session.interrupted) chrome.bump()
     }

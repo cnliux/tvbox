@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.tvbox.app.domain.WatchHistoryItem
+import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import java.text.SimpleDateFormat
@@ -162,16 +163,28 @@ internal fun MobileHistoryScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     sections.forEach { section ->
+                        // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
+                        // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
                         item(key = "header_${section.label}") {
-                            Text(
-                                text = section.label,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 2.dp),
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp),
+                            ) {
+                                Text(
+                                    text = section.label,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 4.dp, end = 10.dp),
+                                )
+                            }
                         }
-                        items(items = section.items, key = { "${it.apiLineId}:${it.movieId}" }) { entry ->
+                        // 使用 apiLineId:movieId:episodeIndex 作为稳定 key：同一影片在同源的多个观看记录（不同集数）必须
+                        // 各自拥有独立 key，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与 anim 错乱到错误条目上。
+                        items(items = section.items, key = { "${it.apiLineId}:${it.movieId}:${it.episodeIndex}" }) { entry ->
                             MobileHistoryRow(
                                 item = entry,
                                 onClick = { actions.resumeHistory(entry, TvScreen.History) },
@@ -267,8 +280,13 @@ private fun MobileHistoryRow(
                         }
                     }
                     if (item.episodeTitle.isNotBlank()) {
+                        // 使用 displayEpisodeTitle 统一剥离源站叠加的编号前缀（如「1.第一集」→「第一集」），
+                        // 与详情页选集显示保持一致。
+                        val displayTitle = remember(item.episodeTitle, item.episodeIndex) {
+                            displayEpisodeTitle(item.episodeTitle, item.episodeIndex)
+                        }
                         Text(
-                            text = item.episodeTitle,
+                            text = displayTitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
