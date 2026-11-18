@@ -1,3 +1,43 @@
+## v1.0.19 - 2026-11-18
+
+工程清理：删除已废弃的 Python 解析服务，移除从未可用的 Kotlin 兜底中继，重写 README。
+
+### 删除
+- **`platform_live_server/`（14 个文件、约 4400 行）**：Python 版解析服务。功能已由
+  `platform_live_go` 完整接管（`cmd/platform-live-server` 覆盖其全部路由，另多
+  `resolve-link`），且 `app/build.gradle.kts`、`settings.gradle.kts`、`.github/` 均无引用。
+  同源 `douyin_sign.js` 在 `platform_live_go/platformassets/` 仍有副本。
+- **Kotlin 兜底中继（约 1180 行）**：`LiveContinuityRelay`、`FlvSplicer`、`FlvTagReader`
+  及对应测试。该路径 JVM 端到端测试可过，但 Android 真机必定在 250ms 内报
+  `ERROR_CODE_IO_UNSPECIFIED`，从未验证可用——保留它等于把"兜底"做成"一定失败"。
+  现在 `FlvContinuityProxy` 只有 Go 代理一条路径，失败时退回直连（直连只是每两分钟
+  重连一次，仍可播放）。线路归一化测试拆到 `LiveLineNormalizerTest` 保留。
+- 一次性脚本 `tools/_fix_settings.py`、`_fix_settings2.py`（硬编码本机绝对路径）。
+
+### 修正的设计问题
+- `tools/live_longrun_monitor.py` 原本 `subprocess` 启动已删除的
+  `platform_live_server/renew_server.py`，工具会静默失效；改为自行编译并拉起
+  `cmd/platform-live-server`，接口切到 `/v1/live/resolve` 与 `streams` 字段。
+- **`flv_proxy.go` 真实缺陷**：回放跨度 `replaySpanMin/Max` 从不清零，跨会话无限累积，
+  使"跨度达窗口 60%"恒成立，窗口一路顶到 24s 上限后不再回落，自适应退化为"永久最大
+  窗口"。新增 `resetReplaySpan()`，按上游会话重置，改为单段统计。
+- 删除无调用代码：`flvProxyFileHeader`、`liveHostSupported`、`showroomStreamsFromLive`、
+  `sortedStable`，以及未使用的 `audioResyncDrops` 字段。
+- `FlvContinuityProxy` 头注释把优先级写反（实际 Go 优先），已修正。
+- `.gitignore`、`LOCAL_DEV.md`、`PlatformLiveRepository.kt` 中指向 Python 服务的残留引用。
+
+### 文档
+- README 重写为按实际代码组织：功能、遥控键位、架构（同一份 Go 源码的 AAR 与 HTTP
+  两种形态）、连续播放代理（指纹去重 / 自适应窗口 / 音频回拉 / 三档互斥调参）、
+  构建与 AAR 绑定、解析服务接口表、长跑监控、发布流程。原 README 的版本号停留在
+  1.0.5、仍指向 Python 服务、且写着已被替换的"5 秒指纹窗口"。
+
+### 验证
+- Go：`go build ./...`、`go vet ./...`、`go test ./...` 全部通过（142 个用例）。
+- Kotlin：`compileDebugKotlin` + `testDebugUnitTest` 通过；`LiveLineNormalizerTest` 9 个用例
+  0 失败。
+- 长跑工具对接 Go 服务实测：`ensure_service()` 返回 True，`sign()` 取到 3 条真实 CDN 线路。
+
 ## v1.0.18 - 2026-11-18
 
 平台直播「一起看」自适应修复搬到**生产路径（Go 代理）**，并补 TV 遥控房间列表导航。

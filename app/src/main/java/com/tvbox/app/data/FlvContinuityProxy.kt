@@ -1,8 +1,6 @@
 package com.tvbox.app.data
 
 import android.util.Log
-import com.tvbox.app.data.live.LiveContinuityRelay
-import com.tvbox.app.data.live.LiveLine
 import com.tvbox.app.data.live.LiveProxyHandle
 import com.tvbox.app.util.logSafeText
 import org.json.JSONObject
@@ -16,12 +14,14 @@ import platformlive.Platformlive
  * （房间 11342412 实测 120.7s 被服务端正常关闭），斗鱼则用 `expire` 租约到期断流。
  * 播放器直接用平台地址时，每次都会经历 ENDED → 重新解析 → 重新 prepare 的可见断流。
  *
- * 优先级（与 [start] 的实际调用顺序一致）：
- *  1. **Go 侧代理**（`platform_live_go` 的 gomobile 实现）——默认生产路径，
- *     经真机长跑验证（预建双连接 + 指纹去重 + 自适应扩窗 + 音频回拉 + 进度看门狗）；
- *  2. **Kotlin 本机中继**（[LiveContinuityRelay]）——仅在 Go 代理返回 null 时兜底。
- *     注意：该路径在 Android 真机上仍会报 `ERROR_CODE_IO_UNSPECIFIED`（JVM 端到端
- *     测试可过，差异在 Android 的 HTTP 响应处理上），**不能当作已验证的播放路径**。
+ * 生产路径只有一条：**Go 侧代理**（`platform_live_go` 的 gomobile 实现），
+ * 经真机长跑验证（预建双连接 + 指纹去重 + 自适应扩窗 + 音频回拉 + 进度看门狗）。
+ * 启动失败时返回 null，由调用方退回直连平台地址——直连只是每两分钟重连一次，
+ * 仍可正常播放。
+ *
+ * 历史上曾有一条 Kotlin 本机中继作为兜底，但它在本机 JVM 测试通过、Android 真机
+ * 却必定报 `ERROR_CODE_IO_UNSPECIFIED`，从未验证可用；保留它等于把"兜底"做成
+ * "一定失败"，因此已整体移除（见 CHANGELOG v1.0.19）。
  *
  * 只对虎牙/斗鱼启用是刻意的产品约束：B 站/抖音/快手等平台的签名与会话语义不同，
  * 把这两家的假设套过去反而会引入新问题。
@@ -35,10 +35,7 @@ object FlvContinuityProxy {
         protocol.equals("flv", ignoreCase = true) && site.lowercase() in supportedSites
 
     /**
-     * 启动本机中继；返回 null 表示两条路径都失败，调用方回退为直连平台地址。
-     *
-     * [renew] 用于续流时拿新签名线路（在后台线程同步调用），
-     * 由 ViewModel 走平台解析得到，避免代理内部再依赖 Go 桥接。
+     * 启动本机代理；返回 null 表示启动失败，调用方回退为直连平台地址。
      */
     fun start(
         site: String,
@@ -46,42 +43,21 @@ object FlvContinuityProxy {
         candidateIndex: Int,
         url: String,
         headers: Map<String, String>,
-        renew: ((Int) -> LiveLine?)? = null,
     ): LiveProxyHandle? {
-        // 顺序很重要：Go 代理是经过 20 分钟 × 6 房间真机验证的成熟实现
-        // （预建双连接 + 指纹去重 + 进度看门狗），必须保持为默认路径。
-        // Kotlin 中继目前在真机上会在 250ms 内让播放器报 ERROR_CODE_IO_UNSPECIFIED
-        // （JVM 端到端测试通过，差异在 Android 的 HTTP 响应处理上，仍在排查），
-        // 因此只能在 Go 代理**不可用**时兜底，绝不能抢在前面造成回归。
-        startGoProxy(site, roomId, candidateIndex, url, headers)?.let { return it }
-        if (renew == null) return null
-        Log.w(LOG_TAG, "【连续中继】Go 代理不可用，尝试 Kotlin 中继兜底")
-        return LiveContinuityRelay.start(
-            site = site,
-            roomId = roomId,
-            line = LiveLine(url = url, cdn = "", headers = headers),
-            renew = renew,
-        )?.also { Log.d(LOG_TAG, "【连续中继】Kotlin 中继已启用 ${it.localUrl()}") }
-    }
-
-    /** Go 侧代理（历史实现，保留作为兜底）。 */
-    private fun startGoProxy(
-        site: String,
-        roomId: String,
-        candidateIndex: Int,
-        url: String,
-        headers: Map<String, String>,
-    ): LiveProxyHandle? = runCatching {
-        Platformlive.startFlvProxy(
-            site,
-            roomId,
-            candidateIndex.toLong(),
-            url,
-            JSONObject(headers.toMap()).toString(),
-        )?.let(::GoProxyHandle)
-    }.getOrElse { error ->
-        Log.w(LOG_TAG, "【连续代理】启动失败，回退直连：${logSafeText(error.message)}")
-        null
+        // Go 代理是经过真机长跑验证的成熟实现（预建双连接 + 指纹去重 + 进度看门狗），
+        // 必须保持为唯一路径；启动异常时返回 null 交给调用方直连。
+        return runCatching {
+            Platformlive.startFlvProxy(
+                site,
+                roomId,
+                candidateIndex.toLong(),
+                url,
+                JSONObject(headers.toMap()).toString(),
+            )?.let(::GoProxyHandle)
+        }.getOrElse { error ->
+            Log.w(LOG_TAG, "【连续代理】启动失败，回退直连：${logSafeText(error.message)}")
+            null
+        }
     }
 
     /** gomobile 句柄适配到统一接口。 */

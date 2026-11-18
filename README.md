@@ -96,9 +96,12 @@ Go 侧代理对播放器只暴露一条永不结束的本地 FLV（`127.0.0.1:<�
   而不是丢帧——逐帧丢音频会造成断续，钳位不会让时间轴停住。
 - **分段调参**：虎牙 / 斗鱼 / 其它平台三档互斥，其它平台不借用前两者的站点假设。
 
-`FlvContinuityProxy` 的调用顺序是 **Go 代理优先**，Kotlin 中继仅在 Go 返回 null 时兜底；
-后者在 Android 真机上仍会报 `ERROR_CODE_IO_UNSPECIFIED`（JVM 端到端测试可通过），
-因此不作为已验证的播放路径。
+`FlvContinuityProxy` 只有 **Go 代理** 一条路径；启动失败时返回 null，调用方退回直连
+平台地址（直连只是每两分钟重连一次，仍可正常播放）。
+
+历史上曾有一条 Kotlin 本机中继作为兜底，但它在 JVM 端到端测试中能通过、Android 真机
+却必定报 `ERROR_CODE_IO_UNSPECIFIED`，从未验证可用；留着等于把"兜底"做成"一定失败"，
+因此已整体移除（`LiveContinuityRelay`、`FlvSplicer`、`FlvTagReader` 及其测试，约 1180 行）。
 
 算法细节与实测数据见 `platform_live_go/FLV_CONTINUITY_VALIDATION.md`。
 

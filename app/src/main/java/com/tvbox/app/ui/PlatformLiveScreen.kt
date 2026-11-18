@@ -899,8 +899,6 @@ private fun PlatformLivePlayerScreen(
                 candidateIndex = resolved.safeActiveCandidateIndex,
                 url = candidateUrl,
                 headers = resolved.headers,
-                // 传入续流回调才会启用 Kotlin 本机中继；为 null 时退回 Go 代理。
-                renew = actions::renewPlatformLiveLine,
             )
         }
         value = handle
