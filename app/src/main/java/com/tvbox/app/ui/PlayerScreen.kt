@@ -74,6 +74,8 @@ import com.tvbox.app.domain.SkipCreditsRuntimeState
 import com.tvbox.app.domain.advanceSkipCredits
 import com.tvbox.app.domain.resetSkipCreditsRuntime
 import com.tvbox.app.domain.resolveSkipCredits
+import com.tvbox.app.domain.nextPlaybackSpeed
+import com.tvbox.app.domain.PLAYER_SPEED_STEPS
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.CoroutineScope
@@ -82,7 +84,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlin.math.abs
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -738,7 +739,7 @@ fun PlayerScreen(
         seekGesturePromptNonce++
     }
     val cyclePlaybackSpeedByRemote = {
-        val nextSpeed = nextPlaybackSpeed(latestState.playerSpeed)
+        val nextSpeed = nextPlaybackSpeed(latestState.playerSpeed, PLAYER_SPEED_STEPS)
         player.setPlaybackSpeed(nextSpeed)
         actions.updatePlaybackSpeed(nextSpeed)
         seekGesturePrompt = "当前倍速 ${formatPlaybackSpeed(nextSpeed)}"
@@ -1188,12 +1189,6 @@ private enum class VideoDisplayMode(
 private const val LONG_PRESS_PLAYBACK_SPEED = 2f
 private const val PORTRAIT_VIDEO_ASPECT_RATIO_MAX = 0.8f
 private const val LANDSCAPE_VIDEO_ASPECT_RATIO_MIN = 1.1f
-private val PLAYBACK_SPEEDS = listOf(0.75f, 1f, 1.25f, 1.5f, 2f)
-
-private fun nextPlaybackSpeed(currentSpeed: Float): Float {
-    val currentIndex = PLAYBACK_SPEEDS.indexOfFirst { abs(it - currentSpeed) < 0.01f }
-    return PLAYBACK_SPEEDS[(currentIndex + 1).coerceAtLeast(0) % PLAYBACK_SPEEDS.size]
-}
 
 private fun formatPlaybackSpeed(speed: Float): String {
     return "${speed.toString().trimEnd('0').trimEnd('.')}x"
