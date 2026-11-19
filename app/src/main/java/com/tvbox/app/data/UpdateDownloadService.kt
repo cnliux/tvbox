@@ -35,6 +35,9 @@ internal data class AppDownloadStatus(
     val total: Long = 0,
     val complete: Boolean = false,
     val error: String? = null,
+    /** 用户主动取消标记：cancel() 先置位，即使 startService 被后台启动限制拦截，
+     * 轮询方也能感知并终止，避免「取消无效、下载继续」的体验。 */
+    val cancelled: Boolean = false,
 )
 
 /** Fallback for devices whose ROM has removed or disabled DownloadProvider. */
@@ -70,8 +73,22 @@ class UpdateDownloadService : Service() {
         if (activePath == path && job?.isActive == true) {
             // 重复启动同一 path：沿用进行中的任务，但新的 startId 仍要重新声明前台，
             // 否则系统会按前台服务超时处理；进度沿用 states 中的实时值。
-            if (states[path]?.total?.let { it > 0 } != true) {
+            val existing = states[path]
+            if (existing?.error != null || existing?.complete == true) {
+                // 旧任务已结束但 finally 尚未清场（竞态）：按新任务重启，避免沿用陈旧状态。
+                job?.cancel()
+                activePath = path
+                activeStartId = startId
                 states[path] = AppDownloadStatus(total = size)
+                if (!startForegroundSafely(path, startId)) return START_NOT_STICKY
+                job = scope.launch { runDownload(url, path, size, sha, startId) }
+                return START_REDELIVER_INTENT
+            }
+            // 进行中：更新 total（服务端 contentLength 可能比清单 size 更准）并重新声明前台。
+            if (existing?.total?.let { it > 0 } != true) {
+                states[path] = AppDownloadStatus(total = size)
+            } else if (existing != null && size > existing.total) {
+                states[path] = existing.copy(total = size)
             }
             if (!startForegroundSafely(path, startId)) return START_NOT_STICKY
             return START_REDELIVER_INTENT
@@ -81,64 +98,67 @@ class UpdateDownloadService : Service() {
         activeStartId = startId
         states[path] = AppDownloadStatus(total = size)
         if (!startForegroundSafely(path, startId)) return START_NOT_STICKY
-        job = scope.launch {
-            try {
-                val target = File(path)
-                if (!target.isFile || runCatching { verifyUpdateApk(target, size, sha) }.isFailure) {
-                    val partial = File("$path.part")
-                    val directory = target.parentFile ?: throw IOException("下载目录不可用")
-                    if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建下载目录")
-                    val request = Request.Builder().url(url).header("User-Agent", "TVBox-Android").build()
-                    val call = client.newCall(request)
-                    val cancellation = coroutineContext[Job]?.invokeOnCompletion { if (it != null) call.cancel() }
-                    try {
-                        call.execute().use { response ->
-                            if (!response.isSuccessful) throw IOException("更新下载失败：HTTP ${response.code}")
-                            val total = response.body.contentLength().takeIf { it > 0 } ?: size
-                            var received = 0L
-                            var notifiedAt = 0L
-                            response.body.byteStream().use { input ->
-                                partial.outputStream().use { output ->
-                                    val buffer = ByteArray(32 * 1024)
-                                    while (true) {
-                                        coroutineContext.ensureActive()
-                                        val count = input.read(buffer)
-                                        if (count < 0) break
-                                        output.write(buffer, 0, count)
-                                        received += count
-                                        states[path] = AppDownloadStatus(received, total)
-                                        val now = android.os.SystemClock.elapsedRealtime()
-                                        if (now - notifiedAt >= 1_000) {
-                                            getSystemService(NotificationManager::class.java)
-                                                .notify(NOTIFICATION_ID, notification(received, total))
-                                            notifiedAt = now
-                                        }
+        job = scope.launch { runDownload(url, path, size, sha, startId) }
+        return START_REDELIVER_INTENT
+    }
+
+    /** 应用内下载主流程：流式写入 .part，校验后改名；结束与错误均写回 states。 */
+    private suspend fun runDownload(url: String, path: String, size: Long, sha: String, startId: Int) {
+        try {
+            val target = File(path)
+            if (!target.isFile || runCatching { verifyUpdateApk(target, size, sha) }.isFailure) {
+                val partial = File("$path.part")
+                val directory = target.parentFile ?: throw IOException("下载目录不可用")
+                if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建下载目录")
+                val request = Request.Builder().url(url).header("User-Agent", "TVBox-Android").build()
+                val call = client.newCall(request)
+                val cancellation = coroutineContext[Job]?.invokeOnCompletion { if (it != null) call.cancel() }
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) throw IOException("更新下载失败：HTTP ${response.code}")
+                        val total = response.body.contentLength().takeIf { it > 0 } ?: size
+                        var received = 0L
+                        var notifiedAt = 0L
+                        response.body.byteStream().use { input ->
+                            partial.outputStream().use { output ->
+                                val buffer = ByteArray(32 * 1024)
+                                while (true) {
+                                    coroutineContext.ensureActive()
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    output.write(buffer, 0, count)
+                                    received += count
+                                    states[path] = AppDownloadStatus(received, total)
+                                    val now = android.os.SystemClock.elapsedRealtime()
+                                    if (now - notifiedAt >= 1_000) {
+                                        getSystemService(NotificationManager::class.java)
+                                            .notify(NOTIFICATION_ID, notification(received, total))
+                                        notifiedAt = now
                                     }
                                 }
                             }
                         }
-                    } finally { cancellation?.dispose() }
-                    verifyUpdateApk(partial, size, sha)
-                    if (!partial.renameTo(target)) throw IOException("无法保存已下载的安装包")
-                }
-                states[path] = AppDownloadStatus(target.length(), target.length(), complete = true)
-                Log.i("TVBoxUpdate", "Fallback download completed and verified")
-            } catch (cancelled: CancellationException) {
-                if (states[path]?.error == null) states[path] = AppDownloadStatus(error = "下载已中断，请重试")
-                throw cancelled
-            } catch (error: Exception) {
-                Log.e("TVBoxUpdate", "Fallback download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
-                states[path] = AppDownloadStatus(error = error.message ?: "更新下载失败，请重试")
-            } finally {
-                withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
-                    if (activeStartId == startId) {
-                        stopForeground(STOP_FOREGROUND_REMOVE)
-                        stopSelf()
                     }
+                } finally { cancellation?.dispose() }
+                verifyUpdateApk(partial, size, sha)
+                if (!partial.renameTo(target)) throw IOException("无法保存已下载的安装包")
+            }
+            states[path] = AppDownloadStatus(target.length(), target.length(), complete = true)
+            Log.i("TVBoxUpdate", "Fallback download completed and verified")
+        } catch (cancelled: CancellationException) {
+            if (states[path]?.error == null) states[path] = AppDownloadStatus(error = "下载已中断，请重试")
+            throw cancelled
+        } catch (error: Exception) {
+            Log.e("TVBoxUpdate", "Fallback download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
+            states[path] = AppDownloadStatus(error = error.message ?: "更新下载失败，请重试")
+        } finally {
+            withContext(kotlinx.coroutines.NonCancellable + Dispatchers.Main) {
+                if (activeStartId == startId) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
         }
-        return START_REDELIVER_INTENT
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -200,6 +220,11 @@ class UpdateDownloadService : Service() {
 
         /** 请求停止当前更新下载；服务未运行或后台启动受限时静默忽略。 */
         internal fun cancel(context: Context) {
+            // 先置取消标记：即使 startService 被 Android 12+ 后台启动限制拦截，
+            // downloadInApp 的轮询也能感知并终止，避免「取消无效」。
+            states.keys.firstOrNull()?.let { path ->
+                states[path]?.let { states[path] = it.copy(cancelled = true) }
+            }
             runCatching {
                 context.startService(Intent(context, UpdateDownloadService::class.java).setAction(ACTION_CANCEL))
             }

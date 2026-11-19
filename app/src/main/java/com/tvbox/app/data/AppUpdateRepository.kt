@@ -96,6 +96,9 @@ class DefaultAppUpdateRepository(
         .followRedirects(true)
         .connectTimeout(CDN_PROBE_CONNECT_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .readTimeout(CDN_PROBE_READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        // callTimeout 兜底：整体 withTimeout(4s) 超时后，阻塞中的 execute() 由 OkHttp 自身
+        // 终止，避免子协程继续占用连接/线程到各自 budget 结束。
+        .callTimeout(CDN_PROBE_OVERALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
 
     override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = withContext(Dispatchers.IO) {
@@ -219,6 +222,8 @@ class DefaultAppUpdateRepository(
         for ((index, candidate) in candidates.withIndex()) {
             if (index > 0) {
                 delay(otaCdnRetryDelayMs(index - 1))
+                // 切换到备用 CDN：新线路从 0% 重新计数，且重置闸门防止新线路首段进度被旧值吞掉。
+                progressGate.resetForNewCdn()
                 progressGate.onProgress(0)
             }
             val startedAtMs = System.currentTimeMillis()
@@ -418,6 +423,7 @@ class DefaultAppUpdateRepository(
                 consecutiveNullStatus = 0
             }
             if (status?.error != null) throw IOException(status.error)
+            if (status?.cancelled == true) throw IOException("下载已取消")
             if (status?.complete == true) {
                 verifyUpdateApk(apk, task.manifest.apkSize, task.manifest.apkSha256)
                 onProgress(100)
@@ -630,10 +636,11 @@ class DefaultAppUpdateRepository(
 internal fun isSecureOtaUrl(url: String): Boolean {
     val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
     val scheme = uri.scheme?.lowercase().orEmpty()
-    val host = uri.host?.lowercase().orEmpty()
+    // URI.host 对 IPv6 字面量可能带方括号（[::1]），统一剥离后判断，消除边界歧义。
+    val host = uri.host?.lowercase()?.trim('[', ']').orEmpty()
     return when (scheme) {
         "https" -> host.isNotBlank()
-        "http" -> host in setOf("127.0.0.1", "localhost", "::1", "[::1]")
+        "http" -> host in setOf("127.0.0.1", "localhost", "::1")
         else -> false
     }
 }

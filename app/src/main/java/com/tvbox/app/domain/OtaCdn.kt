@@ -1,6 +1,7 @@
 package com.tvbox.app.domain
 
 import kotlinx.coroutines.CancellationException
+import java.io.IOException
 
 /**
  * OTA 多 CDN 下载策略（纯 Kotlin，不依赖 Android，可直接 JVM 单测）。
@@ -253,9 +254,26 @@ private val FATAL_OTA_MESSAGE_TOKENS = listOf(
     "无法启动应用下载服务",
 )
 
+/**
+ * 失败分类：换 CDN 是否有意义。
+ *
+ * 只有「本地不可恢复」的致命错误才返回 [OtaCdnFailureKind.Fatal]，网络/HTTP/超时等
+ * 一律 [OtaCdnFailureKind.RetryOnAnotherCdn]。
+ *
+ * 不用纯 message 匹配判定网络类错误：网络异常消息（如 "download interrupted"）可能
+ * 偶发包含致命 token，误判会停止 CDN 切换、浪费整个更新流程。因此：
+ * - 明确类型优先：CancellationException（用户取消/取消协程）、SecurityException（本地权限）
+ *   判 Fatal；
+ * - IOException 且消息命中本地致命 token（空间不足/目录/校验/记录/服务启动）判 Fatal；
+ * - 其余 IOException / OkHttp 网络异常一律 RetryOnAnotherCdn。
+ */
 fun classifyOtaDownloadFailure(error: Throwable): OtaCdnFailureKind {
     if (error is CancellationException) return OtaCdnFailureKind.Fatal
+    if (error is SecurityException) return OtaCdnFailureKind.Fatal
     val message = error.message.orEmpty()
+    // 网络类异常（超时、连接中断、协议错误）换一条 CDN 通常有收益；即使消息里
+    // 恰好含 token（如 "下载已中断" 被网络层复用），也不应据此停止切换。
+    if (error !is IOException) return OtaCdnFailureKind.RetryOnAnotherCdn
     return if (FATAL_OTA_MESSAGE_TOKENS.any { message.contains(it, ignoreCase = true) }) {
         OtaCdnFailureKind.Fatal
     } else {
@@ -294,6 +312,16 @@ data class OtaCdnAttempt(
 class OtaDownloadProgressGate(private val emit: (Int) -> Unit) {
     private var lastReported = -1
     private var completed = false
+
+    /**
+     * 切换到备用 CDN 后新线路从 0% 重新计数。
+     * 必须先重置 lastReported，否则新线路首次回调（如 3%）小于旧值会被丢弃，
+     * 进度条会"卡住在旧值"直到新值超过它才跳变。
+     */
+    fun resetForNewCdn() {
+        lastReported = -1
+        completed = false
+    }
 
     fun onProgress(value: Int) {
         if (completed) return

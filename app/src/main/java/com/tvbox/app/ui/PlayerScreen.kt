@@ -1082,9 +1082,11 @@ private class PlaybackRebuildSeed {
     private var positionMs: Long = 0L
 
     fun remember(player: ExoPlayer) {
-        if (player.currentPosition > 0L && player.currentMediaItemIndex >= 0) {
+        // 只要已定位到某一集（含位置 0：刚开播就切换解码策略）就记录续播种子，
+        // 否则新播放器会从头开始而丢失"第几集"的上下文。
+        if (player.currentMediaItemIndex >= 0) {
             episodeIndex = player.currentMediaItemIndex
-            positionMs = player.currentPosition
+            positionMs = player.currentPosition.coerceAtLeast(0L)
         }
     }
 

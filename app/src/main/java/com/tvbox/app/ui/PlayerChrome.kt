@@ -233,10 +233,13 @@ internal fun PlayerChromeBackHandler(
     extraDismiss: List<() -> Boolean> = emptyList(),
 ) {
     BackHandler {
+        // 先探测是否存在页面级浮层：与 extraDismiss 的逐层判断保持一致，
+        // 否则 playerChromeBackAction 的 extraLayerOpen 恒为 false，BACK 层级判定会失真。
+        val extraLayerOpen = extraDismiss.any { it() }
         val action = playerChromeBackAction(
             locked = state.locked,
             panel = state.panel,
-            extraLayerOpen = false,
+            extraLayerOpen = extraLayerOpen,
             visible = state.visible,
             dismissControls = dismissControls,
         )
@@ -1432,7 +1435,7 @@ private fun PlayerChromeMobilePanel(
                         data.episodes.lastIndex - data.episodeIndex
                     } else {
                         data.episodeIndex
-                    }
+                    }.coerceIn(0, data.episodes.lastIndex.coerceAtLeast(0))
                     val epRowState = rememberLazyListState()
                     // 打开选集面板时直接定位到当前集（左边留两格上下文）；
                     // 否则百集剧要从第 1 集横滑几十次才能找到正在看的那集。
@@ -1742,6 +1745,10 @@ private fun SkipSettingsPanel(
             SkipOptionRow(outroSkipOptions, outroSeconds, onOutroSkip)
             Text("设置会立即保存，对之后播放的集数生效。", style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.55f))
+            // 片头+片尾区间重叠时跳过不动作：提前说明，避免用户设置了 60s+90s 却毫无反馈。
+            Text("提示：片头 + 片尾超过单集时长时跳过不会生效（避免在区间内来回跳）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color(0xFFFACC15))
         }
     }
 }
