@@ -41,6 +41,23 @@ class EpgParserTest {
     }
 
     @Test
+    fun parsesColonTimezoneByAbsoluteOffsetAndRejectsTrailingJunk() {
+        val xml = "<tv>" +
+            "<programme start=\"20260101120000+08:00\" stop=\"20260101130000+08:00\" channel=\"c1\">" +
+            "<title>带冒号时区</title></programme>" +
+            "<programme start=\"20260101150000+08:00oops\" stop=\"20260101160000+08:00\" channel=\"c1\">" +
+            "<title>尾部脏数据</title></programme>" +
+            "</tv>"
+
+        val parsed = parseXmltvEpg(xml)
+
+        // 12:00+08:00 == 04:00 UTC，与运行测试设备的本地时区无关。
+        assertEquals(1_767_240_000_000L, parsed["c1"]?.single()?.startMs)
+        assertEquals(1_767_243_600_000L, parsed["c1"]?.single()?.stopMs)
+        assertEquals(listOf("带冒号时区"), parsed["c1"]?.map { it.title })
+    }
+
+    @Test
     fun keepsProgrammesWithoutChannelDeclaration() {
         val xml = "<tv>" +
             "<programme start=\"20260101080000\" stop=\"20260101090000\" channel=\"orphan\">" +

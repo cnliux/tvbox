@@ -143,6 +143,20 @@ enum class HomeFeedMode {
     Catalog,
 }
 
+/**
+ * 通知权限被拒后的一次性提示。[permanent] 表示用户选择了「不再询问」（或策略禁止），
+ * 此时再次申请不会弹窗，只能引导去系统设置开启；临时拒绝仍可重试授权。
+ */
+data class NotificationPermissionDenial(val permanent: Boolean) {
+    /** 可直接展示的文案，含设置路径，便于用户自行处理。 */
+    val message: String
+        get() = if (permanent) {
+            "通知权限已被拒绝且不再询问，更新下载进度无法显示。请到系统设置 → 应用 → TVBox → 通知中允许通知后重试。"
+        } else {
+            "未获得通知权限，更新下载进度无法显示。可重试授权，或在系统设置中开启通知。"
+        }
+}
+
 enum class PlatformLiveDestination {
     Sites,
     Favorites,
@@ -232,6 +246,8 @@ data class TvBoxUiState(
     val source: SourceManagerUiState = SourceManagerUiState(),
     /** 设置持久化失败时的一次性提示，由 UI 消费后清空。 */
     val settingsSaveError: String? = null,
+    /** 通知权限被拒的一次性提示；由 UI 展示「重试授权 / 去设置」后清空。 */
+    val notificationPermissionDenial: NotificationPermissionDenial? = null,
 ) {
     // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写子 state.copy(...)。
     val availableUpdate: AppUpdate? get() = update.availableUpdate
@@ -412,6 +428,10 @@ class TvBoxViewModel(
     private var platformLiveRecoveryWindowAttempts = 0
     // 同一条候选线路的原地重连次数（缓冲卡死/被服务端正常关流时先用完再换线路）。
     private var platformLiveSameLineRetries = 0
+    // 当前这轮自动恢复中已失败的候选下标。键取「房间 + 候选列表」而非对象身份，
+    // 这样 withActiveCandidate() 产生的副本不会把已试过的线路清空。
+    private var platformLiveRotationKey: String? = null
+    private val platformLiveTriedCandidates = mutableSetOf<Int>()
     // 详情页选集滚动位置记忆（影片 id + 线路 -> 首个可见项下标）。
     // 返回详情页时恢复用户上次滚动到的位置，而不是被"滚到选中集"逻辑拉回去。
     private val detailEpisodeScrollIndex = HashMap<String, Int>()
@@ -431,6 +451,12 @@ class TvBoxViewModel(
     private val liveFavoritesMutex = Mutex()
     private var epgJob: Job? = null
     private var liveLineTestJob: Job? = null
+    /** 当前测速归属的频道/订阅身份；切台换源后旧协程的迟到结果一律作废。 */
+    @Volatile
+    private var liveLineTestIdentity: String? = null
+    /** 测速代次：即使切回同名频道，上一轮协程的迟到回调也不能清掉新一轮的状态。 */
+    @Volatile
+    private var liveLineTestGeneration = 0L
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
@@ -467,6 +493,18 @@ class TvBoxViewModel(
         }
         loadPlatformLiveFavorites()
         loadLiveFavorites()
+        // 切台/换源后当前频道身份改变：统一终止在途测速，避免旧协程继续占用网络或写回旧结果。
+        // 只切线路（lineIndex）不改变身份，用户主动发起的测速不会被误取消。
+        viewModelScope.launch {
+            var lastIdentity = currentLiveLineTestIdentity(_state.value)
+            _state.collect { current ->
+                val identity = currentLiveLineTestIdentity(current)
+                if (identity != lastIdentity) {
+                    lastIdentity = identity
+                    if (liveLineTestJob != null) cancelLiveChannelLineTest()
+                }
+            }
+        }
         viewModelScope.launch {
             val settings = runCatching { appSettingsRepository.getSettings() }
                 .getOrDefault(AppSettings())
@@ -2137,6 +2175,15 @@ class TvBoxViewModel(
     }
 
     /**
+     * 线路测速归属：订阅 + 频道下标 + 分组/频道名。只切线路（lineIndex）不产生新身份，
+     * 频道/订阅一变，旧协程的结果就不能再写进当前频道的延迟表。
+     */
+    private fun currentLiveLineTestIdentity(state: TvBoxUiState): String? {
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return null
+        return "${state.live.selectedSourceIndex}:${state.live.channelIndex}:${channel.groupName}#${channel.name}"
+    }
+
+    /**
      * 对当前频道的所有线路发起首包测速，结果写入 [LiveUiState.lineLatencies]。
      *
      * 在线路浮层展开时调用：让用户按实际延迟挑线路，而不是逐条点播试错。
@@ -2148,39 +2195,79 @@ class TvBoxViewModel(
         val lines = channel.lines
         if (lines.isEmpty()) return
         if (state.live.lineTesting) return
+        val identity = currentLiveLineTestIdentity(state) ?: return
         // 新频道/新测速：清掉上一轮结果，避免旧延迟误导用户。
         _state.update { it.copy(live = it.live.copy(lineTesting = true, lineLatencies = emptyMap())) }
         liveLineTestJob?.cancel()
+        val generation = ++liveLineTestGeneration
+        liveLineTestIdentity = identity
         liveLineTestJob = viewModelScope.launch {
             android.util.Log.i(VM_LIVE_LOG_TAG, "【线路测速】开始 channel=${channel.name}, lines=${lines.size}")
-            val results = mutableMapOf<String, Long?>()
-            coroutineScope {
-                lines.forEach { line ->
-                    launch {
-                        val latency = runCatching {
-                            measureLiveLineLatencyMs(line.url, line.headers)
-                        }.getOrNull()
-                        results[line.url] = latency
-                        // 单条完成即写入：浮层里该行从「测速中」变成实测结果，不必等全部线路结束。
-                        _state.update { it.copy(live = it.live.copy(lineLatencies = results.toMap())) }
-                    }
+            // async 并发，但写入统一加锁并发布不可变快照：避免多个协程同时写 mutableMap
+            // 让 UI 读到半成品，同时保留「单条完成即写入」的浮层体验与原顺序。
+            val results = LinkedHashMap<String, Long?>()
+            val resultsMutex = Mutex()
+            fun publish(snapshot: Map<String, Long?>) {
+                // 切台/换源后的迟到结果一律丢弃，不覆盖新频道数据。
+                if (liveLineTestGeneration != generation || liveLineTestIdentity != identity) return
+                _state.update { current ->
+                    if (liveLineTestGeneration != generation || liveLineTestIdentity != identity ||
+                        currentLiveLineTestIdentity(current) != identity
+                    ) current
+                    else current.copy(live = current.live.copy(lineLatencies = snapshot))
                 }
             }
-            android.util.Log.i(
-                VM_LIVE_LOG_TAG,
-                "【线路测速】完成 channel=${channel.name}, " +
-                    results.entries.joinToString { (url, ms) -> "${logSafeUrl(url)}=${ms?.let { "${it}ms" } ?: "超时"}" },
-            )
-            _state.update { it.copy(live = it.live.copy(lineLatencies = results.toMap(), lineTesting = false)) }
+            try {
+                coroutineScope {
+                    lines.map { line ->
+                        async {
+                            val latency = try {
+                                measureLiveLineLatencyMs(line.url, line.headers)
+                            } catch (cancelled: CancellationException) {
+                                // 切台/离页取消必须立即透传，否则迟到的 null 会污染新频道结果。
+                                throw cancelled
+                            } catch (_: Throwable) {
+                                null
+                            }
+                            val snapshot = resultsMutex.withLock {
+                                results[line.url] = latency
+                                results.toMap()
+                            }
+                            publish(snapshot)
+                        }
+                    }.awaitAll()
+                }
+                val snapshot = resultsMutex.withLock { results.toMap() }
+                android.util.Log.i(
+                    VM_LIVE_LOG_TAG,
+                    "【线路测速】完成 channel=${channel.name}, " +
+                        snapshot.entries.joinToString { (url, ms) -> "${logSafeUrl(url)}=${ms?.let { "${it}ms" } ?: "超时"}" },
+                )
+                if (liveLineTestGeneration == generation && liveLineTestIdentity == identity) {
+                    _state.update { current ->
+                        if (currentLiveLineTestIdentity(current) != identity) current
+                        else current.copy(live = current.live.copy(lineLatencies = snapshot, lineTesting = false))
+                    }
+                }
+            } finally {
+                // 只清理本轮代次，避免新测速刚启动就被旧协程的 finally 误清。
+                if (liveLineTestGeneration == generation && liveLineTestIdentity == identity) {
+                    liveLineTestJob = null
+                    liveLineTestIdentity = null
+                }
+            }
         }
     }
 
-    /** 线路浮层关闭即停：取消未完成的测速，不在后台继续占用网络。 */
+    /** 线路浮层关闭/切台即停：取消未完成的测速，并清掉属于旧频道的结果。 */
     fun cancelLiveChannelLineTest() {
+        liveLineTestGeneration++
         liveLineTestJob?.cancel()
         liveLineTestJob = null
-        if (_state.value.live.lineTesting) {
-            _state.update { it.copy(live = it.live.copy(lineTesting = false)) }
+        liveLineTestIdentity = null
+        val live = _state.value.live
+        if (live.lineTesting || live.lineLatencies.isNotEmpty()) {
+            _state.update { it.copy(live = it.live.copy(lineTesting = false, lineLatencies = emptyMap())) }
         }
     }
 
@@ -2269,6 +2356,17 @@ class TvBoxViewModel(
     fun consumeSettingsSaveError() {
         if (_state.value.settingsSaveError == null) return
         _state.update { it.copy(settingsSaveError = null) }
+    }
+
+    /** 通知权限被拒：记录一次性提示，UI 据此给出「重试授权」或「去设置」入口。 */
+    fun reportNotificationPermissionDenied(permanent: Boolean) {
+        _state.update { it.copy(notificationPermissionDenial = NotificationPermissionDenial(permanent)) }
+    }
+
+    /** 通知权限提示已展示/关闭后清空，避免重复弹出。 */
+    fun consumeNotificationPermissionDenial() {
+        if (_state.value.notificationPermissionDenial == null) return
+        _state.update { it.copy(notificationPermissionDenial = null) }
     }
 
     /** 消费一次性轻提示（自动切线路/订阅切换结果）。 */
@@ -2750,6 +2848,9 @@ class TvBoxViewModel(
     }
 
     fun reconnectPlatformLiveChannel() {
+        // 强制重新解析意味着开启新一轮候选轮换，旧失败记录不再适用。
+        platformLiveTriedCandidates.clear()
+        platformLiveRotationKey = null
         android.util.Log.w(VM_LIVE_LOG_TAG, "【平台重新解析】forceRefresh=true")
         resolvePlatformLiveRoom(forceRefresh = true)
     }
@@ -2765,8 +2866,10 @@ class TvBoxViewModel(
             VM_LIVE_LOG_TAG,
             "【平台手动切换候选】from=${stream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}",
         )
-        // 用户手动指定线路后，重置自动恢复计数，避免刚切完就被熔断拦下。
+        // 用户手动指定线路后，重置自动恢复计数与已失败候选，按用户选择开启新一轮轮换。
         platformLiveRecoveryInProgress = false
+        platformLiveTriedCandidates.clear()
+        platformLiveRotationKey = null
         platformLiveSameLineRetries = 0
         platformLiveRecoveryWindowAttempts = 0
         platformLiveRecoveryWindowStartMs = 0L
@@ -2884,12 +2987,27 @@ class TvBoxViewModel(
         }
     }
 
-    /** 切换到下一条候选 CDN；已是最后一条则强制重新解析。 */
+    /** 候选轮换身份：房间 + 候选 URL 列表；仅切换 activeIndex 不改变身份。 */
+    private fun platformLiveStreamKey(stream: ResolvedPlatformLiveStream): String = buildString {
+        append(stream.channelId).append('\u0000')
+        stream.candidates.forEach { append(it.url).append('\u0000') }
+    }
+
+    /** 切换到下一条未失败的候选 CDN；全部试过才强制重新解析。 */
     private fun rotatePlatformLiveCandidate(stream: ResolvedPlatformLiveStream) {
-        val nextIdx = nextRotatedPlatformLiveCandidate(stream)
+        // 重新解析/换房（候选列表变化）才重置；自动切换 activeIndex 产生的副本保留已失败集合。
+        val key = platformLiveStreamKey(stream)
+        if (platformLiveRotationKey != key) {
+            platformLiveRotationKey = key
+            platformLiveTriedCandidates.clear()
+        }
+        platformLiveTriedCandidates += stream.safeActiveCandidateIndex
+        val nextIdx = nextRotatedPlatformLiveCandidate(stream, platformLiveTriedCandidates)
         val nextCandidate = nextIdx?.let { stream.candidates.getOrNull(it) }
         if (nextIdx == null || nextCandidate == null) {
             android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈或无可用候选，强制重新解析")
+            platformLiveTriedCandidates.clear()
+            platformLiveRotationKey = null
             platformLiveRecoveryInProgress = false
             reconnectPlatformLiveChannel()
             return

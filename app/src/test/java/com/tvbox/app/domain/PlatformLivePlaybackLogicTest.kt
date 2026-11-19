@@ -25,6 +25,21 @@ class PlatformLivePlaybackLogicTest {
     }
 
     @Test
+    fun defaultRotationStillWrapsToNullForThreeCandidates() {
+        val stream = resolved(listOf(c("a"), c("b"), c("c")), 2)
+        assertNull(nextRotatedPlatformLiveCandidate(stream))
+    }
+
+    @Test
+    fun triedSetAllowsCandidateZeroWhenRotationStartsElsewhere() {
+        val stream = resolved(listOf(c("a"), c("b"), c("c")), 1)
+        // 候选 1、2 已失败：必须还能尝试从未用过的候选 0，而不是直接触发重新解析。
+        assertEquals(0, nextRotatedPlatformLiveCandidate(stream, setOf(1, 2)))
+        // 全部试过才返回 null。
+        assertNull(nextRotatedPlatformLiveCandidate(stream, setOf(0, 1, 2)))
+    }
+
+    @Test
     fun singleCandidateReturnsCurrentIndexForSameLineRetry() {
         // 单候选时不应返回 null（null = 强制重新解析），应返回当前下标让调用方走
         // sameLineRetries 递增 + schedulePlatformLiveReResolve 的退避重解析路径。

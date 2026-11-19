@@ -385,6 +385,9 @@ private fun EpisodeGrid(
         return
     }
     val leadingItemCount = EPISODE_HEADER_ITEM_COUNT + if (header != null) 1 else 0
+    // 线路身份参与 item key：换源时即使集数下标相同也要重建，避免复用上一线路的按钮状态；
+    // 不取剧集内容（url/title）是因为同一线路里完全可能存在重复 url/标题。
+    val episodeSourceKey = source?.lineId?.takeIf { it.isNotBlank() } ?: source?.name.orEmpty()
     val displayedEpisodes = if (episodeSortReverse) episodes.asReversed() else episodes
     val safeSelectedEpisodeIndex = if (episodeSortReverse) {
         (episodes.size - 1 - selectedEpisodeIndex).coerceIn(0, displayedEpisodes.lastIndex)
@@ -456,9 +459,14 @@ private fun EpisodeGrid(
         }
         itemsIndexed(
             items = displayedEpisodes,
-            // key 只取剧集内容：正倒序切换不应让 LazyGrid 认为整批都是新 item，
-            // 否则滚动位置归零、焦点请求器重建。
-            key = { _, episode -> episode.url },
+            // key 必须由「线路 + 真实集数下标」组成：url/title 可能重复（被裁剪的 m3u8 列表、
+            // 同一地址多标题、甚至完全重复的行），直接当 key 会让 Compose 抛「duplicate key」崩溃。
+            // 用 realIndex 而不是展示下标，正倒序切换时同一个剧集的 key 保持不变，
+            // 不会整批重建、也不会把滚动位置归零；换线路时 sourceKey 变化才重建。
+            key = { index, _ ->
+                val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
+                "episode-$episodeSourceKey-$realIndex"
+            },
         ) { index, episode ->
             val realIndex = if (episodeSortReverse) episodes.lastIndex - index else index
             EpisodeButton(

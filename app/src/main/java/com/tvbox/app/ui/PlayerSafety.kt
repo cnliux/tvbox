@@ -185,24 +185,37 @@ internal data class HardwareDecoderFallbackEvent(
  * - [reset] 在每次构建选择器前清空，避免上一台的状态串到新播放器。
  */
 internal object HardwareDecoderFallbackNotice {
-    var event: HardwareDecoderFallbackEvent? by mutableStateOf(null)
-        private set
+    // report() 来自 MediaCodecSelector 的解码线程，event/kinds 又被 UI 组合直接读取：
+    // 读写必须同一把锁，否则「先判断再写入」的复合操作会丢更新/读到半新半旧快照。
+    // 对外仍以 mutableStateOf 作为可观察载体，Compose 侧 API（直接读 event/kinds）保持不变。
+    private val lock = Any()
 
-    var kinds: Set<DecoderTrackKind> by mutableStateOf(emptySet())
-        private set
+    private var stateEvent: HardwareDecoderFallbackEvent? by mutableStateOf(null)
+    private var stateKinds: Set<DecoderTrackKind> by mutableStateOf(emptySet())
 
     private var sequence = 0L
 
+    val event: HardwareDecoderFallbackEvent?
+        get() = synchronized(lock) { stateEvent }
+
+    val kinds: Set<DecoderTrackKind>
+        get() = synchronized(lock) { stateKinds }
+
     fun reset() {
-        kinds = emptySet()
-        event = null
+        synchronized(lock) {
+            stateKinds = emptySet()
+            stateEvent = null
+            // 不清零 sequence：Toast 去重靠序号递增，重置事件不能让上一条提示重复弹出。
+        }
     }
 
     fun report(mimeType: String, kind: DecoderTrackKind) {
-        if (kind !in kinds) kinds = kinds + kind
-        if (event == null) {
-            sequence += 1
-            event = HardwareDecoderFallbackEvent(mimeType, kind, sequence)
+        synchronized(lock) {
+            if (kind !in stateKinds) stateKinds = stateKinds + kind
+            if (stateEvent == null) {
+                sequence += 1
+                stateEvent = HardwareDecoderFallbackEvent(mimeType, kind, sequence)
+            }
         }
     }
 }

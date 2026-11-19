@@ -10,12 +10,17 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.Inet4Address
+import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
+import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 
 data class RemoteManageSession(
@@ -67,16 +72,34 @@ data class RemoteManageRequest(
 )
 
 /**
- * 局域网远程管理服务：无需 token，手机与电视在同一网络时直接访问即可。
- * 支持视频源管理（导入/选择/屏蔽/删除/测速）、直播源、平台站点与屏蔽视频分类。
+ * 局域网远程管理服务。
+ *
+ * 安全边界（默认拒绝未授权写操作）：
+ *  - GET /blocked-categories.json 是只读状态端点，有意保持开放，便于局域网内读取屏蔽分类；
+ *  - GET /（管理页面）与所有 POST 状态变更端点必须携带本次会话 token。token 由
+ *    [start] 随机生成（也可用 [controlToken] 外部配置），只出现在电视端展示的完整 URL 中，
+ *    页面表单通过隐藏字段透传，LAN 上无法从开放端点猜到；
+ *  - [allowUnauthenticatedControl] 为 true 会显式关闭写操作鉴权，仅限本机调试，默认 false。
+ *
+ * 注意：调用方展示的地址必须保留完整 query（含 token），否则手机端会被 403 拒绝。
  */
 class RemoteManageServer(
     private val snapshot: () -> RemoteManageSnapshot,
     private val onSubmit: suspend (RemoteManageRequest) -> String?,
+    /** 可选固定 token；留空则每次 start() 随机生成，避免长期有效的局域网凭据。 */
+    private val controlToken: String = "",
+    /** 显式开启无 token 控制（危险）；默认 false，即所有写操作都要鉴权。 */
+    private val allowUnauthenticatedControl: Boolean = false,
 ) {
     @Volatile
     private var serverSocket: ServerSocket? = null
     private val activeClients = AtomicInteger(0)
+
+    /** 在途客户端 socket，stop() 时主动关闭，让阻塞在 readLine() 的协程立即退出。 */
+    private val activeSockets = Collections.newSetFromMap(ConcurrentHashMap<Socket, Boolean>())
+
+    @Volatile
+    private var sessionToken: String = ""
 
     /**
      * 服务私有的协程作用域：acceptLoop 与每个客户端都作为它的子协程。
@@ -94,23 +117,38 @@ class RemoteManageServer(
         serverSocket = socket
         // stop() 取消了旧 scope，这里重建一个可复用的（CoroutineScope 取消后不能再次 launch）。
         serverScope = newServerScope()
+        sessionToken = when {
+            controlToken.isNotBlank() -> controlToken
+            allowUnauthenticatedControl -> ""
+            else -> newSessionToken()
+        }
         val host = localIpv4Address()
         serverScope.launch {
             acceptLoop(socket)
         }
+        val tokenQuery = if (sessionToken.isEmpty()) {
+            ""
+        } else {
+            "?$TOKEN_QUERY_KEY=${URLEncoder.encode(sessionToken, StandardCharsets.UTF_8.name())}"
+        }
         RemoteManageSession(
-            url = "http://$host:${socket.localPort}/",
+            url = "http://$host:${socket.localPort}/$tokenQuery",
             host = host,
             port = socket.localPort,
         )
     }
 
     fun stop() {
-        // 先关 socket 让 accept() 立即抛异常退出循环，再取消整个私有作用域（含在途客户端）。
+        // 先关监听 socket 让 accept() 立即抛异常退出循环，再关闭在途客户端并取消整个私有作用域。
         runCatching { serverSocket?.close() }
         serverSocket = null
+        activeSockets.toList().forEach { socket -> runCatching { socket.close() } }
+        activeSockets.clear()
         runCatching { serverScope.cancel() }
     }
+
+    /** 别名，方便生命周期组件以 shutdown() 语义调用。 */
+    fun shutdown() = stop()
 
     private suspend fun acceptLoop(socket: ServerSocket) {
         val loopScope = serverScope
@@ -127,6 +165,7 @@ class RemoteManageServer(
                     runCatching { handleClient(client) }
                 } finally {
                     activeClients.decrementAndGet()
+                    runCatching { client.close() }
                 }
             }
         }
@@ -134,55 +173,111 @@ class RemoteManageServer(
 
     private suspend fun handleClient(client: Socket) {
         client.use { socket ->
-            runCatching { socket.soTimeout = CLIENT_READ_TIMEOUT_MS }
-            val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
-            val requestLine = reader.readLine().orEmpty()
-            if (requestLine.isBlank()) return
-            val parts = requestLine.split(" ")
-            val method = parts.getOrNull(0).orEmpty()
-            val target = parts.getOrNull(1).orEmpty()
-            val headers = mutableMapOf<String, String>()
-            while (true) {
-                val line = reader.readLine() ?: break
-                if (line.isEmpty()) break
-                val separator = line.indexOf(':')
-                if (separator > 0) {
-                    headers[line.substring(0, separator).trim().lowercase()] =
-                        line.substring(separator + 1).trim()
-                }
-            }
-
-            when (method) {
-                "GET" -> if (target.startsWith("/blocked-categories.json")) {
-                    writeJsonResponse(socket, blockedCategoriesJson())
-                } else {
-                    writeHtmlResponse(socket, page(queryValue(target, "message")))
-                }
-                "POST" -> {
-                    val declaredLength = headers["content-length"]?.toLongOrNull() ?: 0L
-                    if (declaredLength > MAX_REQUEST_BODY_BYTES) {
-                        writeHtmlResponse(socket, "请求体过大，已拒绝。", status = "413 Payload Too Large")
-                        return
+            activeSockets.add(socket)
+            try {
+                runCatching { socket.soTimeout = CLIENT_READ_TIMEOUT_MS }
+                val reader = BufferedReader(InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))
+                val requestLine = reader.readLine().orEmpty()
+                if (requestLine.isBlank()) return
+                val parts = requestLine.split(" ")
+                val method = parts.getOrNull(0).orEmpty()
+                val target = parts.getOrNull(1).orEmpty()
+                val headers = mutableMapOf<String, String>()
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line.isEmpty()) break
+                    val separator = line.indexOf(':')
+                    if (separator > 0) {
+                        headers[line.substring(0, separator).trim().lowercase()] =
+                            line.substring(separator + 1).trim()
                     }
-                    val body = readBody(reader, declaredLength.toInt())
-                    val form = parseForm(body)
-                    val request = RemoteManageRequest(
-                        action = form["action"].orEmpty(),
-                        id = form["id"].orEmpty(),
-                        name = form["name"].orEmpty(),
-                        url = form["url"].orEmpty(),
-                        value = form["value"].orEmpty(),
-                        content = form["content"].orEmpty(),
-                    )
-                    val message = onSubmit(request) ?: "操作成功"
-                    val location = "/?message=" +
-                        URLEncoder.encode(message, StandardCharsets.UTF_8.name())
-                    writeRedirect(socket, location)
                 }
-                else -> writeHtmlResponse(socket, "不支持的请求。", status = "405 Method Not Allowed")
+
+                when (method) {
+                    "GET" -> when {
+                        // 只读状态端点：有意开放，不要求 token（见类注释的安全边界）。
+                        target.startsWith("/blocked-categories.json") ->
+                            writeJsonResponse(socket, blockedCategoriesJson())
+                        !isAuthorized(queryValue(target, TOKEN_QUERY_KEY) ?: headers[TOKEN_HEADER].orEmpty()) ->
+                            writeHtmlResponse(
+                                socket,
+                                "管理页面需要有效 token，请使用电视端显示的完整地址访问。",
+                                status = "403 Forbidden",
+                            )
+                        else -> writeHtmlResponse(socket, page(queryValue(target, "message"), sessionToken))
+                    }
+                    "POST" -> {
+                        val declaredLength = headers["content-length"]?.toLongOrNull() ?: 0L
+                        if (declaredLength < 0) {
+                            writeHtmlResponse(socket, "请求体长度不合法，已拒绝。", status = "400 Bad Request")
+                            return
+                        }
+                        if (declaredLength > MAX_REQUEST_BODY_BYTES) {
+                            writeHtmlResponse(socket, "请求体过大，已拒绝。", status = "413 Payload Too Large")
+                            return
+                        }
+                        val body = readBody(reader, declaredLength.toInt())
+                        val form = parseForm(body)
+                        val suppliedToken = form[TOKEN_QUERY_KEY].orEmpty()
+                            .ifBlank { headers[TOKEN_HEADER].orEmpty() }
+                        if (!isAuthorized(suppliedToken)) {
+                            writeHtmlResponse(socket, "token 无效或已过期，请刷新电视端页面后重试。", status = "403 Forbidden")
+                            return
+                        }
+                        val request = RemoteManageRequest(
+                            action = form["action"].orEmpty(),
+                            id = form["id"].orEmpty(),
+                            name = form["name"].orEmpty(),
+                            url = form["url"].orEmpty(),
+                            value = form["value"].orEmpty(),
+                            content = form["content"].orEmpty(),
+                        )
+                        // onSubmit 抛错时只回稳定文案，不把异常原文（可能含 URL/凭据）写进页面。
+                        val message = runCatching { onSubmit(request) }
+                            .getOrElse { "操作失败（${it.javaClass.simpleName}）" }
+                            ?: "操作成功"
+                        val tokenPart = if (sessionToken.isEmpty()) {
+                            ""
+                        } else {
+                            "$TOKEN_QUERY_KEY=${URLEncoder.encode(sessionToken, StandardCharsets.UTF_8.name())}&"
+                        }
+                        val location = "/?$tokenPart" +
+                            "message=" + URLEncoder.encode(message, StandardCharsets.UTF_8.name())
+                        writeRedirect(socket, location)
+                    }
+                    else -> writeHtmlResponse(socket, "不支持的请求。", status = "405 Method Not Allowed")
+                }
+            } finally {
+                activeSockets.remove(socket)
             }
         }
     }
+
+    /** 常量时间比较，避免通过响应耗时逐字节猜 token。 */
+    private fun isAuthorized(supplied: String): Boolean {
+        if (allowUnauthenticatedControl && sessionToken.isEmpty()) return true
+        if (sessionToken.isEmpty()) return false
+        return MessageDigest.isEqual(
+            sessionToken.toByteArray(StandardCharsets.UTF_8),
+            supplied.toByteArray(StandardCharsets.UTF_8),
+        )
+    }
+
+    private fun newSessionToken(): String {
+        val bytes = ByteArray(18)
+        SecureRandom().nextBytes(bytes)
+        val digits = "0123456789abcdef"
+        return buildString(bytes.size * 2) {
+            bytes.forEach { value ->
+                val byte = value.toInt() and 0xFF
+                append(digits[byte shr 4]).append(digits[byte and 0x0F])
+            }
+        }
+    }
+
+    /** snapshot() 由外部注入，可能因设置读取失败而抛错；失败时退化为空白页面而不是断开连接。 */
+    private fun safeSnapshot(): RemoteManageSnapshot =
+        runCatching { snapshot() }.getOrDefault(RemoteManageSnapshot())
 
     private fun readBody(reader: BufferedReader, contentLength: Int): String {
         if (contentLength <= 0) return ""
@@ -227,7 +322,7 @@ class RemoteManageServer(
     }
 
     private fun blockedCategoriesJson(): String {
-        val categories = snapshot().blockedVideoCategories
+        val categories = safeSnapshot().blockedVideoCategories
         val items = categories.joinToString(", ") { category ->
             "\"" + category.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
         }
@@ -250,9 +345,9 @@ class RemoteManageServer(
         out.flush()
     }
 
-    private fun page(message: String?): String {
-        val data = snapshot()
-        return """
+    private fun page(message: String?, token: String): String {
+        val data = safeSnapshot()
+        val html = """
             <!doctype html>
             <html lang="zh-CN">
             <head>
@@ -293,7 +388,7 @@ class RemoteManageServer(
             <body>
               <main>
                 <h1>聚合视频 远程管理</h1>
-                <p>同一局域网内直接访问，无需 token。修改会立即同步到电视并保存。</p>
+                <p>同一局域网内访问；管理操作需使用电视端显示地址中的会话 token。修改会立即同步到电视并保存。</p>
                 ${message?.takeIf { it.isNotBlank() }?.let { "<div class=\"message\">${it.htmlEscape()}</div>" }.orEmpty()}
 
                 <section class="panel">
@@ -368,11 +463,20 @@ class RemoteManageServer(
                   }}
                 </section>
 
-                <footer>聚合视频 局域网远程管理 · 无需 token</footer>
+                <footer>聚合视频 局域网远程管理 · 写操作需会话 token</footer>
               </main>
             </body>
             </html>
         """.trimIndent()
+        // token 只通过隐藏字段透传给本页 POST；匿名可访问的只读端点不含它。
+        return if (token.isEmpty()) {
+            html
+        } else {
+            html.replace(
+                "<form method=\"post\">",
+                "<form method=\"post\"><input type=\"hidden\" name=\"$TOKEN_QUERY_KEY\" value=\"${token.htmlEscape()}\" />",
+            )
+        }
     }
 
     private fun videoSourceTag(source: RemoteManageVideoSource): String {
@@ -538,9 +642,10 @@ class RemoteManageServer(
         val queryStart = target.indexOf('?')
         if (queryStart < 0) return null
         val query = target.substring(queryStart + 1)
-        return query.split('&').firstOrNull { it.substringBefore('=') == key }
-            ?.substringAfter('=', "")
-            ?.urlDecode()
+        val raw = query.split('&').firstOrNull { it.substringBefore('=') == key }
+            ?.substringAfter('=', "") ?: return null
+        // 畸形百分号编码不能让整个 GET 处理链抛异常。
+        return runCatching { raw.urlDecode() }.getOrNull()
     }
 
     private fun parseForm(body: String): Map<String, String> {
@@ -557,15 +662,22 @@ class RemoteManageServer(
     }
 
     private fun createServerSocket(): ServerSocket {
-        return runCatching { ServerSocket(PREFERRED_PORT) }
-            .getOrElse { ServerSocket(0) }
+        // 先设置 reuseAddress 再 bind：stop() 后能立即复用同一端口，不受 TIME_WAIT 影响。
+        fun bind(port: Int): ServerSocket = ServerSocket().apply {
+            reuseAddress = true
+            bind(InetSocketAddress(port))
+        }
+        return runCatching { bind(PREFERRED_PORT) }.getOrElse { bind(0) }
     }
 
     private fun localIpv4Address(): String {
-        val interfaces = NetworkInterface.getNetworkInterfaces().toList()
+        val interfaces = runCatching { NetworkInterface.getNetworkInterfaces()?.toList() }
+            .getOrNull().orEmpty()
         return interfaces
             .asSequence()
-            .flatMap { it.inetAddresses.toList().asSequence() }
+            .flatMap { nic ->
+                runCatching { nic.inetAddresses?.toList() }.getOrNull().orEmpty().asSequence()
+            }
             .filterIsInstance<Inet4Address>()
             .firstOrNull { !it.isLoopbackAddress && it.isSiteLocalAddress }
             ?.hostAddress
@@ -589,5 +701,7 @@ class RemoteManageServer(
         const val MAX_REQUEST_BODY_BYTES = 1_000_000L
         const val MAX_CONCURRENT_CLIENTS = 8
         const val CLIENT_READ_TIMEOUT_MS = 15_000
+        const val TOKEN_QUERY_KEY = "token"
+        const val TOKEN_HEADER = "x-remote-token"
     }
 }

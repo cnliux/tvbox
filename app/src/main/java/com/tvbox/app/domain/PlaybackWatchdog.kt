@@ -152,24 +152,35 @@ class PlaybackWatchdog(
         }
         val nowMs = sample.nowMs
         val previousPosition = lastPositionMs
+        val positionDelta = previousPosition?.let { sample.positionMs - it }
 
-        // 2a. 位置推进：只要与上次不同即算推进（与历史行为一致，兼容旧调用点）。
-        // moveEpsilonMs 仅作为"回退"方向的容差保护：轻微回退（如时间戳取整）不算异常。
-        val positionAdvanced = previousPosition == null || sample.positionMs != previousPosition
-        // 2b. 渲染帧对账：窗口内渲染帧数达标也算"在动"（画面在动却转圈的场景）。
+        // 2a. 位置推进必须达到 epsilon；±epsilon 内的抖动保留基线，不刷新卡顿计时。
+        // 大幅回退按 seek 重置基线，但不计入"曾推进过"（避免软卡顿段被跳过）。
+        val firstSample = previousPosition == null
+        val positionAdvanced = positionDelta != null && positionDelta >= moveEpsilonMs
+        val positionRewound = positionDelta != null && positionDelta <= -moveEpsilonMs
+
+        // 2b. 渲染帧对账：滚动窗口内渲染帧数达标也算"在动"（画面在动却转圈的场景）。
+        // 基线只在窗口到期或本次已判定成功时更新，否则 1s 窗口会退化为"相邻两次采样达标"。
         val sampleAt = renderedSampleAtMs
-        val windowOk = sampleAt != null && nowMs - sampleAt <= reconcileWindowMs
+        val windowOk = sampleAt != null && nowMs - sampleAt < reconcileWindowMs
+        val windowExpired = !windowOk
         val framesAdvanced = windowOk && sample.renderedFrames > 0 &&
             sample.renderedFrames - lastRenderedFrames >= reconcileFrames
-        // 更新帧基线（即便本次没达标，也要滚动窗口基线）。
-        lastRenderedFrames = sample.renderedFrames
-        renderedSampleAtMs = nowMs
+        if (framesAdvanced || windowExpired) {
+            lastRenderedFrames = sample.renderedFrames
+            renderedSampleAtMs = nowMs
+        }
 
-        if (positionAdvanced || framesAdvanced) {
-            if (positionAdvanced) {
-                hasEverMoved = true
-                lastPositionMs = sample.positionMs
-            }
+        if (firstSample || positionAdvanced || positionRewound) {
+            lastPositionMs = sample.positionMs
+            if (positionAdvanced) hasEverMoved = true
+            lastProgressAtMs = nowMs
+            stallIssueReported = false
+            softStallIssueReported = false
+            return null
+        }
+        if (framesAdvanced) {
             lastProgressAtMs = nowMs
             stallIssueReported = false
             softStallIssueReported = false

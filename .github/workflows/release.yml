@@ -19,6 +19,24 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
+      # 版本号以 app/build.gradle.kts 为唯一来源：tag、update.json 与 APK 文件名必须一致。
+      - name: Verify version consistency
+        run: |
+          VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          VERSION_CODE=$(grep -oP 'TVBOX_VERSION_CODE\s*=\s*\K\d+' app/build.gradle.kts)
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} 与 app 版本 v${VERSION_NAME} 不一致"
+            exit 1
+          fi
+          grep -q "\"versionCode\": ${VERSION_CODE}" update.json || {
+            echo "::error::update.json versionCode 与 app 版本不一致"
+            exit 1
+          }
+          grep -q "\"versionName\": \"${VERSION_NAME}\"" update.json || {
+            echo "::error::update.json versionName 与 app 版本不一致"
+            exit 1
+          }
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

@@ -1072,9 +1072,20 @@ private fun PlayerChromePanel(
         PlayerPanel.Subtitle -> "当前视频没有字幕轨道".takeIf { data.subtitleTracks.isEmpty() }
         else -> null
     }
-    val pickerFocus = remember(panel, labels.size) { List(labels.size) { FocusRequester() } }
+    // 线路面板会按实测延迟重排，兜底切源后顺序/文案同样会变。若 effect 只看 panel + size，
+    // 重排后下标没变就不会重跑，焦点会落到旧位置对应的按钮（甚至已不存在的按钮）。
+    // 用「有序标签 + 当前选中位置 + 选中文案」拼确定性签名，任何重排/换标都触发重新定位。
+    val focusSignature = buildString {
+        append(panel.name).append('\u0000').append(selected).append('\u0000')
+        labels.forEachIndexed { index, label ->
+            if (index > 0) append('\u0000')
+            append(label.text)
+        }
+        append('\u0000').append(labels.getOrNull(selected)?.text.orEmpty())
+    }
+    val pickerFocus = remember(focusSignature) { List(labels.size) { FocusRequester() } }
     val grid = rememberLazyGridState()
-    LaunchedEffect(panel, labels.size) {
+    LaunchedEffect(focusSignature, labels.size) {
         grid.scrollToItem(selected.coerceIn(0, labels.lastIndex.coerceAtLeast(0)))
         runCatching { pickerFocus.getOrNull(selected)?.requestFocus() }
     }

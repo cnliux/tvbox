@@ -739,6 +739,11 @@ private fun MobileLivePlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
     }
+    // 亮度初值必须在父级快照：播放器画面在横竖屏切换时会离开/重新进入组合，
+    // 若在子级 remember，会把「已被竖滑改过的当前亮度」误当成初值，退出后恢复不回原值。
+    val initialScreenBrightness = remember(activity) {
+        activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+    }
     DisposableEffect(activity, initialRequestedOrientation) {
         activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         onDispose { activity?.requestedOrientation = initialRequestedOrientation }
@@ -983,6 +988,7 @@ private fun MobileLivePlayerScreen(
             channelBadgeVisible = channelBadgeVisible,
             isPortrait = isPortrait,
             streamBlocked = streamBlocked,
+            initialScreenBrightness = initialScreenBrightness,
             onRetryStream = {
                 streamBlocked = false
                 actions.reconnectLiveLine()
@@ -1452,6 +1458,8 @@ private fun MobileLivePlayerSurface(
     channelBadgeVisible: Boolean,
     isPortrait: Boolean,
     streamBlocked: Boolean,
+    /** 进入播放页前的窗口亮度快照，由父级持有，横竖屏切换不会重新采样被手势改过的值。 */
+    initialScreenBrightness: Float,
     onRetryStream: () -> Unit,
     onNextChannel: () -> Unit,
     onToggleControls: () -> Unit,
@@ -1462,10 +1470,8 @@ private fun MobileLivePlayerSurface(
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
-    // 竖滑手势会直接改写 Window 亮度，退出页面必须恢复进入前的设置（与点播播放页一致）。
-    val initialScreenBrightness = remember(activity) {
-        activity?.window?.attributes?.screenBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
-    }
+    // 亮度初值由父级快照并传入：本函数会在横竖屏切换时重新进入组合，
+    // 在这里 remember 会把当前（可能已被手势改写的）亮度当成初值，导致退出后亮度不恢复。
     // 手势提示（亮度/音量），1.2 秒后自动消失。
     var gesturePrompt by remember { mutableStateOf<String?>(null) }
     var gesturePromptNonce by remember { mutableIntStateOf(0) }

@@ -5,11 +5,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 
@@ -22,6 +20,9 @@ import kotlinx.serialization.json.putJsonArray
  * 隐私约束：备份只包含源标识、名称与订阅地址，不写任何 API Key / token / 口令；
  * [hasSensitiveKeys] 用于导出前自检，导入时 `ignoreUnknownKeys` 会丢弃额外字段，
  * 不会把密钥带回本机设置。
+ *
+ * 解析约束：所有取字段都走 `as?` 安全转换， corrupt/异形 JSON 只返回固定文案的
+ * [Result.error]，单个坏字段被跳过而不会抛 ClassCastException 中断整次恢复。
  */
 object SourceConfigBackup {
     const val FORMAT = "tvbox-source-backup"
@@ -80,14 +81,17 @@ object SourceConfigBackup {
 
     fun parse(raw: String): Result {
         val root = try {
-            json.parseToJsonElement(raw.trim()).jsonObject
-        } catch (error: Exception) {
-            return Result(null, "备份 JSON 解析失败：${error.message ?: "格式不合法"}")
+            json.parseToJsonElement(raw.trim()) as? JsonObject
+                ?: return Result(null, "备份根节点不是对象")
+        } catch (_: Exception) {
+            // 不回传异常原文：里面可能带文件内容片段。
+            return Result(null, "备份 JSON 解析失败")
         }
-        if (root["format"]?.jsonPrimitive?.content != FORMAT) {
+        val format = (root["format"] as? JsonPrimitive)?.content
+        if (format != FORMAT) {
             return Result(null, "不是本应用的源配置备份文件")
         }
-        val version = root["version"]?.jsonPrimitive?.content?.toIntOrNull()
+        val version = (root["version"] as? JsonPrimitive)?.content?.toIntOrNull()
             ?: return Result(null, "备份缺少有效的版本号")
         if (version > VERSION) {
             return Result(null, "备份版本 $version 高于当前支持的 $VERSION，请先升级应用")
@@ -97,21 +101,21 @@ object SourceConfigBackup {
             ?: return Result(null, "备份缺少 sites 列表")
         val lines = sites.mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
-            val api = item["api"]?.jsonPrimitive?.content?.trim().orEmpty()
+            val api = (item["api"] as? JsonPrimitive)?.content?.trim().orEmpty()
             if (api.isBlank()) return@mapNotNull null
-            val id = item["id"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { api }
-            val name = item["name"]?.jsonPrimitive?.content?.trim().orEmpty().ifBlank { id }
+            val id = (item["id"] as? JsonPrimitive)?.content?.trim().orEmpty().ifBlank { api }
+            val name = (item["name"] as? JsonPrimitive)?.content?.trim().orEmpty().ifBlank { id }
             ApiLine(id = id, name = name, baseUrls = listOf(api))
         }.distinctBy { it.baseUrls.firstOrNull().orEmpty() }
 
         val liveUrls = (root["lives"] as? JsonArray).orEmpty()
-            .mapNotNull { it.jsonPrimitive.content.trim().takeIf(String::isNotBlank) }
+            .mapNotNull { (it as? JsonPrimitive)?.content?.trim()?.takeIf(String::isNotBlank) }
             .distinct()
         val order = (root["order"] as? JsonArray).orEmpty()
-            .map { it.jsonPrimitive.content }
+            .mapNotNull { (it as? JsonPrimitive)?.content }
         val weights = (root["weights"] as? JsonObject).orEmpty()
             .mapNotNull { (id, element) ->
-                val value = runCatching { element.jsonPrimitive.content.toInt() }.getOrNull()
+                val value = (element as? JsonPrimitive)?.content?.toIntOrNull()
                     ?: return@mapNotNull null
                 id to value.coerceAtLeast(0)
             }

@@ -919,7 +919,9 @@ private fun PlatformLivePlayerScreen(
         // 手机模式直播播放页沉浸全屏，退出时恢复系统栏与屏幕方向。
         FullscreenWhilePlayingPageVisible(activity)
     }
-    DisposableEffect(activity) {
+    // initialRequestedOrientation 是 remember(activity) 的固定快照，显式放进 key：
+    // 即使活动实例/快照发生变化，旧 effect 也先按旧快照恢复，再由新 effect 接管。
+    DisposableEffect(activity, initialRequestedOrientation) {
         onDispose {
             activity?.requestedOrientation =
                 initialRequestedOrientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
@@ -1044,9 +1046,10 @@ private fun PlatformLivePlayerScreen(
     DisposableEffect(touchHandler, activity, initialScreenBrightness) {
         onDispose {
             touchHandler.release()
-            if (isMobile) {
-                activity?.window?.restoreScreenBrightness(initialScreenBrightness)
-            }
+            // 不按 isMobile 分支跳过：设备模式可能在亮度和手势生效中途切换（插拔 HDMI /
+            // 设置变更），用 effect 创建时的旧 isMobile 判断会直接跳过恢复，把亮度留在修改值。
+            // 恢复成进入页面时的原值在 TV 模式也是幂等的，统一无条件恢复。
+            activity?.window?.restoreScreenBrightness(initialScreenBrightness)
         }
     }
     // 播放信息只在面板打开时采样，关闭即停。
@@ -1091,15 +1094,19 @@ private fun PlatformLivePlayerScreen(
     val scaleContentKey = roomVideoScaleKey(room.site, room.id)
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
     // 弹幕：按平台接入官方弹幕长连接（斗鱼 STT / 虎牙 Tars），换房或退出即断开。
-    val danmakuClient = remember(room.site, room.id) {
-        com.tvbox.app.data.DanmakuClients.create(room.site, room.id)?.also { client ->
+    // 创建/start/stop 必须留在 DisposableEffect 内：remember 的求值是组合副作用，
+    // 重组或组合被取消时不会调用 dispose，容易重复建连或泄漏长连接。
+    // key 用房间身份（site + id）而不是 client 实例，保证每台房间只启动一次，换房必定断开旧的。
+    var danmakuClient by remember { mutableStateOf<com.tvbox.app.data.DanmakuClient?>(null) }
+    DisposableEffect(room.site, room.id) {
+        val client = com.tvbox.app.data.DanmakuClients.create(room.site, room.id)
+        danmakuClient = client
+        if (client != null) {
             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕开启】site=${room.site}, room=${room.id}")
             client.start()
         }
-    }
-    DisposableEffect(danmakuClient) {
         onDispose {
-            danmakuClient?.dispose()
+            client?.dispose()
             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕关闭】room=${room.id}")
         }
     }
@@ -1509,10 +1516,11 @@ private fun PlatformLivePlayerScreen(
                 },
             )
         }
-        if (danmakuEnabled && danmakuClient != null) {
+        val activeDanmakuClient = danmakuClient
+        if (danmakuEnabled && activeDanmakuClient != null) {
             // 弹幕层压在画面上方、控件下方：留出顶部角标与按钮的高度，避免遮挡。
             DanmakuOverlay(
-                messages = danmakuClient.messages,
+                messages = activeDanmakuClient.messages,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .fillMaxWidth()

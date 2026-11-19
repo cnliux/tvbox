@@ -13,84 +13,104 @@ import javax.crypto.spec.SecretKeySpec
  * 2. "XXXXXXXX**" 前缀 Base64 壳；
  * 3. "2423..." Hex/AES-CBC 壳（key 在 `$#..#$` 之间、iv 取末尾 13 个字符，不足 16 位补 0）；
  * 4. `./ ../` 相对路径修正（jx/.ext 常见写法），`__JS1__/__JS2__` 还原为 `./ ../`。
+ *
+ * 容错约定：任何一步失败都只抛固定文案的 [IllegalArgumentException]，
+ * 不把底层异常原文（可能含密文/密钥片段/URL）回传给 UI；
+ * 相对路径修正逐行隔离，单行异常不会影响其余行。
  */
 object SubscriptionDecoder {
 
     private const val BLOCK = 16
+    private const val EMPTY_ERROR = "订阅内容为空"
+    private const val BASE64_ERROR = "订阅 Base64 解码失败"
+    private const val HEX_ERROR = "订阅 Hex 解码失败"
+    private const val CIPHER_FORMAT_ERROR = "订阅密文格式不合法"
+    private const val CIPHER_ERROR = "订阅解密失败，请检查密钥或内容格式"
+
+    /** 先匹配 `../` 再匹配 `./`，一次 replace 不会把替换结果里的 `./` 再处理一遍。 */
+    private val relativeRef = Regex("""\.\./|\./""")
 
     fun decode(url: String, raw: String): String {
         var text = raw.trim()
-        if (text.isEmpty()) throw IllegalArgumentException("内容为空")
-        if (text.startsWith("\uFEFF")) text = text.drop(1)
-        if (text.startsWith("{")) {
+        if (text.isEmpty()) throw IllegalArgumentException(EMPTY_ERROR)
+        if (text.startsWith("\uFEFF")) text = text.drop(1).trim()
+        if (text.isEmpty()) throw IllegalArgumentException(EMPTY_ERROR)
+        if (text.startsWith("{") || text.startsWith("[")) {
             return fix(url, text)
         }
         if (text.contains("**")) text = base64Shell(text)
         if (text.startsWith("2423")) text = cbcShell(text.filterNot { it.isWhitespace() })
+        if (text.isBlank()) throw IllegalArgumentException(EMPTY_ERROR)
         return fix(url, text)
     }
 
     private fun base64Shell(data: String): String {
         val index = data.indexOf("**")
         if (index < 8) return data
-        val encoded = data.substring(index + 2).trim()
-        return try {
-            String(Base64.decode(encoded, Base64.DEFAULT), StandardCharsets.UTF_8)
-        } catch (error: IllegalArgumentException) {
-            throw IllegalArgumentException("Base64 解码失败：${error.message ?: "格式不合法"}")
-        }
+        val encoded = data.substring(index + 2).filterNot { it.isWhitespace() }
+        if (encoded.isEmpty()) throw IllegalArgumentException(BASE64_ERROR)
+        val bytes = runCatching { Base64.decode(encoded, Base64.DEFAULT) }
+            .getOrElse { throw IllegalArgumentException(BASE64_ERROR) }
+        val decoded = runCatching { String(bytes, StandardCharsets.UTF_8) }
+            .getOrElse { throw IllegalArgumentException(BASE64_ERROR) }
+        if (decoded.isBlank()) throw IllegalArgumentException(BASE64_ERROR)
+        return decoded
     }
 
     private fun cbcShell(data: String): String {
-        val decoded = String(hex2Byte(data), StandardCharsets.UTF_8).lowercase()
-        val keyStart = decoded.indexOf("$#")
-        val keyEnd = decoded.indexOf("#$")
-        if (keyStart < 0 || keyEnd < keyStart) throw IllegalArgumentException("未找到密钥标记")
+        val decoded = runCatching { String(hex2Byte(data), StandardCharsets.UTF_8).lowercase() }
+            .getOrElse { throw IllegalArgumentException(HEX_ERROR) }
+        val keyStart = decoded.indexOf("\$#")
+        if (keyStart < 0) throw IllegalArgumentException(CIPHER_FORMAT_ERROR)
+        val keyEnd = decoded.indexOf("#\$", startIndex = keyStart + 2)
+        if (keyEnd < keyStart) throw IllegalArgumentException(CIPHER_FORMAT_ERROR)
+
         val key = padEnd(decoded.substring(keyStart + 2, keyEnd))
         val iv = padEnd(decoded.takeLast(13))
         val bodyStart = data.indexOf("2324")
-        if (bodyStart < 0) throw IllegalArgumentException("未找到密文体标记 2324")
-        val hexBody = data.substring(bodyStart + 4, data.length - 26)
-        val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
-        cipher.init(
-            Cipher.DECRYPT_MODE,
-            SecretKeySpec(key.toByteArray(StandardCharsets.UTF_8), "AES"),
-            IvParameterSpec(iv.toByteArray(StandardCharsets.UTF_8)),
-        )
-        val plain = cipher.doFinal(hex2Byte(hexBody))
+        val bodyEnd = data.length - 26
+        if (bodyStart < 0 || bodyEnd <= bodyStart + 4) throw IllegalArgumentException(CIPHER_FORMAT_ERROR)
+        val body = runCatching { hex2Byte(data.substring(bodyStart + 4, bodyEnd)) }
+            .getOrElse { throw IllegalArgumentException(HEX_ERROR) }
+
+        val plain = runCatching {
+            val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                SecretKeySpec(key.toByteArray(StandardCharsets.UTF_8), "AES"),
+                IvParameterSpec(iv.toByteArray(StandardCharsets.UTF_8)),
+            )
+            cipher.doFinal(body)
+        }.getOrElse { throw IllegalArgumentException(CIPHER_ERROR) }
         return String(plain, StandardCharsets.UTF_8)
     }
 
-    private fun padEnd(key: String): String {
-        return if (key.length >= BLOCK) {
-            key.substring(0, BLOCK)
-        } else {
-            key + "0000000000000000".substring(key.length)
-        }
-    }
+    private fun padEnd(value: String): String = value.take(BLOCK).padEnd(BLOCK, '0')
 
+    /** 严格逐字节解析；非法字符只抛固定文案，避免 toInt(16) 把原文带进异常消息。 */
     private fun hex2Byte(source: String): ByteArray {
-        val length = source.length / 2
-        val bytes = ByteArray(length)
-        for (index in 0 until length) {
-            bytes[index] = source.substring(index * 2, index * 2 + 2).toInt(16).toByte()
+        if (source.length % 2 != 0) throw IllegalArgumentException(HEX_ERROR)
+        val bytes = ByteArray(source.length / 2)
+        for (index in bytes.indices) {
+            val high = Character.digit(source[index * 2], 16)
+            val low = Character.digit(source[index * 2 + 1], 16)
+            if (high < 0 || low < 0) throw IllegalArgumentException(HEX_ERROR)
+            bytes[index] = ((high shl 4) or low).toByte()
         }
         return bytes
     }
 
     private fun fix(url: String, data: String): String {
-        var fixed = data
-        if (fixed.contains("../")) fixed = fixed.replace("../", resolve(url, "../"))
-        if (fixed.contains("./")) fixed = fixed.replace("./", resolve(url, "./"))
-        return fixed.replace("__JS1__", "./").replace("__JS2__", "../")
+        val tokens = data.replace("__JS1__", "./").replace("__JS2__", "../")
+        // 逐行处理：某一行的相对地址非法或含特殊字符时保留该行原文，不影响其它配置。
+        return tokens.lineSequence().joinToString("\n") { line ->
+            runCatching { relativeRef.replace(line) { match -> resolve(url, match.value) } }
+                .getOrDefault(line)
+        }
     }
 
     private fun resolve(base: String, ref: String): String {
         if (base.isBlank()) return ref
-        return try {
-            URL(URL(base), ref).toString()
-        } catch (error: Exception) {
-            ref
-        }
+        return runCatching { URL(URL(base), ref).toString() }.getOrDefault(ref)
     }
 }

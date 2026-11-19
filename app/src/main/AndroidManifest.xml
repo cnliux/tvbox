@@ -54,9 +54,11 @@
                 android:resource="@xml/update_file_paths" />
         </provider>
 
+        <!-- configChanges 覆盖旋转/键盘/语言等常见变化：Activity 不重建，播放中的 ExoPlayer
+             与弹幕长连接不会被无谓销毁重建；Compose 会随资源更新，无需依赖重建刷新文案。 -->
         <activity
             android:name=".MainActivity"
-            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize"
+            android:configChanges="keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale|uiMode|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>

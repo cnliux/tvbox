@@ -373,7 +373,7 @@ class DataStoreAppSettingsRepositoryTest {
     }
 
     @Test
-    fun `存储被清空后自动从旧数据重新迁移`() = runBlocking {
+    fun `存储被清空后不回放旧设置只重建当前默认值`() = runBlocking {
         val source = FakeLegacySource(
             LegacySettingsSnapshot(
                 values = mapOf(
@@ -387,14 +387,15 @@ class DataStoreAppSettingsRepositoryTest {
         assertEquals(200, repository.getSettings().historyMaxItems)
 
         // 模拟 DataStore 文件损坏后被 ReplaceFileCorruptionHandler 重置为空。
+        // 一次性迁移标记在 DataStore 之外，仍为已迁移，绝不能再次回放旧偏好。
         store.updateData { emptyPreferences() }
         assertEquals(SettingsSchema.LEGACY, store.current().schemaVersion())
 
         val recovered = repository.getSettings()
-        assertEquals(200, recovered.historyMaxItems)
-        assertEquals(TvTheme.Cinema, recovered.theme)
+        assertEquals(AppSettings().historyMaxItems, recovered.historyMaxItems)
+        assertEquals(AppSettings().theme, recovered.theme)
         assertEquals(SettingsSchema.CURRENT, store.current().schemaVersion())
-        assertEquals(2, source.reads)
+        assertEquals(1, source.reads)
     }
 
     private class FakeLegacySource(

@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import android.content.Context
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -43,13 +44,16 @@ class SharedLiveFavoritesRepository(context: Context) : LiveFavoritesRepository 
             }
         }
 
+    /**
+     * 损坏 JSON 必须抛错：把它当成空集合会让随后的 toggle 写回空列表，
+     * 静默抹掉用户收藏。调用方已有 runCatching，失败只提示不更新内存状态。
+     */
     private fun readKeys(): Set<String> {
         val raw = prefs.getString(KEY_KEYS, null).orEmpty()
         if (raw.isBlank()) return emptySet()
-        return runCatching { json.decodeFromString<List<String>>(raw) }
-            .getOrDefault(emptyList())
-            .filter { it.isNotBlank() }
-            .toSet()
+        val decoded = runCatching { json.decodeFromString<List<String>>(raw) }
+            .getOrElse { throw IOException("直播收藏数据损坏，已停止写入以避免覆盖", it) }
+        return decoded.filter { it.isNotBlank() }.toSet()
     }
 
     private companion object {

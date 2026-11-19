@@ -82,8 +82,25 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        if (granted) viewModel.startUpdateDownload()
-        else viewModel.cancelUpdateApkExport("未获得通知权限，下载进度无法显示；安装包仍可保存")
+        if (granted) {
+            viewModel.startUpdateDownload()
+        } else {
+            // 拒绝后 rationale=false 表示「不再询问」或系统策略禁止：再申请也不会弹窗，
+            // 只能引导去系统设置；rationale=true 属于临时拒绝，可直接重试授权。
+            // 旧版本没有该权限，判断放在 API 33+ 分支并兜底，避免调用不可用的权限 API 崩溃。
+            val permanent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                runCatching {
+                    !shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
+                }.getOrDefault(false)
+            } else {
+                false
+            }
+            viewModel.cancelUpdateApkExport(
+                if (permanent) "未获得通知权限（已不再询问），下载进度无法显示；请在系统设置中开启通知后重试"
+                else "未获得通知权限，下载进度无法显示；可重试授权，安装包仍可保存",
+            )
+            viewModel.reportNotificationPermissionDenied(permanent)
+        }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

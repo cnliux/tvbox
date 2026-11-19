@@ -43,6 +43,15 @@ class LiveAutoSwitchThrottleTest {
     }
 
     @Test
+    fun sameMillisecondIsNotTreatedAsClockRollback() {
+        val state = AutoSwitchThrottleState(lastSwitchAtMs = 1_000L, consecutiveSwitches = 3)
+        val gate = gateAutoSwitch(state, nowMs = 1_000L, baseBackoffMs = 800L)
+        assertTrue(gate is AutoSwitchGate.Defer)
+        // 退避按 3 次连切计算：800 << 2 = 3200ms，计数没有被重置。
+        assertEquals(3_200L, (gate as AutoSwitchGate.Defer).retryAfterMs)
+    }
+
+    @Test
     fun resetClearsManualIntentAndClockRollbackIsAllowed() {
         val reset = resetAutoSwitchThrottle()
         assertEquals(0L, reset.lastSwitchAtMs)

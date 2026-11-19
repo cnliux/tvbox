@@ -1,5 +1,6 @@
 package com.tvbox.app.domain
 
+import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -50,6 +51,8 @@ private val EPG_PROGRAMME_REGEX = Regex(
 private val EPG_TITLE_REGEX = Regex("<title\\b[^>]*>([^<]*)</title>", RegexOption.IGNORE_CASE)
 private val EPG_ATTRIBUTE_REGEX = Regex("""(?:^|\s)([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 private val EPG_MILLIS_REGEX = Regex("^(\\d{8}\\d{6})\\.\\d+")
+/** XMLTV 常见写法 `+08:00` → SimpleDateFormat `Z` 需要的 `+0800`；不归一化会被无时区格式吞掉后缀。 */
+private val EPG_COLON_ZONE_REGEX = Regex("([+-]\\d{2}):(\\d{2})$")
 private val EPG_SPACES_REGEX = Regex("\\s+")
 
 fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
@@ -146,12 +149,16 @@ private fun xmltvAttributes(fragment: String): Map<String, String> =
 
 private fun parseXmltvTime(raw: String?): Long? {
     val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
-    // 毫秒段（`.500`）先行剥离，避免逐格式拼接。
-    val normalized = value.replaceFirst(EPG_MILLIS_REGEX, "$1")
+    // 毫秒段（`.500`）先行剥离，再把带冒号的时区归一化为 `Z` 格式。
+    val withoutMillis = value.replaceFirst(EPG_MILLIS_REGEX, "$1")
+    val normalized = withoutMillis.replace(EPG_COLON_ZONE_REGEX, "$1$2")
     // 复用按线程缓存的格式组：每条 programme 原本会 new 6 个 SimpleDateFormat。
-    for (format in EPG_TIME_FORMATS.get()) {
-        val parsed = runCatching { format.parse(normalized) }.getOrNull()
-        if (parsed != null) return parsed.time
+    for (format in EPG_TIME_FORMATS.get().orEmpty()) {
+        // 必须完整消费字符串：SimpleDateFormat.parse(String) 会静默忽略尾部多余字符，
+        // 曾导致 `+08:00` 被当成无时区时间按设备本地时区解析（偏移数小时）。
+        val position = ParsePosition(0)
+        val parsed = runCatching { format.parse(normalized, position) }.getOrNull()
+        if (parsed != null && position.index == normalized.length) return parsed.time
     }
     return null
 }

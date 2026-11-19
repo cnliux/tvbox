@@ -52,6 +52,7 @@ import kotlinx.serialization.json.Json
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.net.URI
 
 interface AppUpdateRepository {
     suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate?
@@ -102,12 +103,14 @@ class DefaultAppUpdateRepository(
         var lastError: Throwable? = null
         for (candidate in candidates) {
             val startedAtMs = System.currentTimeMillis()
-            val request = Request.Builder()
-                .url(candidate.url)
-                .header("Cache-Control", "no-cache")
-                .header("User-Agent", USER_AGENT)
-                .build()
             try {
+                // 明文清单地址一律拒绝；异常走统一失败处理（记录并尝试下一条线路）。
+                requireSecureOtaUrl(candidate.url, "更新清单源")
+                val request = Request.Builder()
+                    .url(candidate.url)
+                    .header("Cache-Control", "no-cache")
+                    .header("User-Agent", USER_AGENT)
+                    .build()
                 val raw = try {
                     // 单源整体超时：慢 CDN 快速失败切下一个，避免启动检查被单个挂起连接长时间拖住。
                     withTimeout(MANIFEST_CHECK_TIMEOUT_MS) {
@@ -170,6 +173,8 @@ class DefaultAppUpdateRepository(
         downloadMutex.withLock {
             if (readTask()?.filePath == apkPath) downloadPrefs.edit().remove("task").commit()
         }
+        // 目前唯一调用方是安装失败（文件缺失）上报：同 cancelDownload 一样清掉半成品。
+        cleanupDownloadFiles(apkPath)
         Unit
     }
 
@@ -193,11 +198,22 @@ class DefaultAppUpdateRepository(
         val resumed = downloadMutex.withLock {
             readTask()?.takeIf { matchesPendingTask(it, update) }
         }
-        if (resumed != null) return@withContext runDownloadTask(resumed, update, progressGate::onProgress)
+        if (resumed != null) {
+            requireSecureOtaUrl(resumed.downloadUrl, "续传安装包地址")
+            return@withContext runDownloadTask(resumed, update, progressGate::onProgress)
+        }
 
         if (update.apkUrl.isBlank()) throw IOException("安装包地址为空")
-        val candidates = orderedCandidates(buildOtaApkCandidates(update.apkUrl, update.apkMirrors))
-        if (candidates.isEmpty()) throw IOException("安装包地址为空")
+        // 明文 APK/镜像地址一律拒绝，避免 OTA 被中间人替换安装包。
+        requireSecureOtaUrl(update.apkUrl, "安装包地址")
+        update.apkMirrors.filter { it.isNotBlank() }
+            .forEach { requireSecureOtaUrl(it, "安装包镜像地址") }
+        // 派生线路也过滤一遍（旧持久化任务可能带明文地址）。
+        val candidates = orderedCandidates(
+            buildOtaApkCandidates(update.apkUrl, update.apkMirrors)
+                .filter { isSecureOtaUrl(it.url) },
+        )
+        if (candidates.isEmpty()) throw IOException("安装包地址必须使用 HTTPS")
 
         val attempts = mutableListOf<OtaCdnAttempt>()
         for ((index, candidate) in candidates.withIndex()) {
@@ -237,14 +253,20 @@ class DefaultAppUpdateRepository(
     override suspend fun cancelDownload() = withContext(Dispatchers.IO) {
         val task = readTask()
         downloadMutex.withLock { downloadPrefs.edit().remove("task").commit() }
-        if (task != null) {
-            if (task.id > 0) runCatching { downloadManager?.remove(task.id) }
-            runCatching { File(task.filePath).delete() }
-            runCatching { File("${task.filePath}.part").delete() }
-            runCatching { File("${task.filePath}.fallback.apk").delete() }
-        }
+        if (task != null) cleanupDownloadTask(task)
         UpdateDownloadService.cancel(appContext)
         Unit
+    }
+
+    /** 取消与失败共用的文件清理：正式包、.part 与 .fallback.apk 一并删除。 */
+    private fun cleanupDownloadFiles(filePath: String) {
+        listOf(filePath, "$filePath.part", "$filePath.fallback.apk")
+            .forEach { path -> runCatching { File(path).delete() } }
+    }
+
+    private fun cleanupDownloadTask(task: PendingSystemDownload) {
+        if (task.id > 0) runCatching { downloadManager?.remove(task.id) }
+        cleanupDownloadFiles(task.filePath)
     }
 
     /** 为某条 CDN 创建独立的下载任务；不同线路使用不同目标文件，避免失败文件互相污染。 */
@@ -353,7 +375,8 @@ class DefaultAppUpdateRepository(
             downloadMutex.withLock {
                 if (readTask()?.filePath == currentTask.filePath) downloadPrefs.edit().remove("task").commit()
             }
-            if (currentTask.id > 0) runCatching { downloadManager?.remove(currentTask.id) }
+            // 失败包与 cancelDownload 使用同一套清理，避免残留半成品被误当成功安装包。
+            cleanupDownloadTask(currentTask)
             throw error
         }
     }
@@ -560,6 +583,7 @@ class DefaultAppUpdateRepository(
      * - 超时/网络错误：不可达。
      */
     private suspend fun probeOne(url: String, budgetMs: Long): OtaCdnProbe {
+        if (!isSecureOtaUrl(url)) return OtaCdnProbe(reachable = false)
         val request = Request.Builder()
             .url(url)
             .header("User-Agent", USER_AGENT)
@@ -597,6 +621,22 @@ class DefaultAppUpdateRepository(
     }
 }
 
+/** 仅允许 HTTPS；本机回环（本地调试/测试）可显式使用 HTTP。 */
+internal fun isSecureOtaUrl(url: String): Boolean {
+    val uri = runCatching { URI(url.trim()) }.getOrNull() ?: return false
+    val scheme = uri.scheme?.lowercase().orEmpty()
+    val host = uri.host?.lowercase().orEmpty()
+    return when (scheme) {
+        "https" -> host.isNotBlank()
+        "http" -> host in setOf("127.0.0.1", "localhost", "::1", "[::1]")
+        else -> false
+    }
+}
+
+private fun requireSecureOtaUrl(url: String, label: String) {
+    if (!isSecureOtaUrl(url)) throw IOException("$label 必须使用 HTTPS 地址（仅本机回环允许 HTTP）")
+}
+
 internal fun parseAppUpdateManifest(
     raw: String,
     currentVersionCode: Long,
@@ -604,17 +644,20 @@ internal fun parseAppUpdateManifest(
 ): AppUpdate? {
     val dto = json.decodeFromString<UpdateManifestDto>(raw.trimStart('\uFEFF').trim())
     if (dto.versionCode <= currentVersionCode) return null
+    val apkUrl = dto.apkUrl.trim()
+    // 明文更新地址直接判为非法清单；SHA-256 校验仍由 verifyUpdateApk 失败关闭。
+    requireSecureOtaUrl(apkUrl, "安装包地址")
     return AppUpdate(
         versionCode = dto.versionCode,
         versionName = dto.versionName.trim(),
-        apkUrl = dto.apkUrl.trim(),
+        apkUrl = apkUrl,
         apkSha256 = dto.apkSha256.trim(),
         apkSize = dto.apkSize.coerceAtLeast(0L),
         force = dto.force,
         changelog = dto.changelog.map { it.trim() }.filter { it.isNotBlank() },
         // 可选字段：只保留 HTTPS 镜像，非法/HTTP 项静默忽略，老清单为空列表。
         apkMirrors = dto.apkMirrors.map { it.trim() }
-            .filter { it.startsWith("https://", ignoreCase = true) }
+            .filter(::isSecureOtaUrl)
             .distinct(),
     )
 }

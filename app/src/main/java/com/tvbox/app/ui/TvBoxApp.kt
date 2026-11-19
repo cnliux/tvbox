@@ -1,7 +1,11 @@
 package com.tvbox.app.ui
 
 import android.view.KeyEvent as AndroidKeyEvent
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
+import android.net.Uri
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -229,7 +233,58 @@ fun TvBoxApp(
             modifier = Modifier.align(Alignment.TopEnd)
                 .windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp),
         )
+        NotificationPermissionDeniedDialog(
+            denial = state.notificationPermissionDenial,
+            onDismiss = actions::consumeNotificationPermissionDenial,
+            onRetry = onStartUpdateDownload,
+        )
     }
+}
+
+/** 通知权限被拒后的可操作提示：临时拒绝可重试，「不再询问」只能去系统设置开启。 */
+@Composable
+private fun NotificationPermissionDeniedDialog(
+    denial: NotificationPermissionDenial?,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+) {
+    if (denial == null) return
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("通知权限未授予") },
+        text = { Text(denial.message) },
+        confirmButton = {
+            TextButton(onClick = {
+                onDismiss()
+                if (denial.permanent) openAppNotificationSettings(context) else onRetry()
+            }) {
+                Text(if (denial.permanent) "去设置" else "重试授权")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+    )
+}
+
+/** 打开系统通知设置；部分盒子 ROM 无通知设置页时回退到应用详情/系统设置。 */
+private fun openAppNotificationSettings(context: Context) {
+    val packageUri = Uri.parse("package:${context.packageName}")
+    val candidates = listOf(
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri),
+        Intent(Settings.ACTION_SETTINGS),
+    )
+    for (intent in candidates) {
+        try {
+            context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: Exception) {
+            // 当前设备没有该设置页，继续尝试下一个候选。
+        }
+    }
+    Toast.makeText(context, "无法打开系统设置，请到应用管理中允许 TVBox 通知", Toast.LENGTH_LONG).show()
 }
 
 /** 卡片“下载停滞提示”的等待时长：进度停在 0/未知超过该时间即提示用户可取消重试。 */
@@ -916,7 +971,7 @@ public fun RemoteManageDialog(
                         overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        text = "无需 token。可管理视频源与直播源、导入订阅、删除平台站点，并屏蔽视频分类。",
+                        text = "访问地址含本次会话的管理令牌，请勿转发。可管理视频源与直播源、导入订阅、删除平台站点，并屏蔽视频分类。",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(

@@ -31,7 +31,8 @@ fun gateAutoSwitch(
     require(baseBackoffMs > 0) { "baseBackoffMs must be positive" }
     require(maxBackoffMs >= baseBackoffMs) { "maxBackoffMs must be >= baseBackoffMs" }
     // 首次自动切，或系统时钟回拨 / 测试注入的早期时间：直接放行。
-    if (state.lastSwitchAtMs <= 0L || nowMs <= state.lastSwitchAtMs) {
+    // 注意"同一毫秒"不是回拨：必须走下面的退避窗口，否则连续失败会把退避计数清零。
+    if (state.lastSwitchAtMs <= 0L || nowMs < state.lastSwitchAtMs) {
         return AutoSwitchGate.Allow(AutoSwitchThrottleState(lastSwitchAtMs = nowMs, consecutiveSwitches = 1))
     }
     val shift = (state.consecutiveSwitches - 1).coerceIn(0, 6)

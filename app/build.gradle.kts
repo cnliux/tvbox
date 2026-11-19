@@ -44,8 +44,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.0.24"
-val TVBOX_VERSION_CODE = 20024
+val TVBOX_VERSION_NAME = "1.0.26"
+val TVBOX_VERSION_CODE = 20026
 
 android {
     namespace = "com.tvbox.app"
@@ -65,7 +65,9 @@ android {
         // AGP 9 起 resConfigs 已弃用，语言资源改用 localeFilters。
         localeFilters += listOf("zh")
         // OkHttp 公共后缀库仅 CookieJar 使用，R8 已删除相关类，这里同步剔除该 assets。
-        ignoreAssetsPatterns += "!PublicSuffixDatabase.list"
+        // aapt 资产规则里 '!' 前缀表示「保留」，与这里要剔除的意图相反；
+        // 直接写文件名才是排除，避免把 OkHttp 的 PublicSuffixDatabase.list 误打进包。
+        ignoreAssetsPatterns += "PublicSuffixDatabase.list"
     }
 
     lint {

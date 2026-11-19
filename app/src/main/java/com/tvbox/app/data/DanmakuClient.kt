@@ -20,6 +20,29 @@ import okio.ByteString
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 
+/**
+ * 弹幕日志脱敏：房间号、cookie、Authorization/token、签名 query、STT 房间字段。
+ * 所有日志只写元数据；原始帧与弹幕正文一律不落日志。
+ */
+internal object DanmakuLogRedactor {
+    private val rules = listOf(
+        Regex("""(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;"'}\]]+""") to
+            "${'$'}1${'$'}2[REDACTED]",
+        Regex("""(?i)(cookie\s*[:=]\s*)[^\s;]+""") to "${'$'}1[REDACTED]",
+        Regex("""(?i)([?&](?:token|sign|signature|auth|key|secret|access[_-]?token|api[_-]?key|x-amz-signature)\s*=\s*)[^&\s]+""") to
+            "${'$'}1[REDACTED]",
+        Regex("""(wss?://[^\s?]+)\?[^\s]+""") to "${'$'}1?[REDACTED]",
+        Regex("""(?i)((?:roomid|rid|room|gid|uid|anchorid)@=)[^/\s]+""") to "${'$'}1[REDACTED]",
+        Regex("""(?i)((?:room(?:_?id)?|roomid|anchor(?:_?id)?|uid)\s*[:=]\s*)["']?[0-9A-Za-z_-]+""") to
+            "${'$'}1[REDACTED]",
+        Regex("""(?<!\d)1[3-9]\d{9}(?!\d)""") to "[PHONE_REDACTED]",
+    )
+
+    fun redact(message: String): String = rules.fold(message) { acc, (pattern, replacement) ->
+        pattern.replace(acc, replacement)
+    }
+}
+
 /** 一条直播弹幕。[color] 为 ARGB 颜色，0 表示默认白色。 */
 data class DanmakuMessage(
     val userName: String,
@@ -50,7 +73,7 @@ object DanmakuClients {
             else -> null
         }
     }.getOrElse { error ->
-        Log.w(TAG, "创建弹幕客户端失败 site=$site room=$roomId: ${error.message}")
+        Log.w(TAG, DanmakuLogRedactor.redact("创建弹幕客户端失败 site=$site room=$roomId: ${error.message.orEmpty()}"))
         null
     }
 }
@@ -97,9 +120,9 @@ internal abstract class BaseDanmakuClient(
     protected abstract fun onPayload(bytes: ByteArray)
     protected open fun onPayload(text: String) = Unit
 
-    protected fun log(message: String) = Log.i(logTag, message)
+    protected fun log(message: String) = Log.i(logTag, DanmakuLogRedactor.redact(message))
 
-    protected fun logWarn(message: String) = Log.w(logTag, message)
+    protected fun logWarn(message: String) = Log.w(logTag, DanmakuLogRedactor.redact(message))
 
     override fun start() {
         if (stopped) {
@@ -126,7 +149,7 @@ internal abstract class BaseDanmakuClient(
     }
 
     /** 彻底释放：销毁顶层 scope。仅当实例确认不再使用时调用，之后不可再 [start]。 */
-    fun dispose() {
+    override fun dispose() {
         close()
         scope.cancel()
     }
@@ -136,7 +159,8 @@ internal abstract class BaseDanmakuClient(
         // 少量抽样打日志，便于现场确认弹幕确实在流动（不刷屏）。
         emittedCount += 1
         if (emittedCount % 20 == 1) {
-            Log.i(logTag, "【弹幕#$emittedCount】${message.userName}: ${message.text}")
+            // 用户名与弹幕正文属于用户数据，不写进日志（原始帧同样不记录）。
+            log("【弹幕#$emittedCount】收到弹幕（内容不落日志）")
         }
         _messages.tryEmit(message)
     }
@@ -147,7 +171,7 @@ internal abstract class BaseDanmakuClient(
             .url(url)
             .header("User-Agent", USER_AGENT)
             .build()
-        Log.i(logTag, "【弹幕连接】$url")
+        log("【弹幕连接】$url")
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (stopped) {
@@ -156,7 +180,7 @@ internal abstract class BaseDanmakuClient(
                 }
                 connected = true
                 reconnectAttempts = 0
-                Log.i(logTag, "【弹幕已连接】$url")
+                log("【弹幕已连接】$url")
                 runCatching { onConnected(webSocket) }
                 startHeartbeat(webSocket)
             }
@@ -172,14 +196,14 @@ internal abstract class BaseDanmakuClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 connected = false
                 if (stopped) return
-                Log.w(logTag, "【弹幕断开】${t.message}")
+                logWarn("【弹幕断开】${t.message.orEmpty()}")
                 scheduleReconnect()
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 connected = false
                 if (stopped) return
-                Log.i(logTag, "【弹幕关闭】code=$code reason=$reason")
+                log("【弹幕关闭】code=$code reason=${reason.take(64)}")
                 scheduleReconnect()
             }
         })
@@ -284,10 +308,11 @@ internal class DouyuDanmakuClient(private val roomId: String) :
         segments.forEach { segment ->
             val fields = parseStt(segment)
             val type = fields["type"]
-            // 前几帧打印 type，便于现场确认登录/进房是否被服务端接受。
+            // 前几帧只打印 type/code 元数据，便于确认登录/进房是否被接受；
+            // 原始帧字段（含房间号与用户数据）不落日志。
             if (framesSeen < 6) {
                 framesSeen += 1
-                log("【斗鱼帧#$framesSeen】type=$type code=${fields["code"]} room=${fields["rid"]}")
+                log("【斗鱼帧#$framesSeen】type=${type.orEmpty()} code=${fields["code"].orEmpty()}")
             }
             if (type != "chatmsg") return@forEach
             // 注意：不要用 dms（弹幕时间戳）判空来过滤——现网 chatmsg 并不带 dms，
@@ -296,7 +321,7 @@ internal class DouyuDanmakuClient(private val roomId: String) :
             if (text.isEmpty()) return@forEach
             if (chatSeen < 5) {
                 chatSeen += 1
-                log("【斗鱼弹幕】${fields["nn"]}: $text")
+                log("【斗鱼弹幕#$chatSeen】收到聊天弹幕（内容不落日志）")
             }
             emit(
                 DanmakuMessage(
@@ -376,7 +401,7 @@ internal class HuyaDanmakuClient(private val roomId: String) :
                 return@launch
             }
             runCatching { ws.send(ByteString.of(*buildRegisterPacket(uid))) }
-            log("【虎牙弹幕注册】room=$roomId uid=$uid groups=live:$uid,chat:$uid")
+            log("【虎牙弹幕注册】room=$roomId uid=$uid（已注册 live/chat 分组）")
         }
     }
 
