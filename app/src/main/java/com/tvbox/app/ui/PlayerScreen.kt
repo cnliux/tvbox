@@ -76,6 +76,7 @@ import com.tvbox.app.domain.resetSkipCreditsRuntime
 import com.tvbox.app.domain.resolveSkipCredits
 import com.tvbox.app.domain.nextPlaybackSpeed
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.CoroutineScope
@@ -543,11 +544,21 @@ fun PlayerScreen(
         }
         player.addListener(listener)
         onDispose {
-            saveCurrentProgress(
-                positionMs = player.currentPosition,
-                durationMs = player.duration.takeIf { it > 0L } ?: 0L,
-            )
-            player.removeListener(listener)
+            // 防御：Compose 逆序 dispose 保证本 onDispose 先于 rememberManagedExoPlayer 的 release，
+            // 但为避免未来注册顺序变化导致在已 release 的播放器上读取崩溃，读取包 try-catch。
+            try {
+                saveCurrentProgress(
+                    positionMs = player.currentPosition,
+                    durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+                )
+            } catch (e: Exception) {
+                android.util.Log.w("TVBoxPlayer", "saveProgressOnDispose failed: ${logSafeText(e.message)}")
+            }
+            try {
+                player.removeListener(listener)
+            } catch (e: Exception) {
+                android.util.Log.w("TVBoxPlayer", "removeListenerOnDispose failed: ${logSafeText(e.message)}")
+            }
         }
     }
 
