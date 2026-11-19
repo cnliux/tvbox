@@ -31,7 +31,10 @@ data class DanmakuMessage(
 interface DanmakuClient {
     val messages: SharedFlow<DanmakuMessage>
     fun start()
+    /** 停止连接但保留 scope 以支持重新连接（用户手动关闭弹幕时调用）。 */
     fun close()
+    /** 彻底释放资源，取消 scope；页面离开/实例销毁时必须调用。 */
+    fun dispose() = Unit
 }
 
 /** 按平台创建弹幕客户端；暂不支持的平台返回 null。 */

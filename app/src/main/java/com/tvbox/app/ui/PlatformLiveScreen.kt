@@ -1099,7 +1099,7 @@ private fun PlatformLivePlayerScreen(
     }
     DisposableEffect(danmakuClient) {
         onDispose {
-            danmakuClient?.close()
+            danmakuClient?.dispose()
             android.util.Log.i(PLATFORM_LIVE_LOG_TAG, "【弹幕关闭】room=${room.id}")
         }
     }

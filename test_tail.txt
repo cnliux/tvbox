@@ -1,0 +1,20 @@
+﻿> Task :app:processDebugManifest
+> Task :app:preDebugUnitTestBuild
+> Task :app:javaPreCompileDebugUnitTest
+> Task :app:processDebugJavaRes
+> Task :app:processDebugManifestForPackage
+> Task :app:processDebugResources
+> Task :app:bundleDebugClassesToRuntimeJar
+> Task :app:bundleDebugClassesToCompileJar
+> Task :app:compileDebugUnitTestKotlin
+w: file:///G:/git/tvbox/app/src/test/java/com/tvbox/app/domain/ConcurrentCollectionsTest.kt:52:17 Expression is unused.
+
+> Task :app:compileDebugUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processDebugUnitTestJavaRes
+> Task :app:testDebugUnitTest
+
+[Incubating] Problems report is available at: file:///G:/git/tvbox/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 4m 3s
+28 actionable tasks: 21 executed, 7 up-to-date
+Consider enabling configuration cache to speed up this build: https://docs.gradle.org/9.4.1/userguide/configuration_cache_enabling.html
