@@ -460,6 +460,8 @@ class TvBoxViewModel(
     private var updateJob: Job? = null
     private var updateDownloadJob: Job? = null
     private var updateInstallStateJob: Job? = null
+    /** 用户取消更新时的底层清理任务：新下载开始前须等待其完成，避免取消与重启竞态。 */
+    private var updateCancelJob: Job? = null
     /** 保存安装包的唯一在途任务：避免重复点击并行导出，取消时也能真正中止。 */
     private var updateApkExportJob: Job? = null
     private var settingsWriteJob: Job? = null
@@ -856,7 +858,9 @@ class TvBoxViewModel(
                 error = null, cardDismissed = true,
             ))
         }
-        viewModelScope.launch { runCatching { appUpdateRepository.cancelDownload() } }
+        // 底层清理（删持久任务/系统下载/前台服务）纳入可等待的取消任务，
+        // 使 startUpdateDownload 能 join 它，避免「取消后立即重下」与之竞态。
+        updateCancelJob = viewModelScope.launch { runCatching { appUpdateRepository.cancelDownload() } }
     }
 
     /** 关闭下载悬浮卡片（失败/提示态），不终止底层任务；返回键在卡片可见时也走这里。 */
@@ -878,6 +882,9 @@ class TvBoxViewModel(
         }
         updateDownloadJob = viewModelScope.launch {
             try {
+                // 若刚取消过下载，先等底层清理（删持久任务/系统任务）完成，
+                // 避免新下载与尚未落地的取消清理竞态（如旧任务残留覆盖新任务）。
+                updateCancelJob?.join()
                 updateInstallStateJob?.join()
                 val apkFile = appUpdateRepository.downloadUpdate(update) { progress ->
                     _state.update { s -> s.copy(update = s.update.copy(downloadProgress = progress.takeIf { value -> value >= 0 })) }
@@ -908,6 +915,9 @@ class TvBoxViewModel(
 
     private fun restorePendingUpdateDownload() {
         viewModelScope.launch {
+            // 用户已取消/关闭下载卡片时，不因 ViewModel 重建而复活下载；
+            // 否则「取消后立刻杀进程再启动」会让已取消的任务重新开始。
+            if (_state.value.update.cardDismissed) return@launch
             val pending = runCatching { appUpdateRepository.pendingDownload() }.getOrNull() ?: return@launch
             if (_state.value.update.downloading) return@launch
             _state.update { it.copy(update = it.update.copy(availableUpdate = pending, dialogVisible = false)) }
