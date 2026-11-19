@@ -78,6 +78,13 @@ class MainActivity : ComponentActivity() {
         pendingInstallPermissionAction = null
         handleInstallPermissionResult(action)
     }
+    // Android 13+（API 33+）后台应用展示通知需要此运行时权限。
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) viewModel.startUpdateDownload()
+        else viewModel.cancelUpdateApkExport("未获得通知权限，下载进度无法显示；安装包仍可保存")
+    }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // debug 包开启 StrictMode：主线程 IO 只写 logcat，不 crash，release 编译期即剔除。
@@ -194,6 +201,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startBackgroundUpdateDownload() {
+        // Android 13+（API 33+）后台应用展示通知需要运行时权限，低版本无需申请。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            when {
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED -> viewModel.startUpdateDownload()
+                shouldShowRequestPermissionRationale(android.Manifest.permission.POST_NOTIFICATIONS) ->
+                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                else ->
+                    notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+            return
+        }
         viewModel.startUpdateDownload()
     }
 

@@ -1,4 +1,4 @@
-﻿package com.tvbox.app.data
+package com.tvbox.app.data
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -158,7 +158,8 @@ class UpdateDownloadService : Service() {
                     NotificationChannel(CHANNEL, "应用更新下载", NotificationManager.IMPORTANCE_LOW))
             }
             val status = states[path] ?: AppDownloadStatus()
-            startForeground(NOTIFICATION_ID, notification(status.received, status.total))
+            val notification = notification(status.received, status.total)
+            startForeground(NOTIFICATION_ID, notification)
             true
         } catch (error: Exception) {
             Log.e("TVBoxUpdate", "Unable to start foreground download", error)
