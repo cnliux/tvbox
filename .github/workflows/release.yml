@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "要构建并发布的已有 tag（例如 v1.0.27）"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -12,30 +17,34 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
+      - name: Validate release tag
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid release tag: $RELEASE_TAG"
+            exit 1
+          fi
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ env.RELEASE_TAG }}
           fetch-tags: true
           fetch-depth: 0
 
-      # 版本号以 app/build.gradle.kts 为唯一来源：tag、update.json 与 APK 文件名必须一致。
+      # 版本号以 app/build.gradle.kts 为唯一来源；这里只校验 tag。
+      # update.json 在 APK 构建后才能写入新版本的 SHA256 和大小，发版前保持上一版本属正常情况。
       - name: Verify version consistency
         run: |
           VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
           VERSION_CODE=$(grep -oP 'TVBOX_VERSION_CODE\s*=\s*\K\d+' app/build.gradle.kts)
-          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v${VERSION_NAME}" ]; then
-            echo "::error::Tag ${GITHUB_REF_NAME} 与 app 版本 v${VERSION_NAME} 不一致"
+          if [ "$RELEASE_TAG" != "v${VERSION_NAME}" ]; then
+            echo "::error::Tag ${RELEASE_TAG} 与 app 版本 v${VERSION_NAME} 不一致"
             exit 1
           fi
-          grep -q "\"versionCode\": ${VERSION_CODE}" update.json || {
-            echo "::error::update.json versionCode 与 app 版本不一致"
-            exit 1
-          }
-          grep -q "\"versionName\": \"${VERSION_NAME}\"" update.json || {
-            echo "::error::update.json versionName 与 app 版本不一致"
-            exit 1
-          }
+          echo "Verified release version: v${VERSION_NAME} (${VERSION_CODE})"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -163,9 +172,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          name: 聚合视频 ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: 聚合视频 ${{ env.RELEASE_TAG }}
           body: |
-            聚合视频 手机/电视合集版 ${{ github.ref_name }}。
+            聚合视频 手机/电视合集版 ${{ env.RELEASE_TAG }}。
 
             - 不内置任何点播视频接口与电视直播源，视频源与直播源均需自行导入
             - 平台直播站点（斗鱼/虎牙等）可管控
