@@ -31,6 +31,15 @@ object SubscriptionDecoder {
     private val relativeRef = Regex("""\.\./|\./""")
 
     fun decode(url: String, raw: String): String {
+        // 线上默认解码器仍走 android.util.Base64（行为不变）；JVM 单测可用 decodeWith 注入 java.util.Base64。
+        return decodeWith(url, raw, ::androidBase64)
+    }
+
+    /**
+     * 可注入 base64 解码器的解码入口，供 JVM 单测覆盖 [base64Shell] 的 Base64 分支，
+     * 避免依赖 android.util.Base64（纯 JVM 无法直接调用）。线上 [decode] 行为与此等价。
+     */
+    internal fun decodeWith(url: String, raw: String, base64Decoder: (String) -> ByteArray): String {
         var text = raw.trim()
         if (text.isEmpty()) throw IllegalArgumentException(EMPTY_ERROR)
         if (text.startsWith("\uFEFF")) text = text.drop(1).trim()
@@ -38,18 +47,22 @@ object SubscriptionDecoder {
         if (text.startsWith("{") || text.startsWith("[")) {
             return fix(url, text)
         }
-        if (text.contains("**")) text = base64Shell(text)
+        if (text.contains("**")) text = base64Shell(text, base64Decoder)
         if (text.startsWith("2423")) text = cbcShell(text.filterNot { it.isWhitespace() })
         if (text.isBlank()) throw IllegalArgumentException(EMPTY_ERROR)
         return fix(url, text)
     }
 
-    private fun base64Shell(data: String): String {
+    /** android.util.Base64 的适配实现；与既有 [base64Shell] 的 Base64.DEFAULT 解码一致。 */
+    private fun androidBase64(encoded: String): ByteArray =
+        Base64.decode(encoded, Base64.DEFAULT)
+
+    private fun base64Shell(data: String, base64Decoder: (String) -> ByteArray): String {
         val index = data.indexOf("**")
         if (index < 8) return data
         val encoded = data.substring(index + 2).filterNot { it.isWhitespace() }
         if (encoded.isEmpty()) throw IllegalArgumentException(BASE64_ERROR)
-        val bytes = runCatching { Base64.decode(encoded, Base64.DEFAULT) }
+        val bytes = runCatching { base64Decoder(encoded) }
             .getOrElse { throw IllegalArgumentException(BASE64_ERROR) }
         val decoded = runCatching { String(bytes, StandardCharsets.UTF_8) }
             .getOrElse { throw IllegalArgumentException(BASE64_ERROR) }
@@ -58,11 +71,15 @@ object SubscriptionDecoder {
     }
 
     private fun cbcShell(data: String): String {
-        val decoded = runCatching { String(hex2Byte(data), StandardCharsets.UTF_8).lowercase() }
+        // decoded 保留原始大小写（key/iv 是 AES 字节，大小写敏感：A 与 a 是不同的
+        // 字节值，lowercase() 会把含大写字母的 key 悄悄转小写导致解密失败）。
+        val decoded = runCatching { String(hex2Byte(data), StandardCharsets.UTF_8) }
             .getOrElse { throw IllegalArgumentException(HEX_ERROR) }
-        val keyStart = decoded.indexOf("\$#")
+        // 分隔符 $#/#$ 不含字母，lowercase 前后位置不变，故用 lower 只做定位。
+        val lower = decoded.lowercase()
+        val keyStart = lower.indexOf("\$#")
         if (keyStart < 0) throw IllegalArgumentException(CIPHER_FORMAT_ERROR)
-        val keyEnd = decoded.indexOf("#\$", startIndex = keyStart + 2)
+        val keyEnd = lower.indexOf("#\$", startIndex = keyStart + 2)
         if (keyEnd < keyStart) throw IllegalArgumentException(CIPHER_FORMAT_ERROR)
 
         val key = padEnd(decoded.substring(keyStart + 2, keyEnd))

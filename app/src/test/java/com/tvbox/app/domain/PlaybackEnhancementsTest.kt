@@ -84,6 +84,33 @@ class PlaybackEnhancementsTest {
     }
 
     @Test
+    fun skipCreditsRejectsIntroEqualToOrBeyondDuration() {
+        // 新增守卫：单侧片头 >= 单集时长时不得触发（避免短时长+大 intro 配置提前跳转）。
+        assertNull(resolveSkipCredits(0L, 120_000L, SkipCreditsConfig(enabled = true, introSeconds = 120)))
+        assertNull(resolveSkipCredits(0L, 120_000L, SkipCreditsConfig(enabled = true, introSeconds = 130)))
+    }
+
+    @Test
+    fun skipCreditsRejectsOutroEqualToOrBeyondDuration() {
+        // 新增守卫：单侧片尾 >= 单集时长时不得触发（避免播放早期就触发下一集）。
+        assertNull(resolveSkipCredits(0L, 120_000L, SkipCreditsConfig(enabled = true, outroSeconds = 120)))
+        assertNull(resolveSkipCredits(0L, 120_000L, SkipCreditsConfig(enabled = true, outroSeconds = 130)))
+    }
+
+    @Test
+    fun skipCreditsStillTriggersWhenSideIsJustBelowDuration() {
+        // 边界：片头/片尾略小于单集时长时仍应正常触发（守卫不误伤合法配置）。
+        assertEquals(
+            SkipCreditsAction.SeekToIntro,
+            resolveSkipCredits(0L, 120_000L, SkipCreditsConfig(enabled = true, introSeconds = 119))?.action,
+        )
+        assertEquals(
+            SkipCreditsAction.PlayNextEpisode,
+            resolveSkipCredits(119_000L, 120_000L, SkipCreditsConfig(enabled = true, outroSeconds = 119))?.action,
+        )
+    }
+
+    @Test
     fun classifyHttpFailureAsSourceInvalid() {
         val decision = classifyPlaybackError("HTTP 404 not found", httpStatus = 404)
         assertEquals(PlaybackErrorKind.SourceInvalid, decision.kind)

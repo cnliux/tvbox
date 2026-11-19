@@ -68,6 +68,12 @@ import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
+import com.tvbox.app.domain.SkipCreditsAction
+import com.tvbox.app.domain.SkipCreditsConfig
+import com.tvbox.app.domain.SkipCreditsRuntimeState
+import com.tvbox.app.domain.advanceSkipCredits
+import com.tvbox.app.domain.resetSkipCreditsRuntime
+import com.tvbox.app.domain.resolveSkipCredits
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.CoroutineScope
@@ -231,11 +237,15 @@ fun PlayerScreen(
     }
     /** 新一集开始播放后等待 READY，再统一跳过片头。 */
     var introSkipPending by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
-    /** 已触发过片尾跳过的那一集，避免重复触发。 */
-    var outroSkipHandledKey by remember(movie.apiLineId, movie.id) { mutableStateOf<String?>(null) }
+    /** SkipCredits 每集只触发一次的运行状态（outroTriggered 替代原 outroSkipHandledKey）。 */
+    var skipCreditsState by remember(movie.apiLineId, movie.id) {
+        mutableStateOf(resetSkipCreditsRuntime())
+    }
     val latestState by rememberUpdatedState(state)
 
     // 片尾跳过：剩 N 秒时自动进入下一集（每集只触发一次）。
+    // 判定统一走 domain 层 resolveSkipCredits + SkipCreditsRuntime（含时长边界守卫），
+    // 替代原手工 remaining>outroSkipMs 判定，避免短时长+大 outro 配置在播放早期误触发下一集。
     LaunchedEffect(player, lifecycleOwner) {
         // 片尾检测同样只在可见时轮询：后台时播放已被会话暂停，
         // 继续 4 次/秒唤醒主线程既无意义又会干扰系统省电策略。
@@ -243,25 +253,31 @@ fun PlayerScreen(
             while (true) {
                 delay(250L)
                 if (!isCurrentPlayback()) continue
-                val outroSkipMs = actions.state.value.appSettings.outroSkipSeconds.toLong() * 1_000L
-                if (outroSkipMs <= 0) continue
+                val settings = actions.state.value.appSettings
+                val config = SkipCreditsConfig(
+                    enabled = true,
+                    introSeconds = settings.introSkipSeconds,
+                    outroSeconds = settings.outroSkipSeconds,
+                )
                 val duration = player.duration
                 if (duration <= 0 || player.playbackState != Player.STATE_READY) continue
-                val remaining = duration - player.currentPosition
+                // 不在片尾区间：若之前已触发过，重置状态以便下次进入片尾时可再次触发。
+                val inOutro = resolveSkipCredits(player.currentPosition, duration, config)
+                    ?.action == SkipCreditsAction.PlayNextEpisode
+                if (!inOutro) {
+                    if (skipCreditsState.outroTriggered) skipCreditsState = resetSkipCreditsRuntime()
+                    continue
+                }
                 val playbackKey = actions.state.value
                     .copy(playerEpisodeIndex = player.currentMediaItemIndex)
                     .currentPlaybackKey()
-                if (remaining > outroSkipMs) {
-                    // 回看或拖动离开片尾后，允许再次触发。
-                    if (outroSkipHandledKey == playbackKey) outroSkipHandledKey = null
-                    continue
-                }
+                val (decision, newState) = advanceSkipCredits(
+                    skipCreditsState, player.currentPosition, duration, config,
+                )
+                skipCreditsState = newState
+                if (decision?.action != SkipCreditsAction.PlayNextEpisode) continue
                 val nextIndex = player.currentMediaItemIndex + 1
-                if (
-                    remaining > 0 && player.isPlaying && playbackKey != null &&
-                    outroSkipHandledKey != playbackKey && nextIndex < player.mediaItemCount
-                ) {
-                    outroSkipHandledKey = playbackKey
+                if (player.isPlaying && playbackKey != null && nextIndex < player.mediaItemCount) {
                     saveCurrentProgress(player.currentPosition, duration)
                     player.seekTo(nextIndex, 0L)
                     session.play(player)
@@ -440,7 +456,7 @@ fun PlayerScreen(
                 if (episodeIndex in episodes.indices && episodeIndex != currentState.playerEpisodeIndex) {
                     resumeAnchor.update(player.currentPosition)
                     failedSourceIndexes = emptySet()
-                    outroSkipHandledKey = null
+                    skipCreditsState = resetSkipCreditsRuntime()
                     playbackIssue = null
                     playbackNotice = null
                     playbackNoticeNonce = 0
@@ -484,10 +500,18 @@ fun PlayerScreen(
                         bufferingPlaybackKey = null
                         if (introSkipPending) {
                             introSkipPending = false
-                            val skipMs = actions.state.value.appSettings.introSkipSeconds.toLong() * 1_000L
+                            val settings = actions.state.value.appSettings
+                            val config = SkipCreditsConfig(
+                                enabled = true,
+                                introSeconds = settings.introSkipSeconds,
+                                outroSeconds = settings.outroSkipSeconds,
+                            )
                             val duration = player.duration
-                            if (skipMs > 0 && duration > 0 && player.currentPosition < skipMs) {
-                                player.seekTo(skipMs.coerceAtMost((duration - 1_000L).coerceAtLeast(0L)))
+                            val decision = resolveSkipCredits(player.currentPosition, duration, config)
+                            if (decision?.action == SkipCreditsAction.SeekToIntro && duration > 0) {
+                                player.seekTo(
+                                    decision.targetPositionMs.coerceAtMost((duration - 1_000L).coerceAtLeast(0L)),
+                                )
                             }
                         }
                         resumeAnchor.update(player.currentPosition)
@@ -562,7 +586,7 @@ fun PlayerScreen(
         attemptTracker.onPlaybackChanged(state.currentPlaybackKey())
         // 从头播放时应用“开始跳过”；恢复进度时保持原位置。
         introSkipPending = startPositionMs <= 0L
-        outroSkipHandledKey = null
+        skipCreditsState = resetSkipCreditsRuntime()
         player.setMediaItems(
             source.episodes.mapIndexed { index, item ->
                 MediaItem.Builder().setUri(item.url)

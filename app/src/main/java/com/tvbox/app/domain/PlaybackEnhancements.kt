@@ -78,7 +78,10 @@ fun resolveSkipCredits(
     val introMs = config.introSeconds.coerceAtLeast(0) * 1_000L
     val outroMs = config.outroSeconds.coerceAtLeast(0) * 1_000L
     if (introMs <= 0L && outroMs <= 0L) return null
-    // 片头与片尾区间重叠时宁可不动作，避免在片头/片尾之间来回跳。
+    // 片头/片尾各自必须严格小于单集时长（否则区间起点过早，短时长+大 outro 配置
+    // 会在播放早期就触发跳下一集）；两者之和也不能超过单集时长（区间重叠时
+    // 宁可不动作，避免在片头/片尾之间来回跳）。
+    if (introMs >= durationMs || outroMs >= durationMs) return null
     if (introMs + outroMs >= durationMs) return null
     val position = positionMs.coerceAtLeast(0L).coerceAtMost(durationMs)
     if (introMs > 0L && position < introMs) {

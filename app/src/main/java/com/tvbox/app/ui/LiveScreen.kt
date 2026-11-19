@@ -476,10 +476,12 @@ private fun LivePlayerScreen(
         state.live.channelIndex,
         state.liveLineIndex,
         currentLine.url,
+        currentLine.headers.hashCode(),
         state.liveReconnectNonce,
     ) {
         // 频道/线路身份也必须参与 key：不同频道或不同线路可能共用同一个 URL
         // （同一地址配不同 Referer），只按 URL 比较会漏掉重新 setMediaSource，表现为换台后黑屏。
+        // headers.hashCode() 覆盖「同 URL 不同 Referer/UA」场景：同一线路手动改 headers 也会触发重载。
         android.util.Log.d(
             LIVE_LOG_TAG,
             "【切换线路】channel=${currentChannel.name}, group=${currentChannel.groupName}, lineIndex=${state.liveLineIndex}, protocol=${currentLine.protocolHint}, headers=${currentLine.headers.keys}, nonce=${state.liveReconnectNonce}"
