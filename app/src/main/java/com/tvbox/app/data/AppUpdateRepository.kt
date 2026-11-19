@@ -595,9 +595,14 @@ class DefaultAppUpdateRepository(
                 val startedAtMs = System.currentTimeMillis()
                 probeClient.newCall(request).execute().use { response ->
                     val code = response.code
-                    if (code == 405 || code == 403) {
+                    if (code == 405) {
                         // 不支持 Range/HEAD：不能据此判定不可用，保留候选但不加速度分。
                         return@use OtaCdnProbe(reachable = true, elapsedMs = -1L)
+                    }
+                    if (code == 403) {
+                        // 403 多为防盗链/封禁/UA 校验失败，不应视为「可达但无法测速」，
+                        // 否则该 CDN 会参与选优，直到下载时才失败、浪费重试预算。
+                        return@use OtaCdnProbe(reachable = false)
                     }
                     if (code !in 200..399) return@use OtaCdnProbe(reachable = false)
                     val source = response.body.byteStream()
