@@ -834,6 +834,7 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
 
 @Composable
 private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var showPrivacyPolicy by remember { mutableStateOf(false) }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Info,
@@ -858,6 +859,15 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
         TvDividerInGroup()
         TvSettingsRow(
             icon = Icons.Default.Info,
+            title = "隐私政策",
+            subtitle = "本地数据处理与网络访问说明",
+            trailing = {
+                TvFocusButton(text = "查看", onClick = { showPrivacyPolicy = true })
+            },
+        )
+        TvDividerInGroup()
+        TvSettingsRow(
+            icon = Icons.Default.Info,
             title = "检查更新",
             subtitle = state.updateError ?: "当前版本 v${BuildConfig.VERSION_NAME}",
             trailing = {
@@ -868,6 +878,17 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
+
+        if (showPrivacyPolicy) {
+            AlertDialog(
+                onDismissRequest = { showPrivacyPolicy = false },
+                confirmButton = {
+                    TextButton(onClick = { showPrivacyPolicy = false }) { Text("知道了") }
+                },
+                title = { Text("隐私政策") },
+                text = { Text(PRIVACY_POLICY_TEXT) },
+            )
+        }
     }
 }
 

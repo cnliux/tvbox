@@ -902,12 +902,24 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
 
 @Composable
 private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var showPrivacyPolicy by remember { mutableStateOf(false) }
     SettingsGroup {
         InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "聚合视频")
         DividerInGroup()
         InfoRow(icon = Icons.Default.Info, title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME}")
         DividerInGroup()
         InfoRow(icon = Icons.Default.Info, title = "开源协议", subtitle = "GPLv3")
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Info,
+            title = "隐私政策",
+            subtitle = "本地数据处理与网络访问说明",
+            trailing = {
+                TextButton(onClick = { showPrivacyPolicy = true }) {
+                    Text("查看", color = TvColors.Accent)
+                }
+            },
+        )
         DividerInGroup()
         SettingsRow(
             icon = Icons.Default.Info,
@@ -933,6 +945,17 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
         }
     OtaCdnStatusSection(actions = actions)
     StartupTimelineSection(actions = actions)
+
+    if (showPrivacyPolicy) {
+        AlertDialog(
+            onDismissRequest = { showPrivacyPolicy = false },
+            confirmButton = {
+                TextButton(onClick = { showPrivacyPolicy = false }) { Text("知道了") }
+            },
+            title = { Text("隐私政策") },
+            text = { Text(PRIVACY_POLICY_TEXT) },
+        )
+    }
     }
 }
 
