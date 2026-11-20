@@ -75,6 +75,8 @@ data class AppSettings(
     val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
     /** 播放器/直播代理详细日志开关；默认关闭，调试排查时开启。 */
     val playerLogEnabled: Boolean = false,
+    /** 更新渠道：stable 指向 update.json（正式发布），beta 指向 update-beta.json（预发布）。 */
+    val updateChannel: UpdateChannel = UpdateChannel.Stable,
 )
 
 /**
@@ -277,4 +279,24 @@ data class CustomVideoApiLine(
 
 fun List<CustomVideoApiLine>.toApiLines(): List<ApiLine> {
     return map { it.toApiLine() }
+}
+
+/**
+ * OTA 更新渠道：决定客户端拉取哪个 update.json 版本。
+ * - [Stable]：正式版路径 update.json，对应 release.yml 每次发版后写入的 manifest。
+ * - [Beta]：测试版路径 update-beta.json，测试者自行放置，用于预发布尝鲜。
+ */
+enum class UpdateChannel(
+    val storageKey: String,
+    val displayName: String,
+    val manifestPath: String,
+) {
+    Stable("stable", "稳定版", "update.json"),
+    Beta("beta", "测试版", "update-beta.json"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): UpdateChannel =
+            entries.firstOrNull { it.storageKey == value } ?: Stable
+    }
 }

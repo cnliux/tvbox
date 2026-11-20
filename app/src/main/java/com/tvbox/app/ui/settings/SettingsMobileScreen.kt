@@ -82,6 +82,7 @@ import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.ui.RemoteManageDialog
 import com.tvbox.app.ui.TvBoxUiState
@@ -526,6 +527,20 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 Switch(
                     checked = state.appSettings.playerLogEnabled,
                     onCheckedChange = actions::updatePlayerLogEnabled,
+                )
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Info,
+            title = "更新渠道",
+            subtitle = state.appSettings.updateChannel.displayName,
+            trailing = {
+                ChoiceChips(
+                    options = UpdateChannel.entries,
+                    selected = state.appSettings.updateChannel,
+                    label = { it.displayName },
+                    onSelect = actions::updateUpdateChannel,
                 )
             },
         )

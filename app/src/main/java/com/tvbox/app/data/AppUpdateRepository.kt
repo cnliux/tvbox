@@ -55,7 +55,7 @@ import java.io.IOException
 import java.net.URI
 
 interface AppUpdateRepository {
-    suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate?
+    suspend fun checkForUpdate(currentVersionCode: Long, updateChannel: com.tvbox.app.domain.UpdateChannel = com.tvbox.app.domain.UpdateChannel.Stable): AppUpdate?
     suspend fun downloadUpdate(update: AppUpdate, onProgress: (Int) -> Unit): File
     /** 用户主动取消下载：终止底层任务并清理半成品；无进行中的任务时为无害空操作。 */
     suspend fun cancelDownload() {}
@@ -101,8 +101,11 @@ class DefaultAppUpdateRepository(
         .callTimeout(CDN_PROBE_OVERALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
 
-    override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = withContext(Dispatchers.IO) {
-        val candidates = orderedCandidates(buildOtaManifestCandidates())
+    override suspend fun checkForUpdate(
+        currentVersionCode: Long,
+        updateChannel: com.tvbox.app.domain.UpdateChannel = com.tvbox.app.domain.UpdateChannel.Stable,
+    ): AppUpdate? = withContext(Dispatchers.IO) {
+        val candidates = orderedCandidates(buildOtaManifestCandidates(path = updateChannel.manifestPath))
         var lastError: Throwable? = null
         for (candidate in candidates) {
             val startedAtMs = System.currentTimeMillis()

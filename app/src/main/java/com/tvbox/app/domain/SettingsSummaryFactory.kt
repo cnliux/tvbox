@@ -77,6 +77,12 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         valueSummary = if (settings.checkUpdatesOnStartup) "开启" else "关闭",
     ),
     SettingEntry(
+        id = "update_channel",
+        group = SettingGroup.DeviceUpdate,
+        label = "更新渠道",
+        valueSummary = settings.updateChannel.displayName,
+    ),
+    SettingEntry(
         id = "epg",
         group = SettingGroup.Advanced,
         label = "直播节目单",

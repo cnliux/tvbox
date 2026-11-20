@@ -67,6 +67,7 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
@@ -438,6 +439,22 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 Switch(
                     checked = state.appSettings.playerLogEnabled,
                     onCheckedChange = actions::updatePlayerLogEnabled,
+                )
+            },
+        )
+        TvDividerInGroup()
+        TvSettingsRow(
+            icon = Icons.Default.Info,
+            title = "更新渠道",
+            subtitle = state.appSettings.updateChannel.displayName,
+            trailing = {
+                TvFocusButton(
+                    text = if (state.appSettings.updateChannel == UpdateChannel.Stable) "稳定版" else "测试版",
+                    onClick = {
+                        val next = if (state.appSettings.updateChannel == UpdateChannel.Stable)
+                            UpdateChannel.Beta else UpdateChannel.Stable
+                        actions.updateUpdateChannel(next)
+                    },
                 )
             },
         )

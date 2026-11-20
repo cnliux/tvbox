@@ -27,8 +27,41 @@ internal interface PlayerKeyMap {
     fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean
 }
 
+/** 多遥控器去重窗口（毫秒）：同一设备在同一 key 上 80ms 内重复上报只处理第一次。 */
+private const val REMOTE_DEDUP_WINDOW_MS = 80L
+
+/**
+ * 遥控器事件来源缓存：按 (deviceId, keyCode) 记录最近一次处理时间，
+ * 用于过滤多遥控器同时按下相同按键时的抖动。
+ * deviceId <= 0 视为系统/虚拟键无法区分真实设备，统一放行。
+ */
+private class RemoteKeyCache {
+    private val entries = LinkedHashMap<Pair<Int, Int>, Long>(16, 0.75f, true)
+    private val maxEntries = 64
+
+    fun shouldDrop(deviceId: Int, keyCode: Int, nowMs: Long): Boolean {
+        if (deviceId <= 0) return false
+        val key = deviceId to keyCode
+        val last = entries[key] ?: return false.also { entries[key] = nowMs }
+        return nowMs - last < REMOTE_DEDUP_WINDOW_MS
+    }
+
+    fun trimIfNeeded(size: Int) {
+        if (size >= maxEntries) entries.clear()
+    }
+}
+
+private val remoteKeyCache = RemoteKeyCache()
+
 internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeState): Modifier =
-    onPreviewKeyEvent { event -> map.handle(event, chrome) }
+    onPreviewKeyEvent { event ->
+        val native = event.nativeKeyEvent
+        if (remoteKeyCache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
+            return@onPreviewKeyEvent false
+        }
+        remoteKeyCache.trimIfNeeded(remoteKeyCache.entries.size)
+        map.handle(event, chrome)
+    }
 
 /** 点播遥控：左右快进快退（长按连发）、OK 暂停、菜单切倍速、上一/下一集。 */
 internal class PlayerSeekKeyMap(

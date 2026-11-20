@@ -1,3 +1,9 @@
+## v1.0.29 - 2026-11-20
+
+- **稳定/测试渠道切换（#120）**：AppSettings 新增 `updateChannel` 字段；UI 设置页「设备与更新」分组提供稳定版/测试版切换入口；`AppUpdateRepository.checkForUpdate` 按渠道选用 `update.json` / `update-beta.json`，启动检查与手动检查均跟随当前选中渠道。
+- **多遥控器去重（#24）**：`PlayerInput.playerKeyInput` 引入 `RemoteKeyCache`，以 `(deviceId, keyCode)` 为键记录最近处理时间，80ms 内同一设备的重复按键直接丢弃，避免双遥控器同时按下时事件翻倍触发。
+- 版本号同步：build.gradle.kts → v1.0.29 / code 20029。
+
 ## v1.0.28 - 2026-11-20
 
 聚焦交互与稳定性（域A–K 逐项落地）：

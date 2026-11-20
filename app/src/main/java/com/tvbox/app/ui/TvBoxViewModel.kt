@@ -806,7 +806,12 @@ class TvBoxViewModel(
         updateJob?.cancel()
         updateJob = viewModelScope.launch {
             _state.update { it.copy(update = it.update.copy(checking = true, error = null)) }
-            runCatching { appUpdateRepository.checkForUpdate(BuildConfig.VERSION_CODE.toLong()) }
+            runCatching {
+                appUpdateRepository.checkForUpdate(
+                    currentVersionCode = BuildConfig.VERSION_CODE.toLong(),
+                    updateChannel = _state.value.appSettings.updateChannel,
+                )
+            }
                 .onSuccess { update ->
                     _state.update {
                         if (update == null) {
@@ -1067,6 +1072,13 @@ class TvBoxViewModel(
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
         PlayerLog.enabled = enabled
+    }
+
+    fun updateUpdateChannel(channel: com.tvbox.app.domain.UpdateChannel) {
+        if (_state.value.appSettings.updateChannel == channel) return
+        val settings = _state.value.appSettings.copy(updateChannel = channel)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
     }
 
     fun updatePlaybackAgentAutoSwitch(enabled: Boolean) {
@@ -4959,7 +4971,10 @@ private const val HISTORY_UPDATE_TIMEOUT_MS = 12_000L
 private const val HISTORY_UPDATE_BATCH_TIMEOUT_MS = 15_000L
 
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
-    override suspend fun checkForUpdate(currentVersionCode: Long): AppUpdate? = null
+    override suspend fun checkForUpdate(
+        currentVersionCode: Long,
+        updateChannel: com.tvbox.app.domain.UpdateChannel,
+    ): AppUpdate? = null
     override suspend fun downloadUpdate(update: AppUpdate, onProgress: (Int) -> Unit): java.io.File {
         error("AppUpdateRepository is not configured")
     }
