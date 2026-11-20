@@ -113,6 +113,11 @@ class UpdateDownloadService : Service() {
                 val partial = File("$path.part")
                 val directory = target.parentFile ?: throw IOException("下载目录不可用")
                 if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建下载目录")
+                // #312 存储检查：APK 下载前确认目标目录可用空间（保留 2 倍余量）。
+                val usable = directory.usableSpace
+                if (size > 0 && usable < size * 2) {
+                    throw IOException("存储空间不足，需至少 ${(size / 1024 / 1024) + 1}MB 可用")
+                }
                 val request = Request.Builder().url(url).header("User-Agent", "TVBox-Android").build()
                 val call = client.newCall(request)
                 val cancellation = coroutineContext[Job]?.invokeOnCompletion { if (it != null) call.cancel() }
