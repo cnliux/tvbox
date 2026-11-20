@@ -2139,7 +2139,9 @@ private fun LiveSourceSetting(
     val currentUrls = remember(urlsText) {
         urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
     }
-    val defaultIdx = currentUrls.getOrNull(defaultIndex)?.let { currentUrls.indexOf(it) } ?: -1
+    // 直接用下标取值：indexOf(value) 会匹配到重复 URL 的首次出现，导致高亮错位；
+    // 用户编辑/去重后 defaultIndex 也可能指向错误行，直接按位置判断更安全。
+    val defaultIdx = if (defaultIndex in currentUrls.indices) defaultIndex else -1
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -2242,6 +2244,10 @@ private fun LiveSourceSetting(
                 text = "保存直播源",
                 onClick = {
                     val urls = urlsText.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                    // defaultIndex 是编辑前的位置下标，用户增删行后已不指向同一 URL；
+                    // 直接用它作为 effectiveIdx 可能保存错误的那行为默认。这里保守处理：
+                    // 若 defaultIndex 超出新列表范围则放弃默认（置 -1），避免静默选错行。
+                    // 如需语义级"仍标记原来那行 URL"需改用 URL 内容匹配，但当前场景简单足够。
                     val effectiveIdx = if (defaultIndex in urls.indices) defaultIndex else -1
                     if (effectiveIdx != defaultIndex) {
                         defaultIndex = effectiveIdx

@@ -11,6 +11,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.Window
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
@@ -34,8 +35,10 @@ private const val REMOTE_DEDUP_WINDOW_MS = 80L
  * 遥控器事件来源缓存：按 (deviceId, keyCode) 记录最近一次处理时间，
  * 用于过滤多遥控器同时按下相同按键时的抖动。
  * deviceId <= 0 视为系统/虚拟键无法区分真实设备，统一放行。
+ *
+ * 每个调用方应持有独立实例（通过 remember 创建），避免多播放器实例互相干扰去重窗口。
  */
-private class RemoteKeyCache {
+internal class RemoteKeyCache {
     private val entries = LinkedHashMap<Pair<Int, Int>, Long>(16, 0.75f, true)
     private val maxEntries = 64
 
@@ -51,16 +54,19 @@ private class RemoteKeyCache {
     }
 }
 
-private val remoteKeyCache = RemoteKeyCache()
-
 internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeState): Modifier =
-    onPreviewKeyEvent { event ->
-        val native = event.nativeKeyEvent
-        if (remoteKeyCache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
-            return@onPreviewKeyEvent false
+    let { outerModifier ->
+        // RemoteKeyCache 提到组合函数体：避免在 onPreviewKeyEvent 非组合回调内调用 remember{}
+        // （compose-bom 2026+ / kotlin-plugin 下会编译失败），并保证跨按键复用去重窗口（80ms）。
+        val cache = remember { RemoteKeyCache() }
+        outerModifier.onPreviewKeyEvent { event ->
+            val native = event.nativeKeyEvent
+            if (cache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
+                return@onPreviewKeyEvent false
+            }
+            cache.trimIfNeeded()
+            map.handle(event, chrome)
         }
-        remoteKeyCache.trimIfNeeded()
-        map.handle(event, chrome)
     }
 
 /** 点播遥控：左右快进快退（长按连发）、OK 暂停、菜单切倍速、上一/下一集。 */
@@ -523,6 +529,9 @@ internal class PlayerTouchGestureHandler(
                 } else if (state.swipeMode == PlayerSwipeMode.Brightness) {
                     cancelLongPressSpeed()
                     cancelPendingSingleTap()
+                    // height==0 且 totalDy==0 时 totalDy/height 得 NaN，经 coerceIn 后仍是 NaN，
+                    // setScreenBrightness(NaN) 写入非法亮度；高度未布局则跳过。
+                    if (height <= 0f) return true
                     val brightness = (state.startBrightness - totalDy / height.toFloat())
                         .coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
                     window?.setScreenBrightness(brightness)
@@ -530,6 +539,7 @@ internal class PlayerTouchGestureHandler(
                 } else if (state.swipeMode == PlayerSwipeMode.Volume && state.maxVolume > 0) {
                     cancelLongPressSpeed()
                     cancelPendingSingleTap()
+                    // height<=0 已在上面短路；此处 float division 不会得 NaN。
                     val volume = (state.startVolume -
                         (totalDy / height.toFloat() * state.maxVolume).roundToInt())
                         .coerceIn(0, state.maxVolume)

@@ -51,8 +51,12 @@ internal fun RestoreGridFocus(focus: ReturnFocus, grid: LazyGridState, items: Li
     // 同页再次 mark() 换 key 后也能重新定位；配置变更后不会因旧布尔而永久跳过恢复。
     var restoredKey by rememberSaveable { mutableStateOf<String?>(null) }
     val targetKey = focus.lastKey
-    LaunchedEffect(targetKey, items) {
-        if (items.isEmpty() || targetKey == null || restoredKey == targetKey) return@LaunchedEffect
+    // 用 items.size 而非 items 列表实例作 key：每次重组都会生成新的 List，若直接用作 key
+    // 只要 restoredKey != targetKey 就会每轮重建 effect、重启 12 次焦点恢复循环（焦点抖动/卡死）。
+    // items 内容本身在 effect 内只读（firstOrNull/minByOrNull），size 足以区分「不同列表」。
+    val itemCount = items.size
+    LaunchedEffect(targetKey, itemCount) {
+        if (itemCount == 0 || targetKey == null || restoredKey == targetKey) return@LaunchedEffect
         val target = items.firstOrNull { it.first == targetKey }
             ?: items.minByOrNull { kotlin.math.abs(it.second - focus.lastIndex) }
             ?: return@LaunchedEffect
