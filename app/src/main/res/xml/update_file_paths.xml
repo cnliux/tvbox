@@ -3,6 +3,9 @@
     <cache-path
         name="update_apks"
         path="updates/" />
+    <cache-path
+        name="crash_logs"
+        path="crash_export/" />
     <external-files-path
         name="background_update_apks"
         path="Download/updates/" />

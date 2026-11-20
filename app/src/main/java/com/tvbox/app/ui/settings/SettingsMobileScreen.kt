@@ -902,6 +902,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
 
 @Composable
 private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    val context = LocalContext.current
     var showPrivacyPolicy by remember { mutableStateOf(false) }
     SettingsGroup {
         InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "聚合视频")
@@ -918,6 +919,20 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 TextButton(onClick = { showPrivacyPolicy = true }) {
                     Text("查看", color = TvColors.Accent)
                 }
+            },
+        )
+        DividerInGroup()
+        SettingsRow(
+            icon = Icons.Default.Build,
+            title = "导出崩溃日志",
+            subtitle = "合并本地崩溃日志并通过系统分享",
+            trailing = {
+                TextButton(onClick = {
+                    val result = exportCrashLogs(context)
+                    if (result != null) {
+                        android.widget.Toast.makeText(context, result, android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("导出", color = TvColors.Accent) }
             },
         )
         DividerInGroup()
