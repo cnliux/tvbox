@@ -22,6 +22,8 @@ internal data class PlaybackSnapshot(
     val playWhenReady: Boolean = false,
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
+    /** 当前位置之后已缓冲的时长（bufferedPosition - currentPosition，>=0）。 */
+    val bufferedMs: Long = 0L,
 ) {
     val isBuffering: Boolean get() = playbackState == Player.STATE_BUFFERING
 }
@@ -32,11 +34,13 @@ internal fun playbackSnapshotOf(
     playWhenReady: Boolean,
     positionMs: Long,
     durationMs: Long,
+    bufferedMs: Long = 0L,
 ): PlaybackSnapshot = PlaybackSnapshot(
     playbackState = playbackState,
     playWhenReady = playWhenReady,
     positionMs = positionMs.coerceAtLeast(0L),
     durationMs = durationMs.takeIf { it > 0L } ?: 0L,
+    bufferedMs = bufferedMs.coerceAtLeast(0L),
 )
 
 /**
@@ -73,6 +77,7 @@ internal class PlaybackHost(
             playWhenReady = player.playWhenReady,
             positionMs = player.currentPosition,
             durationMs = player.duration,
+            bufferedMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L),
         )
     }
 }

@@ -47,6 +47,7 @@ import coil.compose.AsyncImage
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.ui.components.EmptyState
+import com.tvbox.app.ui.components.NewEpisodeBadge
 import com.tvbox.app.ui.components.rememberTvImageLoader
 import com.tvbox.app.ui.theme.TvColors
 import java.text.SimpleDateFormat
@@ -325,22 +326,11 @@ private fun MobileHistoryRow(
                         style = MaterialTheme.typography.labelSmall,
                         color = TvColors.TextSecondary,
                     )
-                    // 更新提示紧跟在观看时间后面，不单独占一行：
-                    // 历史行本来就不高，再加一行会把列表压得很松散。
-                    item.updateHint?.let { hint ->
+                    // 新剧集提示统一走 NewEpisodeBadge（labelMedium、橙/绿高对比），
+                    // 与 TV 历史卡片、详情页同一套文案与颜色，保证竖屏列表可扫读。
+                    item.newEpisodeHint?.let { hint ->
                         Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = TvColors.Accent.copy(alpha = 0.16f),
-                        ) {
-                            Text(
-                                text = hint,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TvColors.Accent,
-                                maxLines = 1,
-                            )
-                        }
+                        NewEpisodeBadge(hint = hint)
                     }
                 }
             }

@@ -4,6 +4,7 @@ import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,18 +14,26 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.VideoScaleMode
 
@@ -40,10 +49,22 @@ internal fun PlayerSurface(
     player: ExoPlayer?,
     resizeMode: VideoScaleMode,
     showBuffering: Boolean = true,
+    posterUrl: String? = null,
     configure: (PlayerView) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    AndroidView(
+    var firstFrameRendered by remember(player) { mutableStateOf(false) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onRenderedFirstFrame() {
+                firstFrameRendered = true
+            }
+        }
+        player?.addListener(listener)
+        onDispose { player?.removeListener(listener) }
+    }
+    Box(modifier = modifier.fillMaxSize()) {
+        AndroidView(
         factory = { context ->
             PlayerView(context).apply {
                 layoutParams = ViewGroup.LayoutParams(
@@ -71,8 +92,17 @@ internal fun PlayerSurface(
                 else PlayerView.SHOW_BUFFERING_NEVER,
             )
         },
-        modifier = modifier.fillMaxSize(),
-    )
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (posterUrl != null && !firstFrameRendered) {
+            AsyncImage(
+                model = posterUrl,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.matchParentSize(),
+            )
+        }
+    }
 }
 
 /**
@@ -106,6 +136,12 @@ internal sealed interface PlaybackStatus {
         val retryEnabled: Boolean = true,
         val nextLabel: String? = null,
     ) : PlaybackStatus
+
+    /** 点播无下一集且播放自然结束：提示"已播完"，可返回详情。 */
+    data class Finished(
+        val title: String,
+        val message: String,
+    ) : PlaybackStatus
 }
 
 internal fun playbackFailureTitle(kind: PlaybackFailureKind): String = when (kind) {
@@ -134,6 +170,8 @@ internal fun PlaybackStatusOverlay(
     onNext: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     retryFocusRequester: androidx.compose.ui.focus.FocusRequester? = null,
+    /** 点播"已播完"时的返回详情出口；为空时按钮只关闭提示。 */
+    onFinishedBack: (() -> Unit)? = null,
 ) {
     when (status) {
         PlaybackStatus.Hidden -> Unit
@@ -196,6 +234,30 @@ internal fun PlaybackStatusOverlay(
                         ControlButton(nextLabel, onNext)
                     }
                 }
+            }
+        }
+        is PlaybackStatus.Finished -> {
+            Column(
+                modifier = modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color.Black.copy(alpha = 0.76f))
+                    .padding(horizontal = 24.dp, vertical = 18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = status.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    textAlign = TextAlign.Center,
+                )
+                Text(
+                    text = status.message,
+                    color = Color.White.copy(alpha = 0.76f),
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center,
+                )
+                ControlButton("返回详情", onFinishedBack ?: {}, primary = true)
             }
         }
     }

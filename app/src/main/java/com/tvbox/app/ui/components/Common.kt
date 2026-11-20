@@ -74,6 +74,7 @@ import com.tvbox.app.data.DOUBAN_USER_AGENT
 import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.LocalTouchMode
+import com.tvbox.app.domain.NewEpisodeHint
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.ui.TvScreen
 import com.tvbox.app.ui.formatPlayerTime
@@ -740,6 +741,40 @@ private fun MediaCardBadge(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/** 新剧集提示统一色板：已确认更新（橙）与仅本机未看（绿），高对比、三处复用。 */
+val NewEpisodeConfirmedColor = Color(0xFFFF9E4D)
+val NewEpisodePendingColor = Color(0xFF5DBB8A)
+
+/**
+ * 新剧集醒目文字标签：历史记录 / 追剧列表 / 详情页三处共用。
+ * [large] 用于 TV 端（3 米外可读，焦点态下同样清晰），默认手机端紧凑档。
+ */
+@Composable
+fun NewEpisodeBadge(
+    hint: NewEpisodeHint,
+    large: Boolean = false,
+    modifier: Modifier = Modifier,
+) {
+    val color = if (hint.confirmed) NewEpisodeConfirmedColor else NewEpisodePendingColor
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = color.copy(alpha = 0.18f),
+        modifier = modifier,
+    ) {
+        Text(
+            text = hint.label,
+            modifier = Modifier.padding(
+                horizontal = if (large) 8.dp else 6.dp,
+                vertical = if (large) 3.dp else 2.dp,
+            ),
+            color = color,
+            style = if (large) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelMedium,
+            fontWeight = if (large) FontWeight.SemiBold else FontWeight.Medium,
+            maxLines = 1,
+        )
+    }
+}
+
 @Composable
 fun MoviePosterCard(
     movie: Movie,
@@ -867,22 +902,33 @@ fun HistoryItemCard(
         onClick = onClick,
         modifier = modifier,
         // 导入/迁移的历史可能没有来源名，过滤空段避免副标题以 " / " 开头。
-        // 更新提示（「还有 N 集」）接在副标题末尾：电视卡片空间有限，
-        // 单独占一行会把海报压小，跟在进度后面最省地方又能一眼看到。
-        subtitle = listOf(item.sourceName, progressText, item.updateHint)
+        // 更新提示改由封面底部 overlay 的 NewEpisodeBadge 承担（大字号、高对比、3 米可读），
+        // 副标题只保留来源与进度，避免普通灰字弱提示再次被忽略。
+        subtitle = listOf(item.sourceName, progressText)
             .filterNotNull()
             .filter { it.isNotBlank() }
             .joinToString(" / "),
         badge = "继续观看",
         progress = item.progressPercent / 100f,
         bottomOverlay = {
-            Text(
-                text = item.episodeTitle,
-                color = Color.White,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                if (item.episodeTitle.isNotBlank()) {
+                    Text(
+                        text = item.episodeTitle,
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                }
+                item.newEpisodeHint?.let { hint ->
+                    NewEpisodeBadge(hint = hint, large = true)
+                }
+            }
         },
         cover = {
             if (item.posterUrl.isNotBlank() && !posterFailed) {

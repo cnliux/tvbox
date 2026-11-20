@@ -144,6 +144,17 @@ fun SearchScreen(
     LaunchedEffect(Unit) {
         if (returnFocus.lastKey == null) runCatching { searchFieldFocus.requestFocus() }
     }
+    // #8 空列表焦点兜底：搜索无结果（非错误/加载中）时把焦点拉回搜索框，避免焦点悬空
+    // 无法用方向键继续操作；错误态由 ErrorState 的重试按钮承接焦点，不抢焦点。
+    LaunchedEffect(state.searchQuery, state.searchResults.isEmpty(), state.searchError) {
+        if (state.searchQuery.isNotBlank() &&
+            state.searchResults.isEmpty() &&
+            state.searchError == null &&
+            !state.searchLoading
+        ) {
+            runCatching { searchFieldFocus.requestFocus() }
+        }
+    }
     RestoreGridFocus(returnFocus, grid, state.searchResults.mapIndexed { index, item -> "${item.apiLineId}:${item.id}" to index })
 
     fun setQuery(text: String) {
@@ -208,6 +219,7 @@ fun SearchScreen(
                         onKey = ::insertKey,
                         onDelete = ::deleteKey,
                         onMoveToResults = moveToResults,
+                        tvMode = state.effectiveDeviceMode != com.tvbox.app.domain.DeviceMode.Mobile,
                         modifier = Modifier
                             .width(356.dp)
                             .fillMaxHeight(),
@@ -286,8 +298,10 @@ private fun SearchControlPanel(
     onKey: (String) -> Unit,
     onDelete: () -> Unit,
     onMoveToResults: () -> Unit,
+    tvMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    val softwareKeyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -299,9 +313,16 @@ private fun SearchControlPanel(
         OutlinedTextField(
             value = fieldValue,
             onValueChange = onValueChange,
+            // #22/#7 TV 模式屏蔽软键盘：遥控器走下方 SearchKeyboard 输入，聚焦输入框不弹 IME，
+            // 避免软键盘抢焦点与遥控器冲突；手机端保留系统软键盘。
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(fieldFocus)
+                .onFocusChanged { focusState ->
+                    if (tvMode && focusState.isFocused) {
+                        runCatching { softwareKeyboardController?.hide() }
+                    }
+                }
                 .onPreviewKeyEvent { event ->
                     // 单行搜索框里的"下键"没有光标移动意义：直接进入结果卡片列表，
                     // 避免遥控器焦点被 TextField 吞掉后在输入框里"卡死"。

@@ -876,6 +876,8 @@ private fun PlatformLivePlayerScreen(
     // 虎牙单次 FLV 拉流约 2 分钟被 CDN 关闭：改由 Go 侧本机连续代理续流，
     // 播放器只连本地一条永不结束的 FLV，避免每 2 分钟一次 ENDED 断流。
     // Go 桥接可能耗时或阻塞，必须在 IO 线程启动，避免 Compose 主线程卡死/ANR。
+    // #19 连续代理启动失败标记：回退直连可能周期性缓冲，向用户提示一次（房间维度记忆）。
+    var proxyFallback by remember(room.id) { mutableStateOf(false) }
     val continuityProxyState = androidx.compose.runtime.produceState<com.tvbox.app.data.live.LiveProxyHandle?>(
         initialValue = null,
         key1 = room.id,
@@ -885,12 +887,14 @@ private fun PlatformLivePlayerScreen(
         val resolved = stream
         if (resolved == null || !FlvContinuityProxy.shouldWrap(room.site, resolved.protocol)) {
             value = null
+            proxyFallback = false
             return@produceState
         }
         val candidate = resolved.activeCandidateOrNull
         val candidateUrl = candidate?.url.orEmpty()
         if (candidateUrl.isBlank()) {
             value = null
+            proxyFallback = false
             return@produceState
         }
         val handle = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -907,12 +911,33 @@ private fun PlatformLivePlayerScreen(
             )
         }
         value = handle
+        if (handle == null) {
+            // #19/#21 连续代理启动失败：回退直连可能周期性缓冲，记录退化原因到统一日志并提示。
+            CrashHandler.recordOperation(
+                "flv.proxy.fallback",
+                "site=${room.site} room=${room.id} 原因=代理启动失败，回退直连（可能周期性缓冲）",
+            )
+            proxyFallback = true
+        } else {
+            proxyFallback = false
+        }
         awaitDispose { handle?.close() }
     }
     val continuityProxy = continuityProxyState.value
     val lifecycleOwner = LocalLifecycleOwner.current
     val playbackUrl = continuityProxy?.localUrl() ?: stream?.activeCandidateOrNull?.url
     val context = androidx.compose.ui.platform.LocalContext.current
+    // #19 代理失败提示：与项目现有提示（解码切换/线路提示）一致的 Toast 通道。
+    // TV 横幅可在后续批次升级为 PlayerChrome 通知条，本轮先保证双端可感知。
+    LaunchedEffect(proxyFallback) {
+        if (proxyFallback) {
+            android.widget.Toast.makeText(
+                context,
+                "连续代理启动失败，已回退直连，播放可能周期性缓冲",
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
     val isMobile = state.effectiveDeviceMode == com.tvbox.app.domain.DeviceMode.Mobile
     val activity = remember(context) { context.findActivity() }
     // 全屏按钮按「当前真实方向」切换，而不是翻转一个本地布尔量：进入页面时屏幕可能
@@ -1525,6 +1550,7 @@ private fun PlatformLivePlayerScreen(
             PlayerSurface(
                 player = player,
                 resizeMode = videoScaleMode,
+                posterUrl = room.cover.takeIf { it.isNotBlank() },
                 // 手机端把触摸交给共享手势处理器（单击唤出 + 竖滑亮度/音量）；
                 // TV 端不挂监听，避免与遥控器焦点/按键逻辑冲突。
                 configure = { view ->
@@ -1633,6 +1659,7 @@ private fun PlatformLivePlayerScreen(
                     url = true,
                     cast = true,
                     castLabel = castController.castLabel,
+                    castActive = castController.castingDevice != null,
                     actions = liveActions,
                     // 手机端不再提供「缓冲档位」按钮，改为一个竖屏也保留的调试入口：
                     // 点击打开与电视端相同的实时播放健康/续流统计浮层。

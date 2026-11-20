@@ -232,6 +232,10 @@ fun PlayerScreen(
     var firstFrameFailure by remember(movie.apiLineId, movie.id) {
         mutableStateOf<PlaybackFailureKind?>(null)
     }
+    // 点播无下一集且播放自然结束：显示"已播完"，可返回详情。
+    var playbackFinished by remember(movie.apiLineId, movie.id) {
+        mutableStateOf(false)
+    }
     val overlayRetryFocus = remember { FocusRequester() }
     var bufferingPlaybackKey by remember { mutableStateOf<String?>(null) }
     var bufferingCheckNonce by remember { mutableIntStateOf(0) }
@@ -458,6 +462,7 @@ fun PlayerScreen(
                     ?.episodes
                     .orEmpty()
                 if (episodeIndex in episodes.indices && episodeIndex != currentState.playerEpisodeIndex) {
+                    playbackFinished = false
                     resumeAnchor.update(player.currentPosition)
                     failedSourceIndexes = emptySet()
                     skipCreditsState = resetSkipCreditsRuntime()
@@ -502,6 +507,7 @@ fun PlayerScreen(
                     }
                     Player.STATE_READY -> {
                         bufferingPlaybackKey = null
+                        playbackFinished = false
                         if (introSkipPending) {
                             introSkipPending = false
                             val settings = actions.state.value.appSettings
@@ -540,6 +546,10 @@ fun PlayerScreen(
                             positionMs = player.currentPosition,
                             durationMs = player.duration.takeIf { it > 0L } ?: 0L,
                         )
+                        // 无下一集且自然播完：展示"已播完"，允许返回详情。
+                        if (player.playWhenReady && !player.hasNextMediaItem()) {
+                            playbackFinished = true
+                        }
                     }
                 }
             }
@@ -888,6 +898,7 @@ fun PlayerScreen(
             player = player,
             resizeMode = videoScaleMode,
             showBuffering = false,
+            posterUrl = movie.posterUrl,
             configure = { view ->
                 // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
                 if (!isTelevision) {
@@ -897,6 +908,10 @@ fun PlayerScreen(
         )
         val failureKind = firstFrameFailure
         val overlayStatus = when {
+            playbackFinished -> PlaybackStatus.Finished(
+                title = "已播完",
+                message = "${movie.name} 已播放完毕，可返回详情页。",
+            )
             failureKind != null -> PlaybackStatus.Failed(
                 kind = failureKind,
                 title = playbackFailureTitle(failureKind),
@@ -932,6 +947,7 @@ fun PlayerScreen(
             },
             modifier = Modifier.align(Alignment.Center),
             retryFocusRequester = if (isTelevision) overlayRetryFocus else null,
+            onFinishedBack = { exitPlayer() },
         )
         val currentEpisodeIndex = player.currentMediaItemIndex.coerceIn(0, source.episodes.lastIndex)
         val currentEpisodeTitle = source.episodes[currentEpisodeIndex].title
@@ -957,6 +973,7 @@ fun PlayerScreen(
                 },
                 positionMs = uiPosition,
                 durationMs = uiDuration,
+                bufferedMs = playbackHost.snapshot.bufferedMs,
                 playing = uiPlaying,
                 speed = state.playerSpeed,
                 resizeMode = videoScaleMode,
@@ -991,6 +1008,7 @@ fun PlayerScreen(
                 } else {
                     null
                 },
+                castActive = castingDevice != null,
                 lock = true,
             ),
             actions = PlayerChromeActions(

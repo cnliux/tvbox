@@ -755,6 +755,7 @@ private fun LivePlayerScreen(
             player = player,
             resizeMode = videoScaleMode,
             showBuffering = false,
+            posterUrl = currentChannel.logo.takeIf { it.isNotBlank() },
         )
         val blockedKind = blockedFailureKind
         val overlayStatus = when {

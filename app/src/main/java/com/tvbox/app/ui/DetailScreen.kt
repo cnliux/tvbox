@@ -57,8 +57,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
+import com.tvbox.app.domain.NewEpisodeHint
 import com.tvbox.app.domain.PlayEpisode
 import com.tvbox.app.domain.PlaySource
+import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.domain.resumePositionForEpisode
 import com.tvbox.app.ui.components.CategoryPill
@@ -67,6 +69,7 @@ import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.InfoLine
 import com.tvbox.app.ui.components.LoadingState
+import com.tvbox.app.ui.components.NewEpisodeBadge
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.SmallMeta
@@ -211,6 +214,11 @@ fun DetailScreen(
                                 }
                             }
                             Spacer(modifier = Modifier.height(sectionGap))
+                            val detailHint = detailNewEpisodeHint(
+                                movie = movie,
+                                currentEpisodeTotal = movie.playSources.getOrNull(state.selectedSourceIndex)?.episodes?.size ?: 0,
+                                historyItems = state.historyItems,
+                            )
                             EpisodeGrid(
                                 source = movie.playSources.getOrNull(state.selectedSourceIndex),
                                 selectedEpisodeIndex = state.selectedEpisodeIndex,
@@ -229,6 +237,7 @@ fun DetailScreen(
                                         index,
                                     )
                                 },
+                                newEpisodeHint = detailHint,
                             )
                         }
                     }
@@ -255,6 +264,11 @@ private fun MobileDetailContent(
 ) {
     val selectedSource = movie.playSources.getOrNull(state.selectedSourceIndex)
     val canPlay = selectedSource?.episodes?.isNotEmpty() == true
+    val detailHint = detailNewEpisodeHint(
+        movie = movie,
+        currentEpisodeTotal = selectedSource?.episodes?.size ?: 0,
+        historyItems = state.historyItems,
+    )
     EpisodeGrid(
         source = selectedSource,
         selectedEpisodeIndex = state.selectedEpisodeIndex,
@@ -337,7 +351,28 @@ private fun MobileDetailContent(
         onScrollIndexChanged = { index ->
             actions.rememberDetailScrollIndex(movie.id, state.selectedSourceIndex, index)
         },
+        newEpisodeHint = detailHint,
     )
+}
+
+/**
+ * 详情页「新剧集」提示：对比本机历史（已看集数）与数据源实时总集数。
+ * 匹配 key 与续播逻辑 [findResumePoint] 一致（同影片 + 同 apiLine），
+ * 避免用户切到其它线路时误报。详情页拿到的是实时源集数（或跨源检查已知
+ * 总集数），视为已确认的最新更新；返回 null 表示没有新增或数据不足。
+ */
+private fun detailNewEpisodeHint(
+    movie: Movie,
+    currentEpisodeTotal: Int,
+    historyItems: List<WatchHistoryItem>,
+): NewEpisodeHint? {
+    val item = historyItems.firstOrNull { it.movieId == movie.id && it.apiLineId == movie.apiLineId }
+        ?: return null
+    val total = maxOf(currentEpisodeTotal, item.knownEpisodeCount)
+    if (total <= 0) return null
+    val newCount = total - (item.episodeIndex + 1)
+    if (newCount <= 0) return null
+    return NewEpisodeHint("更新至 $total 集", confirmed = true)
 }
 
 @Composable
@@ -352,6 +387,8 @@ private fun EpisodeGrid(
     /** 上次离开详情页时的滚动位置；-1 表示无记忆，回落到"滚到选中集"。 */
     restoreScrollIndex: Int = -1,
     onScrollIndexChanged: (Int) -> Unit = {},
+    /** 新剧集醒目提示，显示在「选集」标题旁；null 表示无需提示。 */
+    newEpisodeHint: NewEpisodeHint? = null,
 ) {
     val episodes = source?.episodes.orEmpty()
     if (episodes.isEmpty()) {
@@ -453,7 +490,14 @@ private fun EpisodeGrid(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("选集（共 ${episodes.size} 集）", style = MaterialTheme.typography.titleSmall)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("选集（共 ${episodes.size} 集）", style = MaterialTheme.typography.titleSmall)
+                    // 新剧集醒目提示与 TV/手机历史卡片同文案、同颜色，一眼看出「更到第几集」。
+                    newEpisodeHint?.let { NewEpisodeBadge(hint = it) }
+                }
                 CategoryPill(label = if (episodeSortReverse) "正序" else "倒序", selected = false, onClick = onToggleSort)
             }
         }

@@ -71,6 +71,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.foundation.lazy.LazyColumn
 import com.tvbox.app.data.TextFileExporter
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -101,7 +102,10 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -556,6 +560,18 @@ private fun HomeScreen(
         LaunchedEffect(Unit) {
             if (homeFocus.lastKey == null) runCatching { allCategoryFocusRequester.requestFocus() }
         }
+        // #1 页面恢复时强制复位焦点：从后台/系统设置返回（ON_RESUME）时盒子可能丢失焦点，
+        // 显式把焦点拉回逻辑首项（分类行），避免回前台后方向键无响应。
+        val homeLifecycleOwner = LocalLifecycleOwner.current
+        DisposableEffect(homeLifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    runCatching { allCategoryFocusRequester.requestFocus() }
+                }
+            }
+            homeLifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { homeLifecycleOwner.lifecycle.removeObserver(observer) }
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -568,17 +584,29 @@ private fun HomeScreen(
                     // 仅响应 KeyUp 事件，避免长按重复触发
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     // 数字快捷键映射（主键盘 + 小键盘统一处理）
+                    // 1=历史 2=搜索 3=继续观看(历史页) 4=直播 5=平台直播 6=设置
+                    // 7=豆瓣热播 8=源管理 9=刷新 0=远程管理
                     val shortcutMap = mapOf(
                         AndroidKeyEvent.KEYCODE_1       to { actions.openHistory() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_1 to { actions.openHistory() },
                         AndroidKeyEvent.KEYCODE_2       to { actions.openSearch() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_2 to { actions.openSearch() },
+                        AndroidKeyEvent.KEYCODE_3       to { actions.openHistory() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_3 to { actions.openHistory() },
                         AndroidKeyEvent.KEYCODE_4       to { actions.openLive() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_4 to { actions.openLive() },
                         AndroidKeyEvent.KEYCODE_5       to { actions.openPlatformLive() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_5 to { actions.openPlatformLive() },
                         AndroidKeyEvent.KEYCODE_6       to { actions.openSettings() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_6 to { actions.openSettings() },
+                        AndroidKeyEvent.KEYCODE_7       to { actions.selectDoubanHot() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_7 to { actions.selectDoubanHot() },
+                        AndroidKeyEvent.KEYCODE_8       to { actions.openSourceManager() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_8 to { actions.openSourceManager() },
+                        AndroidKeyEvent.KEYCODE_9       to { actions.refreshHome(forceRefresh = true) },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_9 to { actions.refreshHome(forceRefresh = true) },
+                        AndroidKeyEvent.KEYCODE_0       to { actions.openRemoteManageDialog() },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_0 to { actions.openRemoteManageDialog() },
                     )
                     shortcutMap[event.nativeKeyEvent.keyCode]?.let { it(); true } ?: false
                 }
@@ -1299,6 +1327,8 @@ private fun MovieGrid(
         return
     }
     var loadMoreFocused by remember { mutableStateOf(false) }
+    // #14 切换分类/线路/信息流上下文后，把焦点显式落到新内容首项，避免焦点残留在旧位置或丢失。
+    var pendingFirstFocus by remember { mutableStateOf(false) }
     val contextKey = "${state.selectedApiLineId}:${state.homeFeedMode}:${state.selectedParentCategoryId}:${state.selectedCategoryId}"
     var savedContext by rememberSaveable { mutableStateOf(contextKey) }
     LaunchedEffect(contextKey) {
@@ -1306,6 +1336,7 @@ private fun MovieGrid(
             focus.reset()
             gridState.scrollToItem(0)
             savedContext = contextKey
+            pendingFirstFocus = true
         }
         loadMoreFocused = false
     }
@@ -1328,6 +1359,14 @@ private fun MovieGrid(
         if (state.isShowingDoubanHot) hotItems.mapIndexed { index, item -> "douban:${item.doubanId}" to index + itemOffset }
         else state.movies.mapIndexed { index, movie -> "${movie.apiLineId}:${movie.id}" to index + itemOffset }
     RestoreGridFocus(focus, gridState, focusItems)
+    // #14 上下文切换后焦点落到新内容首项（continue 行或首张卡片）；首项未组合时保持待定，
+    // 待 focusItems 变化后重试，避免分类切换后焦点残留在旧位置或直接丢失。
+    LaunchedEffect(pendingFirstFocus, focusItems.firstOrNull()?.first) {
+        if (pendingFirstFocus && focusItems.isNotEmpty()) {
+            withFrameNanos { }
+            if (focus.request(focusItems.first().first)) pendingFirstFocus = false
+        }
+    }
     Column(modifier = modifier.fillMaxSize()) {
         if (showSectionHeader) {
             Row(

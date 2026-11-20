@@ -2,6 +2,15 @@ package com.tvbox.app.domain
 
 import kotlinx.serialization.Serializable
 
+/**
+ * 新剧集提示的文案与语义标记，供历史记录 / 追剧列表 / 详情页统一渲染。
+ * [confirmed] = true 表示已确认总集数上涨（橙色）；false 表示仅本机记录内还有未看集数（绿色）。
+ */
+data class NewEpisodeHint(
+    val label: String,
+    val confirmed: Boolean,
+)
+
 @Serializable
 data class WatchHistoryItem(
     val movieId: Int,
@@ -46,17 +55,30 @@ data class WatchHistoryItem(
             return (total - episodeIndex - 1).coerceAtLeast(0)
         }
 
-    /** 历史行的更新提示文案；null 表示不需要提示。 */
-    val updateHint: String?
+    /** 是否由跨源检查确认了比保存时更高的总集数（「更新至 N 集」语义）。 */
+    val hasConfirmedNewerTotal: Boolean
+        get() = latestEpisodeCount > episodeCount.coerceAtLeast(0) && latestEpisodeCount > 0
+
+    /**
+     * 统一「新剧集」提示模型：历史记录 / 追剧列表 / 详情页三处共用，由 UI 层统一渲染。
+     * null 表示没有新集（或集数未知），不需要提示。
+     */
+    val newEpisodeHint: NewEpisodeHint?
         get() {
             val remaining = unwatchedEpisodes
             if (remaining <= 0) return null
-            // 跨源检查发现的总集数高于保存时记录，明确提示已更新到的总集数。
-            if (latestEpisodeCount > episodeCount.coerceAtLeast(0) && latestEpisodeCount > 0) {
-                return "更新至 $latestEpisodeCount 集"
+            return if (hasConfirmedNewerTotal) {
+                // 跨源检查确认总集数上涨：明确「更新至最新」。
+                NewEpisodeHint("更新至 $knownEpisodeCount 集", confirmed = true)
+            } else {
+                // 仅本机记录内还有未看集数：用增量表达，避免误导为已确认更新。
+                NewEpisodeHint("+$remaining 集", confirmed = false)
             }
-            return "还有 $remaining 集"
         }
+
+    /** 历史行的更新提示文案（兼容旧调用）；null 表示不需要提示。 */
+    val updateHint: String?
+        get() = newEpisodeHint?.label
 
     val progressPercent: Int
         get() {

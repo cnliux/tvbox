@@ -1039,6 +1039,7 @@ private fun MobileLivePlayerScreen(
                         url = true,
                         cast = true,
                         castLabel = castController.castLabel,
+                        castActive = castController.castingDevice != null,
                         // 手机端调试按钮：竖屏精简后仍保留，替代原缓冲档位循环按钮。
                         debugActive = showDebugOverlay,
                         onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
@@ -1554,6 +1555,7 @@ private fun MobileLivePlayerSurface(
             player = exoPlayer,
             resizeMode = resizeMode,
             showBuffering = !streamBlocked,
+            posterUrl = channel.logo.takeIf { it.isNotBlank() },
             configure = { view -> view.setOnTouchListener(touchHandler) },
         )
 

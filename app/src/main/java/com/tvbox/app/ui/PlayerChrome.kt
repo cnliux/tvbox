@@ -292,6 +292,8 @@ internal data class PlayerChromeData(
     val sourceEnabled: List<Boolean> = emptyList(),
     val positionMs: Long = 0L,
     val durationMs: Long = 0L,
+    /** 当前位置之后已缓冲时长（>=0）；进度条绘制缓冲段，0 表示无缓冲数据。 */
+    val bufferedMs: Long = 0L,
     val playing: Boolean = false,
     val speed: Float = 1f,
     val resizeMode: VideoScaleMode = VideoScaleMode.Fit,
@@ -331,6 +333,8 @@ internal data class PlayerChromeCapabilities(
     val skip: Boolean = false,
     val cast: Boolean = false,
     val castLabel: String? = null,
+    /** 当前处于投屏连接中：按钮以激活态高亮，与「停止投屏」文案配合。 */
+    val castActive: Boolean = false,
     val lock: Boolean = false,
     val favorite: Boolean = false,
     val favoriteLabel: String? = null,
@@ -385,6 +389,7 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             // 否则手机竖屏（直播页默认方向）下投屏按钮会被裁剪掉。
             cast = this.cast,
             castLabel = this.castLabel,
+            castActive = this.castActive,
             lock = false,
             favorite = false,
             favoriteLabel = null,
@@ -577,9 +582,14 @@ private fun PlayerChromeTv(
                             track = { slider ->
                                 val fraction = ((slider.value - slider.valueRange.start) /
                                     (slider.valueRange.endInclusive - slider.valueRange.start).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                                val durMs = data.durationMs.coerceAtLeast(1L).toFloat()
+                                // 缓冲终点 = 当前播放位置 + 已缓冲时长；拖动时仍以真实位置为基准。
+                                val bufferedEnd = ((data.positionMs + data.bufferedMs) / durMs).coerceIn(0f, 1f)
                                 Canvas(Modifier.fillMaxWidth().height(if (progressFocused) 5.dp else 3.dp)) {
                                     val center = size.height / 2
                                     drawLine(Color.White.copy(alpha = 0.28f), Offset(0f, center), Offset(size.width, center), size.height, StrokeCap.Round)
+                                    // 缓冲段：浅色延伸在播放进度之下，直观看到"还能往后播多少"。
+                                    drawLine(Color.White.copy(alpha = 0.16f), Offset(0f, center), Offset(size.width * bufferedEnd, center), size.height, StrokeCap.Round)
                                     drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                                 }
                             },
@@ -632,7 +642,8 @@ private fun PlayerChromeTv(
                         ControlButton("下一个", { actions.onNext(); state.interaction++ })
                     }
                     if (!compact) Spacer(Modifier.weight(1f))
-                    if (capabilities.cast) ControlButton(capabilities.castLabel ?: "投屏", { actions.onCast(); state.interaction++ })
+                    if (capabilities.cast) ControlButton(capabilities.castLabel ?: "投屏", { actions.onCast(); state.interaction++ },
+                        primary = capabilities.castActive)
                     if (capabilities.episodes) ControlButton("选集", { state.openPanel(PlayerPanel.Episodes) })
                     if (capabilities.sources) ControlButton("线路", { state.openPanel(PlayerPanel.Sources) })
                     if (capabilities.lines) ControlButton("线路", { actions.onOpenLinePanel(); state.interaction++ })
@@ -829,6 +840,7 @@ private fun PlayerChromeTouch(
                     MobileProgressRow(
                         positionMs = data.positionMs,
                         durationMs = data.durationMs,
+                        bufferedMs = data.bufferedMs,
                         onScrubbing = { scrubbing -> state.scrubbing = scrubbing; state.interaction++ },
                         onSeek = { actions.onSeek(it); state.interaction++ },
                     )
@@ -924,7 +936,7 @@ private fun PlayerChromeTouch(
                     if (capabilities.settings) add(ChromeFeature("设置") {
                         actions.onSettings(); state.interaction++
                     })
-                    if (capabilities.cast) add(ChromeFeature(capabilities.castLabel ?: "投屏") {
+                    if (capabilities.cast) add(ChromeFeature(capabilities.castLabel ?: "投屏", capabilities.castActive) {
                         actions.onCast(); state.interaction++
                     })
                     capabilities.actions.forEach { action ->
@@ -1941,6 +1953,7 @@ private fun formatSpeedLabel(speed: Float): String = speed.toString().trimEnd('0
 private fun MobileProgressRow(
     positionMs: Long,
     durationMs: Long,
+    bufferedMs: Long,
     onScrubbing: (Boolean) -> Unit,
     onSeek: (Long) -> Unit,
 ) {
@@ -1972,9 +1985,12 @@ private fun MobileProgressRow(
             track = { slider ->
                 val fraction = ((slider.value - slider.valueRange.start) /
                     (slider.valueRange.endInclusive - slider.valueRange.start).coerceAtLeast(1f)).coerceIn(0f, 1f)
+                val durMs = durationMs.coerceAtLeast(1L).toFloat()
+                val bufferedEnd = ((positionMs + bufferedMs) / durMs).coerceIn(0f, 1f)
                 Canvas(Modifier.fillMaxWidth().height(4.dp)) {
                     val center = size.height / 2
                     drawLine(Color.White.copy(alpha = 0.25f), Offset(0f, center), Offset(size.width, center), size.height, StrokeCap.Round)
+                    drawLine(Color.White.copy(alpha = 0.16f), Offset(0f, center), Offset(size.width * bufferedEnd, center), size.height, StrokeCap.Round)
                     drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                 }
             },
