@@ -3025,7 +3025,8 @@ class TvBoxViewModel(
                 if (platformLiveSameLineRetries < PLATFORM_LIVE_SAME_LINE_RETRY_MAX) {
                     platformLiveSameLineRetries++
                     android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】保持候选 ${stream.activeCandidateIndex} 重新解析地址（第 $platformLiveSameLineRetries 次）")
-                    schedulePlatformLiveReResolve(delayMs = PLATFORM_LIVE_RECOVERY_BACKOFF_MS * platformLiveSameLineRetries)
+                    schedulePlatformLiveReResolve(delayMs = (PLATFORM_LIVE_RECOVERY_BACKOFF_MS shl (platformLiveSameLineRetries - 1))
+                        .coerceAtMost(PLATFORM_LIVE_RECOVERY_MAX_BACKOFF_MS))
                     return
                 }
                 android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】当前候选重连已用尽，改为切换下一条候选")
@@ -4938,6 +4939,8 @@ private const val PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS = 6
 private const val PLATFORM_LIVE_SAME_LINE_RETRY_MAX = 2
 // 平台直播重连退避基数，按重连次数线性递增，避免瞬时高频请求。
 private const val PLATFORM_LIVE_RECOVERY_BACKOFF_MS = 1_500L
+// #64：网络错误重连采用指数退避，上限 8s 防止重连间隔无界拉长。
+private const val PLATFORM_LIVE_RECOVERY_MAX_BACKOFF_MS = 8_000L
 private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
 
 /** 详情加载诊断日志：只输出影片 id 与异常类型，不输出任何源地址。 */
