@@ -47,6 +47,7 @@ internal object SettingsStorageKeys {
     const val PLAYER_SPEED = "player_speed"
     const val DECODER_STRATEGY = "decoder_strategy"
     const val CONTENT_VIDEO_SCALE_MODES = "content_video_scale_modes"
+    const val CONTENT_SUBTITLE_TRACKS = "content_subtitle_tracks"
     const val DEVICE_MODE = "device_mode"
     const val LIVE_SOURCE_DEFAULT_GROUP = "live_source_default_group"
     const val MOBILE_ONBOARDED = "mobile_onboarded"
@@ -131,6 +132,7 @@ internal fun readLegacySettings(
             float(SettingsStorageKeys.PLAYER_SPEED, PlayerSpeedSetting.Default),
         ),
         contentVideoScaleModes = stringMap(SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES),
+        contentSubtitleTracks = stringMap(SettingsStorageKeys.CONTENT_SUBTITLE_TRACKS),
         deviceMode = DeviceMode.fromStorageKey(string(SettingsStorageKeys.DEVICE_MODE, "")),
         liveSourceDefaultGroup = string(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP, ""),
         mobileOnboarded = boolean(SettingsStorageKeys.MOBILE_ONBOARDED, false),

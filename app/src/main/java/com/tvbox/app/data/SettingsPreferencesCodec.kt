@@ -75,6 +75,10 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
         SettingsStorageKeys.CONTENT_VIDEO_SCALE_MODES,
         json.encodeToString(settings.contentVideoScaleModes),
     )
+    putString(
+        SettingsStorageKeys.CONTENT_SUBTITLE_TRACKS,
+        json.encodeToString(settings.contentSubtitleTracks),
+    )
     putString(SettingsStorageKeys.DEVICE_MODE, settings.deviceMode.storageKey)
     putString(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_GROUP, settings.liveSourceDefaultGroup)
     putBoolean(SettingsStorageKeys.MOBILE_ONBOARDED, settings.mobileOnboarded)

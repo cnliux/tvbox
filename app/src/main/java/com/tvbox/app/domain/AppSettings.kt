@@ -29,6 +29,8 @@ data class AppSettings(
      * value 为 [VideoScaleMode.storageKey]。命中时优先于全局默认 [videoScaleMode]。
      */
     val contentVideoScaleModes: Map<String, String> = emptyMap(),
+    /** 按内容记忆的字幕轨道：key 由影片维度生成，value 为轨道 id（空串表示关闭字幕）。 */
+    val contentSubtitleTracks: Map<String, String> = emptyMap(),
     /** 设备模式偏好：Auto 为默认；Television/Mobile 为手动覆盖值，优先级高于自动识别。 */
     val deviceMode: DeviceMode = DeviceMode.Auto,
     /** 每个直播源地址默认添加到的频道组合名。空字符串表示不自动加入任何组合。 */

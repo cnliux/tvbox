@@ -47,6 +47,7 @@ import com.tvbox.app.domain.canLoadMoreHomeFeed
 import com.tvbox.app.domain.resolveResumePosition
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.effectiveMode
+import com.tvbox.app.domain.withContentSubtitleTrack
 import com.tvbox.app.domain.withContentVideoScaleMode
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.ApiLine
@@ -1086,6 +1087,15 @@ class TvBoxViewModel(
         mode: com.tvbox.app.domain.VideoScaleMode,
     ) {
         val settings = _state.value.appSettings.withContentVideoScaleMode(contentKey, mode)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /**
+     * 按内容记忆字幕轨道：写入覆盖表，不影响其他内容；[trackId] 空串表示关闭字幕。
+     */
+    fun updateContentSubtitleTrack(contentKey: String, trackId: String) {
+        val settings = _state.value.appSettings.withContentSubtitleTrack(contentKey, trackId)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
     }

@@ -38,3 +38,23 @@ fun liveVideoScaleKey(groupName: String, channelName: String): String =
 
 /** 平台直播：按站点 + 房间记忆。 */
 fun roomVideoScaleKey(site: String, roomId: String): String = "room|$site|$roomId"
+
+/** 按内容记忆的字幕轨道；没有记录时返回 null（沿用播放器默认/当前选择）。 */
+fun AppSettings.resolveSubtitleTrack(contentKey: String?): String? =
+    contentKey?.let { contentSubtitleTracks[it] }
+
+/** 字幕记忆覆盖表上限：与画面比例一致，避免偏好无限膨胀。 */
+private const val MAX_CONTENT_SUBTITLE_ENTRIES = 200
+
+/** 记录某内容的字幕轨道选择；[trackId] 为空串表示关闭字幕。纯函数，便于单测。 */
+fun AppSettings.withContentSubtitleTrack(contentKey: String?, trackId: String): AppSettings {
+    if (contentKey.isNullOrBlank()) return this
+    val updated = (contentSubtitleTracks - contentKey).toMutableMap()
+    updated[contentKey] = trackId
+    val trimmed = if (updated.size > MAX_CONTENT_SUBTITLE_ENTRIES) {
+        updated.toList().takeLast(MAX_CONTENT_SUBTITLE_ENTRIES).toMap()
+    } else {
+        updated
+    }
+    return copy(contentSubtitleTracks = trimmed)
+}

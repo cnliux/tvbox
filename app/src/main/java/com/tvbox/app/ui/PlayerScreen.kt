@@ -142,6 +142,15 @@ fun PlayerScreen(
         episodeIndex = player.currentMediaItemIndex.coerceAtLeast(0),
     )
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(videoScaleContentKey)
+    // 字幕轨道按"影片 + 集"记忆：首次轨道就绪时应用一次，用户手动切换后不再覆盖。
+    var subtitleMemoryApplied by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
+    LaunchedEffect(player, videoScaleContentKey, playerTracks.subtitleTracks) {
+        if (!subtitleMemoryApplied && playerTracks.subtitleTracks.isNotEmpty()) {
+            val remembered = state.appSettings.contentSubtitleTracks[videoScaleContentKey]
+            if (remembered != null) player.selectSubtitleTrack(remembered)
+            subtitleMemoryApplied = true
+        }
+    }
     var loadedState by remember { mutableStateOf(state) }
     val resumeAnchor = remember { PlaybackResumeAnchor() }
     // 解码策略变化会重建播放器：本页记住重建前的集与进度，重建后原处续播。
@@ -1050,7 +1059,10 @@ fun PlayerScreen(
                 },
                 onSelectResize = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
                 onSelectAudioTrack = { player.selectAudioTrack(it) },
-                onSelectSubtitleTrack = { player.selectSubtitleTrack(it) },
+                onSelectSubtitleTrack = { trackId ->
+                    player.selectSubtitleTrack(trackId)
+                    actions.updateContentSubtitleTrack(videoScaleContentKey, trackId)
+                },
                 onBack = { exitPlayer() },
                 onCast = {
                     if (castingDevice != null) stopCasting() else castDialogVisible = true
