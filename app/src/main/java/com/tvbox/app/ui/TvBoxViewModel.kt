@@ -1025,6 +1025,11 @@ class TvBoxViewModel(
         loadHistory(triggerUpdateCheck = true)
     }
 
+    /** 下拉刷新历史（#222）：仅重新加载，不切换页面。 */
+    fun refreshHistory() {
+        loadHistory(triggerUpdateCheck = true)
+    }
+
     fun clearHistory() {
         viewModelScope.launch {
             // 与 savePlaybackProgress 共用写锁：退出播放器时的 onDispose 保存仍在提交中，

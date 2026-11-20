@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -163,11 +164,16 @@ internal fun MobileHistoryScreen(
                 val sections = remember(state.historyItems, dayStartMs) {
                     buildHistorySections(state.historyItems, dayStartMs)
                 }
-                LazyColumn(
+                PullToRefreshBox(
+                    isRefreshing = state.historyUpdateChecking,
+                    onRefresh = { actions.refreshHistory() },
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
                     sections.forEachIndexed { sectionIndex, section ->
                         // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
                         // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
@@ -198,6 +204,7 @@ internal fun MobileHistoryScreen(
                                 onDelete = { pendingDelete = entry },
                             )
                         }
+                    }
                     }
                 }
             }
