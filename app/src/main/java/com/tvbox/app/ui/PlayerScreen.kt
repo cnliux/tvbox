@@ -51,6 +51,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
@@ -398,6 +399,7 @@ fun PlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 if (player.playerError != error) return
+                CrashHandler.recordOperation("player.onPlayerError", "code=${error.errorCode} msg=${error.message}")
                 // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示；
                 // 能分级时追加可操作的自愈建议（重试 / 换线路 / 换来源）。
                 val message = appendPlaybackErrorHint(
@@ -588,6 +590,10 @@ fun PlayerScreen(
         val startIndex = rebuilt?.first ?: state.playerEpisodeIndex
         val startPositionMs = rebuilt?.second ?: state.playerStartPositionMs
         resumeAnchor.update(startPositionMs)
+        CrashHandler.recordOperation(
+            "player.startPlayback",
+            "movie=${movie.id} line=${movie.apiLineId} ep=$startIndex pos=$startPositionMs",
+        )
         playbackIssue = null
         bufferingPlaybackKey = null
         bufferMonitor.onMediaChanged()
@@ -788,6 +794,12 @@ fun PlayerScreen(
         },
         onChangeEpisode = { changeEpisodeByRemote(it) },
         onCycleSpeed = { cyclePlaybackSpeedByRemote() },
+        onSettings = {
+            chrome.openPanel(PlayerPanel.Settings)
+        },
+        onInfo = {
+            chrome.openPanel(PlayerPanel.Info)
+        },
     )
 
     val touchController = remember {

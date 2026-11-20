@@ -40,7 +40,8 @@ type Service struct {
 
 // NewService 构建全部平台 adapter（顺序与 Python dict 插入序一致）。
 // clientType: "web"=PC网页/桌面, "mobile"=手机, "tv"=Android TV；空值默认为 "web"。
-func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func() (string, error), clientType string) *Service {
+func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func() (string, error), clientType string) (result *Service) {
+	defer recoverTo(&result, nil)
 	if clientType == "" {
 		clientType = "web"
 	}
@@ -74,16 +75,18 @@ func NewService(timeoutSeconds int64, cacheSeconds int64, catalogProvider func()
 }
 
 // Sites 平台列表，顺序与 Python 实现一致。
-func (s *Service) Sites() []PlatformSite {
-	result := make([]PlatformSite, 0, len(s.adapters))
+// Sites 返回全部平台站点（gomobile 导出；panic 兜底返回空列表）。
+func (s *Service) Sites() (result []PlatformSite) {
+	defer recoverTo(&result, nil)
+	out := make([]PlatformSite, 0, len(s.adapters))
 	for _, adapter := range s.adapters {
-		result = append(result, PlatformSite{
+		out = append(out, PlatformSite{
 			ID:          adapter.SiteID(),
 			Name:        adapter.SiteName(),
 			Description: adapter.Description(),
 		})
 	}
-	return result
+	return out
 }
 
 func (s *Service) adapter(site string) (Adapter, error) {
@@ -95,7 +98,9 @@ func (s *Service) adapter(site string) (Adapter, error) {
 }
 
 // Categories 输出结构与 Python service.categories 一致。
-func (s *Service) Categories(site string) (map[string]interface{}, error) {
+// gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
+func (s *Service) Categories(site string) (result map[string]interface{}, err error) {
+	defer recoverToError(&err)
 	adapter, err := s.adapter(site)
 	if err != nil {
 		return nil, err
@@ -130,7 +135,9 @@ func (s *Service) Categories(site string) (map[string]interface{}, error) {
 }
 
 // Rooms 输出结构与 Python service.rooms 一致；page 至少为 1。
-func (s *Service) Rooms(site, categoryID string, page int64) (map[string]interface{}, error) {
+// gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
+func (s *Service) Rooms(site, categoryID string, page int64) (result map[string]interface{}, err error) {
+	defer recoverToError(&err)
 	adapter, err := s.adapter(site)
 	if err != nil {
 		return nil, err
@@ -139,12 +146,12 @@ func (s *Service) Rooms(site, categoryID string, page int64) (map[string]interfa
 	if normalizedPage < 1 {
 		normalizedPage = 1
 	}
-	result, err := adapter.GetCategoryRooms(categoryID, normalizedPage)
+	roomResult, err := adapter.GetCategoryRooms(categoryID, normalizedPage)
 	if err != nil {
 		return nil, err
 	}
-	rooms := make([]map[string]interface{}, 0, len(result.Rooms))
-	for _, room := range result.Rooms {
+	rooms := make([]map[string]interface{}, 0, len(roomResult.Rooms))
+	for _, room := range roomResult.Rooms {
 		rooms = append(rooms, map[string]interface{}{
 			"roomId":       room.RoomID,
 			"title":        room.Title,
@@ -159,14 +166,16 @@ func (s *Service) Rooms(site, categoryID string, page int64) (map[string]interfa
 		"site":      adapter.SiteID(),
 		"categoryId": categoryID,
 		"page":       normalizedPage,
-		"pageCount":  result.PageCount,
-		"hasMore":    normalizedPage < result.PageCount,
+		"pageCount":  roomResult.PageCount,
+		"hasMore":    normalizedPage < roomResult.PageCount,
 		"rooms":      rooms,
 	}, nil
 }
 
 // Catalog 解析频道目录 JSON；与 Python 实现相同：仅保留斗鱼条目并按 id 去重。
-func (s *Service) Catalog() ([]CatalogChannel, error) {
+// gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
+func (s *Service) Catalog() (result []CatalogChannel, err error) {
+	defer recoverToError(&err)
 	s.catalogMu.Lock()
 	defer s.catalogMu.Unlock()
 	if !s.catalogParsed {
@@ -238,7 +247,9 @@ func (s *Service) parseCatalog() ([]CatalogChannel, error) {
 }
 
 // Resolve 输出结构与 Python service.resolve 一致。
-func (s *Service) Resolve(site, roomInput string, forceRefresh bool) (map[string]interface{}, error) {
+// Resolve 解析直播间（gomobile 导出；panic 兜底返回 error，避免越界 JNI 崩溃）。
+func (s *Service) Resolve(site, roomInput string, forceRefresh bool) (result map[string]interface{}, err error) {
+	defer recoverToError(&err)
 	adapter, err := s.adapter(site)
 	if err != nil {
 		return nil, err

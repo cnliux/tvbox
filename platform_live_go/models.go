@@ -106,7 +106,8 @@ type Adapter interface {
 // Text 对应 platform_common.text：None→fallback，否则去空白后为空时回退。
 // float64（JSON 数字默认解码类型）为整数值时按整数格式化，
 // 避免大整数（如 B 站房间号）被 fmt 格式化成科学计数法（2.3438368e+07）。
-func Text(value interface{}, fallback string) string {
+func Text(value interface{}, fallback string) (result string) {
+	defer recoverTo(&result, fallback)
 	switch raw := value.(type) {
 	case nil:
 		return fallback
@@ -133,12 +134,14 @@ func Text(value interface{}, fallback string) string {
 }
 
 // TextStrict 去空白（无 fallback 语义差异）。
-func TextStrict(value interface{}) string {
+func TextStrict(value interface{}) (result string) {
+	defer recoverTo(&result, "")
 	return Text(value, "")
 }
 
 // PositiveInt 对应 platform_common.positive_int。
-func PositiveInt(value interface{}, fallback int64) int64 {
+func PositiveInt(value interface{}, fallback int64) (result int64) {
+	defer recoverTo(&result, fallback)
 	result, ok := ToInt(value)
 	if !ok {
 		return fallback
@@ -150,7 +153,9 @@ func PositiveInt(value interface{}, fallback int64) int64 {
 }
 
 // ToInt 把 JSON 解出的 interface{}（float64/string/json.Number 等）转换成 int64。
-func ToInt(value interface{}) (int64, bool) {
+// gomobile 导出：panic 兜底返回 0,false，避免越界 JNI 崩溃。
+func ToInt(value interface{}) (result int64, ok bool) {
+	defer recoverTo(&result, 0)
 	switch raw := value.(type) {
 	case nil:
 		return 0, false
@@ -184,7 +189,9 @@ func ToInt(value interface{}) (int64, bool) {
 }
 
 // InferProtocol 对应 platform_common.infer_protocol。
-func InferProtocol(rawURL string) string {
+// gomobile 导出：panic 兜底返回 http，避免越界 JNI 崩溃。
+func InferProtocol(rawURL string) (s string) {
+	defer recoverTo(&s, "http")
 	lower := strings.ToLower(rawURL)
 	switch {
 	case strings.Contains(lower, ".m3u8") || strings.Contains(lower, "hls"):
@@ -199,8 +206,10 @@ func InferProtocol(rawURL string) string {
 }
 
 // UniqueCandidates 对应 platform_common.unique_candidates：按 URL 去重。
-func UniqueCandidates(items []LiveStreamCandidate) []LiveStreamCandidate {
-	result := make([]LiveStreamCandidate, 0, len(items))
+// gomobile 导出：panic 兜底返回 nil，避免越界 JNI 崩溃。
+func UniqueCandidates(items []LiveStreamCandidate) (result []LiveStreamCandidate) {
+	defer recoverTo(&result, nil)
+	out := make([]LiveStreamCandidate, 0, len(items))
 	seen := map[string]bool{}
 	for _, item := range items {
 		rawURL := Text(item.URL, "")
@@ -208,19 +217,21 @@ func UniqueCandidates(items []LiveStreamCandidate) []LiveStreamCandidate {
 			continue
 		}
 		seen[rawURL] = true
-		result = append(result, LiveStreamCandidate{
+		out = append(out, LiveStreamCandidate{
 			CDN:      Text(item.CDN, "默认"),
 			URL:      rawURL,
 			Protocol: Text(item.Protocol, InferProtocol(rawURL)),
 		})
 	}
-	return result
+	return out
 }
 
 var genericRoomPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // ParseRoomInput 对应 platform_common.parse_room_input：从房间号或链接中提取末段。
-func ParseRoomInput(value string, hosts []string, pattern *regexp.Regexp) (string, error) {
+// gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
+func ParseRoomInput(value string, hosts []string, pattern *regexp.Regexp) (result string, err error) {
+	defer recoverToError(&err)
 	raw := Text(value, "")
 	if raw == "" {
 		return "", newError("直播间号不能为空")

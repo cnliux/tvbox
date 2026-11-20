@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -113,7 +114,7 @@ import kotlinx.coroutines.delay
  * 倍速与画面比例已改为「按一次切下一档」的直接切换，不再有面板：
  * 这两个是高频、短反馈的操作，弹层会额外增加一次选择与一次关闭。
  */
-internal enum class PlayerPanel { None, Episodes, Sources, Skip, Audio, Subtitle, Info, Url }
+internal enum class PlayerPanel { None, Episodes, Sources, Skip, Audio, Subtitle, Info, Url, Settings }
 
 internal const val PLAYER_CHROME_AUTO_HIDE_MS = 5_000L
 internal const val PLAYER_CHROME_LIVE_AUTO_HIDE_MS = 3_000L
@@ -1037,6 +1038,15 @@ private fun PlayerChromePanel(
         )
         return
     }
+    if (panel == PlayerPanel.Settings) {
+        PlayerSettingsPanel(
+            capabilities = capabilities,
+            onOpenPanel = { target -> state.openPanel(target) },
+            onClose = { state.closePanel() },
+            modifier = modifier,
+        )
+        return
+    }
     // 排序结果只用于「展示顺序」，所有回传都用原始下标：
     // 线路名可能重复（同为「备用线路」），按对象相等去反查会切错线路。
     val orderedIndexes = remember(data.sources, data.sourceLatencies) {
@@ -1284,6 +1294,132 @@ internal fun middleEllipsis(text: String, maxChars: Int = 72): String {
     return text.take(head) + "…" + text.takeLast(tail)
 }
 
+/**
+ * TV 端播放器设置面板：设置键的统一入口，集中低频功能。
+ *
+ * 与底部按钮行不同，这里把「画面 / 音轨 / 字幕 / 跳过 / 信息 / 地址」等
+ * 低频设置项收敛到一个面板，用户按遥控器设置键即可唤出并上下选择，
+ * 避免先唤起控制条再横向滚动找按钮。选中项进入对应子面板。
+ */
+@Composable
+private fun PlayerSettingsPanel(
+    capabilities: PlayerChromeCapabilities,
+    onOpenPanel: (PlayerPanel) -> Unit,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val items = buildList {
+        if (capabilities.sources || capabilities.lines) {
+            add(PlayerSettingsItem("线路", "切换播放线路 / 候选", PlayerPanel.Sources))
+        }
+        if (capabilities.episodes) {
+            add(PlayerSettingsItem("选集", "切换当前剧集的集数", PlayerPanel.Episodes))
+        }
+        if (capabilities.audioTracks) {
+            add(PlayerSettingsItem("音轨", "选择音频轨道", PlayerPanel.Audio))
+        }
+        if (capabilities.subtitleTracks) {
+            add(PlayerSettingsItem("字幕", "选择字幕轨道", PlayerPanel.Subtitle))
+        }
+        if (capabilities.skip) {
+            add(PlayerSettingsItem("跳过", "配置跳过片头 / 片尾", PlayerPanel.Skip))
+        }
+        if (capabilities.info) {
+            add(PlayerSettingsItem("播放信息", "解码器 / 码率 / 缓冲等", PlayerPanel.Info))
+        }
+        if (capabilities.url) {
+            add(PlayerSettingsItem("播放地址", "查看当前播放 URL", PlayerPanel.Url))
+        }
+    }
+    val firstFocus = remember { FocusRequester() }
+    val listState = rememberLazyListState()
+    LaunchedEffect(Unit) {
+        delay(60)
+        runCatching { firstFocus.requestFocus() }
+    }
+    Surface(
+        modifier.fillMaxHeight(0.6f),
+        color = Color(0xFA202020),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(12.dp),
+    ) {
+        Column(Modifier.fillMaxSize().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("播放器设置", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                ControlButton("关闭", onClose)
+            }
+            Text(
+                "设置键唤出 · 上下选择 · 确认进入",
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.White.copy(alpha = 0.6f),
+                modifier = Modifier.padding(vertical = 8.dp),
+            )
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                itemsIndexed(items) { index, item ->
+                    SettingsRowItem(
+                        item = item,
+                        onSelect = { onOpenPanel(item.target) },
+                        modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                    )
+                }
+            }
+        }
+    }
+}
+
+private data class PlayerSettingsItem(
+    val label: String,
+    val subtitle: String,
+    val target: PlayerPanel,
+)
+
+@Composable
+private fun SettingsRowItem(
+    item: PlayerSettingsItem,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var focused by remember { mutableStateOf(false) }
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 48.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .border(
+                width = 2.dp,
+                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                shape = RoundedCornerShape(10.dp),
+            )
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = item.label,
+            modifier = Modifier.width(96.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Color.White.copy(alpha = 0.8f),
+        )
+        Text(
+            text = item.subtitle,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.55f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "›",
+            style = MaterialTheme.typography.bodySmall,
+            color = Color.White.copy(alpha = 0.4f),
+        )
+    }
+}
+
 private fun copyPlaybackUrl(context: Context, url: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("playback_url", url))
@@ -1417,6 +1553,7 @@ private fun PlayerChromeMobilePanel(
                         PlayerPanel.Skip -> "跳过片头/片尾"
                         PlayerPanel.Info -> "播放信息"
                         PlayerPanel.Url -> "播放地址"
+                        PlayerPanel.Settings -> "播放器设置"
                         PlayerPanel.None -> ""
                     },
                     modifier = Modifier.weight(1f),
@@ -1676,6 +1813,7 @@ private fun PlayerChromeMobilePanel(
                         )
                     }
                 }
+                PlayerPanel.Settings -> Unit
                 PlayerPanel.None -> Unit
             }
         }

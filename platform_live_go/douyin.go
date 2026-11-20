@@ -155,7 +155,9 @@ var (
 )
 
 // SetDouyinSignScript 注入裁剪后的 douyin_sign.js 文本（Init 内部调用）。
+// gomobile 导出：panic 兜底静默，避免越界 JNI 崩溃。
 func SetDouyinSignScript(script string) {
+	defer recoverToErrorOnly()
 	douyinSignMu.Lock()
 	defer douyinSignMu.Unlock()
 	douyinSignScript = script

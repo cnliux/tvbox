@@ -45,6 +45,7 @@ import com.tvbox.app.data.SharedLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
 import com.tvbox.app.domain.DeviceMode
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.theme.TVBoxTheme
@@ -104,6 +105,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        notifyPendingCrashLogs()
         // debug 包开启 StrictMode：主线程 IO 只写 logcat，不 crash，release 编译期即剔除。
         enableStrictModeInDebug()
         lifecycleScope.launch {
@@ -232,6 +234,24 @@ class MainActivity : ComponentActivity() {
         viewModel.startUpdateDownload()
     }
 
+    /**
+     * 启动时若有未确认的崩溃日志，提示一次（记录签名避免每次启动重复弹）。
+     * 上报入口：本地落盘 + 启动提示；后续接后端时替换为上传即可。
+     */
+    private fun notifyPendingCrashLogs() {
+        val logs = CrashHandler.getPendingCrashLogs()
+        if (logs.isEmpty()) return
+        val prefs = getSharedPreferences("crash_notify", MODE_PRIVATE)
+        val sig = "${logs.first().name}|${logs.size}"
+        if (sig == prefs.getString("last_sig", null)) return
+        prefs.edit().putString("last_sig", sig).apply()
+        Toast.makeText(
+            this,
+            "检测到 ${logs.size} 份崩溃日志（${logs.first().name.take(26)}），请及时排查",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
+
     private fun installUpdateApk(apkPath: String) {
         if (permissionSettingsOpen && !canInstallUnknownApps()) return
         if (!viewModel.beginUpdateInstallAttempt(apkPath)) return
@@ -255,6 +275,7 @@ class MainActivity : ComponentActivity() {
 
     @Suppress("DEPRECATION")
     private fun openSystemInstaller(apkFile: File) {
+        CrashHandler.recordOperation("ota.install", "path=${apkFile.absolutePath}")
         val apkUri = try {
             FileProvider.getUriForFile(this, "$packageName.fileprovider", apkFile)
         } catch (error: Exception) {

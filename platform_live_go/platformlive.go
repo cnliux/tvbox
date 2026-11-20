@@ -50,7 +50,8 @@ var (
 // signScript 为 douyin_sign.js 原始文本（包含 Node 包装段也可以，内部会裁剪）；
 // catalogJSON 为频道目录 JSON 数组文本；缓存与超时单位为秒。
 // clientType 为运行端类型："web"=PC/桌面, "mobile"=手机, "tv"=Android TV；空值默认为 "web"。
-func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSeconds int, clientType string) error {
+func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSeconds int, clientType string) (err error) {
+	defer recoverToError(&err)
 	bridgeLock.Lock()
 	defer bridgeLock.Unlock()
 	if bridgeHasInit {
@@ -86,16 +87,19 @@ func bridgeCurrent() (*Service, error) {
 // 每个在播代理在下一帧按新值重新对齐墙钟基准，不产生整段时间轴跳变。
 // 具体实现见 flv_proxy_pacer.go。
 func SetPacerTargetBufferMs(ms int64) {
+	defer recoverToErrorOnly()
 	applyPacerTargetBufferMs(ms)
 }
 
 // GetPacerTargetBufferMs 返回当前 pacer 目标缓冲（毫秒）。
-func GetPacerTargetBufferMs() int64 {
+func GetPacerTargetBufferMs() (ms int64) {
+	defer recoverToErrorOnly()
 	return pacerTargetBufferMsDefault()
 }
 
 // ChannelsJson 等价 Python tvbox_live_bridge.channels_json。
-func ChannelsJson() (string, error) {
+func ChannelsJson() (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
@@ -104,9 +108,9 @@ func ChannelsJson() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	payload := make([]catalogChannelJSON, 0, len(channels))
+	out := make([]catalogChannelJSON, 0, len(channels))
 	for _, channel := range channels {
-		payload = append(payload, catalogChannelJSON{
+		out = append(out, catalogChannelJSON{
 			ID:     channel.ID,
 			Name:   channel.Name,
 			Site:   channel.Site,
@@ -114,29 +118,31 @@ func ChannelsJson() (string, error) {
 			Group:  channel.Group,
 		})
 	}
-	return marshalIndentFree(channelsJSON{Channels: payload})
+	return marshalIndentFree(channelsJSON{Channels: out})
 }
 
 // SitesJson 等价 Python tvbox_live_bridge.sites_json。
-func SitesJson() (string, error) {
+func SitesJson() (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
 	}
 	sites := service.Sites()
-	payload := make([]siteJSON, 0, len(sites))
+	out := make([]siteJSON, 0, len(sites))
 	for _, site := range sites {
-		payload = append(payload, siteJSON{
+		out = append(out, siteJSON{
 			ID:          site.ID,
 			Name:        site.Name,
 			Description: site.Description,
 		})
 	}
-	return marshalIndentFree(sitesJSON{Sites: payload})
+	return marshalIndentFree(sitesJSON{Sites: out})
 }
 
 // CategoriesJson 等价 Python tvbox_live_bridge.categories_json。
-func CategoriesJson(site string) (string, error) {
+func CategoriesJson(site string) (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
@@ -150,7 +156,8 @@ func CategoriesJson(site string) (string, error) {
 
 // RoomsJson 等价 Python tvbox_live_bridge.rooms_json；page 参数保持字符串
 // （对应 Python 侧 callAttr("rooms_json", site, category, page)）。
-func RoomsJson(site string, categoryID string, page string) (string, error) {
+func RoomsJson(site string, categoryID string, page string) (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
@@ -167,7 +174,8 @@ func RoomsJson(site string, categoryID string, page string) (string, error) {
 }
 
 // ResolveJson 等价 Python tvbox_live_bridge.resolve_json。
-func ResolveJson(site string, roomID string, refresh string) (string, error) {
+func ResolveJson(site string, roomID string, refresh string) (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
@@ -182,7 +190,8 @@ func ResolveJson(site string, roomID string, refresh string) (string, error) {
 
 // ResolveLinkJson 把粘贴的分享口令/短链解析成 {site,name,roomId,sourceUrl,url}。
 // siteHint 可空；空值表示完全由链接域名判断平台。
-func ResolveLinkJson(shareText string, siteHint string) (string, error) {
+func ResolveLinkJson(shareText string, siteHint string) (payload string, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return "", err
@@ -200,6 +209,37 @@ func marshalIndentFree(value interface{}) (string, error) {
 		return "", fmt.Errorf("直播解析序列化失败：%w", err)
 	}
 	return string(data), nil
+}
+
+// recoverToError 把 gomobile bind 导出函数里的 panic 转成 *ResolverError，
+// 而不是让 panic 穿透 JNI 边界触发 native crash（进程闪退）。
+//
+// 背景：直播平台解析链路（斗鱼/虎牙/B站/抖音/快手等）依赖 goja JS 引擎、
+// JSON 类型断言、网络响应解析与 FLV 字节流处理，任一处未预见的 panic
+// （nil 解引用、切片越界、类型断言失败等）都会越过 gomobile bind 的边界，
+// 在设备上表现为「点开直播就闪退」。这里统一兜底为可读错误，由 Kotlin 侧
+// callBridge 捕获并展示「直播解析失败：…」，保住进程。
+//
+// 用法：`defer recoverToError(&err)`（err 为命名返回值的 error 字段）。
+func recoverToError(err *error) {
+	if r := recover(); r != nil {
+		*err = newError("直播解析异常：%v", r)
+	}
+}
+
+// recoverToErrorOnly 同 recoverToError，但用于无 error 返回值的导出函数
+// （如 SetPacerTargetBufferMs），panic 时静默丢弃——这类函数不改变可观测
+// 的播放行为，崩溃防护优先于报错。
+func recoverToErrorOnly() {
+	_ = recover()
+}
+
+// recoverTo 供其余 gomobile 导出函数（string/int64 等值返回）统一兜底：
+// panic 时回写 fallback，避免未捕获 panic 穿透 JNI 边界导致进程闪退。
+func recoverTo[T any](value *T, fallback T) {
+	if r := recover(); r != nil {
+		*value = fallback
+	}
 }
 
 func strLowerTrim(value string) string {

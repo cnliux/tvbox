@@ -15,7 +15,22 @@ var catalogJSON string
 var douyinSignJS string
 
 // CatalogJSON 返回内嵌频道目录文本。
-func CatalogJSON() string { return catalogJSON }
+// gomobile 导出：panic 兜底返回空串，避免越界 JNI 崩溃。
+func CatalogJSON() (s string) {
+	defer recoverTo(&s, "")
+	return catalogJSON
+}
 
 // DouyinSignJS 返回内嵌抖音签名脚本全文。
-func DouyinSignJS() string { return douyinSignJS }
+// gomobile 导出：panic 兜底返回空串，避免越界 JNI 崩溃。
+func DouyinSignJS() (s string) {
+	defer recoverTo(&s, "")
+	return douyinSignJS
+}
+
+// recoverTo 是本包专用的 panic 兜底（gomobile 导出边界）。
+func recoverTo[T any](value *T, fallback T) {
+	if r := recover(); r != nil {
+		*value = fallback
+	}
+}

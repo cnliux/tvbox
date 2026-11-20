@@ -95,6 +95,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.BuildConfig
+import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.data.FlvContinuityProxy
 import com.tvbox.app.data.PacerDebugPrefs
 import com.tvbox.app.data.LiveTuningDebugPrefs
@@ -893,6 +894,10 @@ private fun PlatformLivePlayerScreen(
             return@produceState
         }
         val handle = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            CrashHandler.recordOperation(
+                "flv.proxy.start",
+                "site=${room.site} room=${room.id} idx=${resolved.safeActiveCandidateIndex}",
+            )
             FlvContinuityProxy.start(
                 site = room.site,
                 roomId = room.id,
@@ -1119,6 +1124,10 @@ private fun PlatformLivePlayerScreen(
         } else {
             val listener = object : androidx.media3.common.Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
+                    CrashHandler.recordOperation(
+                        "platformLive.onPlayerError",
+                        "room=${room.id} code=${error.errorCode} site=${room.site}",
+                    )
                     android.util.Log.e(
                         PLATFORM_LIVE_LOG_TAG,
                         "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${logSafeText(error.message)}, url=${logSafeUrl(playbackUrl)}, sourceUrl=${logSafeUrl(stream?.url)}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}"
@@ -1495,6 +1504,13 @@ private fun PlatformLivePlayerScreen(
             }
         },
         onReconnect = { actions.reconnectPlatformLiveChannel() },
+        onSettings = {
+            if (stream?.hasCandidates == true) {
+                showLineControl = true
+                chrome.bump()
+            }
+        },
+        onInfo = { actions.reconnectPlatformLiveChannel() },
     )
 
     Box(

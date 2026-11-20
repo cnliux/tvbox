@@ -40,6 +40,7 @@ var (
 // SetDouyuLeaseRefreshLeadMs 调整斗鱼租约到期前主动续期的提前量（毫秒）。
 // 0 恢复默认 45000ms；有效范围 5000..120000ms。
 func SetDouyuLeaseRefreshLeadMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 5000 || ms > 120000) {
 		return
 	}
@@ -47,9 +48,10 @@ func SetDouyuLeaseRefreshLeadMs(ms int64) {
 }
 
 // GetDouyuLeaseRefreshLeadMs 返回当前生效的续期提前量（毫秒）。
-func GetDouyuLeaseRefreshLeadMs() int64 {
-	if v := douyuLeaseRefreshLeadOverride.Load(); v > 0 {
-		return v
+func GetDouyuLeaseRefreshLeadMs() (v int64) {
+	defer recoverTo(&v, defaultDouyuLeaseRefreshLeadMs)
+	if ov := douyuLeaseRefreshLeadOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultDouyuLeaseRefreshLeadMs
 }
@@ -63,6 +65,7 @@ func douyuLeaseRefreshLead() int64 {
 // SetDouyuIdleReadTimeoutMs 调整上游连续无数据多久判为半开连接并重连（毫秒）。
 // 0 恢复默认 15000ms；有效范围 5000..60000ms。过短会在正常卡顿处误重连。
 func SetDouyuIdleReadTimeoutMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 5000 || ms > 60000) {
 		return
 	}
@@ -70,9 +73,10 @@ func SetDouyuIdleReadTimeoutMs(ms int64) {
 }
 
 // GetDouyuIdleReadTimeoutMs 返回当前生效的空闲读超时（毫秒）。
-func GetDouyuIdleReadTimeoutMs() int64 {
-	if v := douyuIdleReadTimeoutOverride.Load(); v > 0 {
-		return v
+func GetDouyuIdleReadTimeoutMs() (v int64) {
+	defer recoverTo(&v, defaultDouyuIdleReadTimeoutMs)
+	if ov := douyuIdleReadTimeoutOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultDouyuIdleReadTimeoutMs
 }
@@ -86,6 +90,7 @@ func douyuIdleReadTimeout() time.Duration {
 // SetDouyuShortBackoffBaseMs 调整斗鱼空/短段后的退避基数（毫秒）。
 // 0 恢复默认 2000ms；有效范围 200..10000ms。
 func SetDouyuShortBackoffBaseMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 200 || ms > 10000) {
 		return
 	}
@@ -93,9 +98,10 @@ func SetDouyuShortBackoffBaseMs(ms int64) {
 }
 
 // GetDouyuShortBackoffBaseMs 返回当前生效的短段退避基数（毫秒）。
-func GetDouyuShortBackoffBaseMs() int64 {
-	if v := douyuShortBackoffBaseOverride.Load(); v > 0 {
-		return v
+func GetDouyuShortBackoffBaseMs() (v int64) {
+	defer recoverTo(&v, defaultDouyuShortBackoffBaseMs)
+	if ov := douyuShortBackoffBaseOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultDouyuShortBackoffBaseMs
 }
@@ -103,6 +109,7 @@ func GetDouyuShortBackoffBaseMs() int64 {
 // SetDouyuShortBackoffMaxMs 调整斗鱼空/短段后的退避上限（毫秒）。
 // 0 恢复默认 8000ms；有效范围 1000..30000ms。
 func SetDouyuShortBackoffMaxMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 1000 || ms > 30000) {
 		return
 	}
@@ -110,9 +117,10 @@ func SetDouyuShortBackoffMaxMs(ms int64) {
 }
 
 // GetDouyuShortBackoffMaxMs 返回当前生效的短段退避上限（毫秒）。
-func GetDouyuShortBackoffMaxMs() int64 {
-	if v := douyuShortBackoffMaxOverride.Load(); v > 0 {
-		return v
+func GetDouyuShortBackoffMaxMs() (v int64) {
+	defer recoverTo(&v, defaultDouyuShortBackoffMaxMs)
+	if ov := douyuShortBackoffMaxOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultDouyuShortBackoffMaxMs
 }

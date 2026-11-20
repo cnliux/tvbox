@@ -4,4 +4,8 @@ package platformlive
 // Init 内部调用）。douyinSignScript 与 SetDouyinSignScript 位于 douyin.go。
 
 // StripDouyinScript 去掉 douyin_sign.js 的 BOM 与 Node CLI 包装段。
-func StripDouyinScript(script string) string { return stripDouyinScript(script) }
+// gomobile 导出：panic 兜底返回原脚本，避免越界 JNI 崩溃。
+func StripDouyinScript(script string) (s string) {
+	defer recoverTo(&s, script)
+	return stripDouyinScript(script)
+}

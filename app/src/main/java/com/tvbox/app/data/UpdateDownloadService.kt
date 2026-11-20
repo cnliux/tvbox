@@ -12,6 +12,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.content.ContextCompat
 import com.tvbox.app.MainActivity
+import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.util.logSafeText
 import kotlinx.coroutines.CancellationException
@@ -42,7 +43,8 @@ internal data class AppDownloadStatus(
 
 /** Fallback for devices whose ROM has removed or disabled DownloadProvider. */
 class UpdateDownloadService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // 协程异常统一进 CrashHandler.coroutineExceptionHandler（记录日志，不杀死进程）。
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CrashHandler.coroutineExceptionHandler)
     private var job: Job? = null
     private var activePath: String? = null
     private var activeStartId = 0
@@ -105,6 +107,7 @@ class UpdateDownloadService : Service() {
     /** 应用内下载主流程：流式写入 .part，校验后改名；结束与错误均写回 states。 */
     private suspend fun runDownload(url: String, path: String, size: Long, sha: String, startId: Int) {
         try {
+            CrashHandler.recordOperation("ota.download.start", "size=$size sha=${sha.take(8)}")
             val target = File(path)
             if (!target.isFile || runCatching { verifyUpdateApk(target, size, sha) }.isFailure) {
                 val partial = File("$path.part")

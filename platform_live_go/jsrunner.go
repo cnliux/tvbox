@@ -75,7 +75,9 @@ func stripDouyinScript(source string) string {
 
 // RunABogus 运行 signScript（douyin_sign.js），返回与 Kotlin/Node 签名助手
 // 一致的 JSON 字符串：{"a_bogus":"..."} 或 {"error":"..."}。
-func RunABogus(signScript, params, userAgent string) (string, error) {
+// gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
+func RunABogus(signScript, params, userAgent string) (result string, err error) {
+	defer recoverToError(&err)
 	jsLock.Lock()
 	defer jsLock.Unlock()
 	vm := newJSRuntime()
@@ -95,12 +97,12 @@ func RunABogus(signScript, params, userAgent string) (string, error) {
 	if !ok {
 		return `{"error":"getABogus 不是函数"}`, nil
 	}
-	result, err := fn(goja.Undefined(), vm.ToValue(params), vm.ToValue(userAgent))
-	if err != nil {
-		return fmt.Sprintf(`{"error":"抖音签名失败：%s"}`, escapeJSON(err.Error())), nil
+	value, err2 := fn(goja.Undefined(), vm.ToValue(params), vm.ToValue(userAgent))
+	if err2 != nil {
+		return fmt.Sprintf(`{"error":"抖音签名失败：%s"}`, escapeJSON(err2.Error())), nil
 	}
-	value := fmt.Sprintf("%v", result.Export())
-	return fmt.Sprintf(`{"a_bogus":%s}`, escapeJSON(value)), nil
+	valueStr := fmt.Sprintf("%v", value.Export())
+	return fmt.Sprintf(`{"a_bogus":%s}`, escapeJSON(valueStr)), nil
 }
 
 func escapeJSON(raw string) string {

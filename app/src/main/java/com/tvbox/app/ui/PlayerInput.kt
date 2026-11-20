@@ -42,6 +42,10 @@ internal class PlayerSeekKeyMap(
         val onPause: () -> Unit,
         val onChangeEpisode: (Int) -> Unit,
         val onCycleSpeed: () -> Unit,
+        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
+        val onSettings: () -> Unit = {},
+        /** INFO 键：打开播放信息面板。 */
+        val onInfo: () -> Unit = {},
     )
 
     private val remote = PlayerRemoteKeyState()
@@ -137,6 +141,18 @@ internal class PlayerSeekKeyMap(
                 if (event.type == KeyEventType.KeyUp) callbacks.onCycleSpeed()
                 true
             }
+            AndroidKeyEvent.KEYCODE_SETTINGS,
+            -> {
+                // 设置键统一打开播放器设置面板，承载画面/音轨/字幕/跳过/信息/地址等低频入口。
+                if (event.type == KeyEventType.KeyUp) callbacks.onSettings()
+                true
+            }
+            AndroidKeyEvent.KEYCODE_INFO,
+            -> {
+                // INFO 键统一打开播放信息面板（与直播/平台直播页语义一致）。
+                if (event.type == KeyEventType.KeyUp) callbacks.onInfo()
+                true
+            }
             else -> false
         }
     }
@@ -165,6 +181,10 @@ internal class PlayerChannelKeyMap(
         val onConfirm: () -> Unit,
         /** 失败卡（重试/下一台）在场时，OK 必须交给当前聚焦的按钮，不在页面级改写为打开频道列表。 */
         val isFailureCardVisible: () -> Boolean = { false },
+        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
+        val onSettings: () -> Unit = {},
+        /** INFO 键：打开播放信息面板（与点播/平台直播页语义一致）。 */
+        val onInfo: () -> Unit = {},
     )
 
     override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
@@ -182,6 +202,7 @@ internal class PlayerChannelKeyMap(
             return when (key) {
                 AndroidKeyEvent.KEYCODE_MENU,
                 AndroidKeyEvent.KEYCODE_INFO,
+                AndroidKeyEvent.KEYCODE_SETTINGS,
                 -> {
                     callbacks.closeChannelList()
                     true
@@ -203,6 +224,7 @@ internal class PlayerChannelKeyMap(
             return when (key) {
                 AndroidKeyEvent.KEYCODE_MENU,
                 AndroidKeyEvent.KEYCODE_INFO,
+                AndroidKeyEvent.KEYCODE_SETTINGS,
                 -> {
                     callbacks.closeLineControl()
                     true
@@ -260,10 +282,16 @@ internal class PlayerChannelKeyMap(
                 callbacks.onConfirm()
                 true
             }
-            AndroidKeyEvent.KEYCODE_MENU,
-            AndroidKeyEvent.KEYCODE_INFO,
-            -> {
+            AndroidKeyEvent.KEYCODE_MENU -> {
                 callbacks.onOpenChannelList()
+                true
+            }
+            AndroidKeyEvent.KEYCODE_INFO -> {
+                callbacks.onInfo()
+                true
+            }
+            AndroidKeyEvent.KEYCODE_SETTINGS -> {
+                callbacks.onSettings()
                 true
             }
             AndroidKeyEvent.KEYCODE_DPAD_UP -> {
@@ -300,6 +328,10 @@ internal class PlayerRoomKeyMap(
         val onNextCandidate: () -> Unit,
         val onOpenRoomList: () -> Unit,
         val onReconnect: () -> Unit,
+        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
+        val onSettings: () -> Unit = {},
+        /** INFO 键：打开播放信息面板（与点播/直播页语义一致）。 */
+        val onInfo: () -> Unit = {},
     )
 
     override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
@@ -332,10 +364,18 @@ internal class PlayerRoomKeyMap(
                 chrome.bump()
                 true
             }
-            AndroidKeyEvent.KEYCODE_MENU,
-            AndroidKeyEvent.KEYCODE_INFO,
-            -> {
+            AndroidKeyEvent.KEYCODE_MENU -> {
                 callbacks.onReconnect()
+                chrome.bump()
+                true
+            }
+            AndroidKeyEvent.KEYCODE_INFO -> {
+                callbacks.onInfo()
+                chrome.bump()
+                true
+            }
+            AndroidKeyEvent.KEYCODE_SETTINGS -> {
+                callbacks.onSettings()
                 chrome.bump()
                 true
             }

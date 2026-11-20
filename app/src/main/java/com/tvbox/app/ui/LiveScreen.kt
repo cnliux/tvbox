@@ -715,6 +715,12 @@ private fun LivePlayerScreen(
             }
         },
         isFailureCardVisible = { streamBlocked },
+        onSettings = {
+            chrome.openPanel(PlayerPanel.Settings)
+        },
+        onInfo = {
+            chrome.openPanel(PlayerPanel.Info)
+        },
     )
 
     val barsAlpha by animateFloatAsState(

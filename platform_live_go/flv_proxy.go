@@ -394,12 +394,49 @@ type FlvProxyHandle struct {
 	proxy *flvProxy
 }
 
+// logGoError 把 Go 侧诊断写入 stderr（fd 2 在 Android 上被 RedirectRuntimeLogcat
+// 重定向到 logcat 与 go_stderr.log），供 goroutine 级 panic 兜底与异常路径记录。
+// 不依赖 android 构建标签，保证桌面测试与 gomobile 构建都能编译。
+func logGoError(format string, args ...interface{}) {
+	_, _ = fmt.Fprintf(os.Stderr, "[TVBoxGo] "+format+"\n", args...)
+}
+
+// runGuarded 以受保护方式启动后台任务：任何可恢复 panic 都被捕获并转为
+// 「关闭代理、结束本地流」，而不是让 Go runtime 打印 fatal error 并 SIGABRT
+// 杀死整个进程（表现为「点开直播就闪退」）。
+//
+// 注意：这只能捕获可恢复的 panic（nil 解引用、切片越界、类型断言等）；Go 的
+// 运行时致命错误（如 `sync: unlock of unlocked mutex`、并发 map 写、栈溢出）
+// 由 runtime.throw 直接 abort，recover 无效，必须从根因上避免（见巡检报告）。
+func (p *flvProxy) runGuarded(name string, fn func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			logGoError("flvProxy %s goroutine panic: %v", name, r)
+			// 结束代理：取消上游请求、关闭本地监听，Kotlin 播放器表现为流结束并
+			// 按既有错误/重连路径恢复，而不是整个进程崩溃。
+			p.abortProxy()
+		}
+	}()
+	fn()
+}
+
+// abortProxy 幂等地终止代理（供 runGuarded 兜底与 close 共用）：取消上下文、
+// 注销注册表并关闭本地监听。与 close 不同，它不等待 done，避免在 panic 恢复
+// 过程中自身再次阻塞或抛错。
+func (p *flvProxy) abortProxy() {
+	defer func() { _ = recover() }()
+	p.cancel()
+	unregisterFlvProxy(p)
+	_ = p.server.Close()
+}
+
 // StartFlvProxy 启动本机连续 FLV 代理。
 //
 // site/roomID 为平台与房间号；candidateIndex 指定首选 CDN 线路下标；
 // initialURL/headersJSON 可为空：非空时首段直接复用 Kotlin 已解析出的地址与
 // 请求头，省掉一次重复解析；为空时交给代理自己解析。
-func StartFlvProxy(site string, roomID string, candidateIndex int, initialURL string, headersJSON string) (*FlvProxyHandle, error) {
+func StartFlvProxy(site string, roomID string, candidateIndex int, initialURL string, headersJSON string) (handle *FlvProxyHandle, err error) {
+	defer recoverToError(&err)
 	service, err := bridgeCurrent()
 	if err != nil {
 		return nil, err
@@ -416,7 +453,9 @@ func StartFlvProxy(site string, roomID string, candidateIndex int, initialURL st
 }
 
 // LocalUrl 返回本地代理播放地址（形如 http://127.0.0.1:port/live.flv）。
-func (h *FlvProxyHandle) LocalUrl() string {
+// gomobile bind 导出方法：panic 兜底返回空串，避免越界 JNI 崩溃。
+func (h *FlvProxyHandle) LocalUrl() (url string) {
+	defer func() { _ = recover() }()
 	if h == nil || h.proxy == nil {
 		return ""
 	}
@@ -424,7 +463,9 @@ func (h *FlvProxyHandle) LocalUrl() string {
 }
 
 // Close 停止代理：关闭本地监听、断开上游连接并结束后台协程。
+// 幂等且兜底 recover：Kotlin 侧可能在任意生命周期多次调用。
 func (h *FlvProxyHandle) Close() {
+	defer func() { _ = recover() }()
 	if h == nil || h.proxy == nil {
 		return
 	}
@@ -432,7 +473,14 @@ func (h *FlvProxyHandle) Close() {
 }
 
 // Stats 返回代理运行统计（JSON），供 Kotlin 侧日志观察续流是否正常。
-func (h *FlvProxyHandle) Stats() string {
+// gomobile bind 导出方法：panic 兜底返回 "{}"，不污染监控采样。
+func (h *FlvProxyHandle) Stats() (stats string) {
+	defer func() {
+		if r := recover(); r != nil {
+			stats = "{}"
+			logGoError("flvProxy Stats panic: %v", r)
+		}
+	}()
 	if h == nil || h.proxy == nil {
 		return "{}"
 	}
@@ -649,12 +697,12 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 	proxy.pacerTargetMs.Store(GetPacerTargetBufferMs())
 	registerFlvProxy(proxy)
 	proxy.server = &http.Server{Handler: proxy}
-	go func() {
+	go proxy.runGuarded("serve", func() {
 		_ = proxy.server.Serve(listener)
-	}()
+	})
 	proxy.diagEnabled = os.Getenv("TVBOX_LIVE_PROXY_DIAG") != ""
 	proxy.pacerEnabled = os.Getenv("TVBOX_LIVE_PROXY_NO_PACER") == ""
-	go proxy.run()
+	go proxy.runGuarded("run", proxy.run)
 	return proxy, nil
 }
 
@@ -863,7 +911,7 @@ func (p *flvProxy) streamLoop() {
 					delayMs = 1000
 				}
 				index := candidateIndex
-				go func() {
+				go p.runGuarded("prepare", func() {
 					select {
 					case <-prepareCtx.Done():
 						return
@@ -880,7 +928,7 @@ func (p *flvProxy) streamLoop() {
 					case <-prepareCtx.Done():
 						stream.close()
 					}
-				}()
+				})
 				opts = &pullOptions{prepared: preparedCh}
 			}
 		}
@@ -890,7 +938,7 @@ func (p *flvProxy) streamLoop() {
 		// 让「既不报错也不吐数据」的半开/交接冻结在 Kotlin 12s 硬恢复前自愈。
 		p.resetProgress()
 		stopProgress := make(chan struct{})
-		go p.watchProgress(stopProgress)
+		go p.runGuarded("watchProgress", func() { p.watchProgress(stopProgress) })
 		leaseExpired, handover, err := p.pullSegment(candidate, headers, leaseDeadline, opts)
 		close(stopProgress)
 		p.setSegmentCancel(nil)

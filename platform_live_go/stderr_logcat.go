@@ -61,6 +61,7 @@ func RedirectRuntimeLogcat() {
 		tag := C.CString("TVBoxGoRuntime")
 
 		go func() {
+			defer recoverToErrorOnly() // goroutine panic 兜底，避免重定向失败拖垮进程
 			reader := bufio.NewReaderSize(r, 1<<16)
 			var lineBuf []byte
 			tmp := make([]byte, 16384)

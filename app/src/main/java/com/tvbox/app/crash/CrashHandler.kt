@@ -13,6 +13,7 @@ import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CoroutineExceptionHandler
 
 /**
  * 全局 UncaughtExceptionHandler + 落盘日志。
@@ -35,6 +36,39 @@ object CrashHandler {
     private val writerExecutor: ExecutorService = Executors.newSingleThreadExecutor {
         Thread(it, "crash-log-writer").apply { isDaemon = true }
     }
+
+    /**
+     * 全局协程异常处理器：协程内未捕获异常记录到崩溃日志（不杀死进程）。
+     * 挂到长时间运行的 scope（播放器、下载、网络任务）时使用：
+     *   CoroutineScope(SupervisorJob() + Dispatchers.Default + CrashHandler.coroutineExceptionHandler)
+     */
+    val coroutineExceptionHandler = CoroutineExceptionHandler { _, throwable ->
+        logError("=== Uncaught coroutine exception ===", throwable)
+        writeCrashLog(Thread.currentThread(), throwable)
+    }
+
+    /**
+     * 最近操作上下文（环形缓冲）：崩溃报告中附带崩溃前最近的用户操作，
+     * 便于定位"最后一步做了什么"（切集/切换线路/下载/安装等）。
+     */
+    private const val MAX_RECENT_OPERATIONS = 24
+    private val recentOperations = ArrayDeque<String>()
+
+    /** 记录一条最近操作；detail 为可选的补充信息（房间号/集数/路径等）。 */
+    @Synchronized
+    fun recordOperation(operation: String, detail: String? = null) {
+        val text = if (detail.isNullOrBlank()) operation else "$operation | $detail"
+        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(System.currentTimeMillis())
+        recentOperations.addLast("$ts  $text")
+        while (recentOperations.size > MAX_RECENT_OPERATIONS) {
+            recentOperations.removeFirst()
+        }
+    }
+
+    /** 与 recordOperation 共用同一把 object 锁，保证环形缓冲读写互斥。 */
+    @Synchronized
+    private fun recentOperationsText(): String =
+        if (recentOperations.isEmpty()) "(none)" else recentOperations.joinToString("\n")
 
     /**
      * logcat 与文件写入共用同一把锁：崩溃线程、日志写入线程和 UI 清理线程
@@ -94,7 +128,8 @@ object CrashHandler {
             // 交给系统默认处理器（会弹 ANR/强制关闭），或 null 则直接退出
             defaultHandler?.uncaughtException(thread, throwable)
         }
-        purgeStaleLogs()
+        // 旧日志清理放到后台线程，避免 Application.onCreate 同步做目录扫描。
+        writerExecutor.execute { purgeStaleLogs() }
         logInfo("CrashHandler installed, version=${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")
     }
 
@@ -170,6 +205,8 @@ object CrashHandler {
             fw.write("\n--- Stack Trace ---\n")
             // 保留完整堆栈；只把命中规则的值替换为 [REDACTED]。
             fw.write(redact(stackTraceOf(throwable)))
+            fw.write("\n\n--- Recent Operations ---\n")
+            fw.write(redact(recentOperationsText()))
         }
         return file.absolutePath
     }

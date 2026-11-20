@@ -86,6 +86,7 @@ func (h *handoverState) watch(ctx context.Context) {
 		return
 	}
 	go func() {
+		defer recoverToErrorOnly()
 		select {
 		case stream := <-h.ready:
 			if stream != nil {

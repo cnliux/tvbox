@@ -50,6 +50,7 @@ var (
 // 0 恢复默认 12000ms；有效范围 3000..60000ms。
 // 调大:更早预建、更不易因解析/握手慢而错过交接，但第二条连接空转更久。
 func SetHuyaPlannedRefreshLeadMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 3000 || ms > 60000) {
 		return
 	}
@@ -57,9 +58,10 @@ func SetHuyaPlannedRefreshLeadMs(ms int64) {
 }
 
 // GetHuyaPlannedRefreshLeadMs 返回当前生效的预建提前量（毫秒）。
-func GetHuyaPlannedRefreshLeadMs() int64 {
-	if v := huyaPlannedRefreshLeadOverride.Load(); v > 0 {
-		return v
+func GetHuyaPlannedRefreshLeadMs() (v int64) {
+	defer recoverTo(&v, defaultHuyaPlannedRefreshLeadMs)
+	if ov := huyaPlannedRefreshLeadOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultHuyaPlannedRefreshLeadMs
 }
@@ -71,6 +73,7 @@ func huyaPlannedRefreshLead() int64 { return GetHuyaPlannedRefreshLeadMs() }
 // SetHuyaNominalSessionMs 调整虎牙首段预期时长（毫秒），用于计算预建时刻。
 // 0 恢复默认 125000ms；有效范围 60000..300000ms。
 func SetHuyaNominalSessionMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 60000 || ms > 300000) {
 		return
 	}
@@ -78,9 +81,10 @@ func SetHuyaNominalSessionMs(ms int64) {
 }
 
 // GetHuyaNominalSessionMs 返回当前生效的标称会话时长（毫秒）。
-func GetHuyaNominalSessionMs() int64 {
-	if v := huyaNominalSessionOverride.Load(); v > 0 {
-		return v
+func GetHuyaNominalSessionMs() (v int64) {
+	defer recoverTo(&v, defaultHuyaNominalSessionMs)
+	if ov := huyaNominalSessionOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultHuyaNominalSessionMs
 }
@@ -92,6 +96,7 @@ func huyaNominalSession() int64 { return GetHuyaNominalSessionMs() }
 // SetHuyaShortBackoffBaseMs 调整虎牙短段退避基数（毫秒）。
 // 0 恢复默认 500ms；有效范围 100..5000ms。
 func SetHuyaShortBackoffBaseMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 100 || ms > 5000) {
 		return
 	}
@@ -99,9 +104,10 @@ func SetHuyaShortBackoffBaseMs(ms int64) {
 }
 
 // GetHuyaShortBackoffBaseMs 返回当前生效的短段退避基数（毫秒）。
-func GetHuyaShortBackoffBaseMs() int64 {
-	if v := huyaShortBackoffBaseOverride.Load(); v > 0 {
-		return v
+func GetHuyaShortBackoffBaseMs() (v int64) {
+	defer recoverTo(&v, defaultHuyaShortBackoffBaseMs)
+	if ov := huyaShortBackoffBaseOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultHuyaShortBackoffBaseMs
 }
@@ -115,6 +121,7 @@ func huyaShortBackoffBaseCurrent() time.Duration {
 // SetHuyaShortBackoffMaxMs 调整虎牙短段退避上限（毫秒）。
 // 0 恢复默认 5000ms；有效范围 500..30000ms；且不得小于当前生效的退避基数。
 func SetHuyaShortBackoffMaxMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 500 || ms > 30000) {
 		return
 	}
@@ -125,9 +132,10 @@ func SetHuyaShortBackoffMaxMs(ms int64) {
 }
 
 // GetHuyaShortBackoffMaxMs 返回当前生效的短段退避上限（毫秒）。
-func GetHuyaShortBackoffMaxMs() int64 {
-	if v := huyaShortBackoffMaxOverride.Load(); v > 0 {
-		return v
+func GetHuyaShortBackoffMaxMs() (v int64) {
+	defer recoverTo(&v, defaultHuyaShortBackoffMaxMs)
+	if ov := huyaShortBackoffMaxOverride.Load(); ov > 0 {
+		return ov
 	}
 	maxMs := int64(defaultHuyaShortBackoffMaxMs)
 	// 防御：若基数被调到超过默认上限，上限跟随基数，避免出现 base>max。
@@ -148,6 +156,7 @@ func huyaShortBackoffMaxCurrent() time.Duration {
 // 上限刻意压在 20s 以内：Kotlin 侧硬卡顿阈值是 12s，超时过长会让播放器先重建，
 // 代理内部自愈失去意义（真机实测第 3 次交接后的半开连接正是这样被误判为硬卡死）。
 func SetHuyaIdleReadTimeoutMs(ms int64) {
+	defer recoverToErrorOnly()
 	if ms != 0 && (ms < 3000 || ms > 20000) {
 		return
 	}
@@ -155,9 +164,10 @@ func SetHuyaIdleReadTimeoutMs(ms int64) {
 }
 
 // GetHuyaIdleReadTimeoutMs 返回当前生效的空闲读超时（毫秒）。
-func GetHuyaIdleReadTimeoutMs() int64 {
-	if v := huyaIdleReadTimeoutOverride.Load(); v > 0 {
-		return v
+func GetHuyaIdleReadTimeoutMs() (v int64) {
+	defer recoverTo(&v, defaultHuyaIdleReadTimeoutMs)
+	if ov := huyaIdleReadTimeoutOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultHuyaIdleReadTimeoutMs
 }
@@ -171,6 +181,7 @@ func huyaIdleReadTimeout() time.Duration {
 // SetHuyaMaxShortStreak 调整虎牙连续短段达到多少次即换线。
 // 0 恢复默认 4；有效范围 1..10（虎牙档不允许按钮关掉换线，故不设 <=0 语义）。
 func SetHuyaMaxShortStreak(count int64) {
+	defer recoverToErrorOnly()
 	if count != 0 && (count < 1 || count > 10) {
 		return
 	}
@@ -178,9 +189,10 @@ func SetHuyaMaxShortStreak(count int64) {
 }
 
 // GetHuyaMaxShortStreak 返回当前生效的连续短段换线阈值。
-func GetHuyaMaxShortStreak() int64 {
-	if v := huyaMaxShortStreakOverride.Load(); v > 0 {
-		return v
+func GetHuyaMaxShortStreak() (v int64) {
+	defer recoverTo(&v, defaultHuyaMaxShortStreak)
+	if ov := huyaMaxShortStreakOverride.Load(); ov > 0 {
+		return ov
 	}
 	return defaultHuyaMaxShortStreak
 }
