@@ -103,7 +103,7 @@ class DefaultAppUpdateRepository(
 
     override suspend fun checkForUpdate(
         currentVersionCode: Long,
-        updateChannel: com.tvbox.app.domain.UpdateChannel = com.tvbox.app.domain.UpdateChannel.Stable,
+        updateChannel: com.tvbox.app.domain.UpdateChannel,
     ): AppUpdate? = withContext(Dispatchers.IO) {
         val candidates = orderedCandidates(buildOtaManifestCandidates(path = updateChannel.manifestPath))
         var lastError: Throwable? = null

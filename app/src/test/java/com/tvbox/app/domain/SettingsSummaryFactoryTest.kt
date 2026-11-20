@@ -12,7 +12,7 @@ class SettingsSummaryFactoryTest {
         val summary = buildSettingsPageSummary(settingsEntriesFrom(AppSettings()))
         assertEquals(5, summary.groups.size)
         assertEquals(0, summary.emptyGroups.size)
-        assertEquals(12, summary.totalEntries)
+        assertEquals(13, summary.totalEntries)
     }
 
     @Test

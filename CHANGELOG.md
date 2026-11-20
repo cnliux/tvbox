@@ -1,3 +1,12 @@
+## v1.0.30 - 2026-11-20
+
+发版阻断修复（v1.0.29 tag 构建与 CI 均在编译阶段失败，未发布成功，本版本一并修复后重新发布）：
+
+- **编译错误修复**：`AppUpdateRepository.checkForUpdate` 覆写方法移除参数默认值（默认值仅保留在接口声明）；`PlayerInput` 的 `RemoteKeyCache.trimIfNeeded()` 改为无参内部判定 size，不再泄露私有 `entries`。
+- **旧设置迁移补全**：`LegacySettingsSnapshot` / `SettingsPreferencesCodec` 补充 `update_channel` key 的读取与迁移，SharedPreferences 升级后稳定/测试渠道选择不丢失。
+- **测试同步**：设置摘要条目数 12 → 13（新增更新渠道项）；历史更新提示文案与实现对齐（`+N 集`）。
+- 版本号同步：build.gradle.kts → v1.0.30 / code 20030。
+
 ## v1.0.29 - 2026-11-20
 
 - **稳定/测试渠道切换（#120）**：AppSettings 新增 `updateChannel` 字段；UI 设置页「设备与更新」分组提供稳定版/测试版切换入口；`AppUpdateRepository.checkForUpdate` 按渠道选用 `update.json` / `update-beta.json`，启动检查与手动检查均跟随当前选中渠道。

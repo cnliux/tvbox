@@ -46,8 +46,8 @@ private class RemoteKeyCache {
         return nowMs - last < REMOTE_DEDUP_WINDOW_MS
     }
 
-    fun trimIfNeeded(size: Int) {
-        if (size >= maxEntries) entries.clear()
+    fun trimIfNeeded() {
+        if (entries.size >= maxEntries) entries.clear()
     }
 }
 
@@ -59,7 +59,7 @@ internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeStat
         if (remoteKeyCache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
             return@onPreviewKeyEvent false
         }
-        remoteKeyCache.trimIfNeeded(remoteKeyCache.entries.size)
+        remoteKeyCache.trimIfNeeded()
         map.handle(event, chrome)
     }
 

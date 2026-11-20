@@ -85,6 +85,6 @@ class WatchHistoryTest {
         assertEquals("更新至 5 集", withLatest.updateHint)
 
         val onlyLocal = base.copy(episodeCount = 5, latestEpisodeCount = 0)
-        assertEquals("还有 2 集", onlyLocal.updateHint)
+        assertEquals("+2 集", onlyLocal.updateHint)
     }
 }

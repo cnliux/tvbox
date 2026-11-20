@@ -9,6 +9,7 @@ import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -69,6 +70,7 @@ internal object SettingsStorageKeys {
     const val HISTORY_MAX_ITEMS = "history_max_items"
     const val MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
     const val PLAYER_LOG_ENABLED = "player_log_enabled"
+    const val UPDATE_CHANNEL = "update_channel"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -158,6 +160,9 @@ internal fun readLegacySettings(
             QuantitySettings.MaxParallelSourceRequests,
         ),
         playerLogEnabled = boolean(SettingsStorageKeys.PLAYER_LOG_ENABLED, false),
+        updateChannel = UpdateChannel.fromStorageKey(
+            string(SettingsStorageKeys.UPDATE_CHANNEL, UpdateChannel.Stable.storageKey),
+        ),
     )
 }
 
