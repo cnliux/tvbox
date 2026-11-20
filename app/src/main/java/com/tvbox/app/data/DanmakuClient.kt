@@ -112,6 +112,8 @@ internal abstract class BaseDanmakuClient(
     @Volatile
     private var stopped = false
     @Volatile
+    private var disposed = false
+    @Volatile
     private var connected = false
     @Volatile
     private var emittedCount = 0
@@ -125,6 +127,10 @@ internal abstract class BaseDanmakuClient(
     protected fun logWarn(message: String) = Log.w(logTag, DanmakuLogRedactor.redact(message))
 
     override fun start() {
+        if (disposed) {
+            logWarn("【弹幕】实例已销毁，start() 被忽略（请重新调用 DanmakuClients.create）")
+            return
+        }
         if (stopped) {
             stopped = false
             // 重新开始后允许再次重连（重置重连计数）。
@@ -151,6 +157,7 @@ internal abstract class BaseDanmakuClient(
     /** 彻底释放：销毁顶层 scope。仅当实例确认不再使用时调用，之后不可再 [start]。 */
     override fun dispose() {
         close()
+        disposed = true
         scope.cancel()
     }
 

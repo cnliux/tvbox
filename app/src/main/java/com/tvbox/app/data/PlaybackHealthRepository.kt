@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import android.content.Context
+import android.util.Log
 import com.tvbox.app.domain.PlaybackHealthEntry
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
@@ -67,7 +68,10 @@ class SharedPreferencesPlaybackHealthStore(
             json.decodeFromString<List<StoredPlaybackHealthEntry>>(raw)
                 .filter { it.key.isNotBlank() }
                 .associateBy { it.key }
-        }.getOrDefault(emptyMap())
+        }.getOrElse { error ->
+            Log.w("TVBoxPlaybackHealth", "线路健康记录解码失败，已回退为空表：${error.message}")
+            emptyMap()
+        }
     }
 
     override fun write(entries: Collection<StoredPlaybackHealthEntry>) {

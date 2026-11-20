@@ -413,6 +413,7 @@ fun PlayerScreen(
             override fun onPlayerError(error: PlaybackException) {
                 if (player.playerError != error) return
                 CrashHandler.recordOperation("player.onPlayerError", "code=${error.errorCode} msg=${error.message}")
+                bufferMonitor.onPlaybackFailed()
                 // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示；
                 // 能分级时追加可操作的自愈建议（重试 / 换线路 / 换来源）。
                 val message = appendPlaybackErrorHint(

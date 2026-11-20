@@ -748,18 +748,25 @@ val NewEpisodePendingColor = Color(0xFF5DBB8A)
 /**
  * 新剧集醒目文字标签：历史记录 / 追剧列表 / 详情页三处共用。
  * [large] 用于 TV 端（3 米外可读，焦点态下同样清晰），默认手机端紧凑档。
+ * [onNavigate] 当详情页有动作时传入：点击或遥控 OK 后跳转至新增剧集位置；null 表示纯展示。
  */
 @Composable
 fun NewEpisodeBadge(
     hint: NewEpisodeHint,
     large: Boolean = false,
     modifier: Modifier = Modifier,
+    onNavigate: (() -> Unit)? = null,
 ) {
     val color = if (hint.confirmed) NewEpisodeConfirmedColor else NewEpisodePendingColor
     Surface(
         shape = RoundedCornerShape(4.dp),
         color = color.copy(alpha = 0.18f),
-        modifier = modifier,
+        modifier = if (onNavigate != null) {
+            modifier
+                .then(Modifier.clickable(role = Role.Button) { onNavigate() })
+                .focusable()
+                .semantics { stateDescription = "跳转到新剧集：${hint.label}" }
+        } else modifier,
     ) {
         Text(
             text = hint.label,

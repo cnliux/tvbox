@@ -100,7 +100,7 @@ class RemoteEpgRepository : EpgRepository {
             val hasBom = data.size >= 3 &&
                 data[0].toInt() == 0xEF && data[1].toInt() == 0xBB && data[2].toInt() == 0xBF
             if (hasBom) {
-                String(data, 3, data.size - 3, Charsets.UTF_8)
+                String(data.sliceArray(3 until data.size), Charsets.UTF_8)
             } else {
                 String(data, Charsets.UTF_8)
             }

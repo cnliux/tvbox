@@ -238,6 +238,7 @@ fun DetailScreen(
                                     )
                                 },
                                 newEpisodeHint = detailHint,
+                                onNavigateToNewEpisode = actions.newEpisodeNavigateAction(movie, state.historyItems, state.selectedSourceIndex),
                             )
                         }
                     }
@@ -352,6 +353,7 @@ private fun MobileDetailContent(
             actions.rememberDetailScrollIndex(movie.id, state.selectedSourceIndex, index)
         },
         newEpisodeHint = detailHint,
+        onNavigateToNewEpisode = actions.newEpisodeNavigateAction(movie, state.historyItems, state.selectedSourceIndex),
     )
 }
 
@@ -375,6 +377,23 @@ private fun detailNewEpisodeHint(
     return NewEpisodeHint("更新至 $total 集", confirmed = true)
 }
 
+/** 点击新剧集 badge 后的跳转动作：跳到下一条未看的新集；无有效历史记录时返回 null。 */
+private fun TvBoxViewModel.newEpisodeNavigateAction(
+    movie: Movie,
+    historyItems: List<WatchHistoryItem>,
+    sourceIndex: Int,
+): (() -> Unit)? {
+    val item = historyItems.firstOrNull { it.movieId == movie.id && it.apiLineId == movie.apiLineId }
+        ?: return null
+    if (!item.hasConfirmedNewerTotal) return null
+    // 从当前已看到最后一集之后的第一集开始播，避免重复播放已看完的内容。
+    val targetEpisode = (item.episodeIndex + 1).coerceIn(
+        0,
+        movie.playSources.getOrNull(sourceIndex)?.episodes?.lastIndex ?: 0,
+    )
+    return { openPlayer(sourceIndex, targetEpisode) }
+}
+
 @Composable
 private fun EpisodeGrid(
     source: PlaySource?,
@@ -389,6 +408,8 @@ private fun EpisodeGrid(
     onScrollIndexChanged: (Int) -> Unit = {},
     /** 新剧集醒目提示，显示在「选集」标题旁；null 表示无需提示。 */
     newEpisodeHint: NewEpisodeHint? = null,
+    /** 点击 badge 时跳转至新增剧集位置（第一个未看的新集）；null 时仅作展示。 */
+    onNavigateToNewEpisode: (() -> Unit)? = null,
 ) {
     val episodes = source?.episodes.orEmpty()
     if (episodes.isEmpty()) {
@@ -496,7 +517,13 @@ private fun EpisodeGrid(
                 ) {
                     Text("选集（共 ${episodes.size} 集）", style = MaterialTheme.typography.titleSmall)
                     // 新剧集醒目提示与 TV/手机历史卡片同文案、同颜色，一眼看出「更到第几集」。
-                    newEpisodeHint?.let { NewEpisodeBadge(hint = it) }
+                    newEpisodeHint?.let {
+                        NewEpisodeBadge(
+                            hint = it,
+                            large = !LocalTouchMode.current,
+                            onNavigate = onNavigateToNewEpisode,
+                        )
+                    }
                 }
                 CategoryPill(label = if (episodeSortReverse) "正序" else "倒序", selected = false, onClick = onToggleSort)
             }

@@ -237,4 +237,44 @@ class PlaybackBufferMonitorTest {
         assertFalse(PlaybackBufferMonitor.reconcileBuffering(0L, 1_000L, 9, 1_500L))
         assertFalse(PlaybackBufferMonitor.reconcileBuffering(0L, 1_000L, 10, 500L))
     }
+
+    @Test
+    fun seekCoolingTimesOutWhenNoReadyArrives() {
+        // seek 后流失败（无 onReady/onMediaChanged）超过 SEEK_COOLING_MAX_MS，应强制释放冷却状态。
+        val monitor = PlaybackBufferMonitor(seekGraceMs = 3_000L)
+        monitor.onSeekStarted(nowMs = 0L)
+        // 5s 时仍在冷却窗口内，onBuffering 应返回 null（继续屏蔽）。
+        assertNull(monitor.onBuffering(playWhenReady = true, nowMs = 5_000L))
+        // 35s 时已超过 SEEK_COOLING_MAX_MS（30s），冷却释放，后续缓冲可被检测。
+        val decision = monitor.onBuffering(playWhenReady = true, nowMs = 35_000L)
+        // 此时 buffering 时长为 35_000 - 35_000 = 0（首次进入缓冲段），不会触发连续超时；
+        // 但关键是 seekCooling 已被释放，下一次真正超过阈值的缓冲应能报告问题。
+        assertNull(decision) // 刚进入缓冲，时长 0
+        val secondDecision = monitor.onBuffering(playWhenReady = true, nowMs = 40_000L)
+        assertEquals(SlowBufferReason.ContinuousBufferTooLong, secondDecision?.reason)
+    }
+
+    @Test
+    fun onPlaybackFailedResetsSeekCooling() {
+        val monitor = PlaybackBufferMonitor(seekGraceMs = 3_000L)
+        monitor.onSeekStarted(nowMs = 0L)
+        // 在冷却窗口内调用 onPlaybackFailed 应重置所有缓冲状态。
+        monitor.onPlaybackFailed()
+        // 重新进缓冲应立即开始计时（不再受冷却影响）。
+        monitor.onBuffering(playWhenReady = true, nowMs = 6_000L)
+        val decision = monitor.onBuffering(playWhenReady = true, nowMs = 11_000L)
+        assertEquals(SlowBufferReason.StartupTooLong, decision?.reason)
+    }
+
+    @Test
+    fun onPausedReleasesStaleSeekCooling() {
+        val monitor = PlaybackBufferMonitor(seekGraceMs = 3_000L)
+        monitor.onSeekStarted(nowMs = 0L)
+        // 用户暂停（seekCooling=true）时，onPaused 会释放冷却。
+        monitor.onPaused()
+        // 恢复播放后进缓冲不应再受冷却约束。
+        monitor.onBuffering(playWhenReady = true, nowMs = 6_000L)
+        val decision = monitor.onBuffering(playWhenReady = true, nowMs = 11_000L)
+        assertEquals(SlowBufferReason.StartupTooLong, decision?.reason)
+    }
 }

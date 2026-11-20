@@ -32,16 +32,47 @@ const val LIVE_MIME_M3U8 = "application/x-mpegURL"
 const val LIVE_MIME_FLV = "video/x-flv"
 const val LIVE_MIME_MP2T = "video/mp2t"
 
-// (URL + 规范化 headers) → MIME（仅缓存探测成功的判定结果）。
-// 直播地址常带一次性 token，长期播放会让无上限缓存持续膨胀；这里用有界 LRU。
-// 同一 URL 换 Referer/UA 后可能返回不同内容，因此缓存 key 必须包含请求头。
+// (URL + 规范化 headers) → 探活结果（含插入时间戳）；TTL 内有效，超过视为未命中。
 private const val LIVE_PROBE_CACHE_MAX_ENTRIES = 256
+private const val LIVE_PROBE_CACHE_TTL_MS = 5L * 60L * 1000L
+
+private data class ProbeCacheValue(
+    val mime: String,
+    val insertedAtMs: Long,
+)
+
+@Volatile
+private var probeCacheInsertedCount = 0
+
 private val probeCache = Collections.synchronizedMap(
-    object : LinkedHashMap<String, String>(LIVE_PROBE_CACHE_MAX_ENTRIES, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
-            size > LIVE_PROBE_CACHE_MAX_ENTRIES
+    object : LinkedHashMap<String, ProbeCacheValue>(LIVE_PROBE_CACHE_MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ProbeCacheValue>?): Boolean {
+            val evicted = size > LIVE_PROBE_CACHE_MAX_ENTRIES
+            if (evicted) probeCacheInsertedCount++
+            return evicted
+        }
     },
 )
+
+/** 取出缓存命中值并刷新访问计数；未命中或已过期返回 null。 */
+private fun probeCacheGet(key: String): String? {
+    val nowMs = System.currentTimeMillis()
+    return probeCache[key]?.takeIf { nowMs - it.insertedAtMs < LIVE_PROBE_CACHE_TTL_MS }
+        ?.let { probeCache[key] = it; it.mime }
+}
+
+/** 写入缓存并按 LRU 淘汰超限条目。 */
+private fun probeCachePut(key: String, mime: String) {
+    probeCache[key] = ProbeCacheValue(mime, System.currentTimeMillis())
+    if (probeCache.size > LIVE_PROBE_CACHE_MAX_ENTRIES) {
+        probeCache.remove(probeCache.entries.firstOrNull()?.key)
+    }
+}
+
+/** 清理已过期的缓存条目（在每次探测时调用）。 */
+private fun pruneStaleProbeCache(nowMs: Long) {
+    probeCache.entries.removeAll { (_, value) -> nowMs - value.insertedAtMs >= LIVE_PROBE_CACHE_TTL_MS }
+}
 
 private fun probeCacheKey(url: String, headers: Map<String, String>): String = buildString {
     append(url)
@@ -71,7 +102,8 @@ suspend fun probeLiveLineMimeType(
         }
     }
     val cacheKey = probeCacheKey(url, headers)
-    probeCache[cacheKey]?.let { return it }
+    pruneStaleProbeCache(System.currentTimeMillis())
+    probeCacheGet(cacheKey)?.let { return it }
     val probed = withContext(Dispatchers.IO) {
         try {
             probeBlocking(url, headers)
@@ -83,7 +115,7 @@ suspend fun probeLiveLineMimeType(
         }
     }
     // 失败/无法判定不入缓存：避免一次网络抖动让该地址永久失去探测与黑屏修复机会。
-    if (probed != LIVE_MIME_UNKNOWN) probeCache[cacheKey] = probed
+    if (probed != LIVE_MIME_UNKNOWN) probeCachePut(cacheKey, probed)
     android.util.Log.i(
         LIVE_PROBE_LOG_TAG,
         "【类型探测】url=${logSafeUrl(url)} mime=${probed.ifBlank { "未知（沿用播放器判断）" }}",

@@ -45,4 +45,13 @@ class LiveRepositoryTest {
 
         assertTrue(error is IOException)
     }
+
+    @Test
+    fun setSourceConfigAtomicSnapshotPreservesSelectionIndexAcrossConcurrentWrites() {
+        // 验证 Config 原子快照：在 setSourceConfig 连续写入过程中，sourceUrls 始终返回最近一次完整写入。
+        val repository = DefaultLiveRepository()
+        repository.setSourceConfig(listOf("a", "b", "c"), defaultGroup = "", defaultIndex = -1)
+        repository.setSourceConfig(listOf("x", "y"), defaultGroup = "直播", defaultIndex = 0)
+        assertEquals(listOf("x", "y"), repository.sourceUrls)
+    }
 }

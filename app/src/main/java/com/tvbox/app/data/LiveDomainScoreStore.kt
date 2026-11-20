@@ -6,6 +6,7 @@ import com.tvbox.app.domain.LIVE_DOMAIN_MAX_ENTRIES
 import com.tvbox.app.domain.updateLiveDomainScores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import android.util.Log
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -59,7 +60,10 @@ class LiveDomainScoreStore(context: Context) {
                 json.decodeFromString<List<StoredLiveDomainScore>>(raw)
                     .mapNotNull { it.toDomain() }
                     .associateBy { it.domain }
-            }.getOrDefault(emptyMap())
+            }.getOrElse { error ->
+                Log.w(TAG, "直播线路评分表解码失败，已回退为空表：${error.message}")
+                emptyMap()
+            }
         }
         cache = parsed
         return parsed
@@ -99,5 +103,6 @@ class LiveDomainScoreStore(context: Context) {
     private companion object {
         const val PREFS_NAME = "live_domain_scores"
         const val KEY_ENTRIES = "entries_v1"
+        const val TAG = "TVBoxLiveDomainScore"
     }
 }

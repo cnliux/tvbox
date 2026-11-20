@@ -25,35 +25,37 @@ internal const val LIVE_SOURCE_MAX_BYTES = 20L * 1024L * 1024L
 typealias LiveRepository = com.tvbox.app.domain.LiveRepository
 
 class DefaultLiveRepository : LiveRepository {
-    // setSourceConfig/setSourceSelection（UI 线程）与 getChannels（IO 线程）跨线程访问，
-    // 必须 volatile + 读时一次性快照，避免读到不一致组合（如 selectionIndex 指到旧列表）。
+    // 将直播订阅配置打包为不可变快照，以单个 volatile 引用读写，避免旧 selectionIndex 配合新 URL 列表等交叉不一致状态。
+    private data class Config(
+        val urls: List<String>,
+        val defaultGroup: String,
+        val defaultIndex: Int,
+        val selectionIndex: Int,
+    )
     @Volatile
-    private var customSourceUrls: List<String> = emptyList()
-    @Volatile
-    private var defaultGroup: String = ""
-    @Volatile
-    private var defaultIndex: Int = -1
-    @Volatile
-    private var selectionIndex: Int = -1
+    private var config = Config(emptyList(), "", -1, -1)
 
     override fun setSourceConfig(customUrls: List<String>, defaultGroup: String, defaultIndex: Int) {
-        val previousUrls = this.customSourceUrls
-        val previousSelection = this.selectionIndex
+        val previous = config
+        val previousUrls = previous.urls
+        val previousSelection = previous.selectionIndex
         // 归一化/去空/去重一次性完成：展示标签、默认源与选中源共用同一份索引，不再出现错位。
         val normalized = customUrls.map(::normalizeSourceUrl).filter { it.isNotBlank() }.distinct()
         val defaultUrl = customUrls.getOrNull(defaultIndex)?.let(::normalizeSourceUrl)
         val selectedUrl = previousSelection.takeIf { it >= 0 }?.let { previousUrls.getOrNull(it) }
-        this.customSourceUrls = normalized
-        this.defaultGroup = defaultGroup
-        this.defaultIndex = defaultUrl?.let { normalized.indexOf(it) } ?: -1
-        this.selectionIndex = selectedUrl?.let { normalized.indexOf(it) } ?: -1
+        config = Config(
+            urls = normalized,
+            defaultGroup = defaultGroup,
+            defaultIndex = defaultUrl?.let { normalized.indexOf(it) } ?: -1,
+            selectionIndex = selectedUrl?.let { normalized.indexOf(it) } ?: -1,
+        )
     }
 
     override fun setSourceSelection(index: Int) {
-        this.selectionIndex = index
+        config = config.copy(selectionIndex = index)
     }
 
-    override val sourceUrls: List<String> get() = customSourceUrls
+    override val sourceUrls: List<String> get() = config.urls
 
     @Volatile
     private var lastBundledEpgUrl: String? = null
@@ -61,15 +63,13 @@ class DefaultLiveRepository : LiveRepository {
     override val bundledEpgUrl: String? get() = lastBundledEpgUrl
 
     override suspend fun getChannels(): List<LiveChannel> = withContext(Dispatchers.IO) {
-        // 一次性快照全部配置字段，避免循环中途读到 UI 线程写入的半更新组合。
-        val allUrls = customSourceUrls
-        val snapshotDefaultIndex = defaultIndex
-        val snapshotSelectionIndex = selectionIndex
-        val snapshotDefaultGroup = defaultGroup
+        // 一次性快照全部配置，volatile 引用保证原子读取：不会混入旧 selectionIndex + 新 URL 等不一致组合。
+        val snapshot = config
+        val allUrls = snapshot.urls
         if (allUrls.isEmpty()) {
             throw IOException("请添加自定义直播源地址后重试")
         }
-        val orderedUrls = resolveSourceOrder(allUrls, snapshotDefaultIndex, snapshotSelectionIndex)
+        val orderedUrls = resolveSourceOrder(allUrls, snapshot.defaultIndex, snapshot.selectionIndex)
         var lastError: Throwable? = null
         var lastLoadError: String? = null
 
@@ -91,7 +91,7 @@ class DefaultLiveRepository : LiveRepository {
                 lastBundledEpgUrl = runCatching { extractM3uEpgUrl(rawText) }.getOrNull()
                 val channels = parseLiveChannels(rawText)
                     .map { ch ->
-                        if (ch.groupName == "电视直播" && snapshotDefaultGroup.isNotBlank()) ch.copy(groupName = snapshotDefaultGroup) else ch
+                        if (ch.groupName == "电视直播" && snapshot.defaultGroup.isNotBlank()) ch.copy(groupName = snapshot.defaultGroup) else ch
                     }
                     .withIndex()
                     .map { (i, ch) -> ch.copy(number = i + 1) }
@@ -113,7 +113,7 @@ class DefaultLiveRepository : LiveRepository {
             }
         }
         throw IOException(
-            if (defaultIndex in orderedUrls.indices) {
+            if (snapshot.defaultIndex in orderedUrls.indices) {
                 "默认直播源及备用源均不可用（${lastLoadError ?: "网络异常"}）"
             } else {
                 "所有直播源均加载失败（${lastLoadError ?: "网络异常"}）"
@@ -161,7 +161,7 @@ internal fun readLimitedLiveSourceText(
     }
     val data = out.toByteArray()
     return if (data.size >= 3 && data[0].toInt() == 0xEF && data[1].toInt() == 0xBB && data[2].toInt() == 0xBF) {
-        String(data.copyOfRange(3, data.size), Charsets.UTF_8)
+        String(data.sliceArray(3 until data.size), Charsets.UTF_8)
     } else {
         String(data, Charsets.UTF_8)
     }

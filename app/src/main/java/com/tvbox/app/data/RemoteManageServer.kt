@@ -1,5 +1,6 @@
 package com.tvbox.app.data
 
+import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -658,7 +659,10 @@ class RemoteManageServer(
                     pair.substring(0, separator).urlDecode() to pair.substring(separator + 1).urlDecode()
                 }
                 .toMap()
-        }.getOrDefault(emptyMap())
+        }.getOrElse { error ->
+            Log.w("TVBoxRemoteManage", "表单解析失败：${error.message}")
+            emptyMap()
+        }
     }
 
     private fun createServerSocket(): ServerSocket {

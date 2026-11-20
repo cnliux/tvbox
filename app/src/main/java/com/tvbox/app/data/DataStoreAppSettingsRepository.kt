@@ -127,16 +127,24 @@ internal class DataStoreAppSettingsRepository(
     private val writeMutex = Mutex()
 
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
-        writeMutex.withLock {
-            val preferences = ensureMigratedLocked()
-            if (preferences != null) {
-                parseSettings(preferences)
-            } else if (migrationMarker.isMigrated()) {
-                // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示。
-                AppSettings()
-            } else {
-                // 迁移尚未完成：直接展示旧快照，保证升级后设置不丢；下次读取继续重试迁移。
-                readLegacyFallback()
+        // 迁移完成后（migrationMarker.isMigrated() == true），后续读取无需加写锁，避免高频读被迁移/保存写操作阻塞。
+        if (migrationMarker.isMigrated()) {
+            runCatching { parseSettings(dataStore.data.first()) }
+                .onFailure { error -> Log.e(TAG, "读取设置存储失败（已迁移路径），回退默认值", error) }
+                .getOrNull()
+                ?: AppSettings()
+        } else {
+            writeMutex.withLock {
+                val preferences = ensureMigratedLocked()
+                if (preferences != null) {
+                    parseSettings(preferences)
+                } else if (migrationMarker.isMigrated()) {
+                    // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示。
+                    AppSettings()
+                } else {
+                    // 迁移尚未完成：直接展示旧快照，保证升级后设置不丢；下次读取继续重试迁移。
+                    readLegacyFallback()
+                }
             }
         }
     }
@@ -157,19 +165,23 @@ internal class DataStoreAppSettingsRepository(
     }
 
     override suspend fun getSpeedLatencies(): Map<String, Long?> = withContext(Dispatchers.IO) {
-        writeMutex.withLock {
-            val preferences = ensureMigratedLocked()
-            if (preferences != null) {
-                decodeLegacySpeedLatencies(
-                    preferences.rawSpeedLatencies(),
-                    json,
-                ) { message, error -> Log.w(TAG, message, error) }
-            } else if (migrationMarker.isMigrated()) {
-                // 已完成迁移就不再从旧偏好补测速结果。
-                emptyMap()
-            } else {
-                decodeLegacySpeedLatencies(legacySpeedLatenciesRaw(), json) { message, error ->
-                    Log.w(TAG, message, error)
+        if (migrationMarker.isMigrated()) {
+            runCatching { decodeLegacySpeedLatencies(dataStore.data.first().rawSpeedLatencies(), json) { _, _ -> } }.getOrElse { emptyMap() }
+        } else {
+            writeMutex.withLock {
+                val preferences = ensureMigratedLocked()
+                if (preferences != null) {
+                    decodeLegacySpeedLatencies(
+                        preferences.rawSpeedLatencies(),
+                        json,
+                    ) { message, error -> Log.w(TAG, message, error) }
+                } else if (migrationMarker.isMigrated()) {
+                    // 已完成迁移就不再从旧偏好补测速结果。
+                    emptyMap()
+                } else {
+                    decodeLegacySpeedLatencies(legacySpeedLatenciesRaw(), json) { message, error ->
+                        Log.w(TAG, message, error)
+                    }
                 }
             }
         }
