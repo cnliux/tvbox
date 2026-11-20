@@ -68,6 +68,7 @@ internal object SettingsStorageKeys {
     const val DOUBAN_HOT_FALLBACK_LINES = "douban_hot_fallback_lines"
     const val HISTORY_MAX_ITEMS = "history_max_items"
     const val MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
+    const val PLAYER_LOG_ENABLED = "player_log_enabled"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -156,6 +157,7 @@ internal fun readLegacySettings(
             SettingsStorageKeys.MAX_PARALLEL_SOURCE_REQUESTS,
             QuantitySettings.MaxParallelSourceRequests,
         ),
+        playerLogEnabled = boolean(SettingsStorageKeys.PLAYER_LOG_ENABLED, false),
     )
 }
 

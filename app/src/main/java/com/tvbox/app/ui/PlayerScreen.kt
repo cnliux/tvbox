@@ -578,12 +578,12 @@ fun PlayerScreen(
                     durationMs = player.duration.takeIf { it > 0L } ?: 0L,
                 )
             } catch (e: Exception) {
-                android.util.Log.w("TVBoxPlayer", "saveProgressOnDispose failed: ${logSafeText(e.message)}")
+                PlayerLog.w("TVBoxPlayer", "saveProgressOnDispose failed: ${logSafeText(e.message)}")
             }
             try {
                 player.removeListener(listener)
             } catch (e: Exception) {
-                android.util.Log.w("TVBoxPlayer", "removeListenerOnDispose failed: ${logSafeText(e.message)}")
+                PlayerLog.w("TVBoxPlayer", "removeListenerOnDispose failed: ${logSafeText(e.message)}")
             }
         }
     }

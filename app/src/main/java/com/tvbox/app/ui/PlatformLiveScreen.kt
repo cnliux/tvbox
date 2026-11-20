@@ -1264,7 +1264,7 @@ private fun PlatformLivePlayerScreen(
         if (playbackHost?.snapshot?.playbackState == Player.STATE_ENDED) {
             // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
             // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。
-            android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
+            PlayerLog.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
             actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Ended)
         }
     }

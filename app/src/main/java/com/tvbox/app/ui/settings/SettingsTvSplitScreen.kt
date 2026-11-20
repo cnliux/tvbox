@@ -430,6 +430,17 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "播放器详细日志",
+            subtitle = if (state.appSettings.playerLogEnabled) "已开启" else "已关闭",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.playerLogEnabled,
+                    onCheckedChange = actions::updatePlayerLogEnabled,
+                )
+            },
+        )
     }
 }
 

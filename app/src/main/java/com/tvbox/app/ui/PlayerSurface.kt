@@ -117,7 +117,7 @@ private fun PlayerView.applyVideoScaleMode(mode: VideoScaleMode) {
     val ratio = mode.aspectRatio ?: 0f
     findViewById<AspectRatioFrameLayout>(androidx.media3.ui.R.id.exo_content_frame)
         ?.setAspectRatio(ratio)
-    android.util.Log.i(
+    PlayerLog.i(
         "TVBoxVideoScale",
         "applyVideoScaleMode mode=${mode.storageKey}, resizeMode=$resizeMode, frameAspectRatio=$ratio",
     )

@@ -73,6 +73,8 @@ data class AppSettings(
     val maxParallelSourceRequests: Int = QuantitySettings.MaxParallelSourceRequests.default,
     /** 解码器策略：默认硬解优先、失败自动回落；也可强制只选硬件解码器。 */
     val decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+    /** 播放器/直播代理详细日志开关；默认关闭，调试排查时开启。 */
+    val playerLogEnabled: Boolean = false,
 )
 
 /**

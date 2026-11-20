@@ -457,7 +457,7 @@ private fun LivePlayerScreen(
                         )
                     }
                     Player.STATE_ENDED -> {
-                        android.util.Log.w(LIVE_LOG_TAG, "【播放结束】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}")
+                        PlayerLog.w(LIVE_LOG_TAG, "【播放结束】channel=${latestChannelLabel.value}, lineIndex=${latestLineIndex.value}, url=${logSafeUrl(latestLineUrl.value)}")
                         bufferingLineUrl = null
                         // 直播 ENDED 多为流被服务端正常关闭（token 到期），先原地重连同一条线路。
                         switchLiveLineAfterIssue(LiveLineFallbackReason.Ended)

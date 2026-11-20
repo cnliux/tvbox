@@ -537,6 +537,7 @@ class TvBoxViewModel(
                     source = SourceManagerUiState(latencies = speedLatencies),
                 )
             }
+            PlayerLog.enabled = normalizedSettings.playerLogEnabled
             loadHistory()
             refreshHome()
             // 首屏必需项完成后，把 OTA 检查与直播 EPG 延后到首帧后 / idle，
@@ -1051,6 +1052,13 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(checkUpdatesOnStartup = enabled)
         saveSettings(settings)
         _state.update { it.copy(appSettings = settings) }
+    }
+
+    fun updatePlayerLogEnabled(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(playerLogEnabled = enabled)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+        PlayerLog.enabled = enabled
     }
 
     fun updatePlaybackAgentAutoSwitch(enabled: Boolean) {
