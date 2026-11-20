@@ -546,9 +546,14 @@ fun PlayerScreen(
                             positionMs = player.currentPosition,
                             durationMs = player.duration.takeIf { it > 0L } ?: 0L,
                         )
-                        // 无下一集且自然播完：展示"已播完"，允许返回详情。
-                        if (player.playWhenReady && !player.hasNextMediaItem()) {
-                            playbackFinished = true
+                        // 连续播放：有下一集时自动续播；无下一集则提示"已播完"。
+                        if (player.playWhenReady) {
+                            if (player.hasNextMediaItem()) {
+                                playbackFinished = false
+                                player.seekToNextMediaItem()
+                            } else {
+                                playbackFinished = true
+                            }
                         }
                     }
                 }
