@@ -891,6 +891,17 @@ fun PlayerScreen(
         }
     }
 
+    // 手机端退后台暂停：避免后台继续出声；回前台保留进度，用户手动恢复。
+    DisposableEffect(lifecycleOwner, player, isTelevision) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (!isTelevision && event == Lifecycle.Event.ON_STOP && player.isPlaying) {
+                session.pause(player)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
