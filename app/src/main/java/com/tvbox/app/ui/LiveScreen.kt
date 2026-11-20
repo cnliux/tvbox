@@ -224,6 +224,13 @@ private fun LivePlayerScreen(
     // 顶栏时钟与 EPG 卡"当前节目/进度"共用 20 秒节拍，保证分钟级刷新。
     var clockTick by remember { mutableIntStateOf(0) }
     val clockText = remember(clockTick) { formatClock(System.currentTimeMillis()) }
+    // #69：TV 端切换频道时短暂显示大字号频道名+分组横幅，2s 后自动隐藏。
+    var switchBanner by remember { mutableStateOf<LiveChannel?>(null) }
+    LaunchedEffect(state.liveChannelIndex, state.liveLineIndex) {
+        switchBanner = currentChannel
+        delay(2_000L)
+        switchBanner = null
+    }
     // 播放器回调注册在 DisposableEffect(player) 里，只会捕获首次组合时的频道快照；
     // 换台后日志里的频道名/线路号会停留在旧值，排查时极易误判。改用更新态读取。
     val latestChannelLabel = rememberUpdatedState("${currentChannel.groupName}/${currentChannel.name}")
@@ -1031,6 +1038,64 @@ private fun LivePlayerScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(bottom = 80.dp),
             )
+        }
+
+        // #69：TV 端切台横幅——大字号频道名+分组，2s 后由 LaunchedEffect 清除。
+        switchBanner?.let { ch ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 22.dp, vertical = 12.dp),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = ch.name,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = ch.groupName,
+                        color = LiveTvAccent,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                    )
+                }
+            }
+        }
+
+        // #69：TV 端切台横幅——大字号频道名+分组，2s 后由 LaunchedEffect 清除。
+        switchBanner?.let { ch ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 28.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .padding(horizontal = 22.dp, vertical = 12.dp),
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = ch.name,
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = ch.groupName,
+                        color = LiveTvAccent,
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                    )
+                }
+            }
         }
 
         if (showUrlOverlay) {
