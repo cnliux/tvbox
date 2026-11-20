@@ -46,7 +46,11 @@ class UpdateDownloadService : Service() {
     // 协程异常统一进 CrashHandler.coroutineExceptionHandler（记录日志，不杀死进程）。
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + CrashHandler.coroutineExceptionHandler)
     private var job: Job? = null
+    @Volatile
     private var activePath: String? = null
+    // onStartCommand（主线程写）与 runDownload 的 finally（协程内读）跨上下文访问，标 @Volatile
+    // 保证 stopSelfResult 判定读到最新值，避免下载服务提前/延迟停止。
+    @Volatile
     private var activeStartId = 0
     // APK 下载是流式长请求，沿用统一客户端但放宽整次调用上限，避免大包被默认 60s 截断。
     private val client = HttpClients.default.newBuilder()

@@ -53,6 +53,8 @@ private val EPG_ATTRIBUTE_REGEX = Regex("""(?:^|\s)([\w:.-]+)\s*=\s*(?:"([^"]*)"
 private val EPG_MILLIS_REGEX = Regex("^(\\d{8}\\d{6})\\.\\d+")
 /** XMLTV 常见写法 `+08:00` → SimpleDateFormat `Z` 需要的 `+0800`；不归一化会被无时区格式吞掉后缀。 */
 private val EPG_COLON_ZONE_REGEX = Regex("([+-]\\d{2}):(\\d{2})$")
+/** UTC 字面量 `Z` 后缀（如 `20240101120000Z`）→ `+0000`，避免字面量 Z 无法被 RFC822 Z 格式消费。 */
+private val EPG_UTC_LITERAL_ZONE_REGEX = Regex("Z$")
 private val EPG_SPACES_REGEX = Regex("\\s+")
 
 fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
@@ -152,6 +154,10 @@ private fun parseXmltvTime(raw: String?): Long? {
     // 毫秒段（`.500`）先行剥离，再把带冒号的时区归一化为 `Z` 格式。
     val withoutMillis = value.replaceFirst(EPG_MILLIS_REGEX, "$1")
     val normalized = withoutMillis.replace(EPG_COLON_ZONE_REGEX, "$1$2")
+        // XMLTV 常见的 UTC 字面量 `Z` 后缀（如 20240101120000Z）：SimpleDateFormat 的
+        // Z 是 RFC822 ±HHMM 数值偏移，无法消费字面量 Z；不归一化会因「必须完整消费」
+        // 被整条丢弃，这里统一改写为 +0000 后交给带时区格式解析。
+        .replace(EPG_UTC_LITERAL_ZONE_REGEX, "+0000")
     // 复用按线程缓存的格式组：每条 programme 原本会 new 6 个 SimpleDateFormat。
     for (format in EPG_TIME_FORMATS.get().orEmpty()) {
         // 必须完整消费字符串：SimpleDateFormat.parse(String) 会静默忽略尾部多余字符，

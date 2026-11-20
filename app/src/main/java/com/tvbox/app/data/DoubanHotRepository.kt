@@ -236,7 +236,8 @@ private const val DOUBAN_ENDPOINT = "https://m.douban.com/rexxar/api/v2/subject/
 // 与 domain 契约的默认页大小共用同一常量，避免两处数值漂移。
 private const val DOUBAN_PAGE_SIZE = com.tvbox.app.domain.DoubanHotRepository.DEFAULT_PAGE_SIZE
 private const val MINUTE_MS = 60_000L
-private const val SUCCESS_CACHE_TTL_MS = 20L * 60L * MINUTE_MS
+// 热播数据缓存 20 分钟：热播榜时效性强，缓存过久（如 20 小时）会导致首页热门一整天不更新。
+private const val SUCCESS_CACHE_TTL_MS = 20L * MINUTE_MS
 private const val FAILURE_CACHE_TTL_MS = 6L * MINUTE_MS
 
 private val doubanJson = Json {

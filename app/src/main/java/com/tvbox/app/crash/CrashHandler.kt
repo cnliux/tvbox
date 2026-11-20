@@ -240,10 +240,18 @@ object CrashHandler {
             ?.sortedBy { file -> file.lastModified() }
             ?: return
         val now = System.currentTimeMillis()
-        // 先删除超过保留期的旧日志，再按数量只保留最新的 MAX_LOG_FILES 个。
-        files.filter { file -> now - file.lastModified() > MAX_LOG_FILE_AGE_MS }
-            .forEach { file -> file.delete() }
-        files.take((files.size - MAX_LOG_FILES).coerceAtLeast(0))
+        // 先删除超过保留期的旧日志，再在「存活文件」里按数量裁剪：
+        // 已删除的过期文件不能占用保留名额，否则可能多删有效日志。
+        val survivors = mutableListOf<File>()
+        files.forEach { file ->
+            if (now - file.lastModified() > MAX_LOG_FILE_AGE_MS) {
+                file.delete()
+            } else {
+                survivors += file
+            }
+        }
+        // files 与 survivors 均按 lastModified 升序，最旧的排在前面。
+        survivors.take((survivors.size - MAX_LOG_FILES).coerceAtLeast(0))
             .forEach { file -> file.delete() }
     }
 

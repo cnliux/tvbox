@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 )
@@ -15,6 +16,24 @@ import (
 //    Kotlin 的 DouyinSigner/WebView 执行，这里直接内化）。
 
 var jsLock sync.Mutex
+
+// jsExecTimeout 单次 JS 执行上限：斗鱼签名脚本来自远端 homeH5Enc 下发，
+// 一旦死循环会永久占死 jsLock，阻塞所有直播解析，必须用 vm.Interrupt 强制终止。
+const jsExecTimeout = 8 * time.Second
+
+// maxJSScriptSize 远端脚本大小上限：明显异常/被篡改的巨型脚本直接拒绝执行。
+const maxJSScriptSize = 2 << 20 // 2MB
+
+// watchdogInterrupt 超时后中断 VM；正常完成后由调用方 close(done) 结束看门狗。
+func watchdogInterrupt(vm *goja.Runtime, done <-chan struct{}) {
+	timer := time.NewTimer(jsExecTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		vm.Interrupt(fmt.Errorf("JS 执行超时（>%s）", jsExecTimeout))
+	}
+}
 
 func newJSRuntime() *goja.Runtime {
 	vm := goja.New()
@@ -34,13 +53,20 @@ func newJSRuntime() *goja.Runtime {
 // runJSScriptScriptExpression 编译并执行 script，随后求值 expression，
 // 返回该表达式的字符串值（对应 Kotlin DouyinSigner.runJs 的语义）。
 func runJSScriptScriptExpression(script, expression string) (string, error) {
+	if len(script) > maxJSScriptSize {
+		return "", fmt.Errorf("JS 脚本过大（%d 字节），已拒绝执行", len(script))
+	}
 	jsLock.Lock()
 	defer jsLock.Unlock()
 	vm := newJSRuntime()
+	defer vm.ClearInterrupt()
 	program, err := goja.Compile("tvbox-script", script, false)
 	if err != nil {
 		return "", fmt.Errorf("JS 脚本编译失败：%w", err)
 	}
+	done := make(chan struct{})
+	go watchdogInterrupt(vm, done)
+	defer close(done)
 	if _, err := vm.RunProgram(program); err != nil {
 		return "", fmt.Errorf("JS 脚本执行失败：%w", err)
 	}
@@ -78,6 +104,9 @@ func stripDouyinScript(source string) string {
 // gomobile 导出：panic 兜底返回 error，避免越界 JNI 崩溃。
 func RunABogus(signScript, params, userAgent string) (result string, err error) {
 	defer recoverToError(&err)
+	if len(signScript) > maxJSScriptSize {
+		return fmt.Sprintf(`{"error":"抖音签名脚本过大（%d 字节），已拒绝执行"}`, len(signScript)), nil
+	}
 	jsLock.Lock()
 	defer jsLock.Unlock()
 	vm := newJSRuntime()
@@ -86,6 +115,9 @@ func RunABogus(signScript, params, userAgent string) (result string, err error) 
 		return fmt.Sprintf(`{"error":"抖音签名脚本编译失败：%s"}`, escapeJSON(err.Error())), nil
 	}
 	defer vm.ClearInterrupt()
+	done := make(chan struct{})
+	go watchdogInterrupt(vm, done)
+	defer close(done)
 	if _, err := vm.RunProgram(program); err != nil {
 		return fmt.Sprintf(`{"error":"抖音签名脚本执行失败：%s"}`, escapeJSON(err.Error())), nil
 	}

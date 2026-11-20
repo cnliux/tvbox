@@ -17,9 +17,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import android.view.WindowManager
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
@@ -191,6 +193,16 @@ class MainActivity : ComponentActivity() {
         // 手机模式使用 edge-to-edge 布局，由各页面自行吸收状态栏/导航栏安全区；
         // 电视模式保持原有的系统避让行为，避免盒子端画面被系统栏挤压。
         WindowCompat.setDecorFitsSystemWindows(window, mode != DeviceMode.Mobile)
+        // 主题 Theme.TVBox 带 windowFullscreen=true（电视端要全屏），该 flag 会隐藏系统状态栏，
+        // 使 WindowInsets.statusBars 顶部 inset 恒为 0；手机模式各页面按 systemBars 避让的 padding
+        // 因此失效，标题被状态栏区域压住。手机模式显式清除全屏并恢复状态栏显示。
+        if (mode == DeviceMode.Mobile) {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+            WindowCompat.getInsetsController(window, window.decorView)
+                .show(WindowInsetsCompat.Type.statusBars())
+        } else {
+            window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
+        }
     }
 
     private fun saveUpdateApk(apkPath: String) {

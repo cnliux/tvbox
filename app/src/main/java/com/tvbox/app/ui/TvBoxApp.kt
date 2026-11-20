@@ -398,10 +398,16 @@ private fun UpdateDownloadCard(
 
 /** 屏幕内 rememberSaveable 状态按「屏幕 + 设备模式」隔离，切换电视/手机布局时不复用另一套布局的滚动/输入状态。 */
 private fun screenSaveableKey(state: TvBoxUiState): String {
-    // 详情页内点相关推荐跳到另一部影片时 screen 仍是 Detail，
-    // 必须把影片标识纳入 key，否则 SaveableStateProvider 会复用上一部影片的滚动与焦点状态。
-    val detailKey = state.detailMovie?.let { "${it.apiLineId}:${it.id}" }.orEmpty()
-    return "${state.screen.name}-${state.effectiveDeviceMode.name}-$detailKey"
+    // 仅详情页把影片标识纳入 key：详情页内点相关推荐跳到另一部影片时 screen 仍是 Detail，
+    // 必须按影片隔离，否则 SaveableStateProvider 会复用上一部影片的滚动与焦点状态。
+    // 非详情页不拼 detailMovie（导航离开详情页后 detailMovie 可能残留非 null，
+    // 拼入 key 会让返回主页/历史/搜索时 key 变化，丢失列表滚动与焦点状态）。
+    val detailKey = if (state.screen == TvScreen.Detail) {
+        state.detailMovie?.let { "-${it.apiLineId}:${it.id}" }.orEmpty()
+    } else {
+        ""
+    }
+    return "${state.screen.name}-${state.effectiveDeviceMode.name}$detailKey"
 }
 
 @Composable

@@ -33,21 +33,29 @@ internal interface PlayerKeyMap {
 private const val REMOTE_DEDUP_WINDOW_MS = 80L
 
 /**
- * 遥控器事件来源缓存：按 (deviceId, keyCode) 记录最近一次处理时间，
+ * 遥控器事件来源缓存：按 (deviceId, keyCode, 物理动作) 记录最近一次处理时间，
  * 用于过滤多遥控器同时按下相同按键时的抖动。
+ * 物理动作参与去重 key（ACTION_DOWN=0 / ACTION_UP=1）：一次按压的 DOWN 与 UP 是
+ * 不同事件，快速按压（<80ms）的 KEYUP 不会被 KEYDOWN 的去重窗口吞掉；
+ * 仅对同一动作类型事件的高频重复去重。
  * deviceId <= 0 视为系统/虚拟键无法区分真实设备，统一放行。
  *
  * 每个调用方应持有独立实例（通过 remember 创建），避免多播放器实例互相干扰去重窗口。
  */
 internal class RemoteKeyCache {
-    private val entries = LinkedHashMap<Pair<Int, Int>, Long>(16, 0.75f, true)
+    private val entries = LinkedHashMap<Triple<Int, Int, Int>, Long>(16, 0.75f, true)
     private val maxEntries = 64
 
-    fun shouldDrop(deviceId: Int, keyCode: Int, nowMs: Long): Boolean {
+    fun shouldDrop(deviceId: Int, keyCode: Int, action: Int, nowMs: Long): Boolean {
         if (deviceId <= 0) return false
-        val key = deviceId to keyCode
-        val last = entries[key] ?: return false.also { entries[key] = nowMs }
-        return nowMs - last < REMOTE_DEDUP_WINDOW_MS
+        val key = Triple(deviceId, keyCode, action)
+        val last = entries[key]
+        if (last == null || nowMs - last >= REMOTE_DEDUP_WINDOW_MS) {
+            // 放行分支也要刷新时间戳，否则首个去重窗口过后永远命中不了去重。
+            entries[key] = nowMs
+            return false
+        }
+        return true
     }
 
     fun trimIfNeeded() {
@@ -62,7 +70,7 @@ internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeStat
     val cache = remember { RemoteKeyCache() }
     return onPreviewKeyEvent { event ->
         val native = event.nativeKeyEvent
-        if (cache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
+        if (cache.shouldDrop(native.deviceId, native.keyCode, native.action, android.os.SystemClock.elapsedRealtime())) {
             return@onPreviewKeyEvent false
         }
         cache.trimIfNeeded()
@@ -101,16 +109,8 @@ internal class PlayerSeekKeyMap(
             return false
         }
         return when (native.keyCode) {
-            AndroidKeyEvent.KEYCODE_BACK -> {
-                if (chrome.visible || chrome.panel != PlayerPanel.None) {
-                    if (event.type == KeyEventType.KeyUp) {
-                        if (chrome.panel != PlayerPanel.None) chrome.closePanel() else chrome.hide()
-                    }
-                    true
-                } else {
-                    false
-                }
-            }
+            // BACK 不在此消费：锁定提示/浮层层级统一交给 PlayerChromeBackHandler，
+            // 这里自行处理会绕过「已锁定」提示与统一 BACK 层级。
             AndroidKeyEvent.KEYCODE_DPAD_LEFT,
             AndroidKeyEvent.KEYCODE_MEDIA_REWIND,
             -> {

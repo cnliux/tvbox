@@ -44,6 +44,10 @@ type bilibiliResolver struct {
 	buvid         [2]string
 	buvidLoaded   bool
 
+	// cacheLock 保护 wbiKeys/buvid 的 check-then-act：gomobile 全局单例可能被
+	// 多路 IO 线程并发调用，裸的先读后写会让并发方拿到未填充的空值。
+	cacheLock sync.Mutex
+
 	playLock        sync.Mutex
 	lastPlayRequest time.Time
 
@@ -107,25 +111,24 @@ func (r *bilibiliResolver) headers() map[string]string {
 
 // getBuvid 从 finger/spi 取 b_3/b_4；任何失败都缓存 ("","")（对齐 Python）。
 func (r *bilibiliResolver) getBuvid() (string, string) {
-	if r.buvidLoaded {
-		return r.buvid[0], r.buvid[1]
-	}
-	r.buvidLoaded = true
-	r.buvid = [2]string{"", ""}
-	data, err := r.session.get("https://api.bilibili.com/x/frontend/finger/spi", map[string]string{
-		"User-Agent": bilibiliUserAgent,
-		"Referer":    bilibiliReferer,
-	})
-	if err != nil {
-		return "", ""
-	}
-	payload, err := parseJSONBytes(data)
-	if err != nil {
-		return "", ""
-	}
-	if root := jsonObject(payload); root != nil {
-		if nested := jsonObject(root["data"]); nested != nil {
-			r.buvid = [2]string{Text(nested["b_3"], ""), Text(nested["b_4"], "")}
+	r.cacheLock.Lock()
+	defer r.cacheLock.Unlock()
+	if !r.buvidLoaded {
+		r.buvidLoaded = true
+		r.buvid = [2]string{"", ""}
+		data, err := r.session.get("https://api.bilibili.com/x/frontend/finger/spi", map[string]string{
+			"User-Agent": bilibiliUserAgent,
+			"Referer":    bilibiliReferer,
+		})
+		if err == nil {
+			payload, parseErr := parseJSONBytes(data)
+			if parseErr == nil {
+				if root := jsonObject(payload); root != nil {
+					if nested := jsonObject(root["data"]); nested != nil {
+						r.buvid = [2]string{Text(nested["b_3"], ""), Text(nested["b_4"], "")}
+					}
+				}
+			}
 		}
 	}
 	return r.buvid[0], r.buvid[1]
@@ -618,6 +621,8 @@ func bilibiliAnchorName(roomInfo map[string]interface{}) string {
 }
 
 func (r *bilibiliResolver) getWbiKeys() (string, string, error) {
+	r.cacheLock.Lock()
+	defer r.cacheLock.Unlock()
 	if r.wbiKeysLoaded {
 		return r.wbiKeys[0], r.wbiKeys[1], nil
 	}

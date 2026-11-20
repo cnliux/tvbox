@@ -301,7 +301,7 @@ func (r *douyinResolver) parseRoomID(value string) (string, error) {
 	raw := strings.TrimSpace(value)
 	parsed, parseErr := url.Parse(raw)
 	if parseErr == nil && parsed.Host != "" {
-		host := strings.SplitN(strings.ToLower(parsed.Host), ":", 1)[0]
+		host := strings.SplitN(strings.ToLower(parsed.Host), ":", 2)[0]
 		if host != "live.douyin.com" && host != "douyin.com" && host != "www.douyin.com" {
 			return "", newError("直播间链接不属于抖音")
 		}

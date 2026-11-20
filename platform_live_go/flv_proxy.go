@@ -1119,7 +1119,10 @@ func (p *flvProxy) resolveCandidate(index int) (LiveStreamCandidate, map[string]
 	if len(stream.Candidates) == 0 {
 		return LiveStreamCandidate{}, nil, newError("未返回可播放地址")
 	}
-	return stream.Candidates[index%len(stream.Candidates)], stream.Headers, nil
+	// index 异常（含负数）时做规范化取模，避免负下标 panic 导致整条续流链路静默失败。
+	count := len(stream.Candidates)
+	index = ((index % count) + count) % count
+	return stream.Candidates[index], stream.Headers, nil
 }
 
 // pull 拉取一段上游 FLV 并原样缝进本地输出。

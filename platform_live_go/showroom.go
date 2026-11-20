@@ -346,6 +346,11 @@ func (r *showroomResolver) GetCategoryRooms(categoryID string, page int64) (Live
 	if pageCount < 1 {
 		pageCount = 1
 	}
+	// page 由 JNI 以 int64 传入：先做范围校验，避免超大值乘 pageSize 溢出为负
+	// 导致 rooms[start:end] 负下标 panic；超出真实页数的合法大页返回空列表。
+	if page < 1 || page > 1_000_000 {
+		return LiveRoomsPage{Rooms: []LiveRoom{}, PageCount: pageCount}, nil
+	}
 	start := int((page - 1) * showroomPageSize)
 	if start >= len(rooms) {
 		return LiveRoomsPage{Rooms: []LiveRoom{}, PageCount: pageCount}, nil

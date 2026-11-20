@@ -68,7 +68,8 @@ fun validateSourceEntries(raw: List<Map<String, String?>>): SourceImportPreview 
         val reason = when {
             name == null -> "缺少名称"
             url == null -> "缺少接口地址"
-            !(url.startsWith("http://") || url.startsWith("https://")) -> "接口地址需为 http/https"
+            !(url.startsWith("http://", ignoreCase = true) || url.startsWith("https://", ignoreCase = true)) ->
+                "接口地址需为 http/https"
             type != null && type !in allowedSourceTypes -> "不支持的类型：$type"
             else -> null
         }

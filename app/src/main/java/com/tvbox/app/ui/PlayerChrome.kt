@@ -234,24 +234,23 @@ internal fun PlayerChromeBackHandler(
     extraDismiss: List<() -> Boolean> = emptyList(),
 ) {
     BackHandler {
-        // 先探测是否存在页面级浮层：与 extraDismiss 的逐层判断保持一致，
-        // 否则 playerChromeBackAction 的 extraLayerOpen 恒为 false，BACK 层级判定会失真。
-        val extraLayerOpen = extraDismiss.any { it() }
-        val action = playerChromeBackAction(
-            locked = state.locked,
-            panel = state.panel,
-            extraLayerOpen = extraLayerOpen,
-            visible = state.visible,
-            dismissControls = dismissControls,
-        )
-        var handled = false
+        // extraDismiss 的 lambda 是真实关闭动作（有副作用），只能执行一次；
+        // 从最上层开始逐个尝试，第一个返回 true 即认为 BACK 已消费，绝不能用 any{} “探测”。
+        var handledExtra = false
         for (dismiss in extraDismiss) {
             if (dismiss()) {
-                handled = true
+                handledExtra = true
                 break
             }
         }
-        if (!handled) {
+        if (!handledExtra) {
+            val action = playerChromeBackAction(
+                locked = state.locked,
+                panel = state.panel,
+                extraLayerOpen = false,
+                visible = state.visible,
+                dismissControls = dismissControls,
+            )
             when (action) {
                 PlayerChromeBackAction.LockedHint -> onLockedHint()
                 PlayerChromeBackAction.ClosePanel -> state.closePanel()

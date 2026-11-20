@@ -110,22 +110,40 @@ class RemoteManageServer(
     @Volatile
     private var serverScope: CoroutineScope = newServerScope()
 
+    /**
+     * 服务世代号：stop() 递增一次，start() 全程持有自己的世代并在关键节点校验。
+     * 若 start() 执行期间外部又调用了 stop()（打开对话框后立即关闭），世代失配，
+     * start() 会关闭刚创建的 socket/scope 并抛错退出，避免留下无引用可停的存活 HTTP 服务。
+     */
+    private val generation = AtomicInteger(0)
+
     private fun newServerScope() = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     suspend fun start(): RemoteManageSession = withContext(Dispatchers.IO) {
         stop()
+        val myGeneration = generation.get()
         val socket = createServerSocket()
+        if (generation.get() != myGeneration) {
+            runCatching { socket.close() }
+            throw IllegalStateException("远程管理服务已停止")
+        }
         serverSocket = socket
         // stop() 取消了旧 scope，这里重建一个可复用的（CoroutineScope 取消后不能再次 launch）。
-        serverScope = newServerScope()
+        val scope = newServerScope()
+        serverScope = scope
         sessionToken = when {
             controlToken.isNotBlank() -> controlToken
             allowUnauthenticatedControl -> ""
             else -> newSessionToken()
         }
         val host = localIpv4Address()
-        serverScope.launch {
-            acceptLoop(socket)
+        scope.launch {
+            acceptLoop(socket, myGeneration)
+        }
+        if (generation.get() != myGeneration) {
+            runCatching { socket.close() }
+            runCatching { scope.cancel() }
+            throw IllegalStateException("远程管理服务已停止")
         }
         val tokenQuery = if (sessionToken.isEmpty()) {
             ""
@@ -141,6 +159,7 @@ class RemoteManageServer(
 
     fun stop() {
         // 先关监听 socket 让 accept() 立即抛异常退出循环，再关闭在途客户端并取消整个私有作用域。
+        generation.incrementAndGet()
         runCatching { serverSocket?.close() }
         serverSocket = null
         activeSockets.toList().forEach { socket -> runCatching { socket.close() } }
@@ -151,9 +170,9 @@ class RemoteManageServer(
     /** 别名，方便生命周期组件以 shutdown() 语义调用。 */
     fun shutdown() = stop()
 
-    private suspend fun acceptLoop(socket: ServerSocket) {
+    private suspend fun acceptLoop(socket: ServerSocket, myGeneration: Int) {
         val loopScope = serverScope
-        while (loopScope.isActive && !socket.isClosed) {
+        while (loopScope.isActive && !socket.isClosed && generation.get() == myGeneration) {
             val client = runCatching { socket.accept() }.getOrNull() ?: break
             if (activeClients.incrementAndGet() > MAX_CONCURRENT_CLIENTS) {
                 activeClients.decrementAndGet()

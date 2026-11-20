@@ -259,8 +259,13 @@ class DefaultAppUpdateRepository(
      * 并通知应用内下载服务停止；无进行中的任务时为无害空操作。
      */
     override suspend fun cancelDownload() = withContext(Dispatchers.IO) {
-        val task = readTask()
-        downloadMutex.withLock { downloadPrefs.edit().remove("task").commit() }
+        // 读任务与清记录必须同锁：prepareTask 在同一把锁内写入新任务记录，
+        // 锁外先读后清会与「取消期间新建下载」交错，误删新任务的记录并清错文件。
+        val task = downloadMutex.withLock {
+            val current = readTask()
+            downloadPrefs.edit().remove("task").commit()
+            current
+        }
         if (task != null) cleanupDownloadTask(task)
         UpdateDownloadService.cancel(appContext)
         Unit

@@ -140,7 +140,9 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
                 pendingChannel = line.toM3uChannelMetadata()
             }
             line.startsWith("#EXTGRP", ignoreCase = true) -> {
-                val grp = line.substringAfter(':', "").substringAfter('=').trim().trim('"')
+                // 兼容 #EXTGRP:组名 与 #EXTGRP=组名 两种分隔写法（部分源用等号）。
+                val body = if (line.contains(':')) line.substringAfter(':') else line.substringAfter('=')
+                val grp = body.trim().trim('"')
                 val current = pendingChannel ?: return@forEach
                 pendingChannel = current.copy(groupName = grp.ifBlank { current.groupName })
             }

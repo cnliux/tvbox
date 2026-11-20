@@ -7,6 +7,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.nio.charset.Charset
 import java.util.Collections
 import java.util.LinkedHashMap
 
@@ -166,12 +167,33 @@ internal fun mimeFromContentType(contentType: String): String? {
 /** 按正文头部特征判定：文本 m3u8 / FLV 签名 / TS 同步字节 0x47。 */
 internal fun mimeFromBodyHead(buffer: ByteArray, length: Int): String {
     if (length <= 0) return LIVE_MIME_UNKNOWN
-    // 跳过 UTF-8/UTF-16/UTF-32 BOM（EF BB BF、FE FF、FF FE、00 00 FE FF、FF FE 00 00）。
+    // 识别并跳过 UTF-8/16/32 BOM（EF BB BF、FE FF、FF FE、00 00 FE FF、FF FE 00 00），
+    // 并按对应编码解码正文头部，否则 UTF-16 编码的 m3u8 会被判为未知类型。
     var skip = 0
-    if (length >= 3 && buffer[0] == 0xEF.toByte() && buffer[1] == 0xBB.toByte() && buffer[2] == 0xBF.toByte()) skip = 3
-    val start = skip.coerceAtMost(minOf(3, length))
-    val text = String(buffer, start, minOf(length - start, 64 - start), Charsets.ISO_8859_1)
-    val trimmed = text.trimStart(' ', '\t', '\r', '\n')
+    var charset: Charset = Charsets.ISO_8859_1
+    when {
+        length >= 3 && buffer[0] == 0xEF.toByte() && buffer[1] == 0xBB.toByte() && buffer[2] == 0xBF.toByte() -> skip = 3
+        length >= 4 && buffer[0] == 0x00.toByte() && buffer[1] == 0x00.toByte() &&
+            buffer[2] == 0xFE.toByte() && buffer[3] == 0xFF.toByte() -> {
+            skip = 4
+            charset = utf32Charset("UTF-32BE")
+        }
+        length >= 4 && buffer[0] == 0xFF.toByte() && buffer[1] == 0xFE.toByte() &&
+            buffer[2] == 0x00.toByte() && buffer[3] == 0x00.toByte() -> {
+            skip = 4
+            charset = utf32Charset("UTF-32LE")
+        }
+        length >= 2 && buffer[0] == 0xFE.toByte() && buffer[1] == 0xFF.toByte() -> {
+            skip = 2
+            charset = Charsets.UTF_16BE
+        }
+        length >= 2 && buffer[0] == 0xFF.toByte() && buffer[1] == 0xFE.toByte() -> {
+            skip = 2
+            charset = Charsets.UTF_16LE
+        }
+    }
+    val head = String(buffer, skip, minOf(length - skip, 64), charset)
+    val trimmed = head.trimStart(' ', '\t', '\r', '\n')
     if (trimmed.startsWith("#EXTM3U")) return LIVE_MIME_M3U8
     if (length >= 3 && buffer[0] == 'F'.code.toByte() && buffer[1] == 'L'.code.toByte() && buffer[2] == 'V'.code.toByte()) {
         return LIVE_MIME_FLV
@@ -182,6 +204,10 @@ internal fun mimeFromBodyHead(buffer: ByteArray, length: Int): String {
     }
     return LIVE_MIME_UNKNOWN
 }
+
+/** Android 并非所有版本都注册 UTF-32 字符集，缺失时回退 ISO-8859-1（仅影响探测结果，不影响播放）。 */
+private fun utf32Charset(name: String): Charset =
+    runCatching { Charset.forName(name) }.getOrDefault(Charsets.ISO_8859_1)
 
 private val LIVE_PROBE_KNOWN_EXTENSIONS = listOf(
     "m3u8", "m3u", "flv", "ts", "mp4", "mkv", "mpd", "m4s", "mov", "mpeg", "mpg",

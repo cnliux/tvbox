@@ -12,6 +12,7 @@ package platformlive
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 )
@@ -223,6 +224,9 @@ func marshalIndentFree(value interface{}) (string, error) {
 // 用法：`defer recoverToError(&err)`（err 为命名返回值的 error 字段）。
 func recoverToError(err *error) {
 	if r := recover(); r != nil {
+		// panic 被 recover 吞掉后 UI 只会看到「直播解析失败」，用户报障时无证据可查；
+		// 这里 log 到 stderr（RedirectRuntimeLogcat 会转进 logcat 与 go_stderr.log）留痕。
+		log.Printf("TVBoxGoRuntime recover: 直播解析 panic: %v", r)
 		*err = newError("直播解析异常：%v", r)
 	}
 }
@@ -231,13 +235,16 @@ func recoverToError(err *error) {
 // （如 SetPacerTargetBufferMs），panic 时静默丢弃——这类函数不改变可观测
 // 的播放行为，崩溃防护优先于报错。
 func recoverToErrorOnly() {
-	_ = recover()
+	if r := recover(); r != nil {
+		log.Printf("TVBoxGoRuntime recover: 无返回值导出函数 panic: %v", r)
+	}
 }
 
 // recoverTo 供其余 gomobile 导出函数（string/int64 等值返回）统一兜底：
 // panic 时回写 fallback，避免未捕获 panic 穿透 JNI 边界导致进程闪退。
 func recoverTo[T any](value *T, fallback T) {
 	if r := recover(); r != nil {
+		log.Printf("TVBoxGoRuntime recover: 值返回导出函数 panic: %v", r)
 		*value = fallback
 	}
 }

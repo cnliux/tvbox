@@ -126,6 +126,14 @@ internal class DataStoreAppSettingsRepository(
 
     private val writeMutex = Mutex()
 
+    /**
+     * getSettings 因 DataStore 瞬时读异常而降级为默认值的标记。
+     * 降级期间禁止整份 saveSettings：ViewModel 持有的是默认快照，直接保存会用默认值
+     * 覆盖用户真实配置；保存前先探测存储已恢复可读，恢复才放行，否则抛错。
+     */
+    @Volatile
+    private var degradedRead = false
+
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
         // 已迁移且 schema 完整：直接读，不与写操作互斥，避免高频读被迁移/保存写操作阻塞。
         val direct = runCatching { dataStore.data.first() }.getOrNull()
@@ -136,9 +144,12 @@ internal class DataStoreAppSettingsRepository(
         writeMutex.withLock {
             val preferences = ensureMigratedLocked()
             if (preferences != null) {
+                degradedRead = false
                 parseSettings(preferences)
             } else if (migrationMarker.isMigrated()) {
-                // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示。
+                // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示，
+                // 同时标记降级，防止随后的整份保存用默认值覆盖真实配置。
+                degradedRead = true
                 AppSettings()
             } else {
                 // 迁移尚未完成：直接展示旧快照，保证升级后设置不丢；下次读取继续重试迁移。
@@ -149,6 +160,14 @@ internal class DataStoreAppSettingsRepository(
 
     override suspend fun saveSettings(settings: AppSettings): AppSettings = withContext(Dispatchers.IO) {
         writeMutex.withLock {
+            if (degradedRead) {
+                // 降级未恢复前拒绝写入：此时传入的 settings 可能来自默认快照。
+                val recovered = runCatching {
+                    dataStore.data.first().schemaVersion() >= SettingsSchema.CURRENT
+                }.getOrDefault(false)
+                if (!recovered) throw IOException("设置存储读取异常，本轮写入已跳过以保护现有配置")
+                degradedRead = false
+            }
             if (ensureMigratedLocked() == null) {
                 throw IOException("设置存储尚未完成迁移，本轮写入已跳过")
             }
