@@ -31,6 +31,11 @@ private object TvImageLoaderHolder {
         instance ?: buildTvImageLoader(context.applicationContext).also { instance = it }
     }
 
+    /** #118：低内存回调时清空图片内存缓存；未初始化时不创建实例。 */
+    fun clearMemoryCache() {
+        instance?.memoryCache?.clear()
+    }
+
     private fun buildTvImageLoader(context: Context): ImageLoader {
         return ImageLoader.Builder(context)
             .memoryCachePolicy(CachePolicy.ENABLED)
@@ -52,4 +57,9 @@ private object TvImageLoaderHolder {
             .crossfade(false) // TV 场景关闭 crossfade，减少 GPU 压力
             .build()
     }
+}
+
+/** #118：低内存回调（onTrimMemory）时清空 Coil 图片内存缓存；未初始化时不创建实例。 */
+fun trimTvImageMemoryCache() {
+    TvImageLoaderHolder.clearMemoryCache()
 }
