@@ -181,16 +181,24 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
         }
     }
 
-    return channels.entries.mapIndexed { index, entry ->
-        LiveChannel(
-            number = index + 1,
+    // #72：同一 URL 在多分组重复出现（如"全部"与具体分类均含该频道）时只保留首个，
+    // 避免生成大量必播放失败的重复频道。以「该频道全部线路 URL 列表」为去重键。
+    val deduped = ArrayList<LiveChannel>(channels.size)
+    val seenChannelUrls = mutableSetOf<List<String>>()
+    channels.entries.forEach { entry ->
+        val lines = entry.value.lines.toList()
+        if (lines.isEmpty()) return@forEach
+        if (!seenChannelUrls.add(lines.map { it.url })) return@forEach
+        deduped += LiveChannel(
+            number = deduped.size + 1,
             groupName = entry.key.groupName,
             name = entry.key.channelName,
-            lines = entry.value.lines.toList(),
+            lines = lines,
             logo = entry.value.logo,
             tvgId = entry.value.tvgId,
         )
     }
+    return deduped
 }
 
 private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
