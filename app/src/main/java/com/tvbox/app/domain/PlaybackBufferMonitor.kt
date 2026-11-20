@@ -90,6 +90,12 @@ class PlaybackBufferMonitor(
 
         if (seekCooling && nowMs - (seekCoolingSinceMs ?: nowMs) >= SEEK_COOLING_MAX_MS) {
             resetSeekCoolingLocked()
+            // 冷却兜底释放时重开缓冲段：释放后的缓冲按普通段（非启动、非 seek）从当前时刻重新计时，
+            // 避免把冷却期间累计的时长一次性计入，导致误报启动/连续缓冲超时。
+            currentBufferStartedAtMs = nowMs
+            currentBufferFromSeek = false
+            currentBufferIsStartup = false
+            currentBufferIssueReported = false
         }
         if (seekCooling) return null
 

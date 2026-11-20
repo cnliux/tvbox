@@ -11,6 +11,7 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.view.Window
 import android.view.KeyEvent as AndroidKeyEvent
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEvent
@@ -54,20 +55,20 @@ internal class RemoteKeyCache {
     }
 }
 
-internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeState): Modifier =
-    let { outerModifier ->
-        // RemoteKeyCache 提到组合函数体：避免在 onPreviewKeyEvent 非组合回调内调用 remember{}
-        // （compose-bom 2026+ / kotlin-plugin 下会编译失败），并保证跨按键复用去重窗口（80ms）。
-        val cache = remember { RemoteKeyCache() }
-        outerModifier.onPreviewKeyEvent { event ->
-            val native = event.nativeKeyEvent
-            if (cache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
-                return@onPreviewKeyEvent false
-            }
-            cache.trimIfNeeded()
-            map.handle(event, chrome)
+@Composable
+internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeState): Modifier {
+    // RemoteKeyCache 在组合期创建：每个调用点持有独立实例，多播放器场景去重窗口互不干扰，
+    // 且保证跨按键复用去重窗口（80ms）。onPreviewKeyEvent 回调非组合上下文，不能在此处 remember。
+    val cache = remember { RemoteKeyCache() }
+    return onPreviewKeyEvent { event ->
+        val native = event.nativeKeyEvent
+        if (cache.shouldDrop(native.deviceId, native.keyCode, android.os.SystemClock.elapsedRealtime())) {
+            return@onPreviewKeyEvent false
         }
+        cache.trimIfNeeded()
+        map.handle(event, chrome)
     }
+}
 
 /** 点播遥控：左右快进快退（长按连发）、OK 暂停、菜单切倍速、上一/下一集。 */
 internal class PlayerSeekKeyMap(

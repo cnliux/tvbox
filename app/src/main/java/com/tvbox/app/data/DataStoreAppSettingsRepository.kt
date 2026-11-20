@@ -127,24 +127,22 @@ internal class DataStoreAppSettingsRepository(
     private val writeMutex = Mutex()
 
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
-        // 迁移完成后（migrationMarker.isMigrated() == true），后续读取无需加写锁，避免高频读被迁移/保存写操作阻塞。
-        if (migrationMarker.isMigrated()) {
-            runCatching { parseSettings(dataStore.data.first()) }
-                .onFailure { error -> Log.e(TAG, "读取设置存储失败（已迁移路径），回退默认值", error) }
-                .getOrNull()
-                ?: AppSettings()
-        } else {
-            writeMutex.withLock {
-                val preferences = ensureMigratedLocked()
-                if (preferences != null) {
-                    parseSettings(preferences)
-                } else if (migrationMarker.isMigrated()) {
-                    // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示。
-                    AppSettings()
-                } else {
-                    // 迁移尚未完成：直接展示旧快照，保证升级后设置不丢；下次读取继续重试迁移。
-                    readLegacyFallback()
-                }
+        // 已迁移且 schema 完整：直接读，不与写操作互斥，避免高频读被迁移/保存写操作阻塞。
+        val direct = runCatching { dataStore.data.first() }.getOrNull()
+        if (migrationMarker.isMigrated() && direct != null && direct.schemaVersion() >= SettingsSchema.CURRENT) {
+            return@withContext parseSettings(direct)
+        }
+        // 其余情况走锁内路径：未迁移则迁移；已迁移但 schema 缺失（存储被清空/损坏）则按当前内容重建。
+        writeMutex.withLock {
+            val preferences = ensureMigratedLocked()
+            if (preferences != null) {
+                parseSettings(preferences)
+            } else if (migrationMarker.isMigrated()) {
+                // 已迁移但 DataStore 暂不可读：不回读旧数据，按默认值展示。
+                AppSettings()
+            } else {
+                // 迁移尚未完成：直接展示旧快照，保证升级后设置不丢；下次读取继续重试迁移。
+                readLegacyFallback()
             }
         }
     }
