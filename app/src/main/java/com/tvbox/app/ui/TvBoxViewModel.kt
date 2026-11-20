@@ -433,6 +433,9 @@ class TvBoxViewModel(
     // 这样 withActiveCandidate() 产生的副本不会把已试过的线路清空。
     private var platformLiveRotationKey: String? = null
     private val platformLiveTriedCandidates = mutableSetOf<Int>()
+    // 用户手动切换候选线路失败后要回退到的原线路下标（#60 线路切换失败回原线路并提示）。
+    // 仅在「手动切换后新线路因 Error 失败」这一场景生效；画面就绪或进入自动轮换后清除。
+    private var platformLiveManualFallbackIndex: Int? = null
     // 详情页选集滚动位置记忆（影片 id + 线路 -> 首个可见项下标）。
     // 返回详情页时恢复用户上次滚动到的位置，而不是被"滚到选中集"逻辑拉回去。
     private val detailEpisodeScrollIndex = HashMap<String, Int>()
@@ -2891,6 +2894,7 @@ class TvBoxViewModel(
         // 强制重新解析意味着开启新一轮候选轮换，旧失败记录不再适用。
         platformLiveTriedCandidates.clear()
         platformLiveRotationKey = null
+        platformLiveManualFallbackIndex = null
         android.util.Log.w(VM_LIVE_LOG_TAG, "【平台重新解析】forceRefresh=true")
         resolvePlatformLiveRoom(forceRefresh = true)
     }
@@ -2913,6 +2917,9 @@ class TvBoxViewModel(
         platformLiveSameLineRetries = 0
         platformLiveRecoveryWindowAttempts = 0
         platformLiveRecoveryWindowStartMs = 0L
+        // #60：记录切换前的原线路，新线路失败时回退到该线路并提示。
+        val previousCandidate = stream.safeActiveCandidateIndex
+        platformLiveManualFallbackIndex = if (previousCandidate != index) previousCandidate else null
         _state.update {
             it.copy(platformLive = it.platformLive.copy(
                 error = null,
@@ -2959,6 +2966,11 @@ class TvBoxViewModel(
         if (platformLiveSameLineRetries != 0) {
             android.util.Log.d(VM_LIVE_LOG_TAG, "【平台恢复】画面就绪，清零同线路重连计数（原 $platformLiveSameLineRetries）")
             platformLiveSameLineRetries = 0
+        }
+        // #60：画面就绪说明手动切换的线路稳定，清除失败回退记录。
+        if (platformLiveManualFallbackIndex != null) {
+            android.util.Log.d(VM_LIVE_LOG_TAG, "【平台恢复】画面就绪，清除手动切换回退记录")
+            platformLiveManualFallbackIndex = null
         }
     }
 
@@ -3021,6 +3033,22 @@ class TvBoxViewModel(
                 rotatePlatformLiveCandidate(stream)
             }
             LiveLineFallbackReason.Error -> {
+                val fallback = platformLiveManualFallbackIndex
+                val active = stream.safeActiveCandidateIndex
+                if (fallback != null && fallback != active) {
+                    // #60：手动切换的新线路失败，回退到原线路并提示。
+                    platformLiveManualFallbackIndex = null
+                    platformLiveSameLineRetries = 0
+                    android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选 $active 切换失败，回退原线路 $fallback（共 ${stream.candidates.size}）")
+                    _state.update {
+                        it.copy(platformLive = it.platformLive.copy(
+                            error = null,
+                            notice = "线路切换失败，已回退到原线路 ${fallback + 1}/${stream.candidates.size}",
+                            stream = stream.withActiveCandidate(fallback)))
+                    }
+                    return
+                }
+                platformLiveManualFallbackIndex = null
                 platformLiveSameLineRetries = 0
                 rotatePlatformLiveCandidate(stream)
             }
