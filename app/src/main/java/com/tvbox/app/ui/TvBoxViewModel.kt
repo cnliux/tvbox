@@ -1949,7 +1949,18 @@ class TvBoxViewModel(
         }
     }
 
+    private var lastManualLiveSwitchMs = 0L
+
+    /** 左右切台节流：丢弃 250ms 内的重复切台，避免快速连按连续重连多频道。 */
+    private fun allowManualLiveSwitch(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastManualLiveSwitchMs < 250L) return false
+        lastManualLiveSwitchMs = now
+        return true
+    }
+
     fun playNextLiveChannel() {
+        if (!allowManualLiveSwitch()) return
         lastExhaustedChannelNumber = null
         autoSwitchThrottle = resetAutoSwitchThrottle()
         _state.update { state ->
@@ -1969,6 +1980,7 @@ class TvBoxViewModel(
     }
 
     fun playPreviousLiveChannel() {
+        if (!allowManualLiveSwitch()) return
         lastExhaustedChannelNumber = null
         autoSwitchThrottle = resetAutoSwitchThrottle()
         _state.update { state ->
