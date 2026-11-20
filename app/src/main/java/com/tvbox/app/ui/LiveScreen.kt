@@ -318,7 +318,10 @@ private fun LivePlayerScreen(
         }
         val result = actions.advanceLiveLineAfterFailure(reason)
         android.util.Log.i(LIVE_LOG_TAG, "【自动容错】advanceLiveLineAfterFailure($reason) result=$result")
-        if (!result) {
+        if (result) {
+            // 主线路异常已自动切到备用线路：轻提示，避免用户误判卡死。
+            showPrompt("主线路异常，已切换备用线路")
+        } else {
             // 所有线路都试过仍无可用流：停止无限缓冲提示，交给用户选择重试或换台。
             blockedFailureKind = if (playbackWatchdog.hasFirstFrame) {
                 PlaybackFailureKind.Stalled

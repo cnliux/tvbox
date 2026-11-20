@@ -864,6 +864,8 @@ private fun MobileLivePlayerScreen(
                 else -> PlaybackFailureKind.Stalled
             }
             streamBlocked = true
+        } else {
+            Toast.makeText(context, "主线路异常，已切换备用线路", Toast.LENGTH_SHORT).show()
         }
     }
 
