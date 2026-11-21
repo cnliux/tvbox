@@ -159,7 +159,11 @@ internal class PlayerSeekKeyMap(
                 if (event.type == KeyEventType.KeyUp) callbacks.onPlay()
                 true
             }
-            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE -> {
+            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
+            AndroidKeyEvent.KEYCODE_MEDIA_STOP,
+            -> {
+                // #255：遥控器"停止"键此前无处理（部分盒子有该键）。无独立 stop 回调时
+                // 以暂停作为最接近语义，避免按键落空；后续如需真正停止可在此替换为 stop 回调。
                 if (event.type == KeyEventType.KeyUp) callbacks.onPause()
                 true
             }

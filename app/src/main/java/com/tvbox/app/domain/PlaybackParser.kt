@@ -1,6 +1,8 @@
 package com.tvbox.app.domain
 
 private val htmlTagRegex = Regex("<[^>]+>")
+private val markdownUrlRegex = Regex("""\((https?://[^)]+)\)""")
+private val bracketUrlRegex = Regex("""\[(https?://[^]]+)]""")
 private val whitespaceRegex = Regex("\\s+")
 
 fun parsePlaySources(playFrom: String?, playUrl: String?): List<PlaySource> {
@@ -10,7 +12,6 @@ fun parsePlaySources(playFrom: String?, playUrl: String?): List<PlaySource> {
 
     val urlGroups = playUrl.orEmpty().split("$$$")
     val count = maxOf(sourceNames.size, urlGroups.size)
-    if (count == 0) return emptyList()
 
     return (0 until count).mapNotNull { index ->
         val name = sourceNames.getOrNull(index) ?: "source-${index + 1}"
@@ -38,8 +39,8 @@ private fun parseEpisodes(rawGroup: String): List<PlayEpisode> {
 }
 
 private fun normalizePlayableUrl(rawUrl: String): String {
-    val markdownUrl = Regex("""\((https?://[^)]+)\)""").find(rawUrl)?.groupValues?.getOrNull(1)
-    val bracketUrl = Regex("""\[(https?://[^]]+)]""").find(rawUrl)?.groupValues?.getOrNull(1)
+    val markdownUrl = markdownUrlRegex.find(rawUrl)?.groupValues?.getOrNull(1)
+    val bracketUrl = bracketUrlRegex.find(rawUrl)?.groupValues?.getOrNull(1)
     return (markdownUrl ?: bracketUrl ?: rawUrl)
         .trim()
         .trim('[', ']')

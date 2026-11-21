@@ -6,6 +6,7 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.FanOutTask
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PagedMovies
+import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.PlaySource
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.fanOutIncrementally
@@ -18,7 +19,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -44,6 +44,15 @@ class DefaultMovieRepository(
     override fun setMaxParallelSourceRequests(value: Int) {
         maxParallelSourceRequests = QuantitySettings.MaxParallelSourceRequests.clamp(value)
     }
+
+    // #94 单源超时：与并发数一样由 ViewModel 在设置变更后推入，搜索/详情共用。
+    @Volatile
+    private var sourceTimeoutMs = SEARCH_TIMEOUT_MS
+
+    override fun setPerSourceTimeoutMs(value: Long) {
+        sourceTimeoutMs = PerSourceTimeout.clamp(value)
+    }
+
     @Volatile
     private var customApiLines: List<ApiLine> = emptyList()
 
@@ -277,13 +286,14 @@ class DefaultMovieRepository(
                 }
             }
         }
-        // 搜索对所有源一视同仁：统一 6s 预算 + 高并发（maxParallel 默认 6），
+        // 搜索对所有源一视同仁：统一超时预算 + 高并发（maxParallel 默认 6），
         // 不再按权重递减超时，避免尾源只剩几百毫秒而整体超时。
+        // #94 预算改为可配置（setPerSourceTimeoutMs 推入，默认仍是 SEARCH_TIMEOUT_MS）。
         fanOutIncrementally(
             tasks = tasks,
             maxParallel = maxParallelSourceRequests,
-            perSourceTimeoutMs = SEARCH_TIMEOUT_MS,
-            timeoutForSource = { SEARCH_TIMEOUT_MS },
+            perSourceTimeoutMs = sourceTimeoutMs,
+            timeoutForSource = { sourceTimeoutMs },
         ).collect { update ->
             val line = lines[update.sourceIndex]
             val movies = update.value

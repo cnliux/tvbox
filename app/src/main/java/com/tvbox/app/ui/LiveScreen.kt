@@ -1,44 +1,32 @@
 package com.tvbox.app.ui
 
 import android.content.pm.ActivityInfo
-import android.view.ViewGroup
-import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -53,8 +41,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -62,11 +48,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -77,20 +59,16 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
-import coil.compose.AsyncImage
-import com.tvbox.app.data.liveFavoriteKey
 import com.tvbox.app.domain.DeviceMode
-import com.tvbox.app.domain.EpgProgram
+import com.tvbox.app.domain.LiveInfoBannerDuration
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.domain.effectiveDecoderStrategy
 import com.tvbox.app.domain.LiveChannelNumberMatch
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.liveVideoScaleKey
-import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.PlaybackBufferDecision
 import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.findLiveChannelsByNumberPrefix
@@ -98,13 +76,9 @@ import com.tvbox.app.domain.probeLiveLineMimeType
 import com.tvbox.app.domain.resolveLiveChannelNumberTarget
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
-import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlinx.coroutines.delay
 
 /**
@@ -182,12 +156,15 @@ private fun LivePlayerScreen(
     var blockedFailureKind by remember { mutableStateOf<PlaybackFailureKind?>(null) }
 
     val context = LocalContext.current
+    // #280：电视端频道号搜索与手机端关键词搜索共用同一份历史。
+    LiveChannelSearchHistory.attach(context)
     val activity = remember(context) { context.findActivity() }
     val isTelevision = state.effectiveDeviceMode == DeviceMode.Television
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
-    val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
+    // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
+    val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
     val player = playbackHost.player
     // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
@@ -224,11 +201,16 @@ private fun LivePlayerScreen(
     // 顶栏时钟与 EPG 卡"当前节目/进度"共用 20 秒节拍，保证分钟级刷新。
     var clockTick by remember { mutableIntStateOf(0) }
     val clockText = remember(clockTick) { formatClock(System.currentTimeMillis()) }
-    // #69：TV 端切换频道时短暂显示大字号频道名+分组横幅，2s 后自动隐藏。
+    // #69 + #277：TV 端切台时短暂显示大字号频道名+分组横幅；
+    // 停留时长默认按设备模式（电视 4s / 手机 2s），设置里可覆盖为固定值。
     var switchBanner by remember { mutableStateOf<LiveChannel?>(null) }
-    LaunchedEffect(state.liveChannelIndex, state.liveLineIndex) {
+    val bannerDurationMs = LiveInfoBannerDuration.resolve(
+        configured = state.appSettings.liveInfoBannerDurationMs,
+        isTelevision = isTelevision,
+    )
+    LaunchedEffect(state.liveChannelIndex, state.liveLineIndex, bannerDurationMs) {
         switchBanner = currentChannel
-        delay(2_000L)
+        delay(bannerDurationMs)
         switchBanner = null
     }
     // 播放器回调注册在 DisposableEffect(player) 里，只会捕获首次组合时的频道快照；
@@ -290,6 +272,8 @@ private fun LivePlayerScreen(
     fun commitNumberInput(useFocusedMatch: Boolean) {
         val input = channelNumberInput
         if (input.isEmpty()) return
+        // #280：频道号搜索提交后记入历史，再次搜索时可直接参考最近输入。
+        LiveChannelSearchHistory.record(input)
         channelNumberInput = ""
         numberMatchFocus = 0
         val target: Int? = if (useFocusedMatch) {
@@ -1028,6 +1012,16 @@ private fun LivePlayerScreen(
                         }
                     }
                 }
+                // #280：最近搜索的频道号，下次搜索时无需重新回忆，直接照着输入即可。
+                val recentSearchWords = LiveChannelSearchHistory.keywords
+                if (recentSearchWords.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "最近搜索：${recentSearchWords.take(4).joinToString("  ")}",
+                        color = Color.White.copy(alpha = 0.5f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
         if (promptVisible && promptMessage.isNotBlank()) {
@@ -1144,7 +1138,8 @@ private fun LivePlayerScreen(
                 onCopyUrl = {
                     val clip = android.content.ClipData.newPlainText("live_url", currentLine.url)
                     (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
-                    showPrompt("URL 已复制到剪贴板")
+                    // #205：订阅/直播地址属敏感链接，提示用户及时清理剪贴板。
+                    showPrompt("URL 已复制到剪贴板，含敏感链接，注意及时清理剪贴板")
                 },
                 onViewUrl = {
                     showUrlOverlay = true

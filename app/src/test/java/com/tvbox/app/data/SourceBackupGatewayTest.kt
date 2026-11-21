@@ -57,8 +57,14 @@ class SourceBackupGatewayTest {
 
     @Test
     fun unknownSensitiveFieldsAreNotBroughtBack() {
-        val raw = SourceConfigBackup.export(lines, emptyList()).removeSuffix("}") +
-            ",\"apiKey\":\"should-not-be-returned\"}"
+        // 外部/旧格式备份（无 checksum，走兼容路径）携带敏感字段，解析时应被忽略。
+        // 不使用 export() 再追加字段：那会使 checksum 失效并触发完整性拦截，与本用例意图不符。
+        val raw = """
+            {"format":"tvbox-source-backup","version":1,
+             "sites":[{"id":"a","name":"源A","api":"https://a.test/api.php/provide/vod/","apiKey":"should-not-be-returned"},
+                      {"id":"b","name":"源B","api":"https://b.test/api.php/provide/vod/"}],
+             "lives":[],"order":[],"weights":{}}
+        """.trimIndent()
         val parsed = SourceBackupGateway.parse(raw)
         assertNotNull(parsed.payload)
         assertEquals(2, parsed.payload!!.lines.size)

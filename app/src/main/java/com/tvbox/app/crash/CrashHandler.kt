@@ -8,12 +8,23 @@ import java.io.File
 import java.io.FileWriter
 import java.io.PrintWriter
 import java.io.StringWriter
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineExceptionHandler
+
+/** SimpleDateFormat 非线程安全，崩溃写盘可能跨线程，按线程各持一份复用。 */
+private val OPERATION_TIME_FORMAT = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.US)
+}
+private val CRASH_FILE_TIME_FORMAT = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+}
+/** 线程名白名单化（用作崩溃日志文件名）用的正则。 */
+private val THREAD_NAME_SAFE_REGEX = Regex("[^A-Za-z0-9_-]")
 
 /**
  * 全局 UncaughtExceptionHandler + 落盘日志。
@@ -31,6 +42,14 @@ object CrashHandler {
     private const val LOG_DIR_NAME = "crash_logs"
     private const val MAX_LOG_FILES = 10
     private const val MAX_LOG_FILE_AGE_MS = 7L * 24 * 60 * 60 * 1000L // 7 天
+    // #210：单文件大小上限，避免超长堆栈/大 recent operations 写满存储。
+    private const val MAX_LOG_FILE_BYTES = 1024L * 1024L // 1 MB
+    // 截断时保留的头/尾各 40KB：头部含版本/设备/堆栈起点，尾部含 recent operations。
+    private const val TRUNCATE_KEEP_BYTES = 40L * 1024L
+    // #327：同类崩溃聚类。分组计数单独落盘；文件名不能带 crash_ 前缀，
+    // 否则会被 getPendingCrashLogs / purgeStaleLogs 当成崩溃日志清理或上报。
+    private const val GROUP_FILE_NAME = "groups.tsv"
+    private const val MAX_GROUP_ENTRIES = 64
 
     private lateinit var appContext: Context
     private val writerExecutor: ExecutorService = Executors.newSingleThreadExecutor {
@@ -58,7 +77,7 @@ object CrashHandler {
     @Synchronized
     fun recordOperation(operation: String, detail: String? = null) {
         val text = if (detail.isNullOrBlank()) operation else "$operation | $detail"
-        val ts = SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(System.currentTimeMillis())
+        val ts = OPERATION_TIME_FORMAT.get()!!.format(System.currentTimeMillis())
         recentOperations.addLast("$ts  $text")
         while (recentOperations.size > MAX_RECENT_OPERATIONS) {
             recentOperations.removeFirst()
@@ -139,6 +158,45 @@ object CrashHandler {
         sw.toString()
     }
 
+    /**
+     * #327：同类崩溃聚类——取（已脱敏）堆栈首行（通常是「异常类型: 消息」）计算 SHA-256，
+     * 取前 12 位十六进制作为 group hash。先脱敏再 hash，避免把 token / 手机号等敏感值
+     * 的哈希写进分组文件；现有脱敏规则与轮转逻辑完全不变。
+     */
+    private fun stackGroupHash(redactedStackTrace: String): String {
+        val firstLine = redactedStackTrace.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        val digest = MessageDigest.getInstance("SHA-256").digest(firstLine.toByteArray(Charsets.UTF_8))
+        return digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }.take(12)
+    }
+
+    /**
+     * #327：累加分组计数（每类崩溃一行：hash、次数、最近发生时间），供统计同类崩溃。
+     * 调用方必须已持有 [writeLock]；单文件覆写是「读-改-写」全量替换，不会出现半行中间态。
+     */
+    private fun recordGroupCount(dir: File, groupHash: String) {
+        val file = File(dir, GROUP_FILE_NAME)
+        val counts = LinkedHashMap<String, Pair<Int, Long>>()
+        runCatching {
+            if (file.isFile) {
+                file.readLines().forEach { line ->
+                    val parts = line.split('\t')
+                    val count = parts.getOrNull(1)?.trim()?.toIntOrNull() ?: return@forEach
+                    val lastAt = parts.getOrNull(2)?.trim()?.toLongOrNull() ?: 0L
+                    counts[parts[0].trim()] = count to lastAt
+                }
+            }
+        }
+        val previous = counts[groupHash]
+        counts[groupHash] = ((previous?.first ?: 0) + 1) to System.currentTimeMillis()
+        // 只保留最近活跃的若干分组，避免长期运行导致计数文件无限增长。
+        val kept = counts.entries.sortedByDescending { it.value.second }.take(MAX_GROUP_ENTRIES)
+        runCatching {
+            FileWriter(file, false).use { writer ->
+                kept.forEach { (hash, stat) -> writer.write("$hash\t${stat.first}\t${stat.second}\n") }
+            }
+        }
+    }
+
     private fun logError(message: String, throwable: Throwable? = null) {
         val text = if (throwable == null) message else "$message\n${stackTraceOf(throwable)}"
         synchronized(writeLock) { Log.e(TAG, redact(text)) }
@@ -183,32 +241,53 @@ object CrashHandler {
         val dir = logDir() ?: return null
         if (!dir.exists() && !dir.mkdirs()) return null
 
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(System.currentTimeMillis())
+        val timestamp = CRASH_FILE_TIME_FORMAT.get()!!.format(System.currentTimeMillis())
         // 线程名可能带房间号/路径分隔符，做白名单化后再当文件名。
-        val safeThread = thread.name.replace(Regex("[^A-Za-z0-9_-]"), "_").take(40).ifBlank { "thread" }
+        val safeThread = thread.name.replace(THREAD_NAME_SAFE_REGEX, "_").take(40).ifBlank { "thread" }
         val file = File(dir, "crash_${timestamp}_$safeThread.txt")
 
-        FileWriter(file).use { fw ->
-            fw.write("=== TVBox Crash Report ===\n")
-            fw.write("versionCode  = ${BuildConfig.VERSION_CODE}\n")
-            fw.write("versionName  = ${BuildConfig.VERSION_NAME}\n")
-            fw.write("timestamp    = $timestamp\n")
-            fw.write("device       = ${Build.DEVICE}\n")
-            fw.write("model        = ${Build.MODEL}\n")
-            fw.write("manufacturer = ${Build.MANUFACTURER}\n")
-            fw.write("brand        = ${Build.BRAND}\n")
-            fw.write("sdk          = ${Build.VERSION.SDK_INT}\n")
-            fw.write("abi          = ${Build.SUPPORTED_ABIS.joinToString(",")}\n")
+        // #327：脱敏只做一次，结果同时用于日志正文与分组 hash；保持既有脱敏与轮转逻辑不变。
+        val stackTrace = redact(stackTraceOf(throwable))
+        val groupHash = stackGroupHash(stackTrace)
+        recordGroupCount(dir, groupHash)
+
+        val report = buildString {
+            append("=== TVBox Crash Report ===\n")
+            // #327：日志内标注 group hash，便于把同类崩溃手动归类统计。
+            append("groupHash    = $groupHash\n")
+            append("versionCode  = ${BuildConfig.VERSION_CODE}\n")
+            append("versionName  = ${BuildConfig.VERSION_NAME}\n")
+            append("timestamp    = $timestamp\n")
+            append("device       = ${Build.DEVICE}\n")
+            append("model        = ${Build.MODEL}\n")
+            append("manufacturer = ${Build.MANUFACTURER}\n")
+            append("brand        = ${Build.BRAND}\n")
+            append("sdk          = ${Build.VERSION.SDK_INT}\n")
+            append("abi          = ${Build.SUPPORTED_ABIS.joinToString(",")}\n")
             // threadId 需 JDK19+，CI 是 JDK17，继续用 id 并抑制弃用警告。
             @Suppress("DEPRECATION")
-            fw.write("thread       = ${redact(thread.name)} (id=${thread.id})\n")
-            fw.write("\n--- Stack Trace ---\n")
+            append("thread       = ${redact(thread.name)} (id=${thread.id})\n")
+            append("\n--- Stack Trace ---\n")
             // 保留完整堆栈；只把命中规则的值替换为 [REDACTED]。
-            fw.write(redact(stackTraceOf(throwable)))
-            fw.write("\n\n--- Recent Operations ---\n")
-            fw.write(redact(recentOperationsText()))
+            append(stackTrace)
+            append("\n\n--- Recent Operations ---\n")
+            append(redact(recentOperationsText()))
         }
+        FileWriter(file).use { fw -> fw.write(truncateIfOversized(report)) }
         return file.absolutePath
+    }
+
+    /**
+     * #210：日志超过 [MAX_LOG_FILE_BYTES] 时截断，保留头尾各 [TRUNCATE_KEEP_BYTES] 字节，
+     * 中间插入截断标记。按字符（UTF-8 近似）裁剪，避免把中文字符截成半个导致乱码。
+     */
+    private fun truncateIfOversized(report: String): String {
+        val bytes = report.toByteArray(Charsets.UTF_8).size.toLong()
+        if (bytes <= MAX_LOG_FILE_BYTES) return report
+        val keep = TRUNCATE_KEEP_BYTES.toInt()
+        if (report.length <= keep * 2) return report.take(keep)
+        val marker = "\n\n... [日志超过 ${MAX_LOG_FILE_BYTES / 1024}KB，中间内容已截断] ...\n\n"
+        return report.take(keep) + marker + report.takeLast(keep)
     }
 
     /** 返回未读崩溃日志文件列表（按时间倒序），供 UI 展示"是否发送日志"入口。 */

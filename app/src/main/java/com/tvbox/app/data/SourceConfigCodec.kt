@@ -6,9 +6,6 @@ import com.tvbox.app.domain.normalizeMacCmsApiUrl
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Parses and produces video source configuration compatible with TVBox and sources.json formats.

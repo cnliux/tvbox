@@ -94,4 +94,36 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         label = "播放管家自动换线",
         valueSummary = if (settings.playbackAgentAutoSwitchEnabled) "开启" else "关闭",
     ),
+    // #277 切台横幅时长：0 未配置时显示「自动」，否则显示秒数。
+    SettingEntry(
+        id = "live_info_banner_duration",
+        group = SettingGroup.Playback,
+        label = "切台横幅时长",
+        valueSummary = if (settings.liveInfoBannerDurationMs == LiveInfoBannerDuration.Auto) {
+            "自动（电视 4s / 手机 2s）"
+        } else {
+            "${settings.liveInfoBannerDurationMs / 1000}s"
+        },
+    ),
+    // #54/#266 硬解白名单：空表示未启用，非空显示配置前缀。
+    SettingEntry(
+        id = "decoder_device_whitelist",
+        group = SettingGroup.Playback,
+        label = "硬解设备白名单",
+        valueSummary = settings.decoderDeviceWhitelist.ifBlank { "未启用" },
+    ),
+    // #94 单源超时：显示秒数。
+    SettingEntry(
+        id = "per_source_timeout",
+        group = SettingGroup.Advanced,
+        label = "单源超时",
+        valueSummary = "${settings.perSourceTimeoutMs / 1000}s",
+    ),
+    // #318 历史隐私模式。
+    SettingEntry(
+        id = "history_privacy_mode",
+        group = SettingGroup.Advanced,
+        label = "历史隐私模式",
+        valueSummary = if (settings.historyPrivacyMode) "开启（不记录新历史）" else "关闭",
+    ),
 )

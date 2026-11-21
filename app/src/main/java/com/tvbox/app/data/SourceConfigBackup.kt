@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import com.tvbox.app.domain.ApiLine
+import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -23,6 +24,13 @@ import kotlinx.serialization.json.putJsonArray
  *
  * 解析约束：所有取字段都走 `as?` 安全转换， corrupt/异形 JSON 只返回固定文案的
  * [Result.error]，单个坏字段被跳过而不会抛 ClassCastException 中断整次恢复。
+ *
+ * #393 事务性 / #395 版本迁移：
+ *  - 本对象只做「编解码」，不直接改设置。调用方（SourceBackupGateway → ViewModel）用 Mutex
+ *    或等价的「导入中」串行标记保证同一时刻只有一次导入，并把结果作为整份 AppSettings
+ *    一次性原子替换（单个 commit）：解析/校验失败时整份放弃，不会留下半套源配置。
+ *  - 低版本备份（version &lt; VERSION）靠 `ignoreUnknownKeys` + `coerceInputValues` + 字段
+ *    默认值解析：新增字段缺失时取 Kotlin 默认值，旧字段保留，见 [parse] 的 sites 兜底。
  */
 object SourceConfigBackup {
     const val FORMAT = "tvbox-source-backup"
@@ -55,29 +63,43 @@ object SourceConfigBackup {
         liveUrls: List<String>,
         order: List<String> = emptyList(),
         weights: Map<String, Int> = emptyMap(),
-    ): String = buildJsonObject {
-        put("format", FORMAT)
-        put("version", VERSION)
-        putJsonArray("sites") {
-            lines.forEach { line ->
-                add(
-                    buildJsonObject {
-                        put("id", line.id)
-                        put("name", line.name)
-                        put("api", line.baseUrls.firstOrNull().orEmpty())
-                    },
-                )
+    ): String {
+        val body = buildJsonObject {
+            put("format", FORMAT)
+            put("version", VERSION)
+            putJsonArray("sites") {
+                lines.forEach { line ->
+                    add(
+                        buildJsonObject {
+                            put("id", line.id)
+                            put("name", line.name)
+                            put("api", line.baseUrls.firstOrNull().orEmpty())
+                        },
+                    )
+                }
             }
+            putJsonArray("lives") { liveUrls.forEach { add(it) } }
+            putJsonArray("order") { order.forEach { add(it) } }
+            put(
+                "weights",
+                buildJsonObject {
+                    weights.forEach { (id, weight) -> put(id, weight) }
+                },
+            )
         }
-        putJsonArray("lives") { liveUrls.forEach { add(it) } }
-        putJsonArray("order") { order.forEach { add(it) } }
-        put(
-            "weights",
-            buildJsonObject {
-                weights.forEach { (id, weight) -> put(id, weight) }
-            },
-        )
-    }.toString()
+        // #188/#394：对"不含 checksum 的规范 body"计算 SHA-256，导入时同法重算比对，
+        // 防止备份文件被截断/篡改后静默导入损坏配置。
+        val checksum = sha256(body.toString())
+        return buildJsonObject {
+            body.entries.forEach { (key, value) -> put(key, value) }
+            put("checksum", checksum)
+        }.toString()
+    }
+
+    /** 计算 UTF-8 文本的 SHA-256 十六进制摘要（小写）。 */
+    private fun sha256(text: String): String =
+        MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
     fun parse(raw: String): Result {
         val root = try {
@@ -96,9 +118,26 @@ object SourceConfigBackup {
         if (version > VERSION) {
             return Result(null, "备份版本 $version 高于当前支持的 $VERSION，请先升级应用")
         }
+        // #395：version < VERSION 的低版本备份照样放行——后续字段全部走「缺失即默认值」的兼容解析。
+        val isLegacyBackup = version < VERSION
 
-        val sites = root["sites"] as? JsonArray
-            ?: return Result(null, "备份缺少 sites 列表")
+        // #188/#394：带 checksum 的备份先校验完整性；老版本无该字段则放行以兼容历史文件。
+        val expectedChecksum = (root["checksum"] as? JsonPrimitive)?.content?.trim()
+        if (!expectedChecksum.isNullOrBlank()) {
+            val body = buildJsonObject {
+                root.entries.forEach { (key, value) ->
+                    if (key != "checksum") put(key, value)
+                }
+            }
+            if (!sha256(body.toString()).equals(expectedChecksum, ignoreCase = true)) {
+                return Result(null, "备份校验失败：文件内容已损坏或被修改，请勿导入")
+            }
+        }
+
+        // #395：低版本备份若没有 sites 字段，按空列表兼容（后续 lives/order/weights 本来就用了
+        // orEmpty() 兜底）；当前版本仍要求 sites 存在，避免把损坏的新版备份静默当成空配置。
+        val sites = (root["sites"] as? JsonArray)
+            ?: if (isLegacyBackup) JsonArray(emptyList()) else return Result(null, "备份缺少 sites 列表")
         val lines = sites.mapNotNull { element ->
             val item = element as? JsonObject ?: return@mapNotNull null
             val api = (item["api"] as? JsonPrimitive)?.content?.trim().orEmpty()

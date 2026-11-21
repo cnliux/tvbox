@@ -1,7 +1,6 @@
 package com.tvbox.app.ui
 
 import android.content.Context
-import android.view.ViewGroup
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
@@ -15,15 +14,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
 import com.tvbox.app.util.logSafeText
 import com.tvbox.app.domain.DecoderStrategy
 

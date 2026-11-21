@@ -46,6 +46,10 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
                 it.apiLineId == item.apiLineId && it.movieId == item.movieId
             }
             val durationMs = if (item.durationMs > 0L) item.durationMs else previousSameEpisode?.durationMs ?: 0L
+            // #317：addedAt 只在首次加入该影片时写入，后续观看只刷新 updatedAt。
+            // 旧数据没有该字段（解码为 0），这里补写当前时间，保证「添加时间」排序可用。
+            val nowMs = System.currentTimeMillis()
+            val addedAtEpochMs = previousSameMovie?.addedAtEpochMs?.takeIf { it > 0L } ?: nowMs
             // 播放进度保存不携带跨源检查结果：保留同一影片已有的检查信息，避免被回写覆盖。
             val latestEpisodeCount = maxOf(
                 item.latestEpisodeCount.coerceAtLeast(0),
@@ -57,7 +61,8 @@ class SharedHistoryRepository(context: Context) : HistoryRepository {
             )
             val updatedItem = item.copy(
                 durationMs = durationMs,
-                updatedAtEpochMs = System.currentTimeMillis(),
+                updatedAtEpochMs = nowMs,
+                addedAtEpochMs = addedAtEpochMs,
                 latestEpisodeCount = latestEpisodeCount,
                 lastUpdateCheckEpochMs = lastUpdateCheckEpochMs,
             )

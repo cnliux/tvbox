@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -77,7 +78,10 @@ internal class CastController(
         error = null
         runCatching { caster.discover() }
             .onSuccess { devices = it }
-            .onFailure { error = it.message ?: "搜索投屏设备失败" }
+            .onFailure {
+                if (it is CancellationException) throw it
+                error = it.message ?: "搜索投屏设备失败"
+            }
         discovering = false
     }
 

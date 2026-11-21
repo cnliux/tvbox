@@ -41,6 +41,7 @@ import com.tvbox.app.domain.decodeOtaCdnHealth
 import com.tvbox.app.domain.encodeOtaCdnHealth
 import com.tvbox.app.domain.isOtaDownloadStalled
 import com.tvbox.app.domain.otaCdnRetryDelayMs
+import com.tvbox.app.domain.otaFailureReason
 import com.tvbox.app.domain.rankOtaCdnCandidates
 import com.tvbox.app.domain.summarizeOtaCdnFailures
 import com.tvbox.app.util.logSafeText
@@ -358,8 +359,14 @@ class DefaultAppUpdateRepository(
                     return downloadInApp(currentTask, onProgress)
                 }
                 if (status == DownloadManager.STATUS_FAILED) {
-                    throw IOException(if (reason == DownloadManager.ERROR_INSUFFICIENT_SPACE) "设备存储空间不足，请清理后重试"
-                        else "更新下载失败（系统错误 $reason），请重试")
+                    // #321：把系统失败码换算成可明确归因的文案；空间不足 / 签名冲突给出具体提示，
+                    // 其余仍保留系统错误码便于排查。
+                    val systemReason = if (reason == DownloadManager.ERROR_INSUFFICIENT_SPACE) {
+                        "INSUFFICIENT_SPACE"
+                    } else {
+                        "系统错误 $reason"
+                    }
+                    throw IOException(otaFailureReason(systemReason) ?: "更新下载失败（$systemReason），请重试")
                 }
                 val nowMs = System.currentTimeMillis()
                 if (received != lastReceived) {
@@ -475,7 +482,7 @@ class DefaultAppUpdateRepository(
         val task = readTask()?.takeIf { it.filePath == apkPath } ?: throw IOException("安装包记录已失效，请重新下载")
         val source = File(apkPath)
         verifyUpdateApk(source, task.manifest.apkSize, task.manifest.apkSha256)
-        val version = task.manifest.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+        val version = task.manifest.versionName.replace(APK_NAME_SAFE_REGEX, "_")
         UpdateApkExporter(appContext).save(source, destination, "JuheVideo-v$version.apk")
     }
 
@@ -587,7 +594,8 @@ class DefaultAppUpdateRepository(
                     }.awaitAll().toMap()
                 }
             }
-        }.getOrDefault(emptyMap())
+        }.onFailure { if (it is CancellationException && it !is TimeoutCancellationException) throw it }
+            .getOrDefault(emptyMap())
     }
 
     /**
@@ -634,6 +642,10 @@ class DefaultAppUpdateRepository(
                     )
                 }
             }
+        } catch (e: TimeoutCancellationException) {
+            OtaCdnProbe(reachable = false)
+        } catch (e: CancellationException) {
+            throw e
         } catch (_: Throwable) {
             OtaCdnProbe(reachable = false)
         }
@@ -696,6 +708,9 @@ private data class UpdateManifestDto(
 )
 
 private const val USER_AGENT = "TVBox-Android"
+
+/** 导出 APK 文件名中需要替换掉的非法字符。 */
+private val APK_NAME_SAFE_REGEX = Regex("[^A-Za-z0-9._-]")
 
 /** 单次更新下载的整体上限（20MB 级 APK 在弱网下留足余量），超时后走失败清理而不是永久轮询。 */
 private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L

@@ -136,8 +136,8 @@ private suspend fun probeBlocking(url: String, headers: Map<String, String>): St
     HttpClients.probe.executeCancellable(builder.build()).use { response ->
         if (!response.isSuccessful) return LIVE_MIME_UNKNOWN
         val contentType = response.header("Content-Type")
-        // response.body 在非 2xx 时已由上方 isSuccessful 检查过滤；为防御性编码处理极端场景（如连接重置后 body 被回收）。
-        val bodyRef = response.body ?: return LIVE_MIME_UNKNOWN
+        // OkHttp 的 response.body 契约上非空（非 2xx 已由上方 isSuccessful 过滤），直接取用即可。
+        val bodyRef = response.body
         // 先按响应头判断：CDN 通常会把 m3u8 标成 audio/x-mpegurl 或 application/vnd.apple.mpegurl。
         contentType?.let { fromHeader -> mimeFromContentType(fromHeader)?.let { return it } }
         // 响应头不可信（很多源统一返回 text/plain）时读正文特征。

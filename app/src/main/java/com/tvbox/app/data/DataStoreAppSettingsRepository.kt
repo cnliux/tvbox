@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
 import com.tvbox.app.domain.AppSettings
 import java.io.IOException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -136,7 +137,9 @@ internal class DataStoreAppSettingsRepository(
 
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
         // 已迁移且 schema 完整：直接读，不与写操作互斥，避免高频读被迁移/保存写操作阻塞。
-        val direct = runCatching { dataStore.data.first() }.getOrNull()
+        val direct = runCatching { dataStore.data.first() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrNull()
         if (migrationMarker.isMigrated() && direct != null && direct.schemaVersion() >= SettingsSchema.CURRENT) {
             return@withContext parseSettings(direct)
         }
@@ -164,7 +167,8 @@ internal class DataStoreAppSettingsRepository(
                 // 降级未恢复前拒绝写入：此时传入的 settings 可能来自默认快照。
                 val recovered = runCatching {
                     dataStore.data.first().schemaVersion() >= SettingsSchema.CURRENT
-                }.getOrDefault(false)
+                }.onFailure { if (it is CancellationException) throw it }
+                    .getOrDefault(false)
                 if (!recovered) throw IOException("设置存储读取异常，本轮写入已跳过以保护现有配置")
                 degradedRead = false
             }
@@ -183,7 +187,9 @@ internal class DataStoreAppSettingsRepository(
 
     override suspend fun getSpeedLatencies(): Map<String, Long?> = withContext(Dispatchers.IO) {
         if (migrationMarker.isMigrated()) {
-            runCatching { decodeLegacySpeedLatencies(dataStore.data.first().rawSpeedLatencies(), json) { _, _ -> } }.getOrElse { emptyMap() }
+            runCatching { decodeLegacySpeedLatencies(dataStore.data.first().rawSpeedLatencies(), json) { _, _ -> } }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrElse { emptyMap() }
         } else {
             writeMutex.withLock {
                 val preferences = ensureMigratedLocked()
@@ -224,7 +230,10 @@ internal class DataStoreAppSettingsRepository(
      */
     private suspend fun ensureMigratedLocked(): Preferences? {
         val current = runCatching { dataStore.data.first() }
-            .onFailure { error -> Log.e(TAG, "读取设置存储失败", error) }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                Log.e(TAG, "读取设置存储失败", error)
+            }
             .getOrNull()
             ?: return null
 
@@ -249,12 +258,16 @@ internal class DataStoreAppSettingsRepository(
                     }
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 Log.e(TAG, "重建设置 schema 失败", error)
             }.getOrNull()
         }
 
         val snapshot = runCatching { legacySource.read() }
-            .onFailure { error -> Log.e(TAG, "读取旧设置失败，保留原数据并等待下次重试", error) }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                Log.e(TAG, "读取旧设置失败，保留原数据并等待下次重试", error)
+            }
             .getOrNull()
             ?: return null
         val settings = readLegacySettings(snapshot, json) { message, error -> Log.w(TAG, message, error) }
@@ -271,6 +284,7 @@ internal class DataStoreAppSettingsRepository(
                 }
             }
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             Log.e(TAG, "设置迁移写入失败，未写入 schemaVersion，将保留旧数据重试", error)
         }.getOrNull() ?: return null
 
@@ -288,12 +302,16 @@ internal class DataStoreAppSettingsRepository(
     /** 迁移未完成时的只读回退：使用旧快照，失败才退回默认值。 */
     private suspend fun readLegacyFallback(): AppSettings =
         runCatching { legacySource.read() }
-            .onFailure { error -> Log.e(TAG, "迁移未完成且旧设置不可读，回退默认设置", error) }
+            .onFailure { error ->
+                if (error is CancellationException) throw error
+                Log.e(TAG, "迁移未完成且旧设置不可读，回退默认设置", error)
+            }
             .map { snapshot -> readLegacySettings(snapshot, json) { message, error -> Log.w(TAG, message, error) } }
             .getOrDefault(AppSettings())
 
     private suspend fun legacySpeedLatenciesRaw(): String? =
         runCatching { legacySource.read().values[SettingsStorageKeys.SOURCE_SPEED_LATENCIES] as? String }
+            .onFailure { if (it is CancellationException) throw it }
             .getOrNull()
 
     companion object {

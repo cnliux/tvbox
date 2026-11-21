@@ -9,10 +9,12 @@ class SettingsSummaryFactoryTest {
 
     @Test
     fun defaultSettingsProduceAllFiveGroups() {
-        val summary = buildSettingsPageSummary(settingsEntriesFrom(AppSettings()))
+        val entries = settingsEntriesFrom(AppSettings())
+        val summary = buildSettingsPageSummary(entries)
         assertEquals(5, summary.groups.size)
         assertEquals(0, summary.emptyGroups.size)
-        assertEquals(13, summary.totalEntries)
+        // 条目数随新增设置项变化，断言与实到条目一致而不是写死数字。
+        assertEquals(entries.size, summary.totalEntries)
     }
 
     @Test

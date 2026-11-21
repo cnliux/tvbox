@@ -27,9 +27,6 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -51,6 +48,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -59,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,8 +75,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.domain.DecoderStrategy
+import kotlinx.coroutines.launch
 import com.tvbox.app.domain.DeviceMode
-import com.tvbox.app.domain.CdnStatusRow
+import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.TvFontScale
@@ -620,6 +621,40 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             },
         )
         DividerInGroup()
+        // #54/#266 按设备型号前缀强制硬解；空表示不启用，多个前缀用逗号分隔。
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "硬解设备白名单",
+            subtitle = "命中 Build.MODEL 前缀的设备强制硬解，留空则不启用",
+            stackedTrailing = true,
+            trailing = {
+                TextValueEditor(
+                    value = state.appSettings.decoderDeviceWhitelist,
+                    onSave = actions::updateDecoderDeviceWhitelist,
+                )
+            },
+        )
+        DividerInGroup()
+        // #277 切台频道名横幅时长：自动档 TV 4s / 手机 2s。
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "切台横幅时长",
+            subtitle = if (state.appSettings.liveInfoBannerDurationMs == LiveInfoBannerDuration.Auto) {
+                "自动（电视 4s / 手机 2s）"
+            } else {
+                "固定 ${state.appSettings.liveInfoBannerDurationMs}ms"
+            },
+            stackedTrailing = true,
+            trailing = {
+                ChoiceChips(
+                    options = LiveInfoBannerDuration.choices,
+                    selected = state.appSettings.liveInfoBannerDurationMs,
+                    label = { if (it == LiveInfoBannerDuration.Auto) "自动" else "${it / 1000}s" },
+                    onSelect = actions::updateLiveInfoBannerDurationMs,
+                )
+            },
+        )
+        DividerInGroup()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
@@ -741,6 +776,20 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
 
 @Composable
 private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // #282：一键检测所有直播源（复用 dry-run），与 TV 端共用同一套校验逻辑。
+    val scope = rememberCoroutineScope()
+    var healthChecking by remember { mutableStateOf(false) }
+    var healthReport by remember { mutableStateOf<String?>(null) }
+    if (healthReport != null) {
+        AlertDialog(
+            onDismissRequest = { healthReport = null },
+            title = { Text("直播源健康检查") },
+            text = { Text(healthReport.orEmpty(), style = MaterialTheme.typography.bodySmall) },
+            confirmButton = {
+                TextButton(onClick = { healthReport = null }) { Text("知道了") }
+            },
+        )
+    }
     SettingsGroup {
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
@@ -768,6 +817,30 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         DividerInGroup()
+        // #282：一键检测所有已配置直播源，逐个连接并做结构校验。
+        SettingsRow(
+            icon = Icons.Default.Info,
+            title = "直播源健康检查",
+            subtitle = "共 ${state.appSettings.liveSourceUrls.count { it.isNotBlank() }} 条，逐条连接并校验",
+            trailing = {
+                TextButton(
+                    onClick = {
+                        healthChecking = true
+                        scope.launch {
+                            healthReport = checkAllLiveSources(state.appSettings.liveSourceUrls)
+                            healthChecking = false
+                        }
+                    },
+                    enabled = !healthChecking,
+                ) {
+                    Text(
+                        if (healthChecking) "检测中…" else "一键检测",
+                        color = TvColors.Accent,
+                    )
+                }
+            },
+        )
+        DividerInGroup()
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
             title = "平台直播",
@@ -790,6 +863,19 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 if (state.historyItems.isNotEmpty()) {
                     TextButton(onClick = onClearHistory) { Text("清空", color = TvColors.Danger) }
                 }
+            },
+        )
+        DividerInGroup()
+        // #318 历史隐私模式：只阻止新记录写入，不清空已有历史。
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "历史隐私模式",
+            subtitle = if (state.appSettings.historyPrivacyMode) "已开启，不再记录新的观看历史" else "关闭，正常记录观看历史",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.historyPrivacyMode,
+                    onCheckedChange = actions::updateHistoryPrivacyMode,
+                )
             },
         )
         DividerInGroup()
@@ -912,6 +998,26 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 )
             },
         )
+        DividerInGroup()
+        // #94 单源超时：低于预算则放弃慢源，避免个别源拖住整页搜索/详情。
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "单源超时",
+            subtitle = if (state.appSettings.perSourceTimeoutMs == PerSourceTimeout.DefaultMs) {
+                "默认 ${PerSourceTimeout.DefaultMs / 1000}s"
+            } else {
+                "当前 ${state.appSettings.perSourceTimeoutMs / 1000}s，默认 ${PerSourceTimeout.DefaultMs / 1000}s"
+            },
+            stackedTrailing = true,
+            trailing = {
+                ChoiceChips(
+                    options = PerSourceTimeout.choices,
+                    selected = state.appSettings.perSourceTimeoutMs,
+                    label = { if (it == PerSourceTimeout.DefaultMs) "默认" else "${it / 1000}s" },
+                    onSelect = actions::updatePerSourceTimeoutMs,
+                )
+            },
+        )
     }
 }
 
@@ -922,7 +1028,8 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     SettingsGroup {
         InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "聚合视频")
         DividerInGroup()
-        InfoRow(icon = Icons.Default.Info, title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME}")
+        // #217：当前版本补充版本号（versionCode），便于反馈问题时精确定位构建。
+        InfoRow(icon = Icons.Default.Info, title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
         DividerInGroup()
         InfoRow(icon = Icons.Default.Info, title = "开源协议", subtitle = "GPLv3")
         DividerInGroup()
@@ -1214,6 +1321,22 @@ private fun SkipSecondsRow(
                 inactiveTrackColor = TvColors.SurfaceRaised,
             ),
         )
+    }
+}
+
+/** #54/#266 文本型设置输入：先改草稿，点「保存」才写回设置，避免逐字符写盘。 */
+@Composable
+private fun TextValueEditor(value: String, onSave: (String) -> Unit) {
+    var draft by remember(value) { mutableStateOf(value) }
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        TextField(
+            value = draft,
+            onValueChange = { draft = it },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = { onSave(draft) }) { Text("保存", color = TvColors.Accent) }
     }
 }
 

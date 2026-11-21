@@ -87,4 +87,28 @@ class SourceConfigBackupTest {
         assertNotNull(result.error)
         assertNull(result.payload)
     }
+
+    @Test
+    fun exportedBackupCarriesChecksumAndRoundTrips() {
+        val raw = SourceConfigBackup.export(
+            lines = listOf(ApiLine(id = "a", name = "A", baseUrls = listOf("https://a.test/"))),
+            liveUrls = listOf("https://live.test/a.m3u"),
+        )
+        assertTrue(raw.contains("checksum"))
+        assertNull(SourceConfigBackup.parse(raw).error)
+    }
+
+    @Test
+    fun parseRejectsTamperedBackupWithBadChecksum() {
+        // 取一份合法备份，改掉其中一个 URL 但保留原 checksum，应被完整性校验拦截。
+        val valid = SourceConfigBackup.export(
+            lines = listOf(ApiLine(id = "a", name = "A", baseUrls = listOf("https://a.test/"))),
+            liveUrls = emptyList(),
+        )
+        val tampered = valid.replace("https://a.test/", "https://evil.test/")
+        val result = SourceConfigBackup.parse(tampered)
+        assertNotNull(result.error)
+        assertTrue(result.error!!.contains("校验失败"))
+        assertNull(result.payload)
+    }
 }

@@ -2,7 +2,12 @@ package com.tvbox.app.data.network
 
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.security.cert.CertPathValidatorException
+import java.security.cert.CertificateExpiredException
+import java.security.cert.CertificateNotYetValidException
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -52,6 +57,9 @@ sealed class NetworkException(message: String, cause: Throwable? = null) : IOExc
     class Timeout(message: String, cause: Throwable) : NetworkException(message, cause)
 
     class Parse(message: String, cause: Throwable) : NetworkException(message, cause)
+
+    /** #389：HTTPS 证书校验失败，需给出明确提示而非笼统"网络失败"。 */
+    class Certificate(message: String, cause: Throwable) : NetworkException(message, cause)
 
     class Io(message: String, cause: Throwable) : NetworkException(message, cause)
 }
@@ -130,7 +138,30 @@ private suspend fun OkHttpClient.executeOnce(request: Request): Response =
 private fun IOException.toNetworkException(url: String): NetworkException = when (this) {
     is NetworkException -> this
     is InterruptedIOException -> NetworkException.Timeout(message ?: "请求超时：$url", this)
+    // #389：证书错误单独分类。沿 cause 链找证书相关异常，命中即给明确文案。
+    is SSLException -> if (isCertificateError(this)) {
+        NetworkException.Certificate("HTTPS 证书校验失败，请检查设备时间或网站证书：$url", this)
+    } else {
+        NetworkException.Io(message ?: "网络请求失败：$url", this)
+    }
     else -> NetworkException.Io(message ?: "网络请求失败：$url", this)
+}
+
+private fun isCertificateError(error: Throwable): Boolean {
+    var current: Throwable? = error
+    while (current != null) {
+        if (current is SSLHandshakeException ||
+            current is CertPathValidatorException ||
+            current is CertificateExpiredException ||
+            current is CertificateNotYetValidException ||
+            current.message?.contains("certificate", ignoreCase = true) == true ||
+            current.message?.contains("trust anchor", ignoreCase = true) == true
+        ) {
+            return true
+        }
+        current = current.cause
+    }
+    return false
 }
 
 /** 包装响应解析异常，统一归类为 [NetworkException.Parse]；取消照常透传。 */

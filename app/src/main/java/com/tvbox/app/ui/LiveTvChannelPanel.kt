@@ -37,6 +37,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,6 +79,9 @@ import androidx.compose.ui.input.key.Key as ComposeKey
 /** 浮层里频道行焦点变化时的回调：用于 EPG 卡跟随预览，不改变播放目标。 */
 internal typealias LiveChannelPreview = (LiveChannel?) -> Unit
 
+/** #281：浮层焦点落在「分组标题」还是「频道列表」，决定确认键是折叠切换还是选台。 */
+private enum class LivePanelFocusZone { Groups, Channels }
+
 @Composable
 internal fun LiveChannelOverlayPanel(
     state: TvBoxUiState,
@@ -103,11 +107,17 @@ internal fun LiveChannelOverlayPanel(
                 ?: 0,
         )
     }
-    val visibleChannels = remember(channels, groupIndex, groups) {
+    // #281：分组折叠只影响浮层可见频道，不改动数据源（频道列表本身保持不变）。
+    var collapsedGroups by remember { mutableStateOf(emptySet<String>()) }
+    var focusZone by remember { mutableStateOf(LivePanelFocusZone.Channels) }
+    val selectedGroupName = groups.getOrNull(groupIndex).orEmpty()
+    val selectedGroupCollapsed = groupIndex > 0 && selectedGroupName in collapsedGroups
+    val visibleChannels = remember(channels, groupIndex, groups, collapsedGroups) {
         if (groupIndex <= 0) channels.withIndex().toList()
         else {
             val groupName = groups.getOrNull(groupIndex)
-            channels.withIndex().filter { it.value.groupName == groupName }
+            if (groupName in collapsedGroups) emptyList()
+            else channels.withIndex().filter { it.value.groupName == groupName }
         }
     }
     // 行焦点：进入浮层时优先落在"正在播放"那一行，否则首行。
@@ -174,22 +184,40 @@ internal fun LiveChannelOverlayPanel(
                             true
                         }
                         ComposeKey.DirectionUp -> {
-                            if (visibleChannels.isNotEmpty()) {
+                            // #281：频道列表已到顶再按上，焦点移到分组标题；分组标题按确认折叠/展开。
+                            if (focusZone == LivePanelFocusZone.Channels && focusedIndex == 0) {
+                                focusZone = LivePanelFocusZone.Groups
+                            } else if (visibleChannels.isNotEmpty()) {
                                 focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
                             }
                             onInteraction()
                             true
                         }
                         ComposeKey.DirectionDown -> {
-                            if (visibleChannels.isNotEmpty()) {
+                            if (focusZone == LivePanelFocusZone.Groups) {
+                                focusZone = LivePanelFocusZone.Channels
+                            } else if (visibleChannels.isNotEmpty()) {
                                 focusedIndex = (focusedIndex + 1).coerceAtMost(visibleChannels.lastIndex)
                             }
                             onInteraction()
                             true
                         }
                         ComposeKey.DirectionCenter, ComposeKey.Enter -> {
-                            val picked = visibleChannels.getOrNull(focusedIndex)
-                            if (picked != null) onChannelPicked(picked.index) else onInteraction()
+                            if (focusZone == LivePanelFocusZone.Groups) {
+                                // #281：TV 焦点在分组标题按确认键折叠/展开（「全部」不参与折叠）。
+                                if (groupIndex > 0) {
+                                    val groupName = groups[groupIndex]
+                                    collapsedGroups = if (groupName in collapsedGroups) {
+                                        collapsedGroups - groupName
+                                    } else {
+                                        collapsedGroups + groupName
+                                    }
+                                    focusZone = LivePanelFocusZone.Channels
+                                }
+                            } else {
+                                val picked = visibleChannels.getOrNull(focusedIndex)
+                                if (picked != null) onChannelPicked(picked.index) else onInteraction()
+                            }
                             true
                         }
                         else -> false
@@ -224,11 +252,14 @@ internal fun LiveChannelOverlayPanel(
             ) {
                 itemsIndexed(groups) { index, group ->
                     LiveGroupPill(
-                        label = group,
+                        // #281：折叠分组用 ▶ 标识，展开用 ▼，光标落在分组标题时按确认切换。
+                        label = if (index > 0) "${if (group in collapsedGroups) "▶" else "▼"} $group" else group,
                         selected = index == groupIndex,
+                        focused = focusZone == LivePanelFocusZone.Groups && index == groupIndex,
                         onClick = {
                             if (groupIndex != index) {
                                 groupIndex = index
+                                focusZone = LivePanelFocusZone.Channels
                                 onInteraction()
                             }
                         },
@@ -247,7 +278,12 @@ internal fun LiveChannelOverlayPanel(
                     ) {
                         Text("📺", style = MaterialTheme.typography.headlineSmall, color = Color.White.copy(alpha = 0.25f))
                         Spacer(Modifier.height(8.dp))
-                        Text("该分组暂无频道", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)
+                        // #281：折叠态给出明确的展开提示，避免误认为分组真的没有频道。
+                        Text(
+                            if (selectedGroupCollapsed) "分组已折叠" else "该分组暂无频道",
+                            color = Color.White.copy(alpha = 0.4f),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
                     }
                 } else {
                     LazyColumn(
@@ -281,8 +317,9 @@ internal fun LiveChannelOverlayPanel(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 LiveKeyHint("◀▶", "切分组")
-                LiveKeyHint("▲▼", "选频道")
-                LiveKeyHint("确认", "播放/收起")
+                // #281：上键到顶聚焦分组标题，确认键折叠/展开分组。
+                LiveKeyHint("▲▼", "选频道/分组")
+                LiveKeyHint("确认", "播放/折叠")
                 LiveKeyHint("返回", "关闭")
             }
         }
@@ -294,10 +331,12 @@ internal fun LiveChannelOverlayPanel(
 private fun LiveGroupPill(
     label: String,
     selected: Boolean,
+    /** #281：焦点确实落在分组标题上时给出更亮的描边，提示可按确认折叠/展开。 */
+    focused: Boolean = false,
     onClick: () -> Unit,
 ) {
     val scale by animateFloatAsState(
-        targetValue = if (selected) 1.04f else 1f,
+        targetValue = if (selected || focused) 1.04f else 1f,
         animationSpec = tween(120),
         label = "live-group-pill-scale",
     )
@@ -313,12 +352,13 @@ private fun LiveGroupPill(
             .clip(RoundedCornerShape(18.dp))
             .background(if (selected) LiveTvAccent else Color.White.copy(alpha = 0.08f))
             .border(
-                width = if (selected) 2.dp else 0.dp,
-                color = if (selected) LiveTvAccent else Color.Transparent,
+                // #281：分组标题获得焦点时用 2dp 亮边与选中态区分。
+                width = if (selected || focused) 2.dp else 0.dp,
+                color = if (focused) Color.White else if (selected) LiveTvAccent else Color.Transparent,
                 shape = RoundedCornerShape(18.dp),
             )
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics { stateDescription = if (selected) "已选中" else "未选中" }
+            .semantics { stateDescription = if (focused) "分组标题已聚焦" else if (selected) "已选中" else "未选中" }
             .padding(horizontal = 12.dp, vertical = 7.dp),
     )
 }
@@ -435,16 +475,22 @@ private fun LiveKeyHint(key: String, action: String) {
     }
 }
 
-/** 测速状态文案：测速中 / 已测 / 失败；没有结果时显示「—」。 */
+/**
+ * 测速状态文案：测速中 / 已测 / 失败；没有结果时显示「—」。
+ * #145/#361：在文案前补非颜色图形标识（✓/✕/!/…），色盲用户不依赖红绿/黄配色
+ * 也能区分线路质量；该文案同时用于屏幕文本与语义 contentDescription。
+ */
 internal fun liveLineLatencyLabel(
     hasResult: Boolean,
     latencyMs: Long?,
     testing: Boolean,
 ): String = when {
-    testing && !hasResult -> "测速中"
+    testing && !hasResult -> "… 测速中"
     !hasResult -> "—"
-    latencyMs == null -> "失败"
-    else -> "${latencyMs}ms · 已测"
+    latencyMs == null -> "✕ 失败"
+    latencyMs < 200L -> "✓ ${latencyMs}ms · 已测"
+    latencyMs < 800L -> "${latencyMs}ms · 已测"
+    else -> "! ${latencyMs}ms · 已测"
 }
 
 /** 测速状态配色：失败标红，200ms 内绿色，800ms 以内常规，更慢标黄。 */

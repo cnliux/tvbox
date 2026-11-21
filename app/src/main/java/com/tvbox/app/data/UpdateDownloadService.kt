@@ -91,9 +91,11 @@ class UpdateDownloadService : Service() {
                 return START_REDELIVER_INTENT
             }
             // 进行中：更新 total（服务端 contentLength 可能比清单 size 更准）并重新声明前台。
-            if (existing?.total?.let { it > 0 } != true) {
+            // existing 为 null 视为「无有效进度」，与 total<=0 同样按 size 重置；else 分支里
+            // 编译器已能推断 existing 非空，直接做智能转换，避免恒真判空告警。
+            if (existing == null || existing.total <= 0L) {
                 states[path] = AppDownloadStatus(total = size)
-            } else if (existing != null && size > existing.total) {
+            } else if (size > existing.total) {
                 states[path] = existing.copy(total = size)
             }
             if (!startForegroundSafely(path, startId)) return START_NOT_STICKY

@@ -244,6 +244,13 @@ enum class OtaCdnFailureKind {
 private val FATAL_OTA_MESSAGE_TOKENS = listOf(
     "空间不足",
     "INSUFFICIENT_SPACE",
+    // #321：签名冲突（与已安装版本签名不一致）换 CDN 重下也不会成功，按致命错误处理。
+    "签名冲突",
+    "签名不一致",
+    "SIGNATURE",
+    "INSTALL_FAILED_SIGNATURE",
+    "INSTALL_FAILED_UPDATE_INCOMPATIBLE",
+    "INSTALL_PARSE_FAILED",
     "安装包地址为空",
     "无法创建更新下载目录",
     "无法创建下载目录",
@@ -340,17 +347,39 @@ class OtaDownloadProgressGate(private val emit: (Int) -> Unit) {
 }
 
 /**
+ * #321：把底层错误文案归一成用户可读的具体原因，优先给出签名冲突 / 存储空间不足的明确提示。
+ * 返回 null 表示没有可明确归因的原因。下载失败汇总与安装失败上报共用，避免两处文案不一致。
+ */
+fun otaFailureReason(message: String?): String? {
+    val text = message.orEmpty()
+    return when {
+        text.contains("签名冲突", ignoreCase = true) ||
+            text.contains("签名不一致", ignoreCase = true) ||
+            text.contains("SIGNATURE", ignoreCase = true) ||
+            text.contains("INSTALL_FAILED_SIGNATURE", ignoreCase = true) ||
+            text.contains("INSTALL_FAILED_UPDATE_INCOMPATIBLE", ignoreCase = true) ||
+            text.contains("INSTALL_PARSE_FAILED", ignoreCase = true) ->
+            "安装包签名冲突或解析失败（与已安装版本不一致，请先卸载旧版再安装）"
+        text.contains("空间不足", ignoreCase = true) ||
+            text.contains("INSUFFICIENT_SPACE", ignoreCase = true) ||
+            text.contains("NO_SPACE", ignoreCase = true) ->
+            "存储空间不足，请清理设备空间后重试"
+        text.contains("校验失败", ignoreCase = true) -> "安装包校验未通过，请重新下载"
+        text.contains("无进展", ignoreCase = true) -> "下载长时间无进展"
+        text.contains("超时", ignoreCase = true) || text.contains("TIMEOUT", ignoreCase = true) ->
+            "下载超时，请检查网络后重试"
+        else -> null
+    }
+}
+
+/**
  * 汇总错误信息：只输出线路数量与归类后的原因，不把原始 URL / 异常栈带给 UI 或日志。
  */
 fun summarizeOtaCdnFailures(attempts: List<OtaCdnAttempt>): String {
     if (attempts.isEmpty()) return "更新下载失败，请检查网络后重试"
     val messages = attempts.mapNotNull { it.message }
-    val reason = when {
-        messages.any { it.contains("校验失败", ignoreCase = true) } -> "，安装包校验未通过"
-        messages.any { it.contains("空间不足", ignoreCase = true) } -> "，存储空间不足"
-        messages.any { it.contains("无进展", ignoreCase = true) } -> "，下载长时间无进展"
-        messages.any { it.contains("超时", ignoreCase = true) } -> "，下载超时"
-        else -> ""
-    }
-    return "更新下载失败，已尝试 ${attempts.size} 个下载线路$reason，请检查网络后重试"
+    // #321：签名冲突 / 空间不足优先于「校验失败 / 超时」等泛化原因，保证提示具体可行动。
+    val reason = messages.firstNotNullOfOrNull(::otaFailureReason)
+    val prefix = "更新下载失败，已尝试 ${attempts.size} 个下载线路"
+    return if (reason == null) "$prefix，请检查网络后重试" else "$prefix：$reason"
 }

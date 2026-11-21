@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.data.network.NetworkException
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.resolveEffectiveEpgUrl
@@ -46,12 +47,19 @@ internal fun filterBlockedCategories(
 internal fun Throwable.uiFailureMessageOrNull(): String? =
     if (this is CancellationException) null else userMessage()
 
+// 每次错误展示都重新编译同一正则没有意义，提到顶层预编译复用。
+private val EXCEPTION_PREFIX_REGEX = Regex("^[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\\s*")
+
 internal fun Throwable.userMessage(): String {
+    // #389：HTTPS 证书类错误优先给出明确、可操作的提示，避免落入通用"网络失败"文案。
+    if (this is NetworkException.Certificate) {
+        return "HTTPS 证书校验失败，请检查设备时间或稍后重试"
+    }
     // 不把原始异常（如 "Unexpected JSON token at offset 0 ... JSON input: ..."）直接展示给用户，
     // 统一转换成可读提示，原始内容仅用于本地排查。
     // 先去掉内部异常类名前缀（如 "DouyuResolverError: WebView 初始化超时"），只保留可读部分。
     val raw = localizedMessage.orEmpty().trim()
-        .replace(Regex("^[A-Za-z][A-Za-z0-9_.]*(?:Error|Exception):\\s*"), "")
+        .replace(EXCEPTION_PREFIX_REGEX, "")
         .trim()
     val friendly = when {
         raw.isBlank() -> "请求失败，请稍后重试"

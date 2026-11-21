@@ -22,6 +22,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -41,11 +43,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,8 +66,12 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
+import com.tvbox.app.data.SourceConfigFetcher
 import com.tvbox.app.domain.DecoderStrategy
+import com.tvbox.app.domain.dryRunLiveSource
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
@@ -73,6 +81,61 @@ import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.theme.TvColors
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+
+/** #282：单个直播源健康检查超时，避免一条死链拖住整组检测。 */
+private const val LIVE_SOURCE_HEALTH_TIMEOUT_MS = 10_000L
+
+/**
+ * #282：一键检测所有直播源。
+ * 复用导入流程里的 [dryRunLiveSource]：先取源正文，再做结构校验并汇总每个源的结论。
+ * 并发 + 单源超时，结果与现有「导入摘要」口径一致（频道/线路/分组数 + 警告）。
+ */
+internal suspend fun checkAllLiveSources(urls: List<String>): String = withContext(Dispatchers.IO) {
+    val targets = urls.map { it.trim() }.filter { it.isNotEmpty() }
+    if (targets.isEmpty()) return@withContext "尚未配置直播源，请先在「IPTV 直播源」中添加。"
+
+    val fetcher = SourceConfigFetcher()
+    val results = coroutineScope {
+        targets.map { url ->
+            async {
+                val body = try {
+                    withTimeout(LIVE_SOURCE_HEALTH_TIMEOUT_MS) { fetcher.fetch(url) }
+                } catch (_: TimeoutCancellationException) {
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                url to body?.let(::dryRunLiveSource)
+            }
+        }.awaitAll()
+    }
+    val okCount = results.count { (_, dryRun) -> dryRun?.ok == true }
+    buildString {
+        append("直播源健康检查完成：成功 $okCount 个，失败 ${results.size - okCount} 个。")
+        results.forEach { (url, dryRun) ->
+            append('\n').append("· ")
+            if (dryRun == null) {
+                append(url.takeLast(40)).append("：连接失败或超时")
+            } else {
+                append(dryRun.headline())
+                val warnings = dryRun.warnings()
+                if (warnings.isNotEmpty()) append("；").append(warnings.joinToString("，"))
+                if (!dryRun.ok) append("（").append(url.takeLast(40)).append("）")
+            }
+        }
+    }
+}
 
 /**
  * TV 端设置页。
@@ -508,6 +571,38 @@ private fun TvPlaybackDetail(
             },
         )
         TvDividerInGroup()
+        // #54/#266 按设备型号前缀强制硬解；空表示不启用，多个前缀用逗号分隔。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "硬解设备白名单",
+            subtitle = "命中 Build.MODEL 前缀的设备强制硬解，留空则不启用",
+            trailing = {
+                TvTextValueEditor(
+                    value = state.appSettings.decoderDeviceWhitelist,
+                    onSave = actions::updateDecoderDeviceWhitelist,
+                )
+            },
+        )
+        TvDividerInGroup()
+        // #277 切台频道名横幅时长：自动档 TV 4s / 手机 2s。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "切台横幅时长",
+            subtitle = if (state.appSettings.liveInfoBannerDurationMs == LiveInfoBannerDuration.Auto) {
+                "自动（电视 4s / 手机 2s）"
+            } else {
+                "固定 ${state.appSettings.liveInfoBannerDurationMs}ms"
+            },
+            trailing = {
+                TvChoiceChips(
+                    options = LiveInfoBannerDuration.choices,
+                    selected = state.appSettings.liveInfoBannerDurationMs,
+                    label = { if (it == LiveInfoBannerDuration.Auto) "自动" else "${it / 1000}s" },
+                    onSelect = actions::updateLiveInfoBannerDurationMs,
+                )
+            },
+        )
+        TvDividerInGroup()
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
@@ -693,6 +788,27 @@ private fun TvPlaybackDetail(
 
 @Composable
 private fun TvSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // #282：一键检测所有直播源（复用 dry-run），结果以弹窗展示。
+    val scope = rememberCoroutineScope()
+    var healthChecking by remember { mutableStateOf(false) }
+    var healthReport by remember { mutableStateOf<String?>(null) }
+    if (healthReport != null) {
+        AlertDialog(
+            onDismissRequest = { healthReport = null },
+            title = { Text("直播源健康检查", color = TvColors.TextPrimary) },
+            text = {
+                Text(
+                    text = healthReport.orEmpty(),
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                )
+            },
+            confirmButton = {
+                Button(onClick = { healthReport = null }) { Text("知道了", color = MaterialTheme.colorScheme.onPrimary) }
+            },
+        )
+    }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
@@ -706,6 +822,26 @@ private fun TvSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             title = "IPTV 直播源",
             subtitle = "${state.appSettings.liveSourceUrls.count { it.isNotEmpty() }} 条已配置",
             trailing = { TvFocusButton(text = "管理", onClick = actions::openLiveSourceManager) },
+        )
+        TvDividerInGroup()
+        // #282：一键检测所有直播源，TV 端 TvFocusButton 可聚焦、按确认键触发。
+        TvSettingsRow(
+            icon = Icons.Default.Info,
+            title = "直播源健康检查",
+            subtitle = "逐个连接并校验全部 ${state.appSettings.liveSourceUrls.count { it.isNotBlank() }} 条直播源",
+            trailing = {
+                TvFocusButton(
+                    text = if (healthChecking) "检测中…" else "一键检测",
+                    enabled = !healthChecking,
+                    onClick = {
+                        healthChecking = true
+                        scope.launch {
+                            healthReport = checkAllLiveSources(state.appSettings.liveSourceUrls)
+                            healthChecking = false
+                        }
+                    },
+                )
+            },
         )
         TvDividerInGroup()
         TvSettingsRow(
@@ -730,6 +866,19 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
                 if (state.historyItems.isNotEmpty()) {
                     TvFocusButton(text = "清空", onClick = onClearHistory)
                 }
+            },
+        )
+        TvDividerInGroup()
+        // #318 历史隐私模式：只阻止新记录写入，不清空已有历史。
+        TvSettingsRow(
+            icon = Icons.Default.Delete,
+            title = "历史隐私模式",
+            subtitle = if (state.appSettings.historyPrivacyMode) "已开启，不再记录新的观看历史" else "关闭，正常记录观看历史",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.historyPrivacyMode,
+                    onCheckedChange = actions::updateHistoryPrivacyMode,
+                )
             },
         )
         TvDividerInGroup()
@@ -846,12 +995,33 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
                 )
             },
         )
+        TvDividerInGroup()
+        // #94 单源超时：低于预算则放弃慢源，避免个别源拖住整页搜索/详情。
+        TvSettingsRow(
+            icon = Icons.Default.Delete,
+            title = "单源超时",
+            subtitle = if (state.appSettings.perSourceTimeoutMs == PerSourceTimeout.DefaultMs) {
+                "默认 ${PerSourceTimeout.DefaultMs / 1000}s"
+            } else {
+                "当前 ${state.appSettings.perSourceTimeoutMs / 1000}s，默认 ${PerSourceTimeout.DefaultMs / 1000}s"
+            },
+            trailing = {
+                TvChoiceChips(
+                    options = PerSourceTimeout.choices,
+                    selected = state.appSettings.perSourceTimeoutMs,
+                    label = { if (it == PerSourceTimeout.DefaultMs) "默认" else "${it / 1000}s" },
+                    onSelect = actions::updatePerSourceTimeoutMs,
+                )
+            },
+        )
     }
 }
 
 @Composable
 private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showPrivacyPolicy by remember { mutableStateOf(false) }
+    // #224：遥控器快捷键说明弹窗开关。
+    var showShortcutHelp by remember { mutableStateOf(false) }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Info,
@@ -860,10 +1030,11 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             trailing = {},
         )
         TvDividerInGroup()
+        // #217：当前版本补充版本号（versionCode），便于反馈问题时精确定位构建。
         TvSettingsRow(
             icon = Icons.Default.Info,
             title = "当前版本",
-            subtitle = "v${BuildConfig.VERSION_NAME}",
+            subtitle = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
             trailing = {},
         )
         TvDividerInGroup()
@@ -880,6 +1051,16 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             subtitle = "本地数据处理与网络访问说明",
             trailing = {
                 TvFocusButton(text = "查看", onClick = { showPrivacyPolicy = true })
+            },
+        )
+        TvDividerInGroup()
+        // #224：TV 设置-关于 增加遥控器快捷键说明入口（纯 UI，键位参考 PlayerInput.kt / TvBoxApp.kt）。
+        TvSettingsRow(
+            icon = Icons.Default.Settings,
+            title = "遥控器快捷键",
+            subtitle = "方向键导航 / 确认 / 返回 / 菜单倍速 / 数字键选台 · 跳页",
+            trailing = {
+                TvFocusButton(text = "查看", onClick = { showShortcutHelp = true })
             },
         )
         TvDividerInGroup()
@@ -904,6 +1085,27 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 },
                 title = { Text("隐私政策") },
                 text = { Text(PRIVACY_POLICY_TEXT) },
+            )
+        }
+        // #224：列出遥控器主要按键，内容覆盖首页/点播/电视直播/平台直播的通用键位。
+        if (showShortcutHelp) {
+            val shortcutHelpText = """
+                方向键（上/下/左/右）：移动焦点、浏览列表；播放时左右=快进/快退，上下=换台/换线路。
+                确认键（OK）：确认选择；播放时暂停/继续。
+                返回键：返回上一级 / 关闭当前浮层。
+                菜单键：点播时切换倍速；电视直播时打开线路浮层；平台直播时强制重连。
+                数字键：首页 1=历史 2=搜索 4=电视 5=直播 6=设置 7=豆瓣热播 8=源管理 9=刷新 0=远程管理；电视直播中直接输入频道号选台。
+                播放/暂停键：播放或暂停。
+                上一集/下一集键（或数字 1/3）：点播时切换剧集。
+                信息键（INFO）：查看线路信息 / 节目单。
+            """.trimIndent()
+            AlertDialog(
+                onDismissRequest = { showShortcutHelp = false },
+                confirmButton = {
+                    TextButton(onClick = { showShortcutHelp = false }) { Text("知道了") }
+                },
+                title = { Text("遥控器快捷键") },
+                text = { Text(shortcutHelpText) },
             )
         }
     }
@@ -1024,6 +1226,22 @@ private fun TvSecondsRow(
             modifier = Modifier.width(64.dp).padding(horizontal = 8.dp),
         )
         TvFocusButton(text = "+5s", onClick = { onSecondsChange((seconds + 5).coerceAtMost(300)) })
+    }
+}
+
+/** #54/#266 文本型设置输入：先改草稿，按「保存」才写回设置，避免逐字符写盘。 */
+@Composable
+private fun TvTextValueEditor(value: String, onSave: (String) -> Unit) {
+    var draft by remember(value) { mutableStateOf(value) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextField(
+            value = draft,
+            onValueChange = { draft = it },
+            singleLine = true,
+            modifier = Modifier.width(220.dp).focusable(),
+        )
+        Spacer(Modifier.width(8.dp))
+        TvFocusButton(text = "保存", onClick = { onSave(draft) })
     }
 }
 

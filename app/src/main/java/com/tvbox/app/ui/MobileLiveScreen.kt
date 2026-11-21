@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -43,7 +42,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,7 +52,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,7 +63,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
@@ -85,7 +81,6 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -96,8 +91,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
 import com.tvbox.app.ui.components.ErrorState
@@ -217,11 +210,55 @@ fun MobileLiveScreen(
 // A. 列表页
 // ---------------------------------------------------------------------------
 
+/**
+ * #280：直播频道搜索历史。SharedPreferences 持久化 + Compose 内存镜像，
+ * 手机端关键词搜索与电视端频道号搜索共用；再次搜索时可一键回填关键词。
+ */
+internal object LiveChannelSearchHistory {
+    private const val PREF_NAME = "live_channel_search_history"
+    private const val KEY_KEYWORDS = "keywords"
+    const val MAX_ITEMS = 8
+
+    private var preferences: android.content.SharedPreferences? = null
+    private val _keywords = mutableStateOf<List<String>>(emptyList())
+    val keywords: List<String> get() = _keywords.value
+
+    /** 在任一直播页组合时调用一次，加载上次会话的历史。 */
+    fun attach(context: Context) {
+        if (preferences != null) return
+        val prefs = context.applicationContext.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        preferences = prefs
+        _keywords.value = prefs.getString(KEY_KEYWORDS, "").orEmpty()
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .take(MAX_ITEMS)
+    }
+
+    /** 记录一次搜索；大小写不敏感去重，最近的排在前面。 */
+    fun record(rawKeyword: String) {
+        val keyword = rawKeyword.trim()
+        if (keyword.isEmpty()) return
+        val updated = (listOf(keyword) + _keywords.value.filterNot { it.equals(keyword, ignoreCase = true) })
+            .distinct()
+            .take(MAX_ITEMS)
+        _keywords.value = updated
+        preferences?.edit()?.putString(KEY_KEYWORDS, updated.joinToString("\n"))?.apply()
+    }
+
+    fun clear() {
+        _keywords.value = emptyList()
+        preferences?.edit()?.remove(KEY_KEYWORDS)?.apply()
+    }
+}
+
 /** 列表页筛选状态容器：由 [MobileLiveScreen] 持有，避免进入播放层后丢失。 */
 private class MobileLiveListFilters {
     val query = mutableStateOf("")
     val selectedGroup = mutableStateOf<String?>(null) // null = 全部
     val favoritesOnly = mutableStateOf(false)
+    // #281：分组折叠状态（只做 UI 过滤，不改频道数据源）。
+    val collapsedGroups = mutableStateOf<Set<String>>(emptySet())
 }
 
 /**
@@ -230,13 +267,23 @@ private class MobileLiveListFilters {
  */
 private val MobileLiveFiltersSaver = listSaver<MobileLiveListFilters, String>(
     save = {
-        listOf(it.query.value, it.selectedGroup.value ?: "", it.favoritesOnly.value.toString())
+        // #281：折叠分组以逗号连接持久化，切底部 Tab 后仍保持折叠态。
+        listOf(
+            it.query.value,
+            it.selectedGroup.value ?: "",
+            it.favoritesOnly.value.toString(),
+            it.collapsedGroups.value.joinToString(","),
+        )
     },
     restore = {
         MobileLiveListFilters().apply {
-            query.value = it[0]
-            selectedGroup.value = it[1].ifBlank { null }
-            favoritesOnly.value = it[2].toBoolean()
+            query.value = it.getOrNull(0).orEmpty()
+            selectedGroup.value = it.getOrNull(1)?.ifBlank { null }
+            favoritesOnly.value = it.getOrNull(2).toBoolean()
+            collapsedGroups.value = it.getOrNull(3).orEmpty()
+                .split(',')
+                .filter { name -> name.isNotBlank() }
+                .toSet()
         }
     },
 )
@@ -254,18 +301,33 @@ private fun MobileLiveListScreen(
     var query by filters.query
     var selectedGroup by filters.selectedGroup // null = 全部
     var favoritesOnly by filters.favoritesOnly
+    var collapsedGroups by filters.collapsedGroups
     val context = LocalContext.current
+    // #280：搜索停顿后记录关键词；再次搜索可直接点选历史词回填。
+    LiveChannelSearchHistory.attach(context)
+    LaunchedEffect(query) {
+        val keyword = query.trim()
+        if (keyword.isEmpty()) return@LaunchedEffect
+        delay(600)
+        LiveChannelSearchHistory.record(keyword)
+    }
     val channels = state.liveChannels
     val currentPlayingIndex = state.liveChannelIndex
     val groups = remember(channels) {
         listOf("全部") + channels.map { it.groupName }.distinct()
     }
-    val filtered = remember(channels, query, selectedGroup, favoritesOnly, state.liveFavoriteKeys) {
-        val keyword = query.trim()
-        channels.withIndex().filter { (_, channel) ->
-            (selectedGroup == null || channel.groupName == selectedGroup) &&
-                (keyword.isEmpty() || channel.name.contains(keyword, ignoreCase = true)) &&
-                (!favoritesOnly || containsLiveFavorite(state.liveFavoriteKeys, channel.groupName, channel.name))
+    // #281：分组折叠只在 UI 层过滤展示，频道数据源保持不变。
+    val groupCollapsed = selectedGroup != null && selectedGroup in collapsedGroups
+    val filtered = remember(channels, query, selectedGroup, favoritesOnly, state.liveFavoriteKeys, groupCollapsed) {
+        if (groupCollapsed) {
+            emptyList()
+        } else {
+            val keyword = query.trim()
+            channels.withIndex().filter { (_, channel) ->
+                (selectedGroup == null || channel.groupName == selectedGroup) &&
+                    (keyword.isEmpty() || channel.name.contains(keyword, ignoreCase = true)) &&
+                    (!favoritesOnly || containsLiveFavorite(state.liveFavoriteKeys, channel.groupName, channel.name))
+            }
         }
     }
 
@@ -375,6 +437,38 @@ private fun MobileLiveListScreen(
             }
         }
 
+        // #280：搜索历史快捷回填（仅在关键词为空时展示，避免干扰当前输入）。
+        val searchHistory = LiveChannelSearchHistory.keywords
+        if (query.isEmpty() && searchHistory.isNotEmpty()) {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                items(searchHistory) { keyword ->
+                    Box(
+                        modifier = Modifier
+                            .heightIn(min = 36.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(LiveField)
+                            .clickable(role = Role.Button) { query = keyword }
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "历史 $keyword",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+
         // 2. 「电视直播｜平台直播」Tab 行 48dp。
         Row(
             modifier = Modifier
@@ -400,10 +494,20 @@ private fun MobileLiveListScreen(
             ) {
                 items(groups) { group ->
                     val isSelected = (group == "全部" && selectedGroup == null) || group == selectedGroup
+                    val isCollapsed = group != "全部" && group in collapsedGroups
                     MobileLiveFilterChip(
-                        text = group,
+                        // #281：▶ 折叠 / ▼ 展开，再次点击已选分组即可切换。
+                        text = if (group == "全部") group else "${if (isCollapsed) "▶" else "▼"} $group",
                         selected = isSelected,
-                        onClick = { selectedGroup = if (group == "全部") null else group },
+                        onClick = {
+                            if (group == "全部") {
+                                selectedGroup = null
+                            } else if (isSelected) {
+                                collapsedGroups = if (isCollapsed) collapsedGroups - group else collapsedGroups + group
+                            } else {
+                                selectedGroup = group
+                            }
+                        },
                     )
                 }
             }
@@ -479,9 +583,18 @@ private fun MobileLiveListScreen(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("📺", style = MaterialTheme.typography.headlineMedium)
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text("该分组暂无频道", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelMedium)
+                    // #281：折叠态给出明确提示，避免误认为分组没有频道。
+                    Text(
+                        if (groupCollapsed) "该分组已折叠" else "该分组暂无频道",
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelMedium,
+                    )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("切换其他分组看看", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
+                    Text(
+                        if (groupCollapsed) "再次点击分组可展开" else "切换其他分组看看",
+                        color = Color.White.copy(alpha = 0.6f),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
                 }
             }
             else -> LazyColumn(
@@ -1630,29 +1743,6 @@ private fun MobileLivePlayerSurface(
 private val MOBILE_LIVE_CLOCK_FORMAT = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 private fun formatMobileLiveClock(ms: Long): String = MOBILE_LIVE_CLOCK_FORMAT.format(Date(ms))
-
-/** 直播兜底卡片里的操作按钮：触摸热区不小于 48dp，语义角色为按钮。 */
-@Composable
-private fun LiveBlockedAction(text: String, onClick: () -> Unit) {
-    Box(
-        modifier = Modifier
-            .heightIn(min = 48.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(LiveAccent)
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = text,
-            color = Color.White,
-            style = MaterialTheme.typography.bodySmall,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
 
 /** 手机端调试浮层：竖屏播放区高度有限，正文限高且可滚动，不遮挡整块画面。 */
 @Composable

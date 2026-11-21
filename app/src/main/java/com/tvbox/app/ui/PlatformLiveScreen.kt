@@ -2,7 +2,6 @@ package com.tvbox.app.ui
 
 import android.content.Context
 import android.media.AudioManager
-import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
@@ -80,7 +79,6 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
@@ -92,7 +90,6 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.crash.CrashHandler
@@ -100,14 +97,12 @@ import com.tvbox.app.data.FlvContinuityProxy
 import com.tvbox.app.data.PacerDebugPrefs
 import com.tvbox.app.data.LiveTuningDebugPrefs
 import androidx.compose.runtime.mutableLongStateOf
-import platformlive.FlvProxyHandle
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.PlaybackProgressSample
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.roomVideoScaleKey
 import com.tvbox.app.domain.resolveVideoScaleMode
-import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
@@ -1885,6 +1880,12 @@ private fun PlatformLivePlayerScreen(
                                 if (url.isNotBlank()) {
                                     val clip = android.content.ClipData.newPlainText("live_url", url)
                                     (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                                    // #205：订阅/直播地址属敏感链接，复制成功后提示及时清理剪贴板。
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "URL 已复制到剪贴板，含敏感链接，注意及时清理剪贴板",
+                                        android.widget.Toast.LENGTH_SHORT,
+                                    ).show()
                                 }
                             }) { Text("复制 URL") }
                             TextButton(onClick = { showUrlInPanel = !showUrlInPanel }) {
@@ -2211,8 +2212,4 @@ private fun formatOnline(value: Int): String {
 
 private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 4_000L
 private const val PLATFORM_LIVE_LOG_TAG = "TVBoxPlatformLive"
-// 首帧未出时的起播等待：平台解析 + CDN 建连在弱网下常超过 5s，此前 5s 判定过激会误切线路。
-private const val PLATFORM_LIVE_FIRST_FRAME_TIMEOUT_MS = 12_000L
-// 已经出过画面后再缓冲，判定为断流的等待时间。
-private const val PLATFORM_LIVE_STALL_TIMEOUT_MS = 6_000L
 

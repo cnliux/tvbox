@@ -3,9 +3,11 @@ package com.tvbox.app.ui
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
-import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.annotation.OptIn
+// #262/#50：切集淡入淡出用 alpha 动画驱动黑色遮罩，不重建 ExoPlayer。
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -56,6 +58,7 @@ import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
 import com.tvbox.app.domain.appendPlaybackErrorHint
+import com.tvbox.app.domain.effectiveDecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlaybackAttemptTracker
 import com.tvbox.app.domain.correspondingEpisodeIndex
@@ -71,7 +74,6 @@ import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
 import com.tvbox.app.domain.SkipCreditsAction
 import com.tvbox.app.domain.SkipCreditsConfig
-import com.tvbox.app.domain.SkipCreditsRuntimeState
 import com.tvbox.app.domain.advanceSkipCredits
 import com.tvbox.app.domain.resetSkipCreditsRuntime
 import com.tvbox.app.domain.resolveSkipCredits
@@ -130,7 +132,8 @@ fun PlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
-    val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
+    // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
+    val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
     val player = playbackHost.player
     // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。
     val playerTracks = rememberPlayerTracks(player)
@@ -238,6 +241,19 @@ fun PlayerScreen(
     // 共享看门狗：从建源起算首帧，出帧后才开始判卡死。
     val playbackWatchdog = remember { PlaybackWatchdog() }
     var firstFrameRendered by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
+    // #262/#50：切集过渡遮罩。只叠一层短暂淡入淡出，不重建播放器、不打断续播队列。
+    var episodeFadeActive by remember { mutableStateOf(false) }
+    val episodeFadeAlpha by animateFloatAsState(
+        targetValue = if (episodeFadeActive) 1f else 0f,
+        animationSpec = tween(EPISODE_FADE_DURATION_MS),
+        label = "episode-switch-fade",
+    )
+    LaunchedEffect(episodeFadeActive) {
+        if (!episodeFadeActive) return@LaunchedEffect
+        // 淡入结束后保持一小段时间再淡出，遮住旧画面最后一帧与新集首帧之间的空档。
+        delay(EPISODE_FADE_HOLD_MS)
+        episodeFadeActive = false
+    }
     var firstFrameFailure by remember(movie.apiLineId, movie.id) {
         mutableStateOf<PlaybackFailureKind?>(null)
     }
@@ -560,6 +576,8 @@ fun PlayerScreen(
                         if (player.playWhenReady) {
                             if (player.hasNextMediaItem()) {
                                 playbackFinished = false
+                                // #262/#50：切集时触发短暂黑场淡入淡出，复用播放器队列不重建实例。
+                                episodeFadeActive = true
                                 player.seekToNextMediaItem()
                             } else {
                                 playbackFinished = true
@@ -932,6 +950,14 @@ fun PlayerScreen(
                 }
             },
         )
+        // #262/#50：切集过渡遮罩叠在画面之上、控制条之下；只改 alpha，不动播放器实例。
+        if (episodeFadeAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = episodeFadeAlpha * 0.92f)),
+            )
+        }
         val failureKind = firstFrameFailure
         val overlayStatus = when {
             playbackFinished -> PlaybackStatus.Finished(
@@ -1259,6 +1285,9 @@ private enum class VideoDisplayMode(
 private const val LONG_PRESS_PLAYBACK_SPEED = 2f
 private const val PORTRAIT_VIDEO_ASPECT_RATIO_MAX = 0.8f
 private const val LANDSCAPE_VIDEO_ASPECT_RATIO_MIN = 1.1f
+// #262/#50：切集遮罩淡入/淡出时长与完全遮盖的保持时长（毫秒）。
+private const val EPISODE_FADE_DURATION_MS = 180
+private const val EPISODE_FADE_HOLD_MS = 220L
 
 private fun formatPlaybackSpeed(speed: Float): String {
     return "${speed.toString().trimEnd('0').trimEnd('.')}x"

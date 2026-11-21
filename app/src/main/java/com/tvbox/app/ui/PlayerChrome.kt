@@ -22,9 +22,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -1171,6 +1169,10 @@ private fun PlayerChromePanel(
                     }
                 }
             }
+            // #149/#364：字幕面板底部提供字号/背景调节，TV 焦点可按确认键即时切换。
+            if (panel == PlayerPanel.Subtitle) {
+                SubtitleStyleTvControls(onChanged = { state.interaction++ })
+            }
         }
     }
 }
@@ -1502,7 +1504,8 @@ private fun PlayerUrlPanel(
                                     )
                                     ControlButton("复制", {
                                         copyPlaybackUrl(context, item.url)
-                                        feedback = "已复制：${item.label}"
+                                        // #205：播放/订阅地址为敏感链接，提示及时清理剪贴板。
+                                        feedback = "已复制：${item.label}，含敏感链接，注意及时清理剪贴板"
                                     })
                                 }
                                 Text(
@@ -1679,28 +1682,32 @@ private fun PlayerChromeMobilePanel(
                         }
                     }
                 }
-                PlayerPanel.Subtitle -> if (data.subtitleTracks.isEmpty()) {
-                    Text("当前视频没有字幕轨道。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color.White.copy(alpha = 0.72f))
-                } else {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    ) {
-                        MobileChip(
-                            text = "关闭字幕",
-                            selected = data.subtitleTracks.none { it.selected },
-                            onClick = { actions.onSelectSubtitleTrack(""); onClose() },
-                        )
-                        data.subtitleTracks.forEach { track ->
+                PlayerPanel.Subtitle -> Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (data.subtitleTracks.isEmpty()) {
+                        Text("当前视频没有字幕轨道。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White.copy(alpha = 0.72f))
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
                             MobileChip(
-                                text = track.label,
-                                selected = track.selected,
-                                onClick = { actions.onSelectSubtitleTrack(track.id); onClose() },
+                                text = "关闭字幕",
+                                selected = data.subtitleTracks.none { it.selected },
+                                onClick = { actions.onSelectSubtitleTrack(""); onClose() },
                             )
+                            data.subtitleTracks.forEach { track ->
+                                MobileChip(
+                                    text = track.label,
+                                    selected = track.selected,
+                                    onClick = { actions.onSelectSubtitleTrack(track.id); onClose() },
+                                )
+                            }
                         }
                     }
+                    // #149/#364：字幕字号/背景调节，点选即在画面上生效。
+                    SubtitleStyleMobileControls()
                 }
                 PlayerPanel.Info -> {
                     val infoRows = remember(
@@ -1788,7 +1795,8 @@ private fun PlayerChromeMobilePanel(
                                     TextButton(
                                         onClick = {
                                             copyPlaybackUrl(context, item.url)
-                                            Toast.makeText(context, "已复制：${item.label}", Toast.LENGTH_SHORT).show()
+                                            // #205：播放/订阅地址为敏感链接，提示及时清理剪贴板。
+                                            Toast.makeText(context, "已复制：${item.label}，含敏感链接，注意及时清理剪贴板", Toast.LENGTH_SHORT).show()
                                         },
                                     ) {
                                         Text("复制", style = MaterialTheme.typography.labelSmall)
@@ -1866,6 +1874,65 @@ internal fun ControlButton(
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
     ) {
         Text(text, maxLines = 1, style = MaterialTheme.typography.labelLarge)
+    }
+}
+
+/** #149/#364：TV 字幕样式调节（字号 + 背景），挂在字幕轨道面板底部，按确认键即时生效。 */
+@Composable
+private fun SubtitleStyleTvControls(onChanged: () -> Unit) {
+    val style = SubtitleStyleController.style
+    Text(
+        text = "字幕样式",
+        style = MaterialTheme.typography.labelSmall,
+        color = Color.White.copy(alpha = 0.7f),
+        modifier = Modifier.padding(top = 8.dp),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SubtitleViewStyle.FONT_SCALE_STEPS.forEach { step ->
+            ControlButton(
+                text = subtitleScaleLabel(step),
+                onClick = { SubtitleStyleController.setFontSizeScale(step); onChanged() },
+                primary = style.fontSizeScale == step,
+            )
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SubtitleBackground.entries.forEach { background ->
+            ControlButton(
+                text = subtitleBackgroundLabel(background),
+                onClick = { SubtitleStyleController.setBackground(background); onChanged() },
+                primary = style.background == background,
+            )
+        }
+    }
+}
+
+/** #149/#364：手机字幕样式调节（字号 + 背景），与字幕轨道选择同一面板。 */
+@Composable
+private fun SubtitleStyleMobileControls() {
+    val style = SubtitleStyleController.style
+    Text(
+        text = "字幕样式",
+        style = MaterialTheme.typography.labelSmall,
+        color = Color.White.copy(alpha = 0.6f),
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SubtitleViewStyle.FONT_SCALE_STEPS.forEach { step ->
+            MobileChip(
+                text = subtitleScaleLabel(step),
+                selected = style.fontSizeScale == step,
+                onClick = { SubtitleStyleController.setFontSizeScale(step) },
+            )
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        SubtitleBackground.entries.forEach { background ->
+            MobileChip(
+                text = subtitleBackgroundLabel(background),
+                selected = style.background == background,
+                onClick = { SubtitleStyleController.setBackground(background) },
+            )
+        }
     }
 }
 

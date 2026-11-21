@@ -29,6 +29,11 @@ data class WatchHistoryItem(
     val durationMs: Long,
     val updatedAtEpochMs: Long,
     /**
+     * #317：首次加入历史的时间（epoch ms）。0 表示旧数据，排序时回退到 [updatedAtEpochMs]。
+     * 与 updatedAt（每次观看都会刷新）分离，用于「添加时间」排序。
+     */
+    val addedAtEpochMs: Long = 0,
+    /**
      * 保存这条记录时该线路的总集数；0 表示未知（旧数据/单集影片）。
      *
      * 历史列表用它回答用户最关心的问题：「我看完之后，是不是又更新了新集？」

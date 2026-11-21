@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import android.util.TypedValue
 import android.view.ViewGroup
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
@@ -32,6 +33,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import com.tvbox.app.domain.PlaybackFailureKind
@@ -54,6 +56,8 @@ internal fun PlayerSurface(
     modifier: Modifier = Modifier,
 ) {
     var firstFrameRendered by remember(player) { mutableStateOf(false) }
+    // #149/#364：读取字幕样式状态；变更时 AndroidView 的 update 会重新应用到 SubtitleView。
+    val subtitleStyle = SubtitleStyleController.style
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onRenderedFirstFrame() {
@@ -81,12 +85,15 @@ internal fun PlayerSurface(
                     else PlayerView.SHOW_BUFFERING_NEVER,
                 )
                 applyVideoScaleMode(resizeMode)
+                // #149/#364：字幕样式只作用于 SubtitleView，不重建 ExoPlayer、不打断播放。
+                applySubtitleStyle(subtitleStyle)
                 configure(this)
             }
         },
         update = { view ->
             view.player = player
             view.applyVideoScaleMode(resizeMode)
+            view.applySubtitleStyle(subtitleStyle)
             view.setShowBuffering(
                 if (showBuffering) PlayerView.SHOW_BUFFERING_ALWAYS
                 else PlayerView.SHOW_BUFFERING_NEVER,
@@ -121,6 +128,33 @@ private fun PlayerView.applyVideoScaleMode(mode: VideoScaleMode) {
         "TVBoxVideoScale",
         "applyVideoScaleMode mode=${mode.storageKey}, resizeMode=$resizeMode, frameAspectRatio=$ratio",
     )
+}
+
+/**
+ * #149/#364：把字号/背景档位应用到 Media3 字幕视图。
+ * 内嵌字幕与外挂文本轨都由 SubtitleView 绘制，因此这一处设置对两条路径都生效；
+ * 用固定 sp 字号乘以倍率，避免依赖 Media3 内部默认 fraction 常量导致版本兼容问题。
+ */
+@OptIn(UnstableApi::class)
+private fun PlayerView.applySubtitleStyle(style: SubtitleViewStyle) {
+    val subtitleView = subtitleView ?: return
+    val default = CaptionStyleCompat.DEFAULT
+    val backgroundColor = when (style.background) {
+        SubtitleBackground.Black -> android.graphics.Color.BLACK
+        SubtitleBackground.None -> android.graphics.Color.TRANSPARENT
+        SubtitleBackground.Default -> default.backgroundColor
+    }
+    subtitleView.setStyle(
+        CaptionStyleCompat(
+            default.foregroundColor,
+            backgroundColor,
+            default.windowColor,
+            default.edgeType,
+            default.edgeColor,
+            default.typeface,
+        ),
+    )
+    subtitleView.setFixedTextSize(TypedValue.COMPLEX_UNIT_SP, 16f * style.fontSizeScale)
 }
 
 /** 播放状态表达：加载中 / 三类失败（取流失败、建源后未出帧、出帧后卡死）。 */

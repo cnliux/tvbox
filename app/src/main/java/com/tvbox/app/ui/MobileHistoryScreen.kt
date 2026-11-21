@@ -1,7 +1,8 @@
 package com.tvbox.app.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +23,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -39,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -73,6 +75,60 @@ internal fun MobileHistoryScreen(
 ) {
     var confirmClear by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<WatchHistoryItem?>(null) }
+    // #309：长按条目进入多选模式，选中项用稳定标识（apiLineId:movieId:episodeIndex）记录。
+    var multiSelectMode by remember { mutableStateOf(false) }
+    var selectedKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var confirmBatchDelete by remember { mutableStateOf(false) }
+    // #311：apiLineId 不在当前 apiLines 中的历史条目即「失效源记录」；线路未加载时不做判断，
+    // 避免刚进页面 apiLines 还为空时把全部历史误判成失效。
+    val staleItems = remember(state.historyItems, state.apiLines) {
+        if (state.apiLines.isEmpty()) {
+            emptyList()
+        } else {
+            val validIds = state.apiLines.map { it.id }.toSet()
+            state.historyItems.filter { it.apiLineId !in validIds }
+        }
+    }
+    var confirmCleanStale by remember { mutableStateOf(false) }
+    // #317：最近观看 / 添加时间排序切换（纯本地排序，不改动历史数据）。
+    var sortMode by remember { mutableStateOf(HistorySortMode.RECENT) }
+    // #308：历史搜索——按片名 / 来源 / 分类本地过滤，不改动历史数据本身。
+    var historyQuery by remember { mutableStateOf("") }
+    val normalizedHistoryQuery = historyQuery.trim()
+    val filteredHistoryItems = remember(state.historyItems, normalizedHistoryQuery) {
+        if (normalizedHistoryQuery.isBlank()) {
+            state.historyItems
+        } else {
+            val needle = normalizedHistoryQuery
+            state.historyItems.filter { item ->
+                item.movieName.contains(needle, ignoreCase = true) ||
+                    item.sourceName.contains(needle, ignoreCase = true) ||
+                    item.typeName.contains(needle, ignoreCase = true)
+            }
+        }
+    }
+    // #317：旧数据 addedAtEpochMs=0，回退到 updatedAtEpochMs 参与排序。
+    val sortedHistoryItems = remember(filteredHistoryItems, sortMode) {
+        when (sortMode) {
+            HistorySortMode.RECENT -> filteredHistoryItems.sortedByDescending { it.updatedAtEpochMs }
+            HistorySortMode.ADDED -> filteredHistoryItems.sortedByDescending {
+                it.addedAtEpochMs.takeIf { ts -> ts > 0L } ?: it.updatedAtEpochMs
+            }
+        }
+    }
+    val selectedItems = remember(state.historyItems, selectedKeys) {
+        state.historyItems.filter { historyItemKey(it) in selectedKeys }
+    }
+
+    fun toggleSelection(item: WatchHistoryItem) {
+        val key = historyItemKey(item)
+        selectedKeys = if (key in selectedKeys) selectedKeys - key else selectedKeys + key
+    }
+
+    fun exitMultiSelect() {
+        multiSelectMode = false
+        selectedKeys = emptySet()
+    }
 
     if (confirmClear) {
         AlertDialog(
@@ -106,13 +162,48 @@ internal fun MobileHistoryScreen(
             },
         )
     }
+    // #309：批量删除确认。保持上面的单条删除 Dialog 不变。
+    if (confirmBatchDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmBatchDelete = false },
+            title = { Text("批量删除") },
+            text = { Text("删除选中的 ${selectedItems.size} 条观看记录？") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmBatchDelete = false
+                    actions.removeHistoryItems(selectedItems)
+                    exitMultiSelect()
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBatchDelete = false }) { Text("取消") }
+            },
+        )
+    }
+    // #311：失效源清理确认。
+    if (confirmCleanStale) {
+        AlertDialog(
+            onDismissRequest = { confirmCleanStale = false },
+            title = { Text("清理失效源记录") },
+            text = { Text("删除 ${staleItems.size} 条引用已删除源的观看记录？") },
+            confirmButton = {
+                Button(onClick = {
+                    confirmCleanStale = false
+                    actions.removeStaleHistoryItems()
+                }) { Text("清理") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmCleanStale = false }) { Text("取消") }
+            },
+        )
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = TvColors.Background,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // 顶部只有标题与清空按钮，不再显示“观看记录：...”这类说明提示。
+            // 顶部标题 + 操作按钮：多选模式下切换为「全选 / 删除 / 取消」，其余情况保持「清空」。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -121,7 +212,7 @@ internal fun MobileHistoryScreen(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "历史",
+                        text = if (multiSelectMode) "已选 ${selectedKeys.size} 条" else "历史",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold,
                     )
@@ -142,13 +233,68 @@ internal fun MobileHistoryScreen(
                         }
                     }
                 }
-                TextButton(
-                    onClick = { confirmClear = true },
-                    enabled = state.historyItems.isNotEmpty(),
-                    modifier = Modifier.heightIn(min = 48.dp),
-                ) { Text("清空") }
+                if (multiSelectMode) {
+                    // #309：多选操作。全选只作用于当前（搜索 + 排序后的）可见列表。
+                    TextButton(onClick = { selectedKeys = filteredHistoryItems.map(::historyItemKey).toSet() }) {
+                        Text("全选")
+                    }
+                    TextButton(
+                        onClick = { confirmBatchDelete = true },
+                        enabled = selectedItems.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) { Text("删除", color = TvColors.Danger) }
+                    TextButton(onClick = { exitMultiSelect() }) { Text("取消") }
+                } else {
+                    TextButton(
+                        onClick = { confirmClear = true },
+                        enabled = state.historyItems.isNotEmpty(),
+                        modifier = Modifier.heightIn(min = 48.dp),
+                    ) { Text("清空") }
+                }
             }
 
+            // #309/#311/#317：辅助操作行——排序切换、失效源清理入口、多选提示。
+            if (state.historyItems.isNotEmpty() && !multiSelectMode) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    TextButton(onClick = {
+                        sortMode = if (sortMode == HistorySortMode.RECENT) {
+                            HistorySortMode.ADDED
+                        } else {
+                            HistorySortMode.RECENT
+                        }
+                    }) { Text("排序：${sortMode.label}") }
+                    TextButton(
+                        onClick = { confirmCleanStale = true },
+                        enabled = staleItems.isNotEmpty(),
+                    ) { Text("清理失效源${if (staleItems.isEmpty()) "" else "(${staleItems.size})"}") }
+                    Text(
+                        text = "长按多选",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = TvColors.TextSecondary,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+
+            // #308：历史搜索框。仅在有历史时显示。
+            if (state.historyItems.isNotEmpty()) {
+                OutlinedTextField(
+                    value = historyQuery,
+                    onValueChange = { historyQuery = it },
+                    label = { Text("搜索片名 / 来源 / 分类") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
             if (state.historyItems.isEmpty()) {
                 EmptyState(
                     title = "暂无观看历史",
@@ -156,13 +302,24 @@ internal fun MobileHistoryScreen(
                     actionLabel = "去首页",
                     onAction = actions::openHome,
                 )
+            } else if (filteredHistoryItems.isEmpty()) {
+                EmptyState(
+                    title = "没有匹配的历史",
+                    subtitle = "试试其他关键词，或清空搜索框查看全部记录",
+                )
             } else {
                 // 分组计算依赖「本地自然日」：跨过午夜（或跨年）后若列表未变，首次计算时冻结的
                 // 「今天/昨天」标签会错误地停留在旧日期。这里把本地日零点时间戳纳入 remember key，
                 // 使页面在午夜之后任意一次重组（回到 Tab / 数据变化）时都按新日期重新分组。
                 val dayStartMs = startOfDayMs(System.currentTimeMillis())
-                val sections = remember(state.historyItems, dayStartMs) {
-                    buildHistorySections(state.historyItems, dayStartMs)
+                // #317：按日期分组只适用于「最近观看」；「添加时间」排序下按 updatedAt 分组会打乱
+                // 排序结果，因此直接展示单一分组。
+                val sections = remember(sortedHistoryItems, dayStartMs, sortMode) {
+                    if (sortMode == HistorySortMode.ADDED) {
+                        listOf(HistorySection("按添加时间", sortedHistoryItems))
+                    } else {
+                        buildHistorySections(sortedHistoryItems, dayStartMs)
+                    }
                 }
                 PullToRefreshBox(
                     isRefreshing = state.historyUpdateChecking,
@@ -195,12 +352,26 @@ internal fun MobileHistoryScreen(
                                 )
                             }
                         }
-                        // 使用 apiLineId:movieId:episodeIndex 作为稳定 key：同一影片在同源的多个观看记录（不同集数）必须
-                        // 各自拥有独立 key，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与 anim 错乱到错误条目上。
-                        items(items = section.items, key = { "${it.apiLineId}:${it.movieId}:${it.episodeIndex}" }) { entry ->
+                        // 使用与多选选中集合相同的稳定 key（apiLineId:movieId:episodeIndex），
+                        // 保证同一影片不同集数各自独立，且选中状态在重组后不丢失。
+                        items(items = section.items, key = { historyItemKey(it) }) { entry ->
                             MobileHistoryRow(
                                 item = entry,
-                                onClick = { actions.resumeHistory(entry, TvScreen.History) },
+                                multiSelectMode = multiSelectMode,
+                                selected = historyItemKey(entry) in selectedKeys,
+                                onClick = {
+                                    if (multiSelectMode) toggleSelection(entry)
+                                    else actions.resumeHistory(entry, TvScreen.History)
+                                },
+                                // #309：长按进入多选并选中当前条目；已进入多选则继续切换选中。
+                                onLongClick = {
+                                    if (!multiSelectMode) {
+                                        multiSelectMode = true
+                                        selectedKeys = setOf(historyItemKey(entry))
+                                    } else {
+                                        toggleSelection(entry)
+                                    }
+                                },
                                 onDelete = { pendingDelete = entry },
                             )
                         }
@@ -213,14 +384,18 @@ internal fun MobileHistoryScreen(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MobileHistoryRow(
     item: WatchHistoryItem,
+    multiSelectMode: Boolean,
+    selected: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
     val timeText = remember(item.updatedAtEpochMs) {
-        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.updatedAtEpochMs))
+        HOUR_MINUTE_FORMAT.get().format(Date(item.updatedAtEpochMs))
     }
     val progressText = if (item.durationMs > 0) {
         "${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
@@ -233,7 +408,8 @@ private fun MobileHistoryRow(
         color = TvColors.SurfaceRaised.copy(alpha = 0.6f),
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            // #309：长按进入多选；单选/多选手势都在这一层处理，避免与子控件争抢点击。
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
@@ -342,12 +518,22 @@ private fun MobileHistoryRow(
                 }
             }
             Spacer(modifier = Modifier.width(2.dp))
-            IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
-                Icon(
-                    imageVector = Icons.Default.Delete,
-                    contentDescription = "删除记录",
-                    tint = TvColors.Danger,
+            if (multiSelectMode) {
+                // #309：多选态用只读勾选框展示选中状态，点击交由外层 combinedClickable 处理，
+                // 避免 Checkbox 自身点击与整行点击重复触发导致「点一次反而取消选中」。
+                Checkbox(
+                    checked = selected,
+                    onCheckedChange = null,
+                    modifier = Modifier.size(48.dp),
                 )
+            } else {
+                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = "删除记录",
+                        tint = TvColors.Danger,
+                    )
+                }
             }
         }
     }
@@ -357,6 +543,19 @@ internal data class HistorySection(
     val label: String,
     val items: List<WatchHistoryItem>,
 )
+
+/** #317：历史排序模式。RECENT 按最近观看时间，ADDED 按首次加入时间。 */
+internal enum class HistorySortMode(val label: String) {
+    RECENT("最近观看"),
+    ADDED("添加时间"),
+}
+
+/**
+ * #309：某源某影片某集的稳定标识，用作多选选中集合与 LazyColumn 的 key，
+ * 避免同一影片不同集数互相串位。
+ */
+internal fun historyItemKey(item: WatchHistoryItem): String =
+    "${item.apiLineId}:${item.movieId}:${item.episodeIndex}"
 
 /** 返回 [epochMs] 所在本地自然日的零点时间戳（时/分/秒/毫秒清零）。 */
 internal fun startOfDayMs(epochMs: Long): Long {
@@ -403,9 +602,12 @@ private fun yearOf(epochMs: Long): Int {
 }
 
 // ThreadLocal 避免跨线程共享 SimpleDateFormat（不线程安全）；且避免每次 build 重建。
-private val SAME_YEAR_DAY_FORMAT = ThreadLocal.withInitial {
-    SimpleDateFormat("M月d日", Locale.getDefault())
+// Java 的 ThreadLocal.get() 在 Kotlin 中是平台类型（判为可空），这里覆写为非空返回，
+// 既保留线程本地复用语义，也无需在调用处加 ?. / !!。
+private fun dayFormatThreadLocal(pattern: String) = object : ThreadLocal<SimpleDateFormat>() {
+    override fun initialValue(): SimpleDateFormat = SimpleDateFormat(pattern, Locale.getDefault())
+    override fun get(): SimpleDateFormat = super.get() ?: initialValue().also { set(it) }
 }
-private val CROSS_YEAR_DAY_FORMAT = ThreadLocal.withInitial {
-    SimpleDateFormat("yyyy年M月d日", Locale.getDefault())
-}
+private val SAME_YEAR_DAY_FORMAT = dayFormatThreadLocal("M月d日")
+private val CROSS_YEAR_DAY_FORMAT = dayFormatThreadLocal("yyyy年M月d日")
+private val HOUR_MINUTE_FORMAT = dayFormatThreadLocal("HH:mm")

@@ -105,8 +105,29 @@ class MainActivity : ComponentActivity() {
             viewModel.reportNotificationPermissionDenied(permanent)
         }
     }
+    /**
+     * #201 Intent 来源校验（纵深防御）：MainActivity 因 LAUNCHER 必须 exported，
+     * 但本应用不消费任何外部 data / extra。对携带 data URI 或非 MAIN action 的启动意图
+     * 做防御性剥离与告警，避免被第三方应用当作隐式通道注入内容。正常桌面图标启动
+     * （action=MAIN、无 data）不受影响。
+     */
+    private fun sanitizeExternalIntent() {
+        val incoming = intent ?: return
+        val action = incoming.action
+        val data = incoming.data
+        if (data != null || (action != null && action != Intent.ACTION_MAIN)) {
+            Log.w(
+                "TVBoxIntent",
+                "已剥离外部 Intent 附加数据：action=$action, scheme=${data?.scheme}",
+            )
+            incoming.data = null
+            incoming.action = Intent.ACTION_MAIN
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        sanitizeExternalIntent()
         notifyPendingCrashLogs()
         // debug 包开启 StrictMode：主线程 IO 只写 logcat，不 crash，release 编译期即剔除。
         enableStrictModeInDebug()
@@ -184,6 +205,10 @@ class MainActivity : ComponentActivity() {
         )
     }
 
+    // 主题 Theme.TVBox 的 android:windowFullscreen=true 最终以 FLAG_FULLSCREEN 落到 window 上，
+    // 手机模式必须 clearFlags 才能真正恢复状态栏与 systemBars inset；InsetsController.show 无法
+    // 抵消主题 flag，故此处保留（已弃用但有意为之），与 PlayerViewport 的沉浸式处理同一口径。
+    @Suppress("DEPRECATION")
     private fun applyBaseOrientation(mode: DeviceMode) {
         requestedOrientation = if (mode == DeviceMode.Mobile) {
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -210,7 +235,7 @@ class MainActivity : ComponentActivity() {
         pendingInstallPermissionAction = null
         pendingExportApkPath = apkPath
         val version = viewModel.state.value.availableUpdate?.versionName.orEmpty()
-            .replace(Regex("[^A-Za-z0-9._-]"), "_")
+            .replace(APK_NAME_SAFE_REGEX, "_")
         try {
             saveApkLauncher.launch("TVBox-v$version.apk")
         } catch (error: Exception) {
@@ -437,4 +462,5 @@ private class TvBoxViewModelFactory(
 
 private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
 private const val HOME_BACK_EXIT_INTERVAL_MS = 2000L
+private val APK_NAME_SAFE_REGEX = Regex("[^A-Za-z0-9._-]")
 

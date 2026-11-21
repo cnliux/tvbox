@@ -77,6 +77,14 @@ data class AppSettings(
     val playerLogEnabled: Boolean = false,
     /** 更新渠道：stable 指向 update.json（正式发布），beta 指向 update-beta.json（预发布）。 */
     val updateChannel: UpdateChannel = UpdateChannel.Stable,
+    /** #277 直播切台频道名横幅显示时长（毫秒）；0 表示自动（电视 4000ms / 手机 2000ms）。 */
+    val liveInfoBannerDurationMs: Long = LiveInfoBannerDuration.Auto,
+    /** #94 多源搜索/详情的单源超时（毫秒）；默认沿用既有 6s 预算。 */
+    val perSourceTimeoutMs: Long = PerSourceTimeout.DefaultMs,
+    /** #318 历史隐私模式：开启后不再写入新的观看历史，已有记录保留。 */
+    val historyPrivacyMode: Boolean = false,
+    /** #54/#266 硬解设备白名单：逗号分隔的 Build.MODEL 前缀，命中时强制硬解；空表示不启用。 */
+    val decoderDeviceWhitelist: String = "",
 )
 
 /**
@@ -104,6 +112,36 @@ object PlayerSpeedSetting {
     const val Max = 2.0f
 
     fun clamp(value: Float): Float = value.coerceIn(Min, Max)
+}
+
+/**
+ * #277 直播切台频道名横幅时长。0 为「自动」：电视上停留更久（4s），手机 2s；
+ * 非 0 值由用户指定，统一收敛到 [MinMs]..[MaxMs]。
+ */
+object LiveInfoBannerDuration {
+    const val Auto = 0L
+    const val TvDefaultMs = 4_000L
+    const val MobileDefaultMs = 2_000L
+    const val MinMs = 500L
+    const val MaxMs = 10_000L
+    val choices: List<Long> = listOf(Auto, 1_500L, 2_000L, 3_000L, 4_000L, 5_000L, 6_000L)
+
+    fun clamp(value: Long): Long = value.coerceIn(Auto, MaxMs)
+
+    /** 自动档按设备模式取默认时长；手动档仅在合法区间内生效。 */
+    fun resolve(configured: Long, isTelevision: Boolean): Long =
+        configured.takeIf { it >= MinMs }?.coerceIn(MinMs, MaxMs)
+            ?: if (isTelevision) TvDefaultMs else MobileDefaultMs
+}
+
+/** #94 多源搜索/详情的单源超时，默认沿用改造前搜索/详情的 6s 预算。 */
+object PerSourceTimeout {
+    const val DefaultMs = 6_000L
+    const val MinMs = 1_000L
+    const val MaxMs = 30_000L
+    val choices: List<Long> = listOf(2_000L, 3_000L, 4_000L, DefaultMs, 8_000L, 10_000L, 15_000L)
+
+    fun clamp(value: Long): Long = value.coerceIn(MinMs, MaxMs)
 }
 
 /** 一个数量类设置项：默认值、合法区间与可选档位。 */
@@ -208,6 +246,19 @@ fun DeviceMode.resolveEffective(detected: DeviceMode): DeviceMode =
 /** 计算生效的设备模式：手动值优先，Auto 时读取系统识别结果。 */
 fun AppSettings.effectiveMode(context: android.content.Context): DeviceMode =
     deviceMode.resolveEffective(DeviceMode.detectFromSystem(context))
+
+/**
+ * #54/#266 计算生效的解码策略：白名单按 Build.MODEL 前缀（逗号分隔、忽略大小写）匹配，
+ * 命中时强制 [DecoderStrategy.HardwareOnly]；名单为空时保持用户选择的策略不变。
+ */
+fun AppSettings.effectiveDecoderStrategy(deviceModel: String = android.os.Build.MODEL): DecoderStrategy {
+    val whitelist = decoderDeviceWhitelist
+    if (whitelist.isBlank()) return decoderStrategy
+    val matched = whitelist.split(',')
+        .map { it.trim() }
+        .any { prefix -> prefix.isNotEmpty() && deviceModel.startsWith(prefix, ignoreCase = true) }
+    return if (matched) DecoderStrategy.HardwareOnly else decoderStrategy
+}
 
 enum class VideoScaleMode(
     val storageKey: String,

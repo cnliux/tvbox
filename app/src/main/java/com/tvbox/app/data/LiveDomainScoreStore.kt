@@ -2,7 +2,6 @@ package com.tvbox.app.data
 
 import android.content.Context
 import com.tvbox.app.domain.LiveDomainScore
-import com.tvbox.app.domain.LIVE_DOMAIN_MAX_ENTRIES
 import com.tvbox.app.domain.updateLiveDomainScores
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

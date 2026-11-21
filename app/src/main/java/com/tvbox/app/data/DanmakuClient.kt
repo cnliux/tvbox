@@ -19,6 +19,12 @@ import okhttp3.WebSocketListener
 import okio.ByteString
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+/** 虎牙主播 uid 解析用正则；固定 pattern 提到顶层预编译，避免每次解析重复构造。 */
+private val HUYA_LUID_REGEX = Regex("lUid\":([0-9]+)")
+private val HUYA_CHANNEL_ID_REGEX = Regex("lChannelId\":([0-9]+)")
+private val HUYA_SUB_CHANNEL_ID_REGEX = Regex("lSubChannelId\":([0-9]+)")
 
 /**
  * 弹幕日志脱敏：房间号、cookie、Authorization/token、签名 query、STT 房间字段。
@@ -107,7 +113,7 @@ internal abstract class BaseDanmakuClient(
     private var socket: WebSocket? = null
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
-    private var reconnectAttempts = 0
+    private val reconnectAttempts = AtomicInteger(0)
 
     @Volatile
     private var stopped = false
@@ -115,8 +121,7 @@ internal abstract class BaseDanmakuClient(
     private var disposed = false
     @Volatile
     private var connected = false
-    @Volatile
-    private var emittedCount = 0
+    private val emittedCount = AtomicInteger(0)
 
     protected abstract fun onConnected(ws: WebSocket)
     protected abstract fun onPayload(bytes: ByteArray)
@@ -134,7 +139,7 @@ internal abstract class BaseDanmakuClient(
         if (stopped) {
             stopped = false
             // 重新开始后允许再次重连（重置重连计数）。
-            reconnectAttempts = 0
+            reconnectAttempts.set(0)
         } else if (connected || socket != null || reconnectJob?.isActive == true) {
             return
         }
@@ -164,10 +169,10 @@ internal abstract class BaseDanmakuClient(
     protected fun emit(message: DanmakuMessage) {
         if (message.text.isBlank()) return
         // 少量抽样打日志，便于现场确认弹幕确实在流动（不刷屏）。
-        emittedCount += 1
-        if (emittedCount % 20 == 1) {
+        val n = emittedCount.incrementAndGet()
+        if (n % 20 == 1) {
             // 用户名与弹幕正文属于用户数据，不写进日志（原始帧同样不记录）。
-            log("【弹幕#$emittedCount】收到弹幕（内容不落日志）")
+            log("【弹幕#$n】收到弹幕（内容不落日志）")
         }
         _messages.tryEmit(message)
     }
@@ -186,7 +191,7 @@ internal abstract class BaseDanmakuClient(
                     return
                 }
                 connected = true
-                reconnectAttempts = 0
+                reconnectAttempts.set(0)
                 log("【弹幕已连接】$url")
                 runCatching { onConnected(webSocket) }
                 startHeartbeat(webSocket)
@@ -231,19 +236,19 @@ internal abstract class BaseDanmakuClient(
 
     private fun scheduleReconnect() {
         if (stopped || reconnectJob?.isActive == true) return
-        if (reconnectAttempts >= MAX_CONSECUTIVE_RECONNECTS) {
+        if (reconnectAttempts.get() >= MAX_CONSECUTIVE_RECONNECTS) {
             log("【弹幕重连】已达 ${MAX_CONSECUTIVE_RECONNECTS} 次上限，停止重试")
             return
         }
-        reconnectAttempts += 1
+        val attempt = reconnectAttempts.incrementAndGet()
         socket = null
         // 指数退避：3s → 6s → 12s → 24s → 48s（封顶 60s）。
-        val backoffMs = (RECONNECT_DELAY_MS shl (reconnectAttempts - 1).coerceAtMost(4))
+        val backoffMs = (RECONNECT_DELAY_MS shl (attempt - 1).coerceAtMost(4))
             .coerceAtMost(MAX_RECONNECT_BACKOFF_MS)
         reconnectJob = scope.launch {
             delay(backoffMs)
             if (stopped) return@launch
-            log("【弹幕重连 #$reconnectAttempts】$url")
+            log("【弹幕重连 #${reconnectAttempts.get()}】$url")
             connect()
         }
     }
@@ -473,13 +478,13 @@ internal class HuyaDanmakuClient(private val roomId: String) :
             }
         }.getOrNull() ?: return null
 
-        fun pick(pattern: String): Long =
-            Regex(pattern).find(html)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
+        fun pick(pattern: Regex): Long =
+            pattern.find(html)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
 
         return sequenceOf(
-            pick("lUid\":([0-9]+)"),
-            pick("lChannelId\":([0-9]+)"),
-            pick("lSubChannelId\":([0-9]+)"),
+            pick(HUYA_LUID_REGEX),
+            pick(HUYA_CHANNEL_ID_REGEX),
+            pick(HUYA_SUB_CHANNEL_ID_REGEX),
         ).firstOrNull { it > 0 }
     }
 

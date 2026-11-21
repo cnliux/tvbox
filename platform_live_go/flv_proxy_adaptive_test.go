@@ -261,12 +261,14 @@ func TestDouyuAdaptiveInstantRetryOnTransientSession(t *testing.T) {
 	if rerr != nil && len(frames) < 6 {
 		t.Fatalf("输出不足：%v", rerr)
 	}
-	gapNs := req2At.Load() - req1At.Load()
-	if gapNs <= 0 {
+	// 第二段是否发生以 reqCount 为准；req1At/req2At 在 Windows 粗时钟粒度下
+	// 可能落到同一刻度（gap==0 即 0ms 内完成重连，恰是「立即重连」的预期形态），
+	// 不能以 gap<=0 判定未发生。
+	if atomic.LoadInt64(&reqCount) < 2 {
 		t.Fatalf("第二段请求未发生：reqCount=%d req1At=%d req2At=%d frames=%d rerr=%v",
 			atomic.LoadInt64(&reqCount), req1At.Load(), req2At.Load(), len(frames), rerr)
 	}
-	if gapNs > int64(1500*time.Millisecond) {
+	if gapNs := req2At.Load() - req1At.Load(); gapNs > int64(1500*time.Millisecond) {
 		t.Fatalf("瞬态短会话应立即重连（自适应），实际第二段距第一段 %dms（≥1500 说明仍在退避）", gapNs/int64(time.Millisecond))
 	}
 	if p := proxy.adaptive.instantStreakSnapshot(); p < 1 {

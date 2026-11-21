@@ -82,6 +82,7 @@ class DlnaCaster(context: Context) {
             .mapNotNull { location ->
                 runCatching { loadDevice(location) }
                     .onFailure { error ->
+                        if (error is CancellationException) throw error
                         Log.w(TAG, "loadDevice failed: ${logSafeUrl(location)} ${logSafeText(error.message)}")
                     }
                     .getOrNull()

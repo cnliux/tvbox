@@ -8,6 +8,7 @@ import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.data.network.parseNetworkPayload
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.isBlockedContent
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -43,7 +44,9 @@ class DefaultSearchHotWordRepository(
             cache.get(now)?.words?.takeIf { it.isNotEmpty() }?.let { return@withContext it.take(safeLimit) }
         }
 
-        val fetched = runCatching { fetchAggregatedTitles() }.getOrDefault(emptyList())
+        val fetched = runCatching { fetchAggregatedTitles() }
+            .onFailure { if (it is CancellationException) throw it }
+            .getOrDefault(emptyList())
         if (fetched.isNotEmpty()) {
             cache.put(
                 SearchHotWordCacheRecord(
@@ -59,9 +62,17 @@ class DefaultSearchHotWordRepository(
 
     private suspend fun fetchAggregatedTitles(): List<String> = coroutineScope {
         val rankRequests = HOT_RANK_CATEGORIES.map { category ->
-            async { runCatching { fetchRankTitles(category) }.getOrDefault(emptyList()) }
+            async {
+                runCatching { fetchRankTitles(category) }
+                    .onFailure { if (it is CancellationException) throw it }
+                    .getOrDefault(emptyList())
+            }
         }
-        val doubanRequest = async { runCatching { doubanTitles() }.getOrDefault(emptyList()) }
+        val doubanRequest = async {
+            runCatching { doubanTitles() }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrDefault(emptyList())
+        }
         // 缓存完整档位（最大可选值），实际展示数量由调用方按设置裁剪。
         composeHotWords((rankRequests + doubanRequest).awaitAll(), limit = QuantitySettings.HotWordCount.max)
     }

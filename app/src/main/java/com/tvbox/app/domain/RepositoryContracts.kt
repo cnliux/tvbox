@@ -40,6 +40,8 @@ interface MovieRepository {
     fun setDisabledLineIds(disabledIds: Set<String>)
     /** 设置多源搜索/详情同时请求的源数量。 */
     fun setMaxParallelSourceRequests(value: Int) {}
+    /** #94 设置多源搜索/详情的单源超时（毫秒）。 */
+    fun setPerSourceTimeoutMs(value: Long) {}
     suspend fun testSpeed(apiLineId: String): Long?
     suspend fun getCategories(apiLineId: String): List<Category>
     suspend fun getMovies(apiLineId: String, page: Int, typeId: Int? = null, keyword: String? = null): PagedMovies

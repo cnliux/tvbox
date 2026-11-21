@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.tvbox.app.domain.AppSettings
 import kotlinx.serialization.encodeToString
@@ -23,6 +24,10 @@ internal fun MutablePreferences.putString(name: String, value: String) {
 
 internal fun MutablePreferences.putInt(name: String, value: Int) {
     this[intPreferencesKey(name)] = value
+}
+
+internal fun MutablePreferences.putLong(name: String, value: Long) {
+    this[longPreferencesKey(name)] = value
 }
 
 internal fun MutablePreferences.putFloat(name: String, value: Float) {
@@ -101,6 +106,10 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putInt(SettingsStorageKeys.MAX_PARALLEL_SOURCE_REQUESTS, settings.maxParallelSourceRequests)
     putBoolean(SettingsStorageKeys.PLAYER_LOG_ENABLED, settings.playerLogEnabled)
     putString(SettingsStorageKeys.UPDATE_CHANNEL, settings.updateChannel.storageKey)
+    putLong(SettingsStorageKeys.LIVE_INFO_BANNER_DURATION_MS, settings.liveInfoBannerDurationMs)
+    putLong(SettingsStorageKeys.PER_SOURCE_TIMEOUT_MS, settings.perSourceTimeoutMs)
+    putBoolean(SettingsStorageKeys.HISTORY_PRIVACY_MODE, settings.historyPrivacyMode)
+    putString(SettingsStorageKeys.DECODER_DEVICE_WHITELIST, settings.decoderDeviceWhitelist)
 }
 
 /** 把 DataStore 内容还原成旧快照形状，交给同一套解析函数读取。 */

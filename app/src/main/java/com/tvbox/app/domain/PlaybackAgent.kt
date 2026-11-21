@@ -172,36 +172,46 @@ class PlaybackAgent(
         // 导致 selectNextSource 又切回同一条死链触发无意义重播。
         val candidates = (1 until sources.size)
             .map { offset -> (safeCurrentIndex + offset) % sources.size }
-            .filter { sourceIndex ->
-                sourceIndex !in blockedSourceIndexes &&
-                    episodeIndexes[sourceIndex]?.let { sources[sourceIndex].episodes[it].url.isNotBlank() } == true
+            .mapNotNull { sourceIndex ->
+                if (sourceIndex !in blockedSourceIndexes) {
+                    episodeIndexes[sourceIndex]?.let { episodeIndex ->
+                        if (sources[sourceIndex].episodes[episodeIndex].url.isNotBlank()) {
+                            sourceIndex to episodeIndex
+                        } else {
+                            null
+                        }
+                    }
+                } else {
+                    null
+                }
             }
 
         if (candidates.isEmpty()) return PlaybackAgentDecision(nextSourceIndex = null)
 
-        val healthyCandidates = candidates.filterNot { sourceIndex ->
-            val key = playbackHealthKey(movie.id, episodeIndexes[sourceIndex]!!, sources[sourceIndex])
+        val healthyCandidates = candidates.filterNot { candidate ->
+            val key = playbackHealthKey(movie.id, candidate.second, sources[candidate.first])
             healthSnapshot.entryFor(key)?.isRecentlyUnhealthy(nowMs, unhealthyCooldownMs) == true
         }
         val selectedIndex = candidates
             .sortedWith(
-                compareByDescending<Int> { sourceIndex ->
+                compareByDescending<Pair<Int, Int>> { candidate ->
                     sourceHealthScore(
                         movie = movie,
-                        sourceIndex = sourceIndex,
-                        episodeIndex = episodeIndexes[sourceIndex]!!,
+                        sourceIndex = candidate.first,
+                        episodeIndex = candidate.second,
                         requestedSourceIndex = currentSourceIndex,
                         healthSnapshot = healthSnapshot,
                         nowMs = nowMs,
                         cooldownMs = unhealthyCooldownMs,
                     )
-                }.thenBy { sourceIndex ->
-                    sourceDistance(sourceIndex, currentSourceIndex, sources.size)
-                }.thenBy { sourceIndex ->
-                    sourceIndex
+                }.thenBy { candidate ->
+                    sourceDistance(candidate.first, currentSourceIndex, sources.size)
+                }.thenBy { candidate ->
+                    candidate.first
                 },
             )
             .first()
+            .first
 
         return PlaybackAgentDecision(
             nextSourceIndex = selectedIndex,

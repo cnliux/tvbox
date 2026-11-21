@@ -35,6 +35,8 @@ import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CdnStatusRow
+import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.SettingsPageSummary
 import com.tvbox.app.domain.buildSettingsPageSummary
 import com.tvbox.app.domain.settingsEntriesFrom
@@ -69,6 +71,7 @@ import com.tvbox.app.domain.startupDeferralMs
 import com.tvbox.app.domain.gateAutoSwitch
 import com.tvbox.app.domain.resetAutoSwitchThrottle
 import com.tvbox.app.domain.mergeMoviesBySourceAndId
+import com.tvbox.app.domain.otaFailureReason
 import com.tvbox.app.domain.nextRotatedPlatformLiveCandidate
 import com.tvbox.app.domain.resolveEffectiveEpgUrl
 import com.tvbox.app.data.EpgRepository
@@ -517,6 +520,8 @@ class TvBoxViewModel(
             repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
             repository.setDisabledLineIds(settings.blockedSourceIds.toSet())
             repository.setMaxParallelSourceRequests(settings.maxParallelSourceRequests)
+            // #94 启动时把已保存的单源超时推给仓库，搜索/详情立即按该预算执行。
+            repository.setPerSourceTimeoutMs(settings.perSourceTimeoutMs)
             applyLiveSourceConfig(settings)
             val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
             val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
@@ -961,10 +966,12 @@ class TvBoxViewModel(
     }
 
     fun reportUpdateInstallFailure(apkPath: String, message: String, fileMissing: Boolean = false) {
+        // #321：安装失败统一走错误文案映射，签名冲突 / 空间不足给出具体可行动提示。
+        val friendlyMessage = otaFailureReason(message) ?: message
         _state.update {
             it.copy(update = it.update.copy(
                 autoInstallPath = null, awaitingInstallPermission = false,
-                downloadedApkPath = if (fileMissing) null else it.update.downloadedApkPath, error = message,
+                downloadedApkPath = if (fileMissing) null else it.update.downloadedApkPath, error = friendlyMessage,
             ))
         }
         persistUpdateInstallState {
@@ -1059,6 +1066,39 @@ class TvBoxViewModel(
                 }
             }
         }
+    }
+
+    /**
+     * #309：多选批量删除。复用单条 [removeHistoryItem] 的仓库逻辑，在同一把
+     * [historyWriteMutex] 内逐条提交——既保持与进度保存的互斥语义，又不必改动仓库契约。
+     * 任一条失败只跳过该条，已成功的结果作为最新列表回写；全部失败时保留原列表。
+     */
+    fun removeHistoryItems(items: List<WatchHistoryItem>) {
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            historyWriteMutex.withLock {
+                var latest = _state.value.historyItems
+                items.forEach { item ->
+                    runCatching {
+                        historyRepository.removeHistoryItem(item.apiLineId, item.movieId)
+                    }.onSuccess { history -> latest = history }
+                }
+                _state.update { it.copy(historyItems = latest) }
+            }
+        }
+    }
+
+    /**
+     * #311：一键清理引用已删除源的历史记录——apiLineId 不在当前可用 apiLines 中的条目。
+     * 复用 [removeHistoryItems] 的批量删除逻辑。线路尚未加载（空表）时直接返回，
+     * 避免把全部历史误判为失效。
+     */
+    fun removeStaleHistoryItems() {
+        val current = _state.value
+        if (current.apiLines.isEmpty()) return
+        val validIds = current.apiLines.map { it.id }.toSet()
+        val stale = current.historyItems.filter { it.apiLineId !in validIds }
+        removeHistoryItems(stale)
     }
 
     fun updateStartupUpdateCheck(enabled: Boolean) {
@@ -2151,6 +2191,37 @@ class TvBoxViewModel(
         _state.update { it.copy(appSettings = settings) }
     }
 
+    /** #277 更新直播切台横幅时长；0 为按设备模式自动决定。 */
+    fun updateLiveInfoBannerDurationMs(ms: Long) {
+        val value = LiveInfoBannerDuration.clamp(ms)
+        val settings = _state.value.appSettings.copy(liveInfoBannerDurationMs = value)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** #94 更新单源超时并立即推给仓库，下一次搜索/详情按新预算执行。 */
+    fun updatePerSourceTimeoutMs(ms: Long) {
+        val value = PerSourceTimeout.clamp(ms)
+        repository.setPerSourceTimeoutMs(value)
+        val settings = _state.value.appSettings.copy(perSourceTimeoutMs = value)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** #318 更新历史隐私模式；开启后仅阻止新记录写入，不清空已有历史。 */
+    fun updateHistoryPrivacyMode(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(historyPrivacyMode = enabled)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
+    /** #54/#266 更新硬解设备白名单（逗号分隔的 Build.MODEL 前缀）。 */
+    fun updateDecoderDeviceWhitelist(value: String) {
+        val settings = _state.value.appSettings.copy(decoderDeviceWhitelist = value)
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
+    }
+
     fun updateDeviceMode(mode: DeviceMode) {
         if (_state.value.appSettings.deviceMode == mode) return
         val settings = _state.value.appSettings.copy(deviceMode = mode)
@@ -3164,6 +3235,8 @@ class TvBoxViewModel(
         val source = movie.playSources.getOrNull(current.playerSourceIndex) ?: return
         val episode = source.episodes.getOrNull(current.playerEpisodeIndex) ?: return
         if (episode.url.isBlank()) return
+        // #318 历史隐私模式：开启后不再写入新的观看/续播记录，已有历史保持原样。
+        if (current.appSettings.historyPrivacyMode) return
 
         val item = WatchHistoryItem(
             movieId = movie.id,
@@ -4945,8 +5018,6 @@ private fun customVideoApiLineId(baseUrl: String): String =
 private const val DEFAULT_ALL_CATEGORY_TYPE_ID = 13
 // 首页触底加载失败后，同一页自动重试的冷却时间，避免持续失败时每 800ms 重发请求。
 private const val HOME_LOAD_MORE_RETRY_COOLDOWN_MS = 30_000L
-// 直播断流后切换到下一条候选线路前的最长等待时间（移动端 5s，避免在慢网络上误判）。
-private const val PLATFORM_LIVE_BUFFER_TIMEOUT_MS = 5_000L
 // 电视直播：缓冲/卡死类失败在同一线路上原地重连达到该次数后，才切下一条线路。
 private const val LIVE_STALL_RETRY_BEFORE_SWITCH = 2
 // 平台直播恢复熔断：该时间窗内最多自动恢复次数（虎牙 FLV 约 125s 关流一次，正常播放不该触顶）。

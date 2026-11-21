@@ -1,6 +1,7 @@
 ﻿package com.tvbox.app.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -15,8 +16,8 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.ui.LocalTouchMode
+import com.tvbox.app.ui.theme.LocalTvFocus
 import com.tvbox.app.ui.theme.TvColors
-import com.tvbox.app.ui.theme.TvDimens
 
 @Composable
 fun Modifier.tvFocusScale(
@@ -27,11 +28,15 @@ fun Modifier.tvFocusScale(
     // 手机触摸模式不再"隐藏"焦点：触摸点击不会主动获取焦点，而外接蓝牙遥控/键盘
     // 仍然需要可见的焦点反馈。触摸模式只用 2dp 描边、不做放大，避免误以为卡片被选中。
     val touchMode = LocalTouchMode.current
+    // #363：消费主题层 focusTokensFor(theme, reduceMotion) 的产出。系统开启"减少动画"时
+    // focusScale=1f、animationMs=0，此处不再缩放且动效时长归零，尊重系统无障碍偏好。
+    val focusTokens = LocalTvFocus.current
     val resolvedFocusedBorder = focusedBorder ?: TvColors.Accent
     val resolvedIdleBorder = idleBorder ?: TvColors.Border
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
-        targetValue = if (focused && !touchMode) TvDimens.FocusScale else 1f,
+        targetValue = if (focused && !touchMode) focusTokens.focusScale else 1f,
+        animationSpec = tween(durationMillis = focusTokens.animationMs),
         label = "tv-focus-scale",
     )
     this

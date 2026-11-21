@@ -34,7 +34,6 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
@@ -52,23 +51,16 @@ import androidx.compose.material3.Button
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.*
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.Divider
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.foundation.lazy.LazyColumn
 import com.tvbox.app.data.TextFileExporter
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -115,13 +107,10 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
-import com.tvbox.app.domain.PlaybackHealthSnapshot
-import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvTheme
-import com.tvbox.app.domain.VideoScaleMode
 import androidx.compose.material3.Icon
 import com.tvbox.app.ui.components.AppHeader
 import com.tvbox.app.ui.components.AppNavigationRail
@@ -142,7 +131,6 @@ import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
-import com.tvbox.app.BuildConfig
 import com.tvbox.app.ui.theme.TvLayout
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
@@ -444,6 +432,11 @@ private fun AppUpdateDialog(
     val update = state.availableUpdate ?: return
     if (!state.updateDialogVisible) return
     val downloadedApkPath = state.updateDownloadedApkPath
+    // #240：默认焦点落在"稍后再说"，防止 TV 遥控器按确认键误触发升级；强制更新无该按钮，不改焦点。
+    val laterFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (!update.force) runCatching { laterFocus.requestFocus() }
+    }
     AlertDialog(
         onDismissRequest = actions::dismissUpdateDialog,
         title = {
@@ -520,6 +513,8 @@ private fun AppUpdateDialog(
                 TextButton(
                     enabled = !state.updateDownloading,
                     onClick = actions::dismissUpdateDialog,
+                    // #240：挂载 FocusRequester，配合上方 LaunchedEffect 让初始焦点落在"稍后再说"。
+                    modifier = Modifier.focusRequester(laterFocus),
                 ) {
                     Text("稍后再说")
                 }
@@ -1808,68 +1803,6 @@ private fun MobileHomeFeed(
     }
 }
 
-@Composable
-private fun ThemeSetting(
-    selectedTheme: TvTheme,
-    onThemeSelect: (TvTheme) -> Unit,
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("界面主题", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "当前：${selectedTheme.displayName}",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                text = "选择后立即生效，设置会保存到本机。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            TvTheme.entries.forEach { theme ->
-                SettingsActionButton(
-                    text = if (selectedTheme == theme) "✓ ${theme.displayName}" else theme.displayName,
-                    selected = selectedTheme == theme,
-                    onClick = { onThemeSelect(theme) },
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FontScaleSetting(
-    selectedFontScale: TvFontScale,
-    onFontScaleSelect: (TvFontScale) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Text("字体大小", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = "当前：${selectedFontScale.displayName}。文字和内容卡片会立即按此大小调整。",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.bodySmall,
-        )
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            items(TvFontScale.entries, key = { it.storageKey }) { fontScale ->
-                SettingsActionButton(
-                    text = if (selectedFontScale == fontScale) {
-                        "✓ ${fontScale.displayName}"
-                    } else {
-                        fontScale.displayName
-                    },
-                    selected = selectedFontScale == fontScale,
-                    onClick = { onFontScaleSelect(fontScale) },
-                )
-            }
-        }
-    }
-}
-
 private fun Category.allChildrenLabel(): String {
     val baseName = name.removeSuffix("片")
     return "全部$baseName"
@@ -1909,6 +1842,21 @@ private fun SourceManagerSetting(
     var importDialogVisible by remember { mutableStateOf(false) }
     var importDraft by remember { mutableStateOf("") }
     var exportMessage by remember { mutableStateOf<String?>(null) }
+    // #288：源列表本地搜索过滤（按名称或地址）。不进 ViewModel 状态，避免污染持久化配置。
+    var sourceQuery by remember { mutableStateOf("") }
+    val normalizedSourceQuery = sourceQuery.trim()
+    val visibleSourceLines = remember(state.allSourceLines, normalizedSourceQuery) {
+        if (normalizedSourceQuery.isBlank()) {
+            state.allSourceLines
+        } else {
+            val needle = normalizedSourceQuery
+            state.allSourceLines.filter { line ->
+                line.name.contains(needle, ignoreCase = true) ||
+                    line.baseUrls.any { it.contains(needle, ignoreCase = true) } ||
+                    line.id.contains(needle, ignoreCase = true)
+            }
+        }
+    }
 
     fun exportToDownloads(fileName: String, content: () -> String) {
         scope.launch {
@@ -1978,6 +1926,16 @@ private fun SourceManagerSetting(
             )
         }
         Spacer(modifier = Modifier.height(10.dp))
+        // #288：源搜索过滤框。仅当存在源时显示，避免空态页多余控件。
+        if (state.allSourceLines.isNotEmpty()) {
+            OutlinedTextField(
+                value = sourceQuery,
+                onValueChange = { sourceQuery = it },
+                label = { Text("搜索源名称或地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (state.allSourceLines.isEmpty()) {
                 // 统一三态组件：空态带引导文案，TV 遥控器可直接聚焦后续导入按钮。
@@ -1985,8 +1943,13 @@ private fun SourceManagerSetting(
                     title = "暂无可管理的视频源",
                     hint = "在上方导入订阅地址或 JSON 文件后，即可管理源顺序与屏蔽状态",
                 )
+            } else if (visibleSourceLines.isEmpty()) {
+                GuidedEmptyState(
+                    title = "没有匹配的源",
+                    hint = "试试其他关键词，或清空搜索框查看全部源",
+                )
             }
-            state.allSourceLines.forEach { line ->
+            visibleSourceLines.forEach { line ->
                 val blocked = line.id in state.appSettings.blockedSourceIds
                 val selected = line.id == state.selectedApiLine?.id
                 val statusSuffix = if (blocked) "（已屏蔽）" else ""

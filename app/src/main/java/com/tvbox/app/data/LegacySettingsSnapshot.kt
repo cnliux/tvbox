@@ -4,6 +4,8 @@ import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
@@ -71,6 +73,11 @@ internal object SettingsStorageKeys {
     const val MAX_PARALLEL_SOURCE_REQUESTS = "max_parallel_source_requests"
     const val PLAYER_LOG_ENABLED = "player_log_enabled"
     const val UPDATE_CHANNEL = "update_channel"
+    // #277 / #94 / #318 / #54-#266：本轮 B 档新增的四项设置。
+    const val LIVE_INFO_BANNER_DURATION_MS = "live_info_banner_duration_ms"
+    const val PER_SOURCE_TIMEOUT_MS = "per_source_timeout_ms"
+    const val HISTORY_PRIVACY_MODE = "history_privacy_mode"
+    const val DECODER_DEVICE_WHITELIST = "decoder_device_whitelist"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -99,6 +106,7 @@ internal fun readLegacySettings(
     val values = snapshot.values
     fun string(key: String, default: String): String = (values[key] as? String) ?: default
     fun int(key: String, default: Int): Int = (values[key] as? Int) ?: default
+    fun long(key: String, default: Long): Long = (values[key] as? Long) ?: default
     fun float(key: String, default: Float): Float = (values[key] as? Float) ?: default
     fun boolean(key: String, default: Boolean): Boolean = (values[key] as? Boolean) ?: default
     fun quantity(key: String, setting: QuantitySetting): Int = setting.clamp(int(key, setting.default))
@@ -163,6 +171,14 @@ internal fun readLegacySettings(
         updateChannel = UpdateChannel.fromStorageKey(
             string(SettingsStorageKeys.UPDATE_CHANNEL, UpdateChannel.Stable.storageKey),
         ),
+        liveInfoBannerDurationMs = LiveInfoBannerDuration.clamp(
+            long(SettingsStorageKeys.LIVE_INFO_BANNER_DURATION_MS, LiveInfoBannerDuration.Auto),
+        ),
+        perSourceTimeoutMs = PerSourceTimeout.clamp(
+            long(SettingsStorageKeys.PER_SOURCE_TIMEOUT_MS, PerSourceTimeout.DefaultMs),
+        ),
+        historyPrivacyMode = boolean(SettingsStorageKeys.HISTORY_PRIVACY_MODE, false),
+        decoderDeviceWhitelist = string(SettingsStorageKeys.DECODER_DEVICE_WHITELIST, ""),
     )
 }
 

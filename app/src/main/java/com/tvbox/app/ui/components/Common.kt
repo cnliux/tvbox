@@ -34,6 +34,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -42,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -49,12 +52,16 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.isTraversalGroup
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -331,14 +338,23 @@ private fun HeaderActionButton(
 @Composable
 fun LoadingState(text: String, modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize(),
+        // #142/加载态：状态文本挂 LiveRegion(Polite)，加载开始/完成被 TalkBack 播报；
+        // #147：整块标为遍历组，读屏按视觉顺序一次性读完，不与背景列表跳读交错。
+        modifier = modifier
+            .fillMaxSize()
+            .semantics { isTraversalGroup = true },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
         CircularProgressIndicator()
         Spacer(modifier = Modifier.height(14.dp))
         // 同上：不依赖 colorScheme，避免在纯黑背景页面上文字变成深色而看不见。
-        Text(text = text, color = TvColors.TextSecondary)
+        // #142：liveRegion 让"正在加载/加载完成"变化被朗读，无需 UI 主动 announce。
+        Text(
+            text = text,
+            color = TvColors.TextSecondary,
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
+        )
     }
 }
 
@@ -351,9 +367,14 @@ fun ErrorState(
     secondaryActionLabel: String? = null,
     onSecondaryAction: (() -> Unit)? = null,
 ) {
+    // #236：错误页默认焦点落在"重试"，避免 TV 遥控器进入后焦点悬空在背景。
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { runCatching { retryFocus.requestFocus() } }
     // 删除诊断日志：已确认 message 正常传入，问题在于文字颜色继承了外层 LocalContentColor
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .semantics { isTraversalGroup = true },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -369,6 +390,8 @@ fun ErrorState(
                 style = MaterialTheme.typography.bodyMedium,
                 color = TvColors.TextSecondary,
                 textAlign = TextAlign.Center,
+                // #142：错误原因变化时通过 LiveRegion 朗读，不依赖 Toast（TV 会被遮挡）。
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
             )
         } else {
             // 显式指定颜色：不指定时会继承 LocalContentColor，在深色页面（如手机搜索页）
@@ -378,15 +401,27 @@ fun ErrorState(
                 style = MaterialTheme.typography.titleMedium,
                 color = TvColors.TextPrimary,
                 textAlign = TextAlign.Center,
+                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Assertive },
             )
         }
         Spacer(modifier = Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = onRetry) {
+            Button(
+                onClick = onRetry,
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .focusRequester(retryFocus)
+                    .semantics { traversalIndex = 0f },
+            ) {
                 Text("重试")
             }
             if (secondaryActionLabel != null && onSecondaryAction != null) {
-                OutlinedButton(onClick = onSecondaryAction) {
+                OutlinedButton(
+                    onClick = onSecondaryAction,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .semantics { traversalIndex = 1f },
+                ) {
                     Text(secondaryActionLabel)
                 }
             }
@@ -404,8 +439,16 @@ fun EmptyState(
     /** 动作按钮附加修饰符，供遥控端把初始焦点落在空态动作上。 */
     actionModifier: Modifier = Modifier,
 ) {
+    // #235：无外部 focusRequester 时，空态动作按钮自身即为默认焦点。
+    val fallbackFocus = remember { FocusRequester() }
+    val hasAction = actionLabel != null && onAction != null
+    LaunchedEffect(hasAction) {
+        if (hasAction) runCatching { fallbackFocus.requestFocus() }
+    }
     Column(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .semantics { isTraversalGroup = true },
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -414,6 +457,8 @@ fun EmptyState(
             style = MaterialTheme.typography.titleMedium,
             color = TvColors.TextPrimary,
             textAlign = TextAlign.Center,
+            // #142：空态标题（"暂无数据/去导入"）变化被朗读。
+            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
         if (!subtitle.isNullOrBlank()) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -428,7 +473,11 @@ fun EmptyState(
             Spacer(modifier = Modifier.height(20.dp))
             Button(
                 onClick = onAction,
-                modifier = Modifier.heightIn(min = 48.dp).then(actionModifier),
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .focusRequester(fallbackFocus)
+                    .semantics { traversalIndex = 0f }
+                    .then(actionModifier),
             ) {
                 Text(actionLabel)
             }
@@ -769,7 +818,8 @@ fun NewEpisodeBadge(
         } else modifier,
     ) {
         Text(
-            text = hint.label,
+            // #145/#361：已确认/仅本机未看此前只靠橙/绿颜色区分，补形状标识（★/○），色盲用户也可辨认。
+            text = "${if (hint.confirmed) "★" else "○"} ${hint.label}",
             modifier = Modifier.padding(
                 horizontal = if (large) 8.dp else 6.dp,
                 vertical = if (large) 3.dp else 2.dp,

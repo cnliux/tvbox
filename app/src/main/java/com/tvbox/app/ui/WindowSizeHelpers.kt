@@ -2,7 +2,6 @@ package com.tvbox.app.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.dp
 import androidx.window.layout.WindowMetricsCalculator
 import com.tvbox.app.domain.DeviceMode
 
