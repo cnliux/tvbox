@@ -3044,6 +3044,77 @@ class TvBoxViewModel(
         }
     }
 
+    // ── 虎牙解码丢帧看门狗（自动降码率） ──────────────────────────────
+    //
+    // 真机实测：弱设备（如 p230）解不动蓝光 8M 1080p60，丢帧率 40%+，表现为持续
+    // 卡顿 + 画面落后声音的音画不同步。播放器每 10s 上报一次窗口内渲染/丢弃帧增量；
+    // 连续 3 个样本丢帧率 ≥30% 即认为解码能力不足，按 8000→2000→550 阶梯降低
+    // 码率上限并强制重解析（Go 侧 pickHuyaRate 按「≤上限的最高码率」选流）。
+    private var huyaHighDropStreak = 0
+    private var huyaLastDowngradeAtMs = 0L
+
+    /**
+     * 播放器健康采样回调：[renderedDelta]/[droppedDelta] 为两次采样间的
+     * 渲染帧/丢弃帧增量（不一定是虎牙调用，按站点过滤）。
+     */
+    fun notifyPlatformLiveDecodeHealth(renderedDelta: Long, droppedDelta: Long) {
+        val siteId = _state.value.platformLive.selectedSite?.id ?: return
+        if (siteId != "huya") return
+        val total = renderedDelta + droppedDelta
+        if (total <= 0) return
+        val dropRatio = droppedDelta.toDouble() / total
+        if (dropRatio < HUYA_DOWNGRADE_DROP_RATIO) {
+            // 单次达标不算，恢复即清零；避免瞬时卡顿误降档。
+            if (huyaHighDropStreak != 0) {
+                huyaHighDropStreak = 0
+            }
+            return
+        }
+        huyaHighDropStreak++
+        val now = System.currentTimeMillis()
+        if (huyaHighDropStreak < HUYA_DOWNGRADE_STREAK ||
+            now - huyaLastDowngradeAtMs < HUYA_DOWNGRADE_COOLDOWN_MS
+        ) {
+            android.util.Log.w(
+                VM_LIVE_LOG_TAG,
+                "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}%，streak=$huyaHighDropStreak（等待连续${HUYA_DOWNGRADE_STREAK}个样本）",
+            )
+            return
+        }
+        huyaHighDropStreak = 0
+        val currentCap = com.tvbox.app.data.LiveTuningDebugPrefs.loadHuyaMaxBitRate(appContext)
+        val ladder = com.tvbox.app.data.LiveTuningDebugPrefs.HUYA_BITRATE_LADDER
+        // 当前有效档位：0（不设上限）视同最高档；找阶梯中「严格低于当前」的下一档。
+        val currentIndex = ladder.indexOfFirst { it >= (if (currentCap == 0L) Long.MAX_VALUE else currentCap) }
+            .let { if (it < 0) 0 else it }
+        val nextCap = ladder.getOrNull(currentIndex + 1) ?: run {
+            android.util.Log.w(VM_LIVE_LOG_TAG, "【解码降档】已到最低档，不再降（当前上限=$currentCap）")
+            return
+        }
+        huyaLastDowngradeAtMs = now
+        android.util.Log.w(
+            VM_LIVE_LOG_TAG,
+            "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}% 持续${HUYA_DOWNGRADE_STREAK}个样本，码率上限 $currentCap→$nextCap，触发重解析",
+        )
+        com.tvbox.app.data.LiveTuningDebugPrefs.saveHuyaMaxBitRate(appContext, nextCap)
+        com.tvbox.app.data.LiveTuningDebugPrefs.applyToBridge(appContext, com.tvbox.app.data.LiveTuningDebugPrefs.Site.HUYA)
+        _state.update {
+            it.copy(platformLive = it.platformLive.copy(
+                notice = "解码跟不上，已自动切换到${com.tvbox.app.data.LiveTuningDebugPrefs.huyaBitRateLabel(nextCap)}画质",
+            ))
+        }
+        reconnectPlatformLiveChannel()
+    }
+
+    private companion object {
+        /** 单样本丢帧率阈值。 */
+        const val HUYA_DOWNGRADE_DROP_RATIO = 0.30
+        /** 连续达标样本数（每样本 10s）。 */
+        const val HUYA_DOWNGRADE_STREAK = 3
+        /** 两次降档最小间隔。 */
+        const val HUYA_DOWNGRADE_COOLDOWN_MS = 90_000L
+    }
+
     /**
      * 平台直播画面恢复（READY）后调用：清零同线路重连计数。
      *
@@ -4904,6 +4975,8 @@ class TvBoxViewModel(
             platformLiveSameLineRetries = 0
             platformLiveRecoveryWindowAttempts = 0
             platformLiveRecoveryWindowStartMs = 0L
+            // 换房/手动重连后丢帧样本与新房间无关，重置降档看门狗计数。
+            huyaHighDropStreak = 0
         }
         platformLiveResolveJob?.cancel()
         platformLiveResolveJob = viewModelScope.launch {

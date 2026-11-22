@@ -1219,6 +1219,9 @@ private fun PlatformLivePlayerScreen(
     // 退到后台时由 repeatOnLifecycle 自动暂停，避免无意义的定时唤醒与日志刷屏。
     LaunchedEffect(lifecycleOwner, continuityProxy) {
         if (player == null) return@LaunchedEffect
+        // 解码丢帧看门狗的窗口基线：记录上次采样的渲染/丢弃帧计数，差值即本窗口增量。
+        var lastRendered: Long = -1L
+        var lastDropped: Long = -1L
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 delay(10_000L)
@@ -1226,15 +1229,26 @@ private fun PlatformLivePlayerScreen(
                 val p = player
                 val size = p.videoSize
                 val counters = p.videoDecoderCounters
-                val rendered = counters?.renderedOutputBufferCount ?: -1L
-                val dropped = counters?.droppedBufferCount ?: -1L
-                val skippedOut = counters?.skippedOutputBufferCount ?: -1L
-                val maxDropped = counters?.maxConsecutiveDroppedBufferCount ?: -1L
+                // gomobile 生成的 getter 是弱化的 Number 类型，这里显式收敛成 Long，
+                // 否则下方算术运算会被推断成 Number & Comparable<*> 导致编译失败。
+                val rendered: Long = counters?.renderedOutputBufferCount?.toLong() ?: -1L
+                val dropped: Long = counters?.droppedBufferCount?.toLong() ?: -1L
+                val skippedOut: Long = counters?.skippedOutputBufferCount?.toLong() ?: -1L
+                val maxDropped: Long = counters?.maxConsecutiveDroppedBufferCount?.toLong() ?: -1L
                 val bufferedMs = (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
                 android.util.Log.d(
                     PLATFORM_LIVE_LOG_TAG,
                     "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, skippedOut=$skippedOut, maxDropped=$maxDropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.stats() ?: "continuityProxy=null"}"
                 )
+                // 窗口增量丢帧率 → 弱设备解码降档（见 TvBoxViewModel.notifyPlatformLiveDecodeHealth）。
+                // 换流/重解析会把解码器计数清零，出现负增量时重置基线跳过本窗口。
+                val renderedDelta = if (rendered >= 0) rendered - lastRendered.coerceAtLeast(0L) else -1L
+                val droppedDelta = if (dropped >= 0) dropped - lastDropped.coerceAtLeast(0L) else -1L
+                lastRendered = rendered
+                lastDropped = dropped
+                if (renderedDelta >= 0 && droppedDelta >= 0) {
+                    actions.notifyPlatformLiveDecodeHealth(renderedDelta, droppedDelta)
+                }
             }
         }
     }

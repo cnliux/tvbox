@@ -15,9 +15,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -884,7 +887,10 @@ internal fun MobileSearchScreen(
         val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
         Column(modifier = Modifier.fillMaxSize()) {
             // 搜索框固定在顶部：改关键词不必先滚回列表顶部，符合手机端输入习惯。
+            // 搜索页不渲染公共顶栏，状态栏 inset 由这里自行吸收，
+            // 否则 edge-to-edge 下搜索框顶边会被状态栏压住、视觉上超出页面边界。
             Surface(
+                modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
                 color = Color(0xFF1E1E1E),
                 shadowElevation = 2.dp,
             ) {

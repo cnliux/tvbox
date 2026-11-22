@@ -94,6 +94,38 @@ object LiveTuningDebugPrefs {
 
     fun nextProfileIndex(site: Site, current: Int): Int = (current + 1) % profiles(site).size
 
+    // ── 虎牙码率上限（弱设备自动降档） ──────────────────────────────
+    //
+    // 真机（p230）实测：蓝光 8M 1080p60 下 Amlogic OMX AVC 解码器只能渲出 ~34fps，
+    // 丢帧率 40%+，表现为卡顿 + 画面落后声音的音画不同步。播放器侧看门狗检测到
+    // 持续高丢帧后按 8000→2000→550 阶梯降上限并重解析；0 = 不设上限（默认）。
+
+    /** 降档阶梯：由高到低的码率上限（对应虎牙 iBitRate：蓝光/超清/高清）。 */
+    val HUYA_BITRATE_LADDER = listOf(8000L, 2000L, 550L)
+
+    /** 码率上限对应的清晰度名（提示用）。 */
+    fun huyaBitRateLabel(bitRate: Long): String = when (bitRate) {
+        8000L -> "蓝光"
+        2000L -> "超清"
+        550L -> "高清"
+        else -> "${bitRate}Kbps"
+    }
+
+    /** 读取虎牙码率上限偏好；0 = 不设上限。 */
+    fun loadHuyaMaxBitRate(context: Context): Long =
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .getLong(HUYA_MAX_BITRATE_KEY, 0L)
+
+    /** 保存虎牙码率上限偏好（不写回 Go，由 [applyToBridge] 统一写回）。 */
+    fun saveHuyaMaxBitRate(context: Context, bitRate: Long) {
+        context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(HUYA_MAX_BITRATE_KEY, bitRate)
+            .apply()
+    }
+
+    private const val HUYA_MAX_BITRATE_KEY = "huya_max_bit_rate"
+
     /** init 之后调用一次，写回双站点全部参数。 */
     fun applyToBridge(context: Context) {
         applyToBridge(context, Site.DOUYU)
@@ -118,6 +150,8 @@ object LiveTuningDebugPrefs {
                     Platformlive.setHuyaShortBackoffBaseMs(p.shortBackoffBaseMs)
                     Platformlive.setHuyaShortBackoffMaxMs(p.shortBackoffMaxMs)
                     Platformlive.setHuyaMaxShortStreak((p.maxShortStreak ?: 4).toLong())
+                    // 码率上限（弱设备降档）；0 = 不设上限。
+                    Platformlive.setHuyaMaxBitRate(loadHuyaMaxBitRate(context))
                 }
             }
         }

@@ -218,10 +218,6 @@ func (r *huyaResolver) Resolve(roomInput string) (*ResolvedLiveStream, error) {
 	if presenterUID == 0 && subSideID != 0 {
 		presenterUID = subSideID
 	}
-	type huyaRate struct {
-		bitRate int64
-		name    string
-	}
 	var rates []huyaRate
 	for _, raw := range rawRates {
 		item, ok := raw.(map[string]interface{})
@@ -241,7 +237,8 @@ func (r *huyaResolver) Resolve(roomInput string) (*ResolvedLiveStream, error) {
 		rates = []huyaRate{{bitRate: 0, name: "原画"}}
 	}
 	sort.SliceStable(rates, func(i, j int) bool { return rates[i].bitRate > rates[j].bitRate })
-	rate, quality := rates[0].bitRate, rates[0].name
+	// 码率上限偏好（弱设备自动降档，见 huya_quality.go）。
+	rate, quality := pickHuyaRate(rates, huyaMaxBitRateOverride.Load())
 
 	var candidates []LiveStreamCandidate
 	for _, raw := range rawLines {

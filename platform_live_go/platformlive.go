@@ -98,6 +98,19 @@ func GetPacerTargetBufferMs() (ms int64) {
 	return pacerTargetBufferMsDefault()
 }
 
+// SetHuyaMaxBitRate 设置虎牙选流码率上限（见 huya_quality.go）。
+// 0 = 默认（取最高码率）；Resolve 选「≤上限的最高码率」，用于弱设备自动降档。
+func SetHuyaMaxBitRate(bitRate int64) {
+	defer recoverToErrorOnly()
+	SetHuyaMaxBitRatePref(bitRate)
+}
+
+// GetHuyaMaxBitRate 返回当前虎牙选流码率上限；0 表示未设上限。
+func GetHuyaMaxBitRate() (bitRate int64) {
+	defer recoverToErrorOnly()
+	return huyaMaxBitRateOverride.Load()
+}
+
 // ChannelsJson 等价 Python tvbox_live_bridge.channels_json。
 func ChannelsJson() (payload string, err error) {
 	defer recoverToError(&err)

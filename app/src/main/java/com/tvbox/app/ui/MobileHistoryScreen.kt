@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,21 +16,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,6 +47,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -199,7 +207,12 @@ internal fun MobileHistoryScreen(
     }
 
     Surface(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            // 修复顶部遮挡：仅使用 statusBars 吸收顶部状态栏 inset（不使用 systemBars，
+            // 因为手机版底部已有 MobileNavigationBar 自行处理导航栏空间，再加 systemBars
+            // 底部 padding 会压缩内容导致搜索框以上的区域被挤出视口）。
+            .windowInsetsPadding(WindowInsets.statusBars),
         color = TvColors.Background,
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -253,14 +266,14 @@ internal fun MobileHistoryScreen(
                 }
             }
 
-            // #309/#311/#317：辅助操作行——排序切换、失效源清理入口、多选提示。
+            // #309/#311/#317：辅助操作行——排序切换、失效源清理入口。
+            // 简约设计：弱化为小号次级文字按钮，去掉「长按多选」提示文案（手势可自然发现）。
             if (state.historyItems.isNotEmpty() && !multiSelectMode) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp),
+                        .padding(horizontal = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
                     TextButton(onClick = {
                         sortMode = if (sortMode == HistorySortMode.RECENT) {
@@ -268,31 +281,79 @@ internal fun MobileHistoryScreen(
                         } else {
                             HistorySortMode.RECENT
                         }
-                    }) { Text("排序：${sortMode.label}") }
+                    }) {
+                        Text(
+                            text = "排序：${sortMode.label}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TvColors.TextSecondary,
+                        )
+                    }
                     TextButton(
                         onClick = { confirmCleanStale = true },
                         enabled = staleItems.isNotEmpty(),
-                    ) { Text("清理失效源${if (staleItems.isEmpty()) "" else "(${staleItems.size})"}") }
-                    Text(
-                        text = "长按多选",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TvColors.TextSecondary,
-                        modifier = Modifier.weight(1f),
-                    )
+                    ) {
+                        Text(
+                            text = "清理失效源${if (staleItems.isEmpty()) "" else "(${staleItems.size})"}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = TvColors.TextSecondary,
+                        )
+                    }
                 }
             }
 
             // #308：历史搜索框。仅在有历史时显示。
+            // 简约设计：去外框 label，改为浅色圆角胶囊 + 内嵌放大镜图标，与整体风格统一。
             if (state.historyItems.isNotEmpty()) {
-                OutlinedTextField(
-                    value = historyQuery,
-                    onValueChange = { historyQuery = it },
-                    label = { Text("搜索片名 / 来源 / 分类") },
-                    singleLine = true,
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = TvColors.SurfaceRaised.copy(alpha = 0.6f),
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp),
-                )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = TvColors.TextTertiary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (historyQuery.isEmpty()) {
+                                Text(
+                                    text = "搜索片名 / 来源 / 分类",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = TvColors.TextTertiary,
+                                    maxLines = 1,
+                                )
+                            }
+                            BasicTextField(
+                                value = historyQuery,
+                                onValueChange = { historyQuery = it },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                    color = TvColors.TextPrimary,
+                                ),
+                                cursorBrush = SolidColor(TvColors.Accent),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                        if (historyQuery.isNotEmpty()) {
+                            Text(
+                                text = "✕",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = TvColors.TextTertiary,
+                                modifier = Modifier
+                                    .clickable { historyQuery = "" }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(8.dp))
             }
             if (state.historyItems.isEmpty()) {
@@ -328,29 +389,24 @@ internal fun MobileHistoryScreen(
                 ) {
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
                     sections.forEachIndexed { sectionIndex, section ->
                         // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
                         // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
                         // 分组头不用 label 作 key：日期标签（如「M月d日」）跨年会重复，改用分组序号保证唯一。
+                        // 简约设计：分组头不再使用强调色胶囊底，改为弱化次级文字。
                         item(key = "header_$sectionIndex") {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = TvColors.AccentStrong.copy(alpha = 0.22f),
+                            Text(
+                                text = section.label,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = TvColors.TextSecondary,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 2.dp),
-                            ) {
-                                Text(
-                                    text = section.label,
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TvColors.AccentStrong,
-                                    modifier = Modifier.padding(start = 10.dp, top = 4.dp, bottom = 4.dp, end = 10.dp),
-                                )
-                            }
+                                    .padding(start = 4.dp, top = 14.dp, bottom = 2.dp),
+                            )
                         }
                         // 使用与多选选中集合相同的稳定 key（apiLineId:movieId:episodeIndex），
                         // 保证同一影片不同集数各自独立，且选中状态在重组后不丢失。
@@ -374,6 +430,12 @@ internal fun MobileHistoryScreen(
                                 },
                                 onDelete = { pendingDelete = entry },
                             )
+                            // 扁平列表：用细分隔线代替卡片底色，视觉更轻。
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 76.dp),
+                                thickness = 0.5.dp,
+                                color = TvColors.Border.copy(alpha = 0.6f),
+                            )
                         }
                     }
                     }
@@ -394,146 +456,134 @@ private fun MobileHistoryRow(
     onDelete: () -> Unit,
 ) {
     var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
-    val timeText = remember(item.updatedAtEpochMs) {
-        HOUR_MINUTE_FORMAT.get().format(Date(item.updatedAtEpochMs))
+    // 方案5（渐变进度 + 来源延续）：
+    // - 标题「剧名·第N集」+ 新集 badge；
+    // - 元信息「上次看到 NN% · 继续观看」（无时长数据时回退到具体时间点）；
+    // - 蓝→紫渐变进度条；来源以海报底部小标签延续呈现。
+    val title = remember(item.movieName, item.episodeTitle, item.episodeIndex) {
+        val episode = item.episodeTitle.takeIf { it.isNotBlank() }
+            ?.let { displayEpisodeTitle(it, item.episodeIndex) }
+        if (episode.isNullOrBlank()) item.movieName else "${item.movieName}·$episode"
     }
     val progressText = if (item.durationMs > 0) {
-        "${formatPlayerTime(item.positionMs)} / ${item.progressPercent}%"
+        "上次看到 ${item.progressPercent}% · 继续观看"
     } else {
-        "已看到 ${formatPlayerTime(item.positionMs)}"
+        "上次看到 ${formatPlayerTime(item.positionMs)} · 继续观看"
     }
+    val hasSourceLabel = item.sourceName.isNotBlank()
 
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = TvColors.SurfaceRaised.copy(alpha = 0.6f),
+    // 扁平行：无卡片底色，仅保留海报圆角与点击涟漪；分隔线由外层列表统一绘制。
+    Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
             // #309：长按进入多选；单选/多选手势都在这一层处理，避免与子控件争抢点击。
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 4.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Box(
+            modifier = Modifier
+                .size(width = 56.dp, height = 76.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(TvColors.SurfaceRaised),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(width = 60.dp, height = 82.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(TvColors.SurfaceRaised),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (item.posterUrl.isNotBlank() && !posterFailed) {
-                    AsyncImage(
-                        model = item.posterUrl,
-                        contentDescription = item.movieName,
-                        contentScale = ContentScale.Crop,
-                        onError = { posterFailed = true },
-                        imageLoader = rememberTvImageLoader(),
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Text(
-                        text = "无图",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TvColors.TextSecondary,
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = item.movieName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    if (item.sourceName.isNotBlank()) {
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = TvColors.Accent.copy(alpha = 0.18f),
-                        ) {
-                            Text(
-                                text = item.sourceName,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TvColors.Accent,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                    if (item.episodeTitle.isNotBlank()) {
-                        // 使用 displayEpisodeTitle 统一剥离源站叠加的编号前缀（如「1.第一集」→「第一集」），
-                        // 与详情页选集显示保持一致。
-                        val displayTitle = remember(item.episodeTitle, item.episodeIndex) {
-                            displayEpisodeTitle(item.episodeTitle, item.episodeIndex)
-                        }
-                        Text(
-                            text = displayTitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = TvColors.TextSecondary,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    LinearProgressIndicator(
-                        progress = { item.progressPercent / 100f },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(2.dp)),
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = progressText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TvColors.TextSecondary,
-                        maxLines = 1,
-                    )
-                }
-                Spacer(modifier = Modifier.height(2.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "$timeText 观看",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = TvColors.TextSecondary,
-                    )
-                    // 新剧集提示统一走 NewEpisodeBadge（labelMedium、橙/绿高对比），
-                    // 与 TV 历史卡片、详情页同一套文案与颜色，保证竖屏列表可扫读。
-                    item.newEpisodeHint?.let { hint ->
-                        Spacer(modifier = Modifier.width(8.dp))
-                        NewEpisodeBadge(hint = hint)
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.width(2.dp))
-            if (multiSelectMode) {
-                // #309：多选态用只读勾选框展示选中状态，点击交由外层 combinedClickable 处理，
-                // 避免 Checkbox 自身点击与整行点击重复触发导致「点一次反而取消选中」。
-                Checkbox(
-                    checked = selected,
-                    onCheckedChange = null,
-                    modifier = Modifier.size(48.dp),
+            if (item.posterUrl.isNotBlank() && !posterFailed) {
+                AsyncImage(
+                    model = item.posterUrl,
+                    contentDescription = item.movieName,
+                    contentScale = ContentScale.Crop,
+                    onError = { posterFailed = true },
+                    imageLoader = rememberTvImageLoader(),
+                    modifier = Modifier.fillMaxSize(),
                 )
             } else {
-                IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
-                    Icon(
-                        imageVector = Icons.Default.Delete,
-                        contentDescription = "删除记录",
-                        tint = TvColors.Danger,
-                    )
+                Text(
+                    text = "无图",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TvColors.TextSecondary,
+                )
+            }
+            // 来源小标签：压在海报底部，延续「从哪个源继续看」的语境。
+            if (hasSourceLabel) {
+                Text(
+                    text = item.sourceName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = TvColors.TextPrimary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xCC0B0F14))
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                // 新剧集提示统一走 NewEpisodeBadge（labelMedium、橙/绿高对比），
+                // 与 TV 历史卡片、详情页同一套文案与颜色，保证竖屏列表可扫读。
+                item.newEpisodeHint?.let { hint ->
+                    Spacer(modifier = Modifier.width(8.dp))
+                    NewEpisodeBadge(hint = hint)
                 }
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = progressText,
+                style = MaterialTheme.typography.bodySmall,
+                color = TvColors.TextSecondary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            // 蓝→紫渐变进度条：LinearProgressIndicator 不支持 Brush，改为双层 Box 实现。
+            val fraction = (item.progressPercent.coerceIn(0, 100)) / 100f
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(TvColors.SurfaceRaised),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(fraction)
+                        .height(4.dp)
+                        .background(
+                            Brush.horizontalGradient(
+                                listOf(TvColors.Accent, Color(0xFF8B5CF6)),
+                            ),
+                        ),
+                )
+            }
+        }
+        Spacer(modifier = Modifier.width(4.dp))
+        if (multiSelectMode) {
+            // #309：多选态用只读勾选框展示选中状态，点击交由外层 combinedClickable 处理，
+            // 避免 Checkbox 自身点击与整行点击重复触发导致「点一次反而取消选中」。
+            Checkbox(
+                checked = selected,
+                onCheckedChange = null,
+                modifier = Modifier.size(40.dp),
+            )
+        } else {
+            IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    imageVector = Icons.Default.Delete,
+                    contentDescription = "删除记录",
+                    tint = TvColors.TextSecondary,
+                )
             }
         }
     }
@@ -610,4 +660,3 @@ private fun dayFormatThreadLocal(pattern: String) = object : ThreadLocal<SimpleD
 }
 private val SAME_YEAR_DAY_FORMAT = dayFormatThreadLocal("M月d日")
 private val CROSS_YEAR_DAY_FORMAT = dayFormatThreadLocal("yyyy年M月d日")
-private val HOUR_MINUTE_FORMAT = dayFormatThreadLocal("HH:mm")
