@@ -731,7 +731,7 @@ private fun SearchResultsPanel(
     actions: TvBoxViewModel,
     grid: androidx.compose.foundation.lazy.grid.LazyGridState,
     returnFocus: ReturnFocus,
-    resultsFocus: FocusRequester,
+    resultsFocus: TvFocusRequest,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
