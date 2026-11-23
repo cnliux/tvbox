@@ -40,6 +40,10 @@ import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.SettingsPageSummary
 import com.tvbox.app.domain.buildSettingsPageSummary
 import com.tvbox.app.domain.settingsEntriesFrom
+import com.tvbox.app.domain.SourceHealthSetting
+import com.tvbox.app.domain.UserAgentSetting
+import com.tvbox.app.domain.measureSourceLatencies
+import com.tvbox.app.domain.withFallbackUserAgent
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.StartupTimeline
 import com.tvbox.app.domain.lastWatchedLabel
@@ -61,6 +65,8 @@ import com.tvbox.app.domain.DoubanHotItem
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.liveLineDomain
 import com.tvbox.app.domain.rankLiveLineIndicesByDomain
+import com.tvbox.app.domain.rankLinesByQuality
+import com.tvbox.app.domain.lineQualityKey
 import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
@@ -113,6 +119,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.collect
@@ -212,7 +219,6 @@ data class TvBoxUiState(
     /** 历史记录是否已完成首次读取：首页「继续观看」据此避免半加载造成的布局跳动。 */
     val historyLoaded: Boolean = false,
     val historyUpdateChecking: Boolean = false,
-    val historyUpdateCheckedAtEpochMs: Long = 0L,
     val searchQuery: String = "",
     val searchResults: List<Movie> = emptyList(),
     /** 每源原始搜索结果（未跨源去重），供手机端按源分组；key 为 apiLineId。 */
@@ -272,28 +278,18 @@ data class TvBoxUiState(
     val sourceTestCompleted: Int get() = source.testCompleted
     val sourceTestTotal: Int get() = source.testTotal
     val sourceManagerMessage: String? get() = source.managerMessage
-    val detailSourceTesting: Boolean get() = source.detailTesting
-    val detailSourceTestCompleted: Int get() = source.detailTestCompleted
-    val detailSourceTestTotal: Int get() = source.detailTestTotal
-    val detailSourceMessage: String? get() = source.detailMessage
     val sourceImporting: Boolean get() = source.importing
     val sourceImportMessage: String? get() = source.importMessage
 
     val liveChannels: List<LiveChannel> get() = live.channels
     val liveChannelIndex: Int get() = live.channelIndex
     val liveLineIndex: Int get() = live.lineIndex
-    val liveGroupIndex: Int get() = live.groupIndex
-    val liveSelectedSourceIndex: Int get() = live.selectedSourceIndex
     val liveLoading: Boolean get() = live.loading
     val liveError: String? get() = live.error
     val liveNotice: String? get() = live.notice
     val liveReconnectNonce: Int get() = live.reconnectNonce
-    val liveGroupPanelStage: LiveGroupStage get() = live.groupPanelStage
-    val liveFavoriteChannelNumbers: Set<Int> get() = live.favoriteChannelNumbers
     val liveFavoriteKeys: Set<String> get() = live.favoriteKeys
     val liveEpgByChannel: Map<String, List<EpgProgram>> get() = live.epgByChannel
-    val liveEpgLoaded: Boolean get() = live.epgLoaded
-    val liveEpgBundledUrl: String get() = live.epgBundledUrl
     val liveLineLatencies: Map<String, Long?> get() = live.lineLatencies
     val liveLineTesting: Boolean get() = live.lineTesting
 
@@ -303,7 +299,6 @@ data class TvBoxUiState(
     val platformLiveQuickCategories: List<PlatformLiveQuickCategory> get() = platformLive.quickCategories
     val platformLiveFavorites: List<PlatformLiveRoom> get() = platformLive.favorites
     val platformLiveFavoriteError: String? get() = platformLive.favoriteError
-    val platformLivePlayerReturnDestination: PlatformLiveDestination get() = platformLive.playerReturnDestination
     val platformLiveSelectedSite: PlatformLiveSite? get() = platformLive.selectedSite
     val platformLiveParentCategories: List<PlatformLiveParentCategory> get() = platformLive.parentCategories
     val platformLiveSelectedParentCategory: PlatformLiveParentCategory? get() = platformLive.selectedParentCategory
@@ -365,6 +360,8 @@ class TvBoxViewModel(
     private val liveFavoritesRepository: LiveFavoritesRepository? = null,
     /** 直播线路按域名的成功/失败评分；用于同类源较多时优先选"最近确实能播"的域名。 */
     private val liveDomainScores: LiveDomainScoreStore? = null,
+    /** 直播线路级起播质量；域名无记录时作为第二级择优依据（null 时退化为源内顺序）。 */
+    private val liveLineQualityRecords: com.tvbox.app.data.LiveLineQualityStore? = null,
     /** 平台直播「上次观看」本机记忆；null 时按 Application Context 懒创建，便于 JVM 单测。 */
     private val platformLiveMemoryStore: PlatformLiveMemoryStore? = null,
 ) : ViewModel() {
@@ -451,6 +448,8 @@ class TvBoxViewModel(
     private var lastExhaustedChannelNumber: Int? = null
     // 电视直播：最近一次已记入成功评分的域名（同一域名连续就绪不重复累加）。
     private var lastScoredDomain: String? = null
+    // 线路级起播质量：本次选线/重连的发起时刻，用于估算起播耗时；null 表示尚未开始计时。
+    private var liveLineStartAtMs: Long? = null
     // 切换订阅后要恢复的分类名（新订阅没有该分类时回"全部"）。
     private var pendingLiveGroupRestore: String? = null
     private val platformLiveFavoritesMutex = Mutex()
@@ -480,6 +479,8 @@ class TvBoxViewModel(
     }
     private var sourceTestJob: Job? = null
     private var detailSourceTestJob: Job? = null
+    /** 视频源健康管理循环：应用运行期间按周期静默体检，开关关闭时循环空转。 */
+    private var sourceHealthJob: Job? = null
     private var detailAutoTestedKey: String? = null
     private var remoteManageServer: RemoteManageServer? = null
     /** 远程网页里最近一次“获取分类”的视频源与其分类列表。 */
@@ -522,6 +523,8 @@ class TvBoxViewModel(
             repository.setMaxParallelSourceRequests(settings.maxParallelSourceRequests)
             // #94 启动时把已保存的单源超时推给仓库，搜索/详情立即按该预算执行。
             repository.setPerSourceTimeoutMs(settings.perSourceTimeoutMs)
+            // 自定义 UA：视频接口请求、订阅拉取与直播播放兜底共用同一口径。
+            com.tvbox.app.data.network.GlobalUserAgent.value = UserAgentSetting.resolve(settings.customUserAgent)
             applyLiveSourceConfig(settings)
             val availableApiLines = orderApiLines(repository.apiLines, settings.sourceOrder)
             val allApiLines = orderApiLines(repository.allApiLines, settings.sourceOrder)
@@ -551,6 +554,8 @@ class TvBoxViewModel(
             // 首屏必需项完成后，把 OTA 检查与直播 EPG 延后到首帧后 / idle，
             // 避免与首页取数竞争协程与网络；分级策略由 domain 纯函数定义并可单测。
             launchDeferredStartupTasks(normalizedSettings.checkUpdatesOnStartup)
+            // 视频源健康管理：默认开启，启动后静默周期测速并自动排序。
+            startSourceHealthMonitor()
         }
     }
 
@@ -1103,47 +1108,40 @@ class TvBoxViewModel(
 
     fun updateStartupUpdateCheck(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(checkUpdatesOnStartup = enabled)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updatePlayerLogEnabled(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(playerLogEnabled = enabled)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
         PlayerLog.enabled = enabled
     }
 
     fun updateUpdateChannel(channel: com.tvbox.app.domain.UpdateChannel) {
         if (_state.value.appSettings.updateChannel == channel) return
         val settings = _state.value.appSettings.copy(updateChannel = channel)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updatePlaybackAgentAutoSwitch(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(playbackAgentAutoSwitchEnabled = enabled)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updateHomeContinueWatching(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(homeContinueWatchingEnabled = enabled)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updateVideoScaleMode(mode: com.tvbox.app.domain.VideoScaleMode) {
         val settings = _state.value.appSettings.copy(videoScaleMode = mode)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 解码策略：写入 AppSettings 后由共享播放宿主按新策略重建播放器。 */
     fun updateDecoderStrategy(strategy: com.tvbox.app.domain.DecoderStrategy) {
         val settings = _state.value.appSettings.copy(decoderStrategy = strategy)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /**
@@ -1155,8 +1153,7 @@ class TvBoxViewModel(
         mode: com.tvbox.app.domain.VideoScaleMode,
     ) {
         val settings = _state.value.appSettings.withContentVideoScaleMode(contentKey, mode)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /**
@@ -1164,8 +1161,7 @@ class TvBoxViewModel(
      */
     fun updateContentSubtitleTrack(contentKey: String, trackId: String) {
         val settings = _state.value.appSettings.withContentSubtitleTrack(contentKey, trackId)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun openRemoteManageDialog() {
@@ -2062,15 +2058,13 @@ class TvBoxViewModel(
     /** 更新首页视频卡片每行数量；0 表示跟随布局自适应。 */
     fun updateVideoGridColumns(columns: Int) {
         val settings = _state.value.appSettings.copy(videoGridColumns = columns.coerceIn(0, 8))
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新平台直播卡片每行数量；0 表示跟随布局默认。 */
     fun updatePlatformLiveGridColumns(columns: Int) {
         val settings = _state.value.appSettings.copy(platformLiveGridColumns = columns.coerceIn(0, 10))
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新首页「豆瓣热播」区域显示的条目数上限。 */
@@ -2078,8 +2072,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             homeHotContentCount = QuantitySettings.HomeHotContentCount.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 关闭首页提示条（如热播/详情失败提示），避免状态变化后仍长期残留。 */
@@ -2092,8 +2085,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             continueWatchingCount = QuantitySettings.ContinueWatchingCount.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新电视直播 EPG 窄卡节目条数。 */
@@ -2101,8 +2093,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             epgCardRows = QuantitySettings.EpgCardRows.clamp(rows),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新数字选台浮层候选行数。 */
@@ -2110,8 +2101,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             liveNumberMatchRows = QuantitySettings.LiveNumberMatchRows.clamp(rows),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新数字选台前缀匹配上限。 */
@@ -2119,8 +2109,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             liveNumberSearchLimit = QuantitySettings.LiveNumberSearchLimit.clamp(limit),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新手机直播页「相关频道」数量。 */
@@ -2128,8 +2117,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             relatedChannelCount = QuantitySettings.RelatedChannelCount.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新搜索热词条数；下次刷新热词生效。 */
@@ -2137,8 +2125,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             hotWordCount = QuantitySettings.HotWordCount.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新拼音首字母扩展候选数。 */
@@ -2146,8 +2133,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             searchSuggestionCount = QuantitySettings.SearchSuggestionCount.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新豆瓣热播每页条数；下次翻页生效。 */
@@ -2155,8 +2141,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             doubanHotPageSize = QuantitySettings.DoubanHotPageSize.clamp(size),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新热播点击时尝试的视频源数量。 */
@@ -2164,8 +2149,7 @@ class TvBoxViewModel(
         val settings = _state.value.appSettings.copy(
             doubanHotFallbackLines = QuantitySettings.DoubanHotFallbackLines.clamp(count),
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 更新本地观看历史保留条数，并立即收敛已加载列表。 */
@@ -2187,16 +2171,14 @@ class TvBoxViewModel(
         val value = QuantitySettings.MaxParallelSourceRequests.clamp(count)
         repository.setMaxParallelSourceRequests(value)
         val settings = _state.value.appSettings.copy(maxParallelSourceRequests = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** #277 更新直播切台横幅时长；0 为按设备模式自动决定。 */
     fun updateLiveInfoBannerDurationMs(ms: Long) {
         val value = LiveInfoBannerDuration.clamp(ms)
         val settings = _state.value.appSettings.copy(liveInfoBannerDurationMs = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** #94 更新单源超时并立即推给仓库，下一次搜索/详情按新预算执行。 */
@@ -2204,22 +2186,36 @@ class TvBoxViewModel(
         val value = PerSourceTimeout.clamp(ms)
         repository.setPerSourceTimeoutMs(value)
         val settings = _state.value.appSettings.copy(perSourceTimeoutMs = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** #318 更新历史隐私模式；开启后仅阻止新记录写入，不清空已有历史。 */
     fun updateHistoryPrivacyMode(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(historyPrivacyMode = enabled)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** #54/#266 更新硬解设备白名单（逗号分隔的 Build.MODEL 前缀）。 */
     fun updateDecoderDeviceWhitelist(value: String) {
         val settings = _state.value.appSettings.copy(decoderDeviceWhitelist = value)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
+    }
+
+    /** 更新自定义 User-Agent：立即推给全局 UA 持有点，下一次请求即生效。 */
+    fun updateCustomUserAgent(value: String) {
+        val sanitized = UserAgentSetting.sanitize(value)
+        com.tvbox.app.data.network.GlobalUserAgent.value = UserAgentSetting.resolve(sanitized)
+        val settings = _state.value.appSettings.copy(customUserAgent = sanitized)
+        commitSettings(settings)
+    }
+
+    /** 更新视频源健康管理开关；打开后立即触发一次后台体检，不必等下一个周期。 */
+    fun updateSourceHealthCheckEnabled(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(sourceHealthCheckEnabled = enabled)
+        commitSettings(settings)
+        if (enabled) {
+            viewModelScope.launch { runBackgroundSourceHealthCheck() }
+        }
     }
 
     fun updateDeviceMode(mode: DeviceMode) {
@@ -2251,15 +2247,13 @@ class TvBoxViewModel(
     fun updateTheme(theme: TvTheme) {
         if (_state.value.appSettings.theme == theme) return
         val settings = _state.value.appSettings.copy(theme = theme)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updateFontScale(fontScale: TvFontScale) {
         if (_state.value.appSettings.fontScale == fontScale) return
         val settings = _state.value.appSettings.copy(fontScale = fontScale)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 手机模式首次启动引导 Banner 已展示，记录该状态避免重复弹出。 */
@@ -2279,6 +2273,7 @@ class TvBoxViewModel(
         if (lines.size <= 1) return false
         liveStallRetries = 0
         autoSwitchThrottle = resetAutoSwitchThrottle()
+        liveLineStartAtMs = System.currentTimeMillis()
         val newIndex = (state.live.lineIndex + 1) % lines.size
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${logSafeUrl(lines[newIndex].url)}")
         _state.update {
@@ -2296,6 +2291,7 @@ class TvBoxViewModel(
         if (lines.size <= 1) return false
         liveStallRetries = 0
         autoSwitchThrottle = resetAutoSwitchThrottle()
+        liveLineStartAtMs = System.currentTimeMillis()
         val previousIndex = if (state.live.lineIndex <= 0) lines.lastIndex else state.live.lineIndex - 1
         android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${logSafeUrl(lines[previousIndex].url)}")
         _state.update {
@@ -2353,7 +2349,15 @@ class TvBoxViewModel(
                     lines.map { line ->
                         async {
                             val latency = try {
-                                measureLiveLineLatencyMs(line.url, line.headers)
+                                // 测速请求与播放共用同一 UA 口径：线路头部 > 用户自定义 UA。
+                                measureLiveLineLatencyMs(
+                                    line.url,
+                                    line.headers.withFallbackUserAgent(
+                                        com.tvbox.app.domain.UserAgentSetting.resolve(
+                                            _state.value.appSettings.customUserAgent,
+                                        ),
+                                    ),
+                                )
                             } catch (cancelled: CancellationException) {
                                 // 切台/离页取消必须立即透传，否则迟到的 null 会污染新频道结果。
                                 throw cancelled
@@ -2536,6 +2540,15 @@ class TvBoxViewModel(
         if (domain != null && domain != lastScoredDomain) {
             lastScoredDomain = domain
             liveDomainScores?.record(domain, success = true)
+        }
+        // 线路级质量：以「发起选线 → 画面就绪」的耗时作为起播速度，供下次进台择优。
+        val channel = state.live.channels.getOrNull(state.live.channelIndex)
+        val lineIndex = state.live.lineIndex
+        val startedAt = liveLineStartAtMs
+        liveLineStartAtMs = null
+        if (channel != null && startedAt != null && url != null) {
+            val elapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+            liveLineQualityRecords?.record(lineQualityKey("${channel.groupName}#${channel.name}", lineIndex), elapsed, true)
         }
     }
 
@@ -3535,29 +3548,15 @@ class TvBoxViewModel(
                     ),
                 )
             }
-            val semaphore = kotlinx.coroutines.sync.Semaphore(3)
-            val mutex = kotlinx.coroutines.sync.Mutex()
-            var completed = 0
-            coroutineScope {
-                for (line in srcLines) {
-                    launch {
-                        semaphore.withPermit {
-                            val latency = runCatching { repository.testSpeed(line.id) }
-                                .onFailure { if (it is CancellationException) throw it }
-                                .getOrNull()
-                            mutex.withLock {
-                                completed++
-                                _state.update {
-                                    it.copy(
-                                        source = it.source.copy(
-                                            latencies = it.source.latencies + (line.id to latency),
-                                            testCompleted = completed,
-                                        ),
-                                    )
-                                }
-                            }
-                        }
-                    }
+            // 单条完成即在锁内发布「延迟 + 进度」的原子合并，回调骨架见 measureSourceLatencies。
+            measureSourceLatencies(srcLines.map { it.id }, test = { repository.testSpeed(it) }) { lineId, latency, completed, _ ->
+                _state.update {
+                    it.copy(
+                        source = it.source.copy(
+                            latencies = it.source.latencies + (lineId to latency),
+                            testCompleted = completed,
+                        ),
+                    )
                 }
             }
             val latencies = _state.value.source.latencies
@@ -3591,6 +3590,81 @@ class TvBoxViewModel(
         }
     }
 
+    /**
+     * 视频源健康管理循环：启动后先等 [SourceHealthSetting.InitialDelayMs] 做首查，
+     * 之后按 [SourceHealthSetting.IntervalMs] 周期复查。开关关闭时循环只空转，
+     * 用户重新打开后最迟一个周期内恢复体检。
+     */
+    private fun startSourceHealthMonitor() {
+        sourceHealthJob?.cancel()
+        sourceHealthJob = viewModelScope.launch {
+            while (isActive) {
+                delay(SourceHealthSetting.InitialDelayMs)
+                runBackgroundSourceHealthCheck()
+                delay(SourceHealthSetting.IntervalMs)
+            }
+        }
+    }
+
+    /**
+     * 单轮后台体检：静默并发测速全部视频接口（不复用用户测速的进度条状态），
+     * 结果合并进延迟表并持久化；随后按延迟自动排序（快源靠前、失效靠后）。
+     * 用户正在手动测速时跳过本轮，避免两路测速互相覆盖进度与结论。
+     */
+    private suspend fun runBackgroundSourceHealthCheck() {
+        val current = _state.value
+        if (!current.appSettings.sourceHealthCheckEnabled) return
+        if (current.source.testing) return
+        val lines = current.apiLines
+        if (lines.isEmpty()) return
+        _state.update {
+            it.copy(source = it.source.copy(healthCheckRunning = true))
+        }
+        val results = try {
+            measureSourceLatencies(
+                lines.map { it.id },
+                parallelism = SourceHealthSetting.Parallelism,
+                test = { repository.testSpeed(it) },
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } finally {
+            _state.update { state ->
+                if (state.source.healthCheckRunning) {
+                    state.copy(source = state.source.copy(healthCheckRunning = false))
+                } else {
+                    state
+                }
+            }
+        }
+        _state.update {
+            it.copy(source = it.source.copy(latencies = it.source.latencies + results))
+        }
+        persistSourceLatencies()
+        // 自动排序：健康线路按延迟升序在前，失效线路保持原相对顺序靠后。
+        val sorted = orderLinesByLatency(lines, results)
+        val sortedIds = sorted.map { it.id }
+        val okCount = results.count { it.value != null }
+        val summary = "上次后台体检 ${java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date())}：" +
+            "正常 $okCount / 共 ${lines.size}" +
+            if (sortedIds != lines.map { it.id }) "，已自动排序" else "，顺序无变化"
+        if (sortedIds != lines.map { it.id }) {
+            val settings = _state.value.appSettings.copy(sourceOrder = sortedIds)
+            saveSettings(settings)
+            _state.update {
+                it.copy(
+                    apiLines = sorted,
+                    allSourceLines = orderApiLines(repository.allApiLines, settings.sourceOrder),
+                    appSettings = settings,
+                )
+            }
+        }
+        _state.update {
+            it.copy(source = it.source.copy(lastHealthCheckSummary = summary))
+        }
+        android.util.Log.i("TVBoxSourceHealth", summary)
+    }
+
     /** 对当前详情页的所有播放线路测速，结果会持久化并用于按延迟排列线路。 */
     fun testDetailSourceSpeeds() {
         val current = _state.value
@@ -3613,29 +3687,14 @@ class TvBoxViewModel(
                     ),
                 )
             }
-            val semaphore = kotlinx.coroutines.sync.Semaphore(3)
-            val mutex = kotlinx.coroutines.sync.Mutex()
-            var completed = 0
-            coroutineScope {
-                for (lineId in lineIds) {
-                    launch {
-                        semaphore.withPermit {
-                            val latency = runCatching { repository.testSpeed(lineId) }
-                                .onFailure { if (it is CancellationException) throw it }
-                                .getOrNull()
-                            mutex.withLock {
-                                completed++
-                                _state.update {
-                                    it.copy(
-                                        source = it.source.copy(
-                                            latencies = it.source.latencies + (lineId to latency),
-                                            detailTestCompleted = completed,
-                                        ),
-                                    )
-                                }
-                            }
-                        }
-                    }
+            measureSourceLatencies(lineIds, test = { repository.testSpeed(it) }) { lineId, latency, completed, _ ->
+                _state.update {
+                    it.copy(
+                        source = it.source.copy(
+                            latencies = it.source.latencies + (lineId to latency),
+                            detailTestCompleted = completed,
+                        ),
+                    )
                 }
             }
             persistSourceLatencies()
@@ -4054,8 +4113,7 @@ class TvBoxViewModel(
             liveSourceDefaultIndex = effectiveDefaultIndex,
         )
         applyLiveSourceConfig(settings)
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 把设置中的电视直播源应用到仓库。 */
@@ -4162,8 +4220,7 @@ class TvBoxViewModel(
         val settings = current.appSettings.copy(
             blockedVideoCategories = current.appSettings.blockedVideoCategories - name,
         )
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
         refreshHome()
     }
 
@@ -4171,21 +4228,18 @@ class TvBoxViewModel(
         val current = _state.value
         if (current.appSettings.blockedVideoCategories.isEmpty()) return
         val settings = current.appSettings.copy(blockedVideoCategories = emptyList())
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
         refreshHome()
     }
 
     fun updateIntroSkipSeconds(seconds: Int) {
         val settings = _state.value.appSettings.copy(introSkipSeconds = seconds.coerceIn(0, 600))
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     fun updateOutroSkipSeconds(seconds: Int) {
         val settings = _state.value.appSettings.copy(outroSkipSeconds = seconds.coerceIn(0, 600))
-        saveSettings(settings)
-        _state.update { it.copy(appSettings = settings) }
+        commitSettings(settings)
     }
 
     /** 删除（屏蔽）或恢复平台直播站点，例如斗鱼、虎牙。 */
@@ -4536,7 +4590,6 @@ class TvBoxViewModel(
                                             }
                                             state.copy(
                                                 historyItems = patched.take(maxItems),
-                                                historyUpdateCheckedAtEpochMs = checkedAt,
                                             )
                                         }
                                     }
@@ -4564,6 +4617,12 @@ class TvBoxViewModel(
                     _state.update { it.copy(playbackHealth = snapshot) }
                 }
         }
+    }
+
+    /** 设置变更后既落盘又同步内存态；收敛原先 33 处相同的两行样板。 */
+    private fun commitSettings(settings: AppSettings) {
+        saveSettings(settings)
+        _state.update { it.copy(appSettings = settings) }
     }
 
     private fun saveSettings(settings: AppSettings) {
@@ -4602,22 +4661,36 @@ class TvBoxViewModel(
     private fun TvBoxUiState.rememberedLineIndexOf(channel: com.tvbox.app.domain.LiveChannel): Int {
         val saved = liveLinePrefs?.getSavedLineIndex(channel.key()) ?: -1
         if (saved in channel.lines.indices) return saved
+        val now = System.currentTimeMillis()
         val scores = liveDomainScores?.snapshot().orEmpty()
-        if (scores.isEmpty()) return 0
-        val ranked = rankLiveLineIndicesByDomain(channel.lines, scores, System.currentTimeMillis())
-        // 只在"确有可用依据"时改顺序：最优线路评分为 0（全无记录）时保持源内顺序。
-        val best = ranked.firstOrNull() ?: return 0
-        val bestDomain = liveLineDomain(channel.lines[best].url) ?: return 0
-        val bestScore = scores[bestDomain]?.score(System.currentTimeMillis()) ?: 0.0
-        return if (bestScore > 0.0) best else 0
+        if (scores.isNotEmpty()) {
+            val ranked = rankLiveLineIndicesByDomain(channel.lines, scores, now)
+            // 只在"确有可用依据"时改顺序：最优线路评分为 0（全无记录）时保持源内顺序。
+            val best = ranked.firstOrNull() ?: return 0
+            val bestDomain = liveLineDomain(channel.lines[best].url) ?: return 0
+            val bestScore = scores[bestDomain]?.score(now) ?: 0.0
+            if (bestScore > 0.0) return best
+        }
+        // 域名无记录时的第三级依据：该频道各线路自身的起播质量历史。
+        // 同样只在有正分记录时才改顺序，避免把"从未成功"的线路误判为最优。
+        val lineRecords = liveLineQualityRecords?.snapshot().orEmpty()
+        if (lineRecords.isEmpty()) return 0
+        val channelKey = "${channel.groupName}#${channel.name}"
+        val byQuality = rankLinesByQuality(channel.lines, lineRecords, channelKey, now)
+        val bestByQuality = byQuality.firstOrNull() ?: return 0
+        val record = lineRecords[lineQualityKey(channelKey, bestByQuality)]
+        return if (record != null && record.score(now) > 0.0) bestByQuality else 0
     }
 
     /** 记录当前线路的一次播放失败到域名评分表（错误/卡死/结束都会走到这里）。 */
     private fun recordLiveLineFailure(state: TvBoxUiState) {
-        val url = state.live.channels.getOrNull(state.live.channelIndex)
-            ?.lines?.getOrNull(state.live.lineIndex)?.url ?: return
+        val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return
+        val lineIndex = state.live.lineIndex
+        val url = channel.lines.getOrNull(lineIndex)?.url ?: return
         val domain = liveLineDomain(url) ?: return
         liveDomainScores?.record(domain, success = false)
+        liveLineQualityRecords?.record(lineQualityKey("${channel.groupName}#${channel.name}", lineIndex), null, false)
+        liveLineStartAtMs = null
     }
 
     private fun loadLiveChannels() {

@@ -53,6 +53,18 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         valueSummary = "${settings.blockedVideoCategories.size} 个分类 / ${settings.blockedSourceIds.size} 个源",
     ),
     SettingEntry(
+        id = "custom_user_agent",
+        group = SettingGroup.ContentSources,
+        label = "自定义 User-Agent",
+        valueSummary = settings.customUserAgent.ifBlank { "默认（TVBox-Android）" },
+    ),
+    SettingEntry(
+        id = "source_health_check",
+        group = SettingGroup.ContentSources,
+        label = "视频源健康管理",
+        valueSummary = if (settings.sourceHealthCheckEnabled) "开启（每 30 分钟后台体检）" else "关闭",
+    ),
+    SettingEntry(
         id = "theme",
         group = SettingGroup.Appearance,
         label = "主题",

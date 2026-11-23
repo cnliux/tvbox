@@ -128,10 +128,8 @@ private suspend fun probeBlocking(url: String, headers: Map<String, String>): St
     val builder = Request.Builder()
         .url(url)
         .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
-    headers.forEach { (key, value) ->
-        if (key.isNotBlank() && value.isNotBlank() && value.none { ch -> ch == '\r' || ch == '\n' }) {
-            builder.header(key, value)
-        }
+    headers.sanitizedForHttp().forEach { (key, value) ->
+        builder.header(key, value)
     }
     HttpClients.probe.executeCancellable(builder.build()).use { response ->
         if (!response.isSuccessful) return LIVE_MIME_UNKNOWN
@@ -229,10 +227,8 @@ suspend fun measureLiveLineLatencyMs(
             val builder = Request.Builder()
                 .url(url)
                 .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
-            headers.forEach { (key, value) ->
-                val clean = key.isNotBlank() && value.isNotBlank() &&
-                    value.none { ch -> ch == '\r' || ch == '\n' }
-                if (clean) builder.header(key, value)
+            headers.sanitizedForHttp().forEach { (key, value) ->
+                builder.header(key, value)
             }
             val startedAt = System.currentTimeMillis()
             HttpClients.probe.executeCancellable(builder.build()).use { response ->

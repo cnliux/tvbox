@@ -1,3 +1,30 @@
+## 未发布
+
+自定义 User-Agent（对齐 TVBox/IPTV 生态惯例）：
+
+- 设置 → 数据源新增「自定义 User-Agent」：应用于视频接口（MacCms）请求、直播订阅拉取与直播播放兜底 UA，优先级为「线路自带 UA（`#EXTVLCOPT` 等）> 用户自定义 > 内置默认」。
+- 订阅地址支持行内头部参数：`http://host/iptv.m3u|User-Agent=okhttp/4.9`（`|UA=` 简写等价，另支持 `|Referer=`/`|Origin=`/`|Cookie=`），按源覆盖全局 UA，防止源服务器校验 UA 导致订阅无效；导入校验与「直播源健康检查」共用同一口径。
+- 直播线路首包测速请求与播放使用同一 UA 口径；读取侧清洗换行等非法字符，预设四档常用 UA。
+- 新增 `parseLiveSourceEndpoint` / `withFallbackUserAgent` / `UserAgentSetting` 纯函数与 16 个单测。
+
+视频源健康管理：
+
+- 设置 → 数据源新增「视频源健康管理」开关（默认开启）：应用运行期间启动 90 秒后首查，之后每 30 分钟后台静默测速全部视频接口（并发 3），结果持久化到测速延迟表并按延迟自动排序（快源靠前、失效靠后），不影响当前观看。
+- 用户手动一键测速进行中时本轮体检自动跳过；重新打开开关立即触发一次体检。
+- 「视频接口管理」页与设置页副标题展示最近一轮体检摘要（时间 + 正常数 + 是否已排序）。
+
+## 未发布
+
+重复代码收敛（设置页 / 测速 / 请求头）：
+
+- 新增 `ui/components/SettingsBits.kt`：`SettingsGroupDivider`（原两份逐字相同的分组分割线）、`HeroStat`（参数化合并手机/TV 两份）、`DangerConfirmDialog`（两设置页 4 个清空确认弹窗）、触摸版/遥控器版 `ChoiceChips` 与 `TvChoiceChips`、`QuantityChoiceChips`（20 处「默认」标签样板收敛）、`TextValueEditor`（手机/TV 参数化合并，TV 走 fieldModifier + saveButton 插槽保留焦点行为）。
+- 新增 `domain/HeaderUtils.kt`：`sanitizedForHttp`（空键/空值/CRLF 过滤，原 4 处内联谓词）与 `partitionUserAgent`（UA 拆分，原 3 个播放页三行样板）。
+- 新增 `domain/SourceSpeedProbe.kt`：`measureSourceLatencies` 统一三处手写的并发测速骨架（一键测速 / 详情线路测速 / 后台健康管理），取消透传与锁内原子回调语义保持不变，配 9 个单测。
+- `checkAllLiveSources` 从 TV 设置 UI 文件迁至 `data/LiveSourceHealthCheck.kt`（手机/TV 共用的网络逻辑归位 data 层）。
+- `TvDimens` 新增设置页公共尺寸（图标盒 38dp、图标 20dp、分割线缩进 64dp 等）。
+- 不做：直播取流块抽工厂（播放关键路径，改动风险大于收益）；TV/手机 ChoiceChips 强行合并（焦点语义不同，以插槽接入 `QuantityChoiceChips` 代替）。
+- 净减约 280 行重复代码；全量 623 个单元测试通过。
+
 ## v1.0.35 - 2026-11-23
 
 电视直播遥控：

@@ -93,4 +93,41 @@ class LiveLineNormalizerTest {
         val base = mapOf("Referer" to "https://m.douyu.com/1", "User-Agent" to "UA")
         assertEquals(base, LiveLineNormalizer.headersFor("douyu", "https://x.flv?a=1", base))
     }
+
+    // ── 协议必须逐条推断：顶层 protocol 只代表第一条线路 ───────
+
+    @Test
+    fun `protocol is inferred per candidate url`() {
+        assertEquals("hls", LiveLineNormalizer.inferProtocol("https://x.douyu.com/a.m3u8?key=v", "flv"))
+        assertEquals("flv", LiveLineNormalizer.inferProtocol("https://x.douyu.com/a.flv?key=v", "hls"))
+        assertEquals("hls", LiveLineNormalizer.inferProtocol("https://x.douyu.com/live?fmt=m3u8", "flv"))
+        assertEquals("hls", LiveLineNormalizer.inferProtocol("https://x.douyu.com/live", "hls"))
+        assertEquals("flv", LiveLineNormalizer.inferProtocol("https://x.douyu.com/live", ""))
+    }
+
+    @Test
+    fun `mixed protocol candidates keep their own protocol after normalization`() {
+        val out = LiveLineNormalizer.normalizeCandidates(
+            "douyu",
+            listOf(
+                Triple("HLS", "hls", "https://x.douyu.com/a.m3u8?wsSecret=s"),
+                Triple("FLV", "flv", "http://x.flv.douyu.com/b.flv?wsSecret=s1&wsSecret=s2"),
+            ),
+        )
+        assertEquals(2, out.size)
+        assertEquals("hls", out[0].second)
+        assertEquals("flv", out[1].second)
+        // FLV 线路仍要做去重修复，HLS 线路保持原样。
+        assertEquals(1, Regex("wsSecret=").findAll(out[1].third).count())
+        assertEquals("https://x.douyu.com/a.m3u8?wsSecret=s", out[0].third)
+    }
+
+    @Test
+    fun `legacy pair overload still shares one protocol`() {
+        val out = LiveLineNormalizer.normalizeCandidates(
+            "huya", "flv", listOf("A" to "http://a.flv.huya.com/x.flv?wsSecret=s"),
+        )
+        assertEquals(1, out.size)
+        assertEquals("A", out[0].first)
+    }
 }

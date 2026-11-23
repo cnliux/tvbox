@@ -135,6 +135,8 @@ fun PlayerScreen(
     // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
     val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
     val player = playbackHost.player
+    // 系统媒体键（含电视遥控器多媒体键/耳机线控）在应用未获焦时也能控制播放/暂停与快进快退。
+    rememberPlayerMediaSession(player = player)
     // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。
     val playerTracks = rememberPlayerTracks(player)
     val session = rememberPlaybackSession()
@@ -202,9 +204,9 @@ fun PlayerScreen(
         },
     )
     val lifecycleOwner = LocalLifecycleOwner.current
-    val uiPosition = playbackHost.snapshot.positionMs
-    val uiDuration = playbackHost.snapshot.durationMs
-    val uiPlaying = playbackHost.snapshot.playWhenReady
+    val uiPosition = playbackHost.progress.positionMs
+    val uiDuration = playbackHost.progress.durationMs
+    val uiPlaying = playbackHost.wantsToPlay
     LaunchedEffect(player, lifecycleOwner) {
         // 进度/时长/播放意图由 rememberPlaybackHost 轮询；这里只维护续播锚点。
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -1012,20 +1014,37 @@ fun PlayerScreen(
                 session.play(player)
             }
         }
+        // 播放进度每 250ms 变化一次，但下列派生数据只随影片/剧集变化。
+        // 缓存引用，避免每次重组都重建列表导致面板整棵树无意义比较。
+        val chromeEpisodeTitles = remember(source) { source.episodes.map { it.title } }
+        val chromeSources = remember(movie) {
+            movie.playSources.map { PlayerChromeSource(name = it.name, lineId = it.lineId) }
+        }
+        val chromeSourceEnabled = remember(movie, currentEpisodeTitle, currentEpisodeIndex) {
+            movie.playSources.map { candidate ->
+                correspondingEpisodeIndex(candidate, currentEpisodeTitle, currentEpisodeIndex) != null
+            }
+        }
+        val chromePlaybackUrls = remember(source, currentEpisodeIndex) {
+            listOf(
+                PlayerChromeUrl(
+                    label = "实际播放地址（点播线路）",
+                    url = source.episodes[currentEpisodeIndex].url,
+                ),
+            )
+        }
         PlayerChrome(
             state = chrome,
             data = PlayerChromeData(
                 title = movie.name,
-                episodes = source.episodes.map { it.title },
-                sources = movie.playSources.map { PlayerChromeSource(name = it.name, lineId = it.lineId) },
+                episodes = chromeEpisodeTitles,
+                sources = chromeSources,
                 episodeIndex = currentEpisodeIndex,
                 sourceIndex = state.playerSourceIndex,
-                sourceEnabled = movie.playSources.map { candidate ->
-                    correspondingEpisodeIndex(candidate, currentEpisodeTitle, currentEpisodeIndex) != null
-                },
+                sourceEnabled = chromeSourceEnabled,
                 positionMs = uiPosition,
                 durationMs = uiDuration,
-                bufferedMs = playbackHost.snapshot.bufferedMs,
+                bufferedMs = playbackHost.progress.bufferedMs,
                 playing = uiPlaying,
                 speed = state.playerSpeed,
                 resizeMode = videoScaleMode,
@@ -1036,12 +1055,7 @@ fun PlayerScreen(
                 playbackInfo = diagnostics?.info,
                 decoderStrategy = state.appSettings.decoderStrategy,
                 decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
-                playbackUrls = listOf(
-                    PlayerChromeUrl(
-                        label = "实际播放地址（点播线路）",
-                        url = source.episodes[currentEpisodeIndex].url,
-                    ),
-                ),
+                playbackUrls = chromePlaybackUrls,
             ),
             capabilities = PlayerChromeCapabilities(
                 seek = true,

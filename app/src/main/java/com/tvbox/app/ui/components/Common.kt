@@ -946,6 +946,8 @@ fun HistoryItemCard(
     item: WatchHistoryItem,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 批量删除多选态：勾选标记占用 badge 位，让遥控器用户明确看到选中状态。 */
+    selected: Boolean = false,
 ) {
     // 封面加载失败（防盗链/地址失效）时同样显示「无封面」，避免历史卡出现空白海报。
     var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
@@ -965,7 +967,7 @@ fun HistoryItemCard(
             .filterNotNull()
             .filter { it.isNotBlank() }
             .joinToString(" / "),
-        badge = "继续观看",
+        badge = if (selected) "✓ 已选" else "继续观看",
         progress = item.progressPercent / 100f,
         bottomOverlay = {
             Row(

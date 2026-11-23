@@ -85,7 +85,67 @@ data class AppSettings(
     val historyPrivacyMode: Boolean = false,
     /** #54/#266 硬解设备白名单：逗号分隔的 Build.MODEL 前缀，命中时强制硬解；空表示不启用。 */
     val decoderDeviceWhitelist: String = "",
+    /**
+     * 自定义 User-Agent：应用于视频接口（MacCms）请求、直播订阅拉取与直播播放兜底 UA。
+     * 空字符串表示使用内置默认 UA（[UserAgentSetting.Default]）。
+     * 直播订阅地址还可追加 `|User-Agent=xxx` 参数按源覆盖（见 [parseLiveSourceEndpoint]）。
+     */
+    val customUserAgent: String = "",
+    /**
+     * 视频源健康管理：开启后应用运行期间在后台按固定周期静默测速全部视频接口，
+     * 结果持久化并按延迟自动排序（快源靠前、失效源靠后），不影响用户当前观看。
+     */
+    val sourceHealthCheckEnabled: Boolean = true,
 )
+
+/**
+ * 自定义 User-Agent 的默认值、清洗规则与常用预设。
+ * UA 会随请求头发给远端，禁止换行等控制字符注入；保存与读取统一走 [sanitize]。
+ */
+object UserAgentSetting {
+    /** 内置默认 UA：与订阅拉取既有口径一致（TVBox-Android 标识 + Android 客户端特征）。 */
+    const val Default = "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3"
+
+    /** 常用预设（展示名 → UA），供设置页快捷选择；最后一项为内置默认。 */
+    val presets: List<Pair<String, String>> = listOf(
+        "内置默认" to Default,
+        "okhttp" to "okhttp/4.12.0",
+        "Chrome 移动版" to "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+        "VLC" to "VLC/3.0.20 LibVLC/3.0.20",
+    )
+
+    /** 清洗用户输入：去首尾空白并剔除换行符（HTTP 头不允许）；结果可以为空串（表示用默认）。 */
+    fun sanitize(value: String): String =
+        value.replace("\r", "").replace("\n", "").trim()
+
+    /** 计算生效 UA：用户配置非空用清洗后的用户值，否则回退内置默认。 */
+    fun resolve(configured: String): String = sanitize(configured).ifBlank { Default }
+}
+
+/**
+ * 视频源健康管理的节奏常量：启动后先等首查延迟（避开启动高峰），之后按固定周期复查。
+ */
+object SourceHealthSetting {
+    /** 启动后首次后台体检的延迟：等首屏与延迟启动任务都跑完。 */
+    const val InitialDelayMs = 90_000L
+    /** 复查周期：30 分钟足够发现源失效，又不至于频繁打接口。 */
+    const val IntervalMs = 30L * 60_000L
+    /** 单轮体检的并发上限，与用户手动一键测速一致。 */
+    const val Parallelism = 3
+}
+
+/**
+ * 计算生效的自定义 UA：订阅 URL 参数 > 用户配置 > 内置默认的「用户配置 → 内置默认」部分。
+ * 供视频接口请求、订阅拉取与直播播放兜底共用同一口径。
+ */
+fun AppSettings.effectiveUserAgent(): String = UserAgentSetting.resolve(customUserAgent)
+
+/** 线路头部缺 UA 时补上兜底 UA；已有 UA（含大小写变体）则原样保留，头部不复制多余键。 */
+fun Map<String, String>.withFallbackUserAgent(ua: String): Map<String, String> {
+    if (ua.isBlank()) return this
+    if (keys.any { it.equals("User-Agent", ignoreCase = true) }) return this
+    return this + ("User-Agent" to ua)
+}
 
 /**
  * 解码器策略。只区分两档：

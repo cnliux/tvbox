@@ -128,6 +128,61 @@ class LiveRemoteKeyRouterTest {
     }
 
     @Test
+    fun menuKeyOpensChannelListOnlyOnKeyUp() {
+        val start = LiveRemoteState()
+        val down = router.handle(AndroidKeyEvent.KEYCODE_MENU, KeyEventType.KeyDown, start)
+        assertTrue(down?.effects.isNullOrEmpty())
+        assertEquals(start, down?.state)
+
+        val up = router.handle(AndroidKeyEvent.KEYCODE_MENU, KeyEventType.KeyUp, start)
+        assertEquals(UIState.CHANNEL_LIST, up?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.OpenChannelList), up?.effects)
+    }
+
+    @Test
+    fun deleteRemovesLastDigitAndBumpsNonce() {
+        val typing = LiveRemoteState(numberInput = "123", numberInputNonce = 3)
+        val result = router.handle(AndroidKeyEvent.KEYCODE_DEL, KeyEventType.KeyDown, typing)
+        assertEquals("12", result?.state?.numberInput)
+        assertEquals(4, result?.state?.numberInputNonce)
+        assertEquals(listOf(LiveRemoteEffect.NumberChanged("12")), result?.effects)
+    }
+
+    @Test
+    fun numberInputTruncatesToLastFourDigits() {
+        var state = LiveRemoteState()
+        repeat(6) { index ->
+            state = router.handle(
+                AndroidKeyEvent.KEYCODE_0 + index + 1,
+                KeyEventType.KeyDown,
+                state,
+            )!!.state
+        }
+        assertEquals("3456", state.numberInput)
+    }
+
+    @Test
+    fun repeatedKeyIsConsumedWithoutChangingState() {
+        val start = LiveRemoteState(numberInput = "12")
+        val result = router.handle(
+            AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEventType.KeyDown,
+            start,
+            repeatCount = 5,
+        )
+        // 非 null 表示事件被消费（不能穿透到背景换台），但状态与 effect 都不变。
+        assertEquals(start, result?.state)
+        assertTrue(result?.effects.isNullOrEmpty())
+    }
+
+    @Test
+    fun enterKeySharesConfirmBranchWithDpadCenter() {
+        val result = router.handle(AndroidKeyEvent.KEYCODE_ENTER, KeyEventType.KeyUp, LiveRemoteState())
+        assertEquals(UIState.CONTROLLER, result?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.OpenController), result?.effects)
+    }
+
+    @Test
     fun legacyDirectionMappingKeepsLeftRightChannelSwitching() {
         val legacy = LiveRemoteKeyRouter(
             directionMapping = LiveRemoteDirectionMapping.LEFT_RIGHT_CHANNEL,

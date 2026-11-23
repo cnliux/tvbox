@@ -99,6 +99,8 @@ import com.tvbox.app.domain.LiveChannelLine
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.partitionUserAgent
+import com.tvbox.app.domain.sanitizedForHttp
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.liveVideoScaleKey
 import com.tvbox.app.domain.VideoScaleMode
@@ -447,7 +449,7 @@ private fun MobileLiveListScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                items(searchHistory) { keyword ->
+                items(searchHistory, key = { it }) { keyword ->
                     Box(
                         modifier = Modifier
                             .heightIn(min = 36.dp)
@@ -492,7 +494,7 @@ private fun MobileLiveListScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                items(groups) { group ->
+                items(groups, key = { it }) { group ->
                     val isSelected = (group == "全部" && selectedGroup == null) || group == selectedGroup
                     val isCollapsed = group != "全部" && group in collapsedGroups
                     MobileLiveFilterChip(
@@ -865,6 +867,8 @@ private fun MobileLivePlayerScreen(
     val session = rememberPlaybackSession()
     val playbackHost = rememberPlaybackHost(state.appSettings.decoderStrategy)
     val player = playbackHost.player
+    // 系统媒体键/耳机线控在应用未获焦时也能控制直播播放。
+    rememberPlayerMediaSession(player = player)
     BindPlaybackSession(session, player)
     HardwareDecoderFallbackToast()
     // 解码策略变化会重建播放器：重连当前频道/线路时提示一次。
@@ -1031,12 +1035,14 @@ private fun MobileLivePlayerScreen(
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(MOBILE_LIVE_CONNECT_TIMEOUT_MS)
             .setReadTimeoutMs(MOBILE_LIVE_READ_TIMEOUT_MS)
-        val safeHeaders = currentLine.headers
-            .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() && value.none { ch -> ch == '\r' || ch == '\n' } }
+        val safeHeaders = currentLine.headers.sanitizedForHttp()
         // User-Agent 属受限请求头，必须单独设置，其余走默认请求头。
-        safeHeaders.entries
-            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
-            ?.let { httpFactory.setUserAgent(it.value) }
+        // 优先级：线路自带 UA > 用户自定义 UA > 内置默认 UA。
+        val (lineUserAgent, _) = safeHeaders.partitionUserAgent()
+        httpFactory.setUserAgent(
+            lineUserAgent
+                ?: com.tvbox.app.domain.UserAgentSetting.resolve(state.appSettings.customUserAgent),
+        )
         val otherHeaders = safeHeaders.filter { !it.key.equals("User-Agent", ignoreCase = true) }
         if (otherHeaders.isNotEmpty()) {
             httpFactory.setDefaultRequestProperties(otherHeaders)
@@ -1127,9 +1133,9 @@ private fun MobileLivePlayerScreen(
                                 append(" · ${currentLine.protocolHint.uppercase()}")
                             }
                         },
-                        playing = playbackHost.snapshot.playWhenReady && !session.interrupted,
+                        playing = playbackHost.wantsToPlay && !session.interrupted,
                         resizeMode = videoScaleMode,
-                        buffering = playbackHost.snapshot.isBuffering,
+                        buffering = playbackHost.isBuffering,
                         playbackInfo = diagnostics?.info,
                         decoderStrategy = state.appSettings.decoderStrategy,
                         decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
@@ -1224,7 +1230,7 @@ private fun MobileLivePlayerScreen(
         appendLine("频道: ${channel.groupName}/${channel.name}")
         appendLine("线路: ${lineIndex + 1}/${channel.lines.size} ${currentLine.protocolHint}")
         appendLine("地址: ${logSafeUrl(currentLine.url)}")
-        appendLine("播放: ready=${playbackHost.snapshot.playWhenReady} buffering=${playbackHost.snapshot.isBuffering} 阻塞=$streamBlocked")
+        appendLine("播放: ready=${playbackHost.status.playWhenReady} buffering=${playbackHost.status.isBuffering} 阻塞=$streamBlocked")
         appendLine("缓冲: ${(player.bufferedPosition - player.currentPosition).coerceAtLeast(0L)}ms 位置=${player.currentPosition}ms")
         appendLine("画面: ${player.videoSize.width}x${player.videoSize.height}")
         val counters = player.videoDecoderCounters
@@ -1336,7 +1342,7 @@ private fun MobileLivePlayerScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(channel.lines) { index, line ->
+                itemsIndexed(channel.lines, key = { _, line -> line.url }) { index, line ->
                     val isSelected = index == lineIndex
                     val hasResult = state.liveLineLatencies.containsKey(line.url)
                     val latency = state.liveLineLatencies[line.url]
@@ -1433,7 +1439,7 @@ private fun MobileLivePlayerScreen(
                     .fillMaxWidth()
                     .weight(1f),
             ) {
-                itemsIndexed(epgPrograms) { index, program ->
+                itemsIndexed(epgPrograms, key = { _, program -> program.startMs }) { index, program ->
                     val isCurrent = index == currentEpgIndex
                     val minutes = (program.stopMs - program.startMs) / 60_000L
                     // 整行合并成一条播报：时间 + 节目名 + 时长，当前节目补「正在播放」，
@@ -1443,6 +1449,7 @@ private fun MobileLivePlayerScreen(
                         append(program.title)
                         if (minutes > 0) append("，").append(minutes).append("分钟")
                         if (isCurrent) append("，正在播放")
+                        else if (program.isReplayable(epgNowMs)) append("，可回看（需源支持时移）")
                     }
                     Column {
                         if (index > 0) {
@@ -1477,13 +1484,17 @@ private fun MobileLivePlayerScreen(
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
-                            val rowMinutes = minutes
-                            if (rowMinutes > 0) {
+                            val rowStatus = when {
+                                isCurrent -> "直播中"
+                                program.isReplayable(epgNowMs) -> "可回看"
+                                else -> null
+                            }
+                            if (rowStatus != null) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "${rowMinutes}分钟",
+                                    text = rowStatus,
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.6f),
+                                    color = if (isCurrent) LiveAccent else Color.White.copy(alpha = 0.6f),
                                 )
                             }
                         }

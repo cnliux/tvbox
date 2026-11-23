@@ -137,110 +137,112 @@ fun DetailScreen(
                     } else {
                         val selectedSource = movie.playSources.getOrNull(state.selectedSourceIndex)
                         val canPlay = selectedSource?.episodes?.isNotEmpty() == true
-                        Column(modifier = Modifier.fillMaxSize()) {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = headerMaxHeight),
-                            ) {
-                                PosterImage(
-                                    movie = movie,
+                        val detailHint = detailNewEpisodeHint(
+                            movie = movie,
+                            currentEpisodeTotal = movie.playSources.getOrNull(state.selectedSourceIndex)?.episodes?.size ?: 0,
+                            historyItems = state.historyItems,
+                        )
+                        // 一体滚动（与手机端同一规范）：海报/剧名/简介头部作为 EpisodeGrid 的
+                        // header 插槽随选集列表一起滚动，不再固定在顶部遮挡选集。
+                        // EpisodeGrid 内置的滚动位置记忆与焦点恢复按 leadingItemCount 自动适配 header。
+                        EpisodeGrid(
+                            source = selectedSource,
+                            selectedEpisodeIndex = state.selectedEpisodeIndex,
+                            episodeSortReverse = state.appSettings.episodeSortReverse,
+                            onToggleSort = { actions.toggleEpisodeSortReverse() },
+                            header = {
+                                Row(
                                     modifier = Modifier
-                                        .width(posterWidth)
-                                        .aspectRatio(2f / 3f),
-                                )
-                                Spacer(modifier = Modifier.width(horizontalGap))
-                                Column(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .verticalScroll(rememberScrollState()),
+                                        .fillMaxWidth()
+                                        .heightIn(max = headerMaxHeight),
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.Top,
-                                    ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = movie.name,
-                                                style = MaterialTheme.typography.headlineLarge,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                SmallMeta(movie.typeName)
-                                                SmallMeta(movie.year)
-                                                SmallMeta(movie.remarks)
-                                            }
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            val resumeMs = resumePositionForEpisode(
-                                                movie = movie,
-                                                historyItems = state.historyItems,
-                                                sourceIndex = state.selectedSourceIndex,
-                                                episodeIndex = state.selectedEpisodeIndex,
-                                            )
-                                            Button(
-                                                onClick = {
-                                                    actions.openPlayer(
-                                                        state.selectedSourceIndex,
-                                                        state.selectedEpisodeIndex,
-                                                        resumeMs,
-                                                    )
-                                                },
-                                                enabled = canPlay,
-                                            ) {
-                                                // 有进度时直接告诉用户会从哪里接着播，避免"点了却从头上开始"的困惑。
-                                                Text(if (resumeMs > 0L) "继续播放 ${formatPlayerTime(resumeMs)}" else "立即播放")
-                                            }
-                                            Spacer(modifier = Modifier.height(8.dp))
-                                            Button(onClick = actions::goBack) {
-                                                Text("返回")
-                                            }
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
-                                    if (movie.actor.isNotBlank()) InfoLine(label = "主演", value = movie.actor)
-                                    if (movie.director.isNotBlank()) InfoLine(label = "导演", value = movie.director)
-                                    if (movie.area.isNotBlank()) InfoLine(label = "地区", value = movie.area)
-                                    if (movie.language.isNotBlank()) InfoLine(label = "语言", value = movie.language)
-                                    Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
-                                    CollapsibleDescription(
-                                        text = movie.description.ifBlank { "暂无简介" },
-                                        collapsedLines = descriptionLines,
+                                    PosterImage(
+                                        movie = movie,
+                                        modifier = Modifier
+                                            .width(posterWidth)
+                                            .aspectRatio(2f / 3f),
                                     )
+                                    Spacer(modifier = Modifier.width(horizontalGap))
+                                    Column(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .verticalScroll(rememberScrollState()),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.Top,
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = movie.name,
+                                                    style = MaterialTheme.typography.headlineLarge,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                )
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                    SmallMeta(movie.typeName)
+                                                    SmallMeta(movie.year)
+                                                    SmallMeta(movie.remarks)
+                                                }
+                                            }
+                                            Column(horizontalAlignment = Alignment.End) {
+                                                val resumeMs = resumePositionForEpisode(
+                                                    movie = movie,
+                                                    historyItems = state.historyItems,
+                                                    sourceIndex = state.selectedSourceIndex,
+                                                    episodeIndex = state.selectedEpisodeIndex,
+                                                )
+                                                Button(
+                                                    onClick = {
+                                                        actions.openPlayer(
+                                                            state.selectedSourceIndex,
+                                                            state.selectedEpisodeIndex,
+                                                            resumeMs,
+                                                        )
+                                                    },
+                                                    enabled = canPlay,
+                                                ) {
+                                                    // 有进度时直接告诉用户会从哪里接着播，避免"点了却从头上开始"的困惑。
+                                                    Text(if (resumeMs > 0L) "继续播放 ${formatPlayerTime(resumeMs)}" else "立即播放")
+                                                }
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Button(onClick = actions::goBack) {
+                                                    Text("返回")
+                                                }
+                                            }
+                                        }
+                                        Spacer(modifier = Modifier.height(if (compact) 10.dp else 18.dp))
+                                        if (movie.actor.isNotBlank()) InfoLine(label = "主演", value = movie.actor)
+                                        if (movie.director.isNotBlank()) InfoLine(label = "导演", value = movie.director)
+                                        if (movie.area.isNotBlank()) InfoLine(label = "地区", value = movie.area)
+                                        if (movie.language.isNotBlank()) InfoLine(label = "语言", value = movie.language)
+                                        Spacer(modifier = Modifier.height(if (compact) 8.dp else 12.dp))
+                                        CollapsibleDescription(
+                                            text = movie.description.ifBlank { "暂无简介" },
+                                            collapsedLines = descriptionLines,
+                                        )
+                                    }
                                 }
-                            }
-                            Spacer(modifier = Modifier.height(sectionGap))
-                            val detailHint = detailNewEpisodeHint(
-                                movie = movie,
-                                currentEpisodeTotal = movie.playSources.getOrNull(state.selectedSourceIndex)?.episodes?.size ?: 0,
-                                historyItems = state.historyItems,
-                            )
-                            EpisodeGrid(
-                                source = movie.playSources.getOrNull(state.selectedSourceIndex),
-                                selectedEpisodeIndex = state.selectedEpisodeIndex,
-                                episodeSortReverse = state.appSettings.episodeSortReverse,
-                                onToggleSort = { actions.toggleEpisodeSortReverse() },
-                                onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
-                                modifier = Modifier.weight(1f),
-                                restoreScrollIndex = actions.detailScrollIndexFor(
+                            },
+                            onEpisode = { episodeIndex -> actions.openPlayer(state.selectedSourceIndex, episodeIndex) },
+                            modifier = Modifier.fillMaxSize(),
+                            restoreScrollIndex = actions.detailScrollIndexFor(
+                                movie.id,
+                                state.selectedSourceIndex,
+                            ),
+                            onScrollIndexChanged = { index ->
+                                actions.rememberDetailScrollIndex(
                                     movie.id,
                                     state.selectedSourceIndex,
-                                ),
-                                onScrollIndexChanged = { index ->
-                                    actions.rememberDetailScrollIndex(
-                                        movie.id,
-                                        state.selectedSourceIndex,
-                                        index,
-                                    )
-                                },
-                                newEpisodeHint = detailHint,
-                                onNavigateToNewEpisode = actions.newEpisodeNavigateAction(movie, state.historyItems, state.selectedSourceIndex),
-                            )
-                        }
+                                    index,
+                                )
+                            },
+                            newEpisodeHint = detailHint,
+                            onNavigateToNewEpisode = actions.newEpisodeNavigateAction(movie, state.historyItems, state.selectedSourceIndex),
+                        )
                     }
                 }
             }

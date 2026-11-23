@@ -54,11 +54,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.tvbox.app.domain.WatchHistoryItem
@@ -436,8 +433,10 @@ internal fun MobileHistoryScreen(
                                     onDelete = { pendingDelete = entry },
                                 )
                                 // 扁平列表：用细分隔线代替卡片底色，视觉更轻。
+                                // 缩进 88dp = 行内边距 4dp + 海报 72dp + 间距 12dp，
+                                // 分割线只贯穿右侧文字区域，不穿过左侧海报。
                                 HorizontalDivider(
-                                    modifier = Modifier.padding(start = 76.dp),
+                                    modifier = Modifier.padding(start = 88.dp),
                                     thickness = 0.5.dp,
                                     color = TvColors.Border.copy(alpha = 0.6f),
                                 )
@@ -462,7 +461,6 @@ private object ImmersiveHistoryTokens {
     val SelectedText = Color(0xFF34D399)
     val SelectedBorder = Color(0x4D34D399)
     val Danger = Color(0xFFEF4444)
-    val Source = Color(0xFF888888)
 }
 
 /**
@@ -528,8 +526,9 @@ private fun MobileHistoryRow(
 ) {
     var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
     // 沉浸式列表项（降噪）：
-    // - 标题「剧名·第N集」+ 新集 badge；
-    // - 元信息「[来源] 上次看到 NN% · 继续观看」，来源用深灰前缀与进度文字区分；
+    // - 左侧海报固定 72x102dp、8dp 圆角、Crop 缩放；
+    // - 标题「剧名·第N集」maxLines=1 省略，新集 badge 固定在标题右侧不被压缩；
+    // - 元信息只保留「上次看到 NN% · 继续观看」，不再显示来源名（来源在详情页可见）；
     // - 蓝→紫渐变进度条；海报不再叠加任何来源文字，画面保持干净。
     val title = remember(item.movieName, item.episodeTitle, item.episodeIndex) {
         val episode = item.episodeTitle.takeIf { it.isNotBlank() }
@@ -541,7 +540,6 @@ private fun MobileHistoryRow(
     } else {
         "上次看到 ${formatPlayerTime(item.positionMs)} · 继续观看"
     }
-    val hasSourceLabel = item.sourceName.isNotBlank()
 
     // 扁平行：无卡片底色，仅保留海报圆角与点击涟漪；分隔线由外层列表统一绘制。
     Row(
@@ -555,7 +553,7 @@ private fun MobileHistoryRow(
     ) {
         Box(
             modifier = Modifier
-                .size(width = 56.dp, height = 76.dp)
+                .size(width = 72.dp, height = 102.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(TvColors.SurfaceRaised),
             contentAlignment = Alignment.Center,
@@ -576,10 +574,13 @@ private fun MobileHistoryRow(
                     color = TvColors.TextSecondary,
                 )
             }
-            // 海报上不再叠加来源文字：来源已移至右侧进度行前缀，避免遮挡画面。
+            // 海报上不再叠加来源文字：来源已移至详情页，避免遮挡画面。
         }
         Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
+        Column(
+            // weight(1f) 占满海报与删除图标之间的剩余宽度，高度与海报对齐（Row 默认 CenterVertically）。
+            modifier = Modifier.weight(1f),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = title,
@@ -587,7 +588,9 @@ private fun MobileHistoryRow(
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    // 标题吃掉剩余宽度并省略；badge 是非 weighted 子项、先测量，
+                    // 因此永远保持完整尺寸，不会被长标题压缩。
+                    modifier = Modifier.weight(1f),
                 )
                 // 新剧集提示统一走 NewEpisodeBadge（labelMedium、橙/绿高对比），
                 // 与 TV 历史卡片、详情页同一套文案与颜色，保证竖屏列表可扫读。
@@ -597,16 +600,9 @@ private fun MobileHistoryRow(
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
-            // [tym] 上次看到 74% · 继续观看 —— 来源用深灰 + 方括号降噪，进度文字保持次级灰。
+            // 「上次看到 NN% · 继续观看」：不显示源名称，详情页已展示来源。
             Text(
-                text = buildAnnotatedString {
-                    if (hasSourceLabel) {
-                        withStyle(style = SpanStyle(color = ImmersiveHistoryTokens.Source)) {
-                            append("[${item.sourceName}] ")
-                        }
-                    }
-                    append(progressText)
-                },
+                text = progressText,
                 style = MaterialTheme.typography.bodySmall,
                 color = TvColors.TextSecondary,
                 maxLines = 1,

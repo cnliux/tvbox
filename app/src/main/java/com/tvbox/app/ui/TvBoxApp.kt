@@ -42,6 +42,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,6 +57,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -791,16 +793,24 @@ private fun FeaturedMovieHero(
     }
 }
 
+/** 历史网格的首项是随滚动头部 item；数据下标 → 网格下标换算用。 */
+private const val HISTORY_HEADER_ITEM_COUNT = 1
+
 @Composable
 private fun HistoryScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-) {
-    PageSurface { padding ->
+) {    PageSurface { padding ->
         var confirmClearHistory by remember { mutableStateOf(false) }
+        // TV 端遥控器没有长按手势，用顶部「多选」按钮进入批量删除模式，
+        // 每张卡片点击切换选中，确认键复用 onClick 语义即天然支持遥控器。
+        var multiSelectMode by remember { mutableStateOf(false) }
+        var selectedHistoryKeys by remember { mutableStateOf(emptySet<String>()) }
         val historyGrid = rememberLazyGridState()
         val historyFocus = rememberReturnFocus()
-        RestoreGridFocus(historyFocus, historyGrid, state.historyItems.mapIndexed { index, item -> "${item.apiLineId}:${item.movieId}" to index })
+        // 网格首项是随滚动的头部 item，数据下标要 +1 才是网格 item 下标
+        // （RestoreGridFocus 用该下标 scrollToItem，必须用网格下标而不是数据下标）。
+        RestoreGridFocus(historyFocus, historyGrid, state.historyItems.mapIndexed { index, item -> "${item.apiLineId}:${item.movieId}" to index + HISTORY_HEADER_ITEM_COUNT })
         if (confirmClearHistory) {
             AlertDialog(
                 onDismissRequest = { confirmClearHistory = false },
@@ -834,55 +844,92 @@ private fun HistoryScreen(
                 .padding(padding),
         ) {
             val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "历史",
-                        style = if (isMobile) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineLarge,
-                    )
-                    if (state.historyUpdateChecking) {
+            // 头部（标题 + 多选/清空/返回按钮）与列表合入同一滚动容器：
+            // 固定在顶部会持续挤压下方网格可视区域（与本轮设置页同一规范）。
+            val historyHeader: @Composable () -> Unit = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "正在检查各源更新…",
-                            color = MaterialTheme.colorScheme.primary,
-                            style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                            text = "历史",
+                            style = if (isMobile) MaterialTheme.typography.titleLarge else MaterialTheme.typography.headlineLarge,
                         )
-                    } else {
-                        Text(
-                            text = "观看记录：继续上次的线路、集数和播放进度",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
-                        )
+                        if (state.historyUpdateChecking) {
+                            Text(
+                                text = "正在检查各源更新…",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                            )
+                        } else {
+                            Text(
+                                text = "观看记录：继续上次的线路、集数和播放进度",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = if (isMobile) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                            )
+                        }
                     }
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(
-                        enabled = state.historyItems.isNotEmpty(),
-                        onClick = { confirmClearHistory = true },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
-                    ) {
-                        Text("清空")
-                    }
-                    // 手机模式下「历史」是底部 Tab 的一级页面，没有「返回上一页」的语义：
-                    // 顶部已由公共顶栏提供源切换/搜索/设置，底部有 Tab 导航，这个返回只会
-                    // 把用户莫名送回首页。电视端保持原样（遥控器没有系统返回键）。
-                    if (!isMobile) {
-                        Button(
-                            onClick = actions::goBack,
-                            shape = RoundedCornerShape(8.dp),
-                        ) {
-                            Text("返回")
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (multiSelectMode) {
+                            Button(
+                                enabled = selectedHistoryKeys.isNotEmpty(),
+                                onClick = {
+                                    val selected = state.historyItems.filter {
+                                        "${it.apiLineId}:${it.movieId}" in selectedHistoryKeys
+                                    }
+                                    actions.removeHistoryItems(selected)
+                                    selectedHistoryKeys = emptySet()
+                                    multiSelectMode = false
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
+                            ) {
+                                Text("删除所选(${selectedHistoryKeys.size})")
+                            }
+                            Button(
+                                onClick = {
+                                    multiSelectMode = false
+                                    selectedHistoryKeys = emptySet()
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                            ) { Text("取消") }
+                        } else {
+                            Button(
+                                enabled = state.historyItems.isNotEmpty(),
+                                onClick = { multiSelectMode = true },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
+                            ) {
+                                Text("多选")
+                            }
+                            Button(
+                                enabled = state.historyItems.isNotEmpty(),
+                                onClick = { confirmClearHistory = true },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = if (isMobile) Modifier.heightIn(min = 48.dp) else Modifier,
+                            ) {
+                                Text("清空")
+                            }
+                        }
+                        // 手机模式下「历史」是底部 Tab 的一级页面，没有「返回上一页」的语义：
+                        // 顶部已由公共顶栏提供源切换/搜索/设置，底部有 Tab 导航，这个返回只会
+                        // 把用户莫名送回首页。电视端保持原样（遥控器没有系统返回键）。
+                        if (!isMobile) {
+                            Button(
+                                onClick = actions::goBack,
+                                shape = RoundedCornerShape(8.dp),
+                            ) {
+                                Text("返回")
+                            }
                         }
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(22.dp))
             if (state.historyItems.isEmpty()) {
                 // 空态统一走共享 EmptyState：与详情/平台直播的空态保持同一层级（标题 + 说明 + 动作）。
+                historyHeader()
                 EmptyState(
                     title = "暂无观看历史",
                     subtitle = "在首页选择任意影片开始观看，进度会自动记录在这里",
@@ -890,10 +937,6 @@ private fun HistoryScreen(
                     onAction = actions::goBack,
                 )
             } else {
-                if (state.historyUpdateChecking) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
                 // 手机模式按宽度自适应 3~4 列（与首页信息流同一档密度）；
                 // 原先固定 2 列时一屏只能看到 4 张历史卡，续看命中率低。
                 BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
@@ -917,12 +960,32 @@ private fun HistoryScreen(
                         verticalArrangement = Arrangement.spacedBy(if (isMobile) 10.dp else 22.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        items(state.historyItems, key = { "${it.apiLineId}:${it.movieId}" }) { item ->
-                            HistoryItemCard(item = item, onClick = {
-                                historyFocus.mark("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item))
-                                actions.resumeHistory(item, TvScreen.History)
-                            },
-                                modifier = historyFocus.modifier("${item.apiLineId}:${item.movieId}", state.historyItems.indexOf(item)))
+                        // 头部作为网格首项随列表滚动；所有条目网格下标因此整体 +1。
+                        item(key = "history-header", span = { GridItemSpan(maxLineSpan) }) {
+                            historyHeader()
+                        }
+                        itemsIndexed(
+                            state.historyItems,
+                            key = { _, item -> "${item.apiLineId}:${item.movieId}" },
+                        ) { index, item ->
+                            val focusKey = "${item.apiLineId}:${item.movieId}"
+                            HistoryItemCard(
+                                item = item,
+                                onClick = {
+                                    historyFocus.mark(focusKey, index)
+                                    if (multiSelectMode) {
+                                        selectedHistoryKeys = if (focusKey in selectedHistoryKeys) {
+                                            selectedHistoryKeys - focusKey
+                                        } else {
+                                            selectedHistoryKeys + focusKey
+                                        }
+                                    } else {
+                                        actions.resumeHistory(item, TvScreen.History)
+                                    }
+                                },
+                                selected = focusKey in selectedHistoryKeys,
+                                modifier = historyFocus.modifier(focusKey, index),
+                            )
                         }
                     }
                 }
@@ -1456,30 +1519,35 @@ private fun MovieGrid(
                 }
             }
             if (state.isShowingDoubanHot) {
-                items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                itemsIndexed(
+                    hotItems,
+                    key = { _, item -> item.doubanId.ifBlank { item.title } },
+                ) { index, item ->
+                    val focusKey = "douban:${item.doubanId}"
                     DoubanHotPosterCard(
                         item = item,
                         resolving = state.resolvingDoubanHotId == item.doubanId,
                         onClick = {
-                            focus.mark("douban:${item.doubanId}", hotItems.indexOf(item) + itemOffset)
+                            focus.mark(focusKey, index + itemOffset)
                             onDoubanHotClick(item)
                         },
-                        modifier = focus.modifier("douban:${item.doubanId}", hotItems.indexOf(item) + itemOffset)
+                        modifier = focus.modifier(focusKey, index + itemOffset)
                             .onFocusChanged { if (it.hasFocus) onContentFocused() },
                     )
                 }
             } else {
-                items(
+                itemsIndexed(
                     state.movies,
-                    key = { "${it.apiLineId}-${it.id}" },
-                ) { movie ->
+                    key = { _, movie -> "${movie.apiLineId}-${movie.id}" },
+                ) { index, movie ->
+                    val focusKey = "${movie.apiLineId}:${movie.id}"
                     MoviePosterCard(
                         movie = movie,
                         onClick = {
-                            focus.mark("${movie.apiLineId}:${movie.id}", state.movies.indexOf(movie) + itemOffset)
+                            focus.mark(focusKey, index + itemOffset)
                             onMovieClick(movie.id)
                         },
-                        modifier = focus.modifier("${movie.apiLineId}:${movie.id}", state.movies.indexOf(movie) + itemOffset)
+                        modifier = focus.modifier(focusKey, index + itemOffset)
                             .onFocusChanged { if (it.hasFocus) onContentFocused() },
                     )
                 }
@@ -1830,49 +1898,24 @@ private fun createQrBitmap(content: String, size: Int): Bitmap? = runCatching {
 
 // ===== Source Management Screens =====
 
+/**
+ * 源管理工具栏：测速/排序/导出等批量操作、消息提示与本地搜索框。
+ * 作为滚动容器的一个 item 随页面整体滚动；「添加接口」在手机端由右下角 FAB 承担。
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SourceManagerSetting(
+private fun SourceManagerToolbar(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
+    sourceQuery: String,
+    onQueryChange: (String) -> Unit,
+    onOpenImport: () -> Unit,
+    exportMessage: String?,
+    onExportTvbox: () -> Unit,
+    onExportJson: () -> Unit,
+    showImportButton: Boolean,
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
-    var importDialogVisible by remember { mutableStateOf(false) }
-    var importDraft by remember { mutableStateOf("") }
-    var exportMessage by remember { mutableStateOf<String?>(null) }
-    // #288：源列表本地搜索过滤（按名称或地址）。不进 ViewModel 状态，避免污染持久化配置。
-    var sourceQuery by remember { mutableStateOf("") }
-    val normalizedSourceQuery = sourceQuery.trim()
-    val visibleSourceLines = remember(state.allSourceLines, normalizedSourceQuery) {
-        if (normalizedSourceQuery.isBlank()) {
-            state.allSourceLines
-        } else {
-            val needle = normalizedSourceQuery
-            state.allSourceLines.filter { line ->
-                line.name.contains(needle, ignoreCase = true) ||
-                    line.baseUrls.any { it.contains(needle, ignoreCase = true) } ||
-                    line.id.contains(needle, ignoreCase = true)
-            }
-        }
-    }
-
-    fun exportToDownloads(fileName: String, content: () -> String) {
-        scope.launch {
-            try {
-                // 全量源序列化与写文件都移出主线程，源数量多时不会卡住点击反馈。
-                val location = withContext(Dispatchers.IO) {
-                    TextFileExporter(context).save(fileName, content())
-                }
-                exportMessage = "已导出到 $location"
-            } catch (error: Exception) {
-                exportMessage = "导出失败：${error.message ?: error.toString()}"
-            }
-        }
-    }
-
-    Column {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         // 工具按钮流式排布：电视宽屏保持一行，手机版窄屏/大字号自动换行不溢出。
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
@@ -1894,191 +1937,179 @@ private fun SourceManagerSetting(
                 enabled = !state.sourceTesting && !state.sourceImporting && state.apiLines.isNotEmpty(),
                 onClick = actions::deleteInvalidSources,
             )
-            SettingsActionButton(
-                text = "导入配置",
-                enabled = !state.sourceImporting,
-                onClick = { importDraft = ""; actions.dismissSourceImportMessage(); importDialogVisible = true },
-            )
+            // 手机端添加入口移至右下角 FAB；电视端保留按钮（遥控器点 FAB 语义不佳）。
+            if (showImportButton) {
+                SettingsActionButton(
+                    text = "导入配置",
+                    enabled = !state.sourceImporting,
+                    onClick = onOpenImport,
+                )
+            }
             SettingsActionButton(
                 text = "导出 TVBox",
                 enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
-                onClick = { exportToDownloads("tvbox_sources.json") { actions.sourceConfigTvboxJson() } },
+                onClick = onExportTvbox,
             )
             SettingsActionButton(
                 text = "导出 JSON",
                 enabled = !state.sourceImporting && state.apiLines.isNotEmpty(),
-                onClick = { exportToDownloads("sources.json") { actions.sourceConfigSourcesJson() } },
+                onClick = onExportJson,
             )
         }
         state.sourceManagerMessage?.let { msg ->
-            Spacer(modifier = Modifier.height(6.dp))
             Text(text = msg, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
         exportMessage?.let { msg ->
-            Spacer(modifier = Modifier.height(6.dp))
             Text(text = msg, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
         }
         if (state.sourceTesting) {
-            Spacer(modifier = Modifier.height(8.dp))
             LinearProgressIndicator(
                 progress = { if (state.sourceTestTotal <= 0) 0f else state.sourceTestCompleted.toFloat() / state.sourceTestTotal },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(modifier = Modifier.height(10.dp))
         // #288：源搜索过滤框。仅当存在源时显示，避免空态页多余控件。
         if (state.allSourceLines.isNotEmpty()) {
             OutlinedTextField(
                 value = sourceQuery,
-                onValueChange = { sourceQuery = it },
+                onValueChange = onQueryChange,
                 label = { Text("搜索源名称或地址") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (state.allSourceLines.isEmpty()) {
-                // 统一三态组件：空态带引导文案，TV 遥控器可直接聚焦后续导入按钮。
-                GuidedEmptyState(
-                    title = "暂无可管理的视频源",
-                    hint = "在上方导入订阅地址或 JSON 文件后，即可管理源顺序与屏蔽状态",
+    }
+}
+
+/** 源测速状态标签：正常（有延迟）/ 失效（超时）/ 未测速，以及对应语义色。 */
+@Composable
+private fun sourceStatusLabel(lineId: String, latencies: Map<String, Long?>): Pair<String, Color> {
+    return when (val latency = latencies[lineId]) {
+        null -> {
+            if (lineId in latencies) "失效" to MaterialTheme.colorScheme.error
+            else "未测速" to MaterialTheme.colorScheme.onSurfaceVariant
+        }
+        else -> "正常" to MaterialTheme.colorScheme.primary
+    }
+}
+
+/**
+ * 源列表卡片（规范布局）：左侧「标题 + 副标题（测速 | 接口地址）」，
+ * 右侧「状态标签（正常/失效）+ 箭头」；整卡可点，打开操作弹窗（测速/屏蔽/删除）。
+ */
+@Composable
+private fun SourceManageCard(
+    line: ApiLine,
+    isSelected: Boolean,
+    isBlocked: Boolean,
+    latencies: Map<String, Long?>,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(10.dp)
+    var focused by remember { mutableStateOf(false) }
+    val latencyLabel = sourceLatencyLabel(line.id, latencies)
+    val (statusText, statusColor) = sourceStatusLabel(line.id, latencies)
+    Surface(
+        modifier = modifier
+            .tvFocusScale(shape = shape)
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(role = Role.Button, onClick = onClick)
+            .focusable(),
+        shape = shape,
+        color = if (focused) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = buildString {
+                        if (isSelected) append("已选 ")
+                        append(line.name)
+                        if (isBlocked) append("（已屏蔽）")
+                    },
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
                 )
-            } else if (visibleSourceLines.isEmpty()) {
-                GuidedEmptyState(
-                    title = "没有匹配的源",
-                    hint = "试试其他关键词，或清空搜索框查看全部源",
+                Text(
+                    text = buildString {
+                        append(latencyLabel)
+                        append(" | ")
+                        append(line.baseUrls.firstOrNull() ?: "")
+                    },
+                    // 原为 labelSmall 单行，手机端字太小且源地址只剩开头几个字符。
+                    color = TvColors.TextSecondary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            visibleSourceLines.forEach { line ->
-                val blocked = line.id in state.appSettings.blockedSourceIds
-                val selected = line.id == state.selectedApiLine?.id
-                val statusSuffix = if (blocked) "（已屏蔽）" else ""
-                val cardModifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                val infoBlock = @Composable {
-                    Text(
-                        text = (if (selected) "已选 " else "") + line.name + statusSuffix,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = buildString {
-                            append(sourceLatencyLabel(line.id, state.sourceLatencies))
-                            append(" | ")
-                            append(line.baseUrls.firstOrNull() ?: "")
-                        },
-                        // 原为 labelSmall 单行，手机端字太小且源地址只剩开头几个字符。
-                        color = TvColors.TextSecondary,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                val actionBlock = @Composable {
-                    if (!blocked) {
-                        SettingsActionButton(
-                            text = if (state.sourceTesting) "..." else "测速",
-                            enabled = !state.sourceTesting,
-                            onClick = { actions.testSourceSpeed(line.id) },
-                        )
-                        SettingsActionButton(
-                            text = "屏蔽",
-                            onClick = { actions.blockSource(line.id) },
-                        )
-                    } else {
-                        SettingsActionButton(
-                            text = "取消屏蔽",
-                            onClick = { actions.unblockSource(line.id) },
-                        )
-                    }
-                    SettingsActionButton(
-                        text = "删除",
-                        onClick = { actions.deleteApiLine(line.id) },
-                    )
-                }
-                if (isMobile) {
-                    // 手机版：信息在上、操作按钮流式换行在下，避免窄屏把源名挤成竖排。
-                    Column(modifier = cardModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        infoBlock()
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) { actionBlock() }
-                    }
-                } else {
-                    Row(
-                        modifier = cardModifier,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) { infoBlock() }
-                        actionBlock()
-                    }
-                }
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = statusColor.copy(alpha = 0.14f),
+                contentColor = statusColor,
+            ) {
+                Text(
+                    text = statusText,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                )
             }
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
+}
 
-    if (importDialogVisible) {
-        val importMessage = state.sourceImportMessage
-        AlertDialog(
-            onDismissRequest = { importDialogVisible = false; actions.dismissSourceImportMessage() },
-            title = { Text("导入源配置") },
-            text = {
-                Column {
-                    Text(
-                        text = "粘贴 TVBox JSON（含 sites 或加密壳 ** / 2423 AES）、storeHouse 或 sources.json 数组，也可直接输入订阅地址。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = importDraft,
-                        onValueChange = { importDraft = it },
-                        modifier = Modifier.fillMaxWidth().height(190.dp),
-                        placeholder = { Text("https://example.com/tvbox.json 或 {\"sites\":[...]}") },
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        TextButton(
-                            onClick = {
-                                importDraft = ""
-                            },
-                        ) { Text("清空草稿") }
-                    }
-                    if (importMessage != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = importMessage,
-                            color = if (
-                                importMessage.contains("失败") ||
-                                importMessage.contains("错误") ||
-                                importMessage.contains("不合法") ||
-                                importMessage.contains("缺少")
-                            ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                SettingsActionButton(
-                    text = "导入",
-                    enabled = importDraft.isNotBlank() && !state.sourceImporting,
-                    onClick = { actions.importSourceConfig(importDraft); importDialogVisible = false },
+/** 源操作弹窗：测速、屏蔽/取消屏蔽、删除。 */
+@Composable
+private fun SourceActionDialog(
+    line: ApiLine,
+    isBlocked: Boolean,
+    isTesting: Boolean,
+    latencyLabel: String,
+    onTest: () -> Unit,
+    onToggleBlock: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = line.name) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    text = line.baseUrls.firstOrNull() ?: "",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-            },
-            dismissButton = {
-                TextButton(onClick = { importDialogVisible = false; actions.dismissSourceImportMessage() }) { Text("取消") }
-            },
-        )
-    }
+                Text(
+                    text = "测速结果：$latencyLabel",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsActionButton(text = if (isTesting) "..." else "测速", enabled = !isTesting, onClick = onTest)
+                SettingsActionButton(text = if (isBlocked) "取消屏蔽" else "屏蔽", onClick = onToggleBlock)
+                SettingsActionButton(text = "删除", onClick = onDelete)
+                TextButton(onClick = onDismiss) { Text("关闭") }
+            }
+        },
+    )
 }
 
 @Composable
@@ -2393,75 +2424,74 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
     BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
     PageSurface { padding ->
-        Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
-            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
-            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
-            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
+        // 一体滚动：标题栏、说明文字与内容卡片放在同一个 LazyVerticalGrid 里，
+        // 随用户滑动一起滚出屏幕；不再把头部固定在顶部挤压列表可视区域。
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
+            contentPadding = PaddingValues(bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.systemBars)
+                .padding(padding),
         ) {
-            ManageScreenHeader(
-                title = "源管理",
-                subtitle = if (isMobile) "视频接口、直播源与首页渲染数据统一管理（支持地址导入与页内管理）" else "视频接口、直播源与首页渲染数据统一管理（支持网页管理与地址导入）",
-                isMobile = isMobile,
-            ) {
-                SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
-                SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
-                SettingsActionButton(text = "返回", onClick = actions::goBack)
-            }
-            Spacer(modifier = Modifier.height(22.dp))
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
-                contentPadding = PaddingValues(bottom = 24.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.weight(1f),
-            ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "首页渲染数据（视频接口）",
-                        subtitle = "从这里进入独立的视频接口管理页，支持地址导入与页内管理。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "当前首页接口：${state.selectedApiLine?.name ?: "未选择"}", style = MaterialTheme.typography.titleMedium)
-                            Text(text = "视频接口总数：${state.apiLines.size}（自定义：${state.appSettings.customVideoApiLines.size}）", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        SettingsActionButton(text = "进入视频接口管理", onClick = actions::openVideoSourceManager)
-                    }
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SettingsSectionTitle(
-                        title = "直播源",
-                        subtitle = "从这里进入独立的直播源管理页，支持地址导入与页内编辑。",
-                    )
-                }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "自定义直播源：${state.appSettings.liveSourceUrls.size} 条", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = if (state.appSettings.liveSourceUrls.isEmpty()) "未配置自定义直播源（直播将使用导入的源）" else "已配置自定义直播源",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        SettingsActionButton(text = "进入直播源管理", onClick = actions::openLiveSourceManager)
-                    }
+            item(key = "source-hub-header", span = { GridItemSpan(maxLineSpan) }) {
+                ManageScreenHeader(
+                    title = "源管理",
+                    subtitle = if (isMobile) "视频接口、直播源与首页渲染数据统一管理（支持地址导入与页内管理）" else "视频接口、直播源与首页渲染数据统一管理（支持网页管理与地址导入）",
+                    isMobile = isMobile,
+                ) {
+                    SettingsActionButton(text = "视频接口管理", onClick = actions::openVideoSourceManager)
+                    SettingsActionButton(text = "直播源管理", onClick = actions::openLiveSourceManager)
+                    SettingsActionButton(text = "返回", onClick = actions::goBack)
                 }
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                SettingsSectionTitle(
+                    title = "首页渲染数据（视频接口）",
+                    subtitle = "从这里进入独立的视频接口管理页，支持地址导入与页内管理。",
+                )
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "当前首页接口：${state.selectedApiLine?.name ?: "未选择"}", style = MaterialTheme.typography.titleMedium)
+                        Text(text = "视频接口总数：${state.apiLines.size}（自定义：${state.appSettings.customVideoApiLines.size}）", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    SettingsActionButton(text = "进入视频接口管理", onClick = actions::openVideoSourceManager)
+                }
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                SettingsSectionTitle(
+                    title = "直播源",
+                    subtitle = "从这里进入独立的直播源管理页，支持地址导入与页内编辑。",
+                )
+            }
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "自定义直播源：${state.appSettings.liveSourceUrls.size} 条", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            text = if (state.appSettings.liveSourceUrls.isEmpty()) "未配置自定义直播源（直播将使用导入的源）" else "已配置自定义直播源",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    SettingsActionButton(text = "进入直播源管理", onClick = actions::openLiveSourceManager)
+                }
+            }
+            item(key = "source-hub-back", span = { GridItemSpan(maxLineSpan) }) {
+                // 常驻兜底返回：即使软键盘盖住顶部标题栏，滚动到底部仍有一个可点的退出入口。
+                SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+            }
         }
     }
 }
@@ -2470,38 +2500,78 @@ private fun SourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel)
 private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewModel) {
     BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var importDialogVisible by remember { mutableStateOf(false) }
+    var importDraft by remember { mutableStateOf("") }
+    var exportMessage by remember { mutableStateOf<String?>(null) }
+    // #288：源列表本地搜索过滤（按名称或地址）。不进 ViewModel 状态，避免污染持久化配置。
+    var sourceQuery by remember { mutableStateOf("") }
+    // 当前打开操作弹窗（测速/屏蔽/删除）的源 id；null 表示弹窗关闭。
+    var actionLineId by remember { mutableStateOf<String?>(null) }
+    val normalizedSourceQuery = sourceQuery.trim()
+    val visibleSourceLines = remember(state.allSourceLines, normalizedSourceQuery) {
+        if (normalizedSourceQuery.isBlank()) {
+            state.allSourceLines
+        } else {
+            val needle = normalizedSourceQuery
+            state.allSourceLines.filter { line ->
+                line.name.contains(needle, ignoreCase = true) ||
+                    line.baseUrls.any { it.contains(needle, ignoreCase = true) } ||
+                    line.id.contains(needle, ignoreCase = true)
+            }
+        }
+    }
+
+    fun exportToDownloads(fileName: String, content: () -> String) {
+        scope.launch {
+            try {
+                // 全量源序列化与写文件都移出主线程，源数量多时不会卡住点击反馈。
+                val location = withContext(Dispatchers.IO) {
+                    TextFileExporter(context).save(fileName, content())
+                }
+                exportMessage = "已导出到 $location"
+            } catch (error: Exception) {
+                exportMessage = "导出失败：${error.message ?: error.toString()}"
+            }
+        }
+    }
+
+    fun openImport() {
+        importDraft = ""
+        actions.dismissSourceImportMessage()
+        importDialogVisible = true
+    }
+
     PageSurface { padding ->
-        Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
-            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
-            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
-            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
+        Box(
+            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏（状态栏 + 导航栏），保证
+            // 页面顶部与 FAB 都落在可交互区域。与历史页修复保持一致。
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
         ) {
-            ManageScreenHeader(
-                title = "视频接口管理",
-                subtitle = if (isMobile) "首页渲染数据管理（支持地址导入、测速与源增删）" else "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）",
-                isMobile = isMobile,
-            ) {
-                // 手机版源管理全部在页内完成，不再暴露远程网页入口。
-                if (!isMobile) {
-                    SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
-                }
-                SettingsActionButton(text = "返回", onClick = actions::goBack)
-            }
-            Spacer(modifier = Modifier.height(22.dp))
-            if (state.remoteManageDialogVisible) {
-                RemoteManageDialog(state = state, actions = actions)
-            }
+            // 一体滚动：标题栏、说明文字、工具栏与源卡片在同一个 LazyVerticalGrid 中，
+            // 随用户滑动一起滚出屏幕；列表不再被固定头部挤压。
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
-                contentPadding = PaddingValues(bottom = 24.dp),
+                contentPadding = PaddingValues(bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "video-mgr-header", span = { GridItemSpan(maxLineSpan) }) {
+                    ManageScreenHeader(
+                        title = "视频接口管理",
+                        subtitle = if (isMobile) "首页渲染数据管理（支持地址导入、测速与源增删）" else "首页渲染数据管理（支持网页管理与地址导入以解析视频源数据）",
+                        isMobile = isMobile,
+                    ) {
+                        // 手机版源管理全部在页内完成，不再暴露远程网页入口。
+                        if (!isMobile) {
+                            SettingsActionButton(text = "打开远程管理（网页）", onClick = actions::openRemoteManageDialog)
+                        }
+                        SettingsActionButton(text = "返回", onClick = actions::goBack)
+                    }
+                }
+                item(key = "video-home-api", span = { GridItemSpan(maxLineSpan) }) {
                     HomeApiLineSetting(
                         apiLines = state.apiLines,
                         selectedApiLine = state.selectedApiLine,
@@ -2510,28 +2580,186 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                         onOpenConfig = if (isMobile) null else actions::openRemoteManageDialog,
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "video-manage-title", span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "源管理",
-                        subtitle = "测速排序、删除/恢复、导入/导出，支持地址导入以解析视频源数据。",
+                        // 健康管理开启时把最近一轮后台体检结果带给用户，静默不等于不可见。
+                        subtitle = buildString {
+                            append("测速排序、删除/恢复、导入/导出，支持地址导入以解析视频源数据。")
+                            state.source.lastHealthCheckSummary?.let {
+                                append("　")
+                                append(it)
+                            }
+                        },
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    SourceManagerSetting(state = state, actions = actions)
+                item(key = "video-manage-toolbar", span = { GridItemSpan(maxLineSpan) }) {
+                    SourceManagerToolbar(
+                        state = state,
+                        actions = actions,
+                        sourceQuery = sourceQuery,
+                        onQueryChange = { sourceQuery = it },
+                        onOpenImport = ::openImport,
+                        exportMessage = exportMessage,
+                        onExportTvbox = { exportToDownloads("tvbox_sources.json") { actions.sourceConfigTvboxJson() } },
+                        onExportJson = { exportToDownloads("sources.json") { actions.sourceConfigSourcesJson() } },
+                        showImportButton = !isMobile,
+                    )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                when {
+                    state.allSourceLines.isEmpty() -> {
+                        item(key = "video-manage-empty", span = { GridItemSpan(maxLineSpan) }) {
+                            // 统一三态组件：空态带引导文案，TV 遥控器可直接聚焦后续导入按钮。
+                            GuidedEmptyState(
+                                title = "暂无可管理的视频源",
+                                hint = "导入订阅地址或 JSON 文件后，即可管理源顺序与屏蔽状态",
+                            )
+                        }
+                    }
+                    visibleSourceLines.isEmpty() -> {
+                        item(key = "video-manage-no-match", span = { GridItemSpan(maxLineSpan) }) {
+                            GuidedEmptyState(
+                                title = "没有匹配的源",
+                                hint = "试试其他关键词，或清空搜索框查看全部源",
+                            )
+                        }
+                    }
+                    else -> {
+                        // 每个源一张卡片：列表长时只有可见项参与组合，比整列 forEach 更省。
+                        items(
+                            items = visibleSourceLines,
+                            key = { "source-${it.id}" },
+                        ) { line ->
+                            SourceManageCard(
+                                line = line,
+                                isSelected = line.id == state.selectedApiLine?.id,
+                                isBlocked = line.id in state.appSettings.blockedSourceIds,
+                                latencies = state.sourceLatencies,
+                                onClick = { actionLineId = line.id },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+                }
+                item(key = "video-blocked-title", span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "屏蔽视频分类",
                         subtitle = "屏蔽后该分类不再出现在电视首页的分类与影片列表；可随时恢复。",
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "video-blocked-setting", span = { GridItemSpan(maxLineSpan) }) {
                     BlockedVideoCategorySetting(state = state, actions = actions)
                 }
+                item(key = "video-mgr-back", span = { GridItemSpan(maxLineSpan) }) {
+                    // 常驻兜底返回：即使软键盘盖住顶部标题栏，滚动到底部仍可退出。
+                    SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+                }
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+            // 规范 3：添加接口的入口移出页面顶部，固定在右下角、滚动时永远可见。
+            // 电视端遥控器对 FAB 语义不佳，保留工具栏「导入配置」按钮。
+            if (isMobile) {
+                ExtendedFloatingActionButton(
+                    onClick = ::openImport,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(20.dp),
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "添加接口")
+                }
+            }
         }
+    }
+
+    if (state.remoteManageDialogVisible) {
+        RemoteManageDialog(state = state, actions = actions)
+    }
+
+    if (actionLineId != null) {
+        val actionLine = state.allSourceLines.firstOrNull { it.id == actionLineId }
+        if (actionLine != null) {
+            SourceActionDialog(
+                line = actionLine,
+                isBlocked = actionLine.id in state.appSettings.blockedSourceIds,
+                isTesting = state.sourceTesting,
+                latencyLabel = sourceLatencyLabel(actionLine.id, state.sourceLatencies),
+                onTest = { actions.testSourceSpeed(actionLine.id) },
+                onToggleBlock = {
+                    if (actionLine.id in state.appSettings.blockedSourceIds) {
+                        actions.unblockSource(actionLine.id)
+                    } else {
+                        actions.blockSource(actionLine.id)
+                    }
+                },
+                onDelete = {
+                    actions.deleteApiLine(actionLine.id)
+                    actionLineId = null
+                },
+                onDismiss = { actionLineId = null },
+            )
+        } else {
+            // 源已被删除但弹窗还开着：直接关闭，避免引用悬空。
+            actionLineId = null
+        }
+    }
+
+    if (importDialogVisible) {
+        val importMessage = state.sourceImportMessage
+        AlertDialog(
+            onDismissRequest = { importDialogVisible = false; actions.dismissSourceImportMessage() },
+            title = { Text("导入源配置") },
+            text = {
+                Column {
+                    Text(
+                        text = "粘贴 TVBox JSON（含 sites 或加密壳 ** / 2423 AES）、storeHouse 或 sources.json 数组，也可直接输入订阅地址。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = importDraft,
+                        onValueChange = { importDraft = it },
+                        modifier = Modifier.fillMaxWidth().height(190.dp),
+                        placeholder = { Text("https://example.com/tvbox.json 或 {\"sites\":[...]}") },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(
+                            onClick = {
+                                importDraft = ""
+                            },
+                        ) { Text("清空草稿") }
+                    }
+                    if (importMessage != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = importMessage,
+                            color = if (
+                                importMessage.contains("失败") ||
+                                importMessage.contains("错误") ||
+                                importMessage.contains("不合法") ||
+                                importMessage.contains("缺少")
+                            ) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                SettingsActionButton(
+                    text = "导入",
+                    enabled = importDraft.isNotBlank() && !state.sourceImporting,
+                    onClick = { actions.importSourceConfig(importDraft); importDialogVisible = false },
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { importDialogVisible = false; actions.dismissSourceImportMessage() }) { Text("取消") }
+            },
+        )
     }
 }
 
@@ -2540,62 +2768,122 @@ private fun LiveSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewMo
     // IPTV 直播源管理页：保存后若键盘/遮罩未退，系统返回键仍必须能回到设置页。
     BackHandler { actions.goBack() }
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+    // 「添加直播源」弹窗：单条地址快捷添加，避免用户为加一条源而滚动到编辑区找保存按钮。
+    var addSourceDialogVisible by remember { mutableStateOf(false) }
+    var newSourceUrl by remember { mutableStateOf("") }
+
     PageSurface { padding ->
-        Column(
-            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏，保证标题栏（含「返回」按钮）可用。
-            // 不用 safeDrawing：部分机型/主题下它取不到状态栏高度，顶部按钮会落到状态栏下方而点不到，
-            // 表现为「整页遮挡层退不出去」。这里用 systemBars（状态栏 + 导航栏）而不是只用
-            // statusBars —— 页面底部那颗「返回」贴屏幕最底，只避让状态栏会被三键导航栏压住、
-            // 或落进手势条热区，同样「点不中」。与历史页修复保持一致。
+        Box(
+            // 手机版为 edge-to-edge 全屏页：显式吸收系统栏（状态栏 + 导航栏）。
             modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.systemBars).padding(padding),
         ) {
-            ManageScreenHeader(
-                title = "直播源管理",
-                subtitle = if (isMobile) "直播源与平台直播站点管理（支持地址导入与页内编辑）" else "直播源与自定义直播源管理（支持网页管理与地址导入以解析直播源数据）",
-                isMobile = isMobile,
-            ) {
-                SettingsActionButton(text = "返回", onClick = actions::goBack)
-            }
-            Spacer(modifier = Modifier.height(22.dp))
+            // 一体滚动：标题栏、说明文字与各设置卡片放在同一个 LazyVerticalGrid 里一起滚动。
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = TvLayout.SettingsGridMinWidth),
-                contentPadding = PaddingValues(bottom = 24.dp),
+                contentPadding = PaddingValues(bottom = 96.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.fillMaxSize(),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-mgr-header", span = { GridItemSpan(maxLineSpan) }) {
+                    ManageScreenHeader(
+                        title = "直播源管理",
+                        subtitle = if (isMobile) "直播源与平台直播站点管理（支持地址导入与页内编辑）" else "直播源与自定义直播源管理（支持网页管理与地址导入以解析直播源数据）",
+                        isMobile = isMobile,
+                    ) {
+                        SettingsActionButton(text = "返回", onClick = actions::goBack)
+                    }
+                }
+                item(key = "live-source-title", span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "直播源",
                         subtitle = "请添加电视直播源地址（M3U/TXT），支持地址导入以解析直播源数据；可设置默认频道分组名，为空则保持源内分组。",
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-source-setting", span = { GridItemSpan(maxLineSpan) }) {
                     LiveSourceSetting(state = state, actions = actions)
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-epg-title", span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "节目单（EPG）",
                         subtitle = "XMLTV 格式接口地址，用于直播页的频道节目单与 EPG 卡片；留空则直播页显示「暂无节目单」，不影响播放。",
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-epg-setting", span = { GridItemSpan(maxLineSpan) }) {
                     EpgUrlSetting(state = state, actions = actions)
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-platform-title", span = { GridItemSpan(maxLineSpan) }) {
                     SettingsSectionTitle(
                         title = "平台直播站点",
                         subtitle = "斗鱼、虎牙等平台直播站点；删除后可在本页恢复。",
                     )
                 }
-                item(span = { GridItemSpan(maxLineSpan) }) {
+                item(key = "live-platform-setting", span = { GridItemSpan(maxLineSpan) }) {
                     PlatformLiveSiteSetting(state = state, actions = actions)
                 }
+                item(key = "live-mgr-back", span = { GridItemSpan(maxLineSpan) }) {
+                    // 常驻兜底返回：即使软键盘/遮罩盖住顶部标题栏，滚动到底部仍可退出。
+                    SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+                }
             }
-            // 常驻兜底返回：即使软键盘/遮罩盖住顶部标题栏，底部仍有一个可点的退出入口。
-            Spacer(modifier = Modifier.height(10.dp))
-            SettingsActionButton(text = "返回设置", onClick = actions::goBack)
+            // 规范 3：添加直播源的入口固定在右下角、滚动时永远可见；电视端仍用页内编辑区。
+            if (isMobile) {
+                ExtendedFloatingActionButton(
+                    onClick = { newSourceUrl = ""; addSourceDialogVisible = true },
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(20.dp),
+                ) {
+                    Icon(imageVector = Icons.Default.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = "添加直播源")
+                }
+            }
         }
+    }
+
+    if (addSourceDialogVisible) {
+        AlertDialog(
+            onDismissRequest = { addSourceDialogVisible = false },
+            title = { Text("添加直播源") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "输入 M3U/TXT 直播源地址，将追加到现有直播源列表末尾。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedTextField(
+                        value = newSourceUrl,
+                        onValueChange = { newSourceUrl = it },
+                        singleLine = true,
+                        placeholder = { Text("https://example.com/live.m3u") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                SettingsActionButton(
+                    text = "添加",
+                    enabled = newSourceUrl.trim().isNotBlank(),
+                    onClick = {
+                        val url = newSourceUrl.trim()
+                        if (url.isNotEmpty() && url !in state.appSettings.liveSourceUrls) {
+                            // 追加到末尾；默认源下标指向已有行，追加不改变原默认。
+                            actions.updateLiveSourceUrls(
+                                urls = state.appSettings.liveSourceUrls + url,
+                                defaultGroup = state.appSettings.liveSourceDefaultGroup,
+                                defaultIndex = state.appSettings.liveSourceDefaultIndex,
+                            )
+                        }
+                        addSourceDialogVisible = false
+                    },
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { addSourceDialogVisible = false }) { Text("取消") }
+            },
+        )
     }
 }
 

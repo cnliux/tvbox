@@ -66,6 +66,8 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LiveInfoBannerDuration
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.effectiveDecoderStrategy
+import com.tvbox.app.domain.partitionUserAgent
+import com.tvbox.app.domain.sanitizedForHttp
 import com.tvbox.app.domain.LiveChannelNumberMatch
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlaybackWatchdog
@@ -169,6 +171,8 @@ private fun LivePlayerScreen(
     // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
     val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
     val player = playbackHost.player
+    // 系统媒体键/耳机线控在应用未获焦时也能控制直播播放。
+    rememberPlayerMediaSession(player = player)
     // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
     val chrome = remember { PlayerChromeState(initialVisible = true) }
     val playerFocusRequester = chrome.rootFocus
@@ -240,6 +244,7 @@ private fun LivePlayerScreen(
     }
 
     fun showChannelList() {
+        showLineControl = false
         channelListVisible = true
         bumpBars()
         channelListInteraction++
@@ -271,6 +276,8 @@ private fun LivePlayerScreen(
         // #280：频道号搜索提交后记入历史，再次搜索时可直接参考最近输入。
         LiveChannelSearchHistory.record(input)
         channelNumberInput = ""
+        // 递增 nonce 立即取消旧的 2 秒定时器，避免提交后再次触发"无频道内容"。
+        channelNumberNonce++
         numberMatchFocus = 0
         val target: Int? = if (useFocusedMatch) {
             visibleNumberMatches.getOrNull(numberMatchFocus)?.index
@@ -490,12 +497,13 @@ private fun LivePlayerScreen(
             .setAllowCrossProtocolRedirects(true)
             .setConnectTimeoutMs(LIVE_CONNECT_TIMEOUT_MS)
             .setReadTimeoutMs(LIVE_READ_TIMEOUT_MS)
-        val safeHeaders = currentLine.headers
-            .filter { (key, value) -> key.isNotBlank() && value.isNotBlank() && value.none { ch -> ch == '\r' || ch == '\n' } }
+        val safeHeaders = currentLine.headers.sanitizedForHttp()
         // User-Agent 属于 ExoPlayer 的受限请求头，走通用请求头会被静默丢弃，必须单独设置。
-        safeHeaders.entries
-            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
-            ?.let { httpFactory.setUserAgent(it.value) }
+        // 优先级：线路自带 UA（#EXTVLCOPT 等）> 用户自定义 UA > 内置默认 UA。
+        val (lineUserAgent, _) = safeHeaders.partitionUserAgent()
+        httpFactory.setUserAgent(
+            lineUserAgent ?: com.tvbox.app.domain.UserAgentSetting.resolve(state.appSettings.customUserAgent),
+        )
         val otherHeaders = safeHeaders.filter { !it.key.equals("User-Agent", ignoreCase = true) }
         if (otherHeaders.isNotEmpty()) {
             httpFactory.setDefaultRequestProperties(otherHeaders)
@@ -641,8 +649,10 @@ private fun LivePlayerScreen(
 
     // 遥控键位统一由 LiveRemoteKeyRouter 裁决；页面只把副作用映射回现有 action。
     // UIState 从现有浮层状态派生，避免「路由状态」与「实际浮层」两套状态不同步。
-    val remoteState = LiveRemoteState(
+    // 数字输入优先：它是全屏上的模态，哪怕触摸顺手打开了浮层，也必须继续吞掉方向键。
+    fun currentRemoteState() = LiveRemoteState(
         uiState = when {
+            channelNumberInput.isNotEmpty() -> UIState.FULLSCREEN
             channelListVisible -> UIState.CHANNEL_LIST
             showLineControl -> UIState.CONTROLLER
             else -> UIState.FULLSCREEN
@@ -765,7 +775,7 @@ private fun LivePlayerScreen(
             }
             .liveRemoteKeyInput(
                 router = remoteRouter,
-                state = remoteState,
+                state = ::currentRemoteState,
                 // 状态由 showLineControl / channelListVisible / channelNumberInput 派生，
                 // 路由结果通过下面的 effect 落到这些现有状态上。
                 onStateChange = {},
@@ -789,7 +799,7 @@ private fun LivePlayerScreen(
                 nextLabel = "下一台",
             )
             // 缓冲/加载中：进度环 + 「正在加载 <频道名>...」，缓冲结束自动消失。
-            playbackHost.snapshot.isBuffering && !session.interrupted -> PlaybackStatus.Loading(
+            playbackHost.isBuffering && !session.interrupted -> PlaybackStatus.Loading(
                 "正在加载 ${currentChannel.name}...",
             )
             else -> PlaybackStatus.Hidden
@@ -860,7 +870,7 @@ private fun LivePlayerScreen(
                 subtitle = currentChannel.groupName,
                 playing = player.playWhenReady && !session.interrupted,
                 resizeMode = videoScaleMode,
-                buffering = playbackHost.snapshot.isBuffering,
+                buffering = playbackHost.isBuffering,
                 playbackInfo = diagnostics?.info,
                 decoderStrategy = state.appSettings.decoderStrategy,
                 decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
@@ -902,7 +912,13 @@ private fun LivePlayerScreen(
                     showPrompt("画面模式：${mode.displayName}")
                     bumpBars()
                 },
-                onOpenLinePanel = { showLineControl = true; bumpBars() },
+                onOpenLinePanel = {
+                    // 两个浮层互斥，避免 BACK 弹栈时状态不一致。
+                    channelListVisible = false
+                    previewChannel = null
+                    showLineControl = true
+                    bumpBars()
+                },
                 onFavorite = { actions.toggleLiveFavorite(currentChannel); bumpBars() },
                 onBack = { actions.goBack() },
                 onInteraction = { bumpBars() },

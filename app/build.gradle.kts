@@ -57,6 +57,7 @@ android {
         targetSdk = 36
         versionCode = TVBOX_VERSION_CODE
         versionName = TVBOX_VERSION_NAME
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // ABI 按构建类型分别配置：Release 只发 arm64-v8a，Debug 可选本机 x86。
     }
 
@@ -412,6 +413,7 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.media3.exoplayer)
+    implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
     implementation(libs.coil.compose)
@@ -423,6 +425,12 @@ dependencies {
     implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
+
+    // Compose UI 测试（instrumentation）：验证面板焦点陷阱等真实焦点行为。
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
 
 

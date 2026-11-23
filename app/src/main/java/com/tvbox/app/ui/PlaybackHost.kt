@@ -1,6 +1,7 @@
 package com.tvbox.app.ui
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,15 +44,60 @@ internal fun playbackSnapshotOf(
     bufferedMs = bufferedMs.coerceAtLeast(0L),
 )
 
+/** 高频进度字段：仅进度条/时间显示需要，250ms 更新一次。 */
+internal data class PlaybackProgress(
+    val positionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val bufferedMs: Long = 0L,
+)
+
+/**
+ * 低频播放状态：只在播放器回调时变化，直播页只读这里就不会被进度轮询唤醒。
+ * 命名避开 UI 层的 PlaybackStatus（失败覆盖层密封类）。
+ */
+internal data class PlaybackStateSnapshot(
+    val playbackState: Int = Player.STATE_IDLE,
+    val playWhenReady: Boolean = false,
+) {
+    val isBuffering: Boolean get() = playbackState == Player.STATE_BUFFERING
+}
+
 /**
  * 共享播放宿主：持有 ExoPlayer 实例，并在页面可见时按 250ms 刷新快照。
- * 页面只保留各自的业务语义（选集 / 换台 / 换房间），不再各写一套轮询与错误文案。
+ *
+ * 关键设计：进度与状态是**两个独立的 Compose State**。
+ * 旧实现每 250ms 整体替换一个 snapshot 对象，导致只读 buffering/播放意图的
+ * 直播页也跟着每秒重组 4 次；现在轮询只失效 [progress]，状态字段不变时
+ * [status] 保持同一对象引用，下游 composable 完全不被通知。
  */
 internal class PlaybackHost(
     val player: ExoPlayer,
 ) {
-    var snapshot by mutableStateOf(PlaybackSnapshot())
+    /** 高频：只有显示进度/时间的 UI 读它。 */
+    var progress by mutableStateOf(PlaybackProgress())
         private set
+
+    /** 低频：只有状态真正变化时才产生新对象。 */
+    var status by mutableStateOf(PlaybackStateSnapshot())
+        private set
+
+    val isBuffering: Boolean by derivedStateOf { status.playbackState == Player.STATE_BUFFERING }
+    val wantsToPlay: Boolean by derivedStateOf { status.playWhenReady }
+
+    /**
+     * 全量快照视图，供诊断日志/一次性读全字段使用。
+     * 注意：它读 [progress]，会随轮询失效——**不要在重组敏感的 UI 里读它**，
+     * 页面应直接读 [progress] 或 [status] 的对应字段。
+     */
+    val snapshot: PlaybackSnapshot by derivedStateOf {
+        playbackSnapshotOf(
+            playbackState = status.playbackState,
+            playWhenReady = status.playWhenReady,
+            positionMs = progress.positionMs,
+            durationMs = progress.durationMs,
+            bufferedMs = progress.bufferedMs,
+        )
+    }
 
     private val listener = object : Player.Listener {
         // 状态切换需要立即反映到 UI（加载环不能等 250ms 轮询）。
@@ -72,13 +118,18 @@ internal class PlaybackHost(
     }
 
     internal fun refreshSnapshot() {
-        snapshot = playbackSnapshotOf(
+        val currentPosition = player.currentPosition
+        progress = PlaybackProgress(
+            positionMs = currentPosition.coerceAtLeast(0L),
+            durationMs = player.duration.takeIf { it > 0L } ?: 0L,
+            bufferedMs = (player.bufferedPosition - currentPosition).coerceAtLeast(0L),
+        )
+        val nextState = PlaybackStateSnapshot(
             playbackState = player.playbackState,
             playWhenReady = player.playWhenReady,
-            positionMs = player.currentPosition,
-            durationMs = player.duration,
-            bufferedMs = (player.bufferedPosition - player.currentPosition).coerceAtLeast(0L),
         )
+        // 只有字段真的变化才赋值：同值赋值同样会使 Compose State 失效。
+        if (nextState != status) status = nextState
     }
 }
 

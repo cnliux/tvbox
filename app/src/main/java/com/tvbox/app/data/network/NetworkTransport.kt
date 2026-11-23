@@ -20,6 +20,16 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
+ * 全局自定义 User-Agent 持有点：由 ViewModel 在设置加载/变更时推入（已按
+ * [com.tvbox.app.domain.UserAgentSetting.resolve] 收敛为非空默认值），
+ * 视频接口请求、订阅拉取等各网络出口按需读取；直播播放的线路级 UA 仍优先生效。
+ */
+object GlobalUserAgent {
+    @Volatile
+    var value: String = ""
+}
+
+/**
  * 全局 OkHttpClient 出口：统一连接/读/写/整次调用超时口径，避免各仓库各写一套。
  * 需要特殊口径时用 [default.newBuilder] 派生，不要直接 new Builder。
  */

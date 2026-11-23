@@ -55,26 +55,51 @@ object LiveLineNormalizer {
     }
 
     /**
-     * 修复并去重候选列表。
+     * 从线路地址推断容器协议，无法判断时回退到平台给出的值。
      *
-     * [candidates] 按平台优先级排列，输出保持相对顺序（第一条仍是最优线路）。
-     * 完全相同的地址只保留第一条；去重键用「主机 + 路径 + 关键签名参数」，
-     * 避免同一路流因参数顺序不同被当成两条线。
+     * 平台直播的候选列表可能同时含 FLV 与 HLS（斗鱼多清晰度场景），
+     * 而桥接层顶层的 protocol 只代表第一条线路，不能用它覆盖所有候选。
      */
+    fun inferProtocol(url: String, fallback: String): String {
+        val path = runCatching { URI(url.trim()).path }.getOrNull().orEmpty()
+        return when {
+            path.endsWith(".m3u8", ignoreCase = true) || url.contains("m3u8", ignoreCase = true) -> "hls"
+            path.endsWith(".flv", ignoreCase = true) || url.contains(".flv", ignoreCase = true) -> "flv"
+            else -> fallback.trim().ifBlank { "flv" }
+        }
+    }
+
+    /**
+     * 修复并去重候选列表，保留每条候选各自的协议。
+     *
+     * [candidates] 三元组依次为 CDN 名、该线路协议、地址；按平台优先级排列，
+     * 输出保持相对顺序（第一条仍是最优线路）。完全相同的地址只保留第一条；
+     * 去重键用「主机 + 路径 + 关键签名参数」，避免同一路流因参数顺序不同被当成两条线。
+     */
+    fun normalizeCandidates(
+        site: String,
+        candidates: List<Triple<String, String, String>>,
+    ): List<Triple<String, String, String>> {
+        val seen = HashSet<String>()
+        val output = ArrayList<Triple<String, String, String>>(candidates.size)
+        for ((cdn, protocol, url) in candidates) {
+            val fixed = normalizeUrl(site, protocol, url) ?: continue
+            if (!seen.add(dedupeKey(fixed))) continue
+            output.add(Triple(cdn, protocol, fixed))
+        }
+        return output
+    }
+
+    /** 兼容旧调用：所有候选共用同一协议。 */
     fun normalizeCandidates(
         site: String,
         protocol: String,
         candidates: List<Pair<String, String>>,
-    ): List<Pair<String, String>> {
-        val seen = HashSet<String>()
-        val output = ArrayList<Pair<String, String>>(candidates.size)
-        for ((cdn, url) in candidates) {
-            val fixed = normalizeUrl(site, protocol, url) ?: continue
-            if (!seen.add(dedupeKey(fixed))) continue
-            output.add(cdn to fixed)
-        }
-        return output
-    }
+    ): List<Pair<String, String>> =
+        normalizeCandidates(
+            site = site,
+            candidates = candidates.map { (cdn, url) -> Triple(cdn, protocol, url) },
+        ).map { (cdn, _, url) -> cdn to url }
 
     /**
      * 按线路的实际签名参数给出配套请求头。

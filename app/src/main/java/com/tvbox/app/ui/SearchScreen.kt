@@ -102,6 +102,9 @@ private val FallbackSearchHotWords = listOf(
     "三体",
 )
 
+/** 窄屏一体化搜索网格里，结果卡片之前的全宽 item 数（搜索框 + 结果状态区）。 */
+private const val SEARCH_RESULT_LEADING_ITEMS = 2
+
 @Composable
 fun SearchScreen(
     state: TvBoxUiState,
@@ -154,7 +157,8 @@ fun SearchScreen(
             runCatching { searchFieldFocus.requestFocus() }
         }
     }
-    RestoreGridFocus(returnFocus, grid, state.searchResults.mapIndexed { index, item -> "${item.apiLineId}:${item.id}" to index })
+    // 焦点恢复在 PageSurface 内按布局做下标换算：宽屏结果网格从 0 开始，
+    // 窄屏一体化网格前有搜索框/状态区两个全宽 item。
 
     fun setQuery(text: String) {
         fieldValue = queryFieldValue(text)
@@ -202,6 +206,15 @@ fun SearchScreen(
                 .padding(padding),
         ) {
             val wideLayout = maxWidth >= 860.dp
+            RestoreGridFocus(
+                returnFocus,
+                grid,
+                state.searchResults.mapIndexed { index, item ->
+                    "${item.apiLineId}:${item.id}" to (
+                        index + if (wideLayout) 0 else SEARCH_RESULT_LEADING_ITEMS
+                        )
+                },
+            )
             if (wideLayout) {
                 Row(modifier = Modifier.fillMaxSize()) {
                     SearchControlPanel(
@@ -252,33 +265,89 @@ fun SearchScreen(
                     )
                 }
             } else {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    SearchCompactBar(
-                        state = state,
-                        fieldValue = fieldValue,
-                        fieldFocus = searchFieldFocus,
-                        onMoveToResults = moveToResults,
-                        onValueChange = {
-                            fieldValue = it
-                            actions.updateSearchQuery(it.text)
-                        },
-                        onSearch = actions::submitSearch,
-                        onClear = ::clearQuery,
-                        onBack = actions::goBack,
-                    )
-                    if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
-                        Spacer(modifier = Modifier.height(12.dp))
-                        HotSearchStrip(hotWords = hotWords, onSelect = ::searchHotWord)
+                // 一体滚动：搜索框、热门搜索与结果列表在同一个 LazyVerticalGrid 中，
+                // 随用户滑动一起滚出屏幕；固定搜索框不再挤压结果区域。
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 132.dp),
+                    state = grid,
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    item(key = "search-header", span = { GridItemSpan(maxLineSpan) }) {
+                        SearchCompactBar(
+                            state = state,
+                            fieldValue = fieldValue,
+                            fieldFocus = searchFieldFocus,
+                            onMoveToResults = moveToResults,
+                            onValueChange = {
+                                fieldValue = it
+                                actions.updateSearchQuery(it.text)
+                            },
+                            onSearch = actions::submitSearch,
+                            onClear = ::clearQuery,
+                            onBack = actions::goBack,
+                        )
                     }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    SearchResultsPanel(
-                        state = state,
-                        actions = actions,
-                        grid = grid,
-                        returnFocus = returnFocus,
-                        resultsFocus = resultsFocus,
-                        modifier = Modifier.weight(1f),
-                    )
+                    if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
+                        item(key = "search-hot", span = { GridItemSpan(maxLineSpan) }) {
+                            HotSearchStrip(hotWords = hotWords, onSelect = ::searchHotWord)
+                        }
+                    }
+                    item(key = "search-status", span = { GridItemSpan(maxLineSpan) }) {
+                        SearchResultsHeader(state = state)
+                    }
+                    when {
+                        state.searchLoading && state.searchResults.isEmpty() -> {
+                            item(key = "search-loading", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    LoadingState(text = "正在搜索多个影视来源")
+                                }
+                            }
+                        }
+
+                        state.searchError != null && state.searchResults.isEmpty() -> {
+                            item(key = "search-error", span = { GridItemSpan(maxLineSpan) }) {
+                                ErrorState(
+                                    message = state.searchError,
+                                    onRetry = actions::submitSearch,
+                                )
+                            }
+                        }
+
+                        state.searchResults.isEmpty() -> {
+                            item(key = "search-empty", span = { GridItemSpan(maxLineSpan) }) {
+                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                                    SearchEmptyState(query = state.searchQuery)
+                                }
+                            }
+                        }
+
+                        else -> {
+                            itemsIndexed(
+                                items = state.searchResults,
+                                key = { _, movie -> "result-${movie.apiLineId}-${movie.id}" },
+                            ) { index, movie ->
+                                SearchResultCard(
+                                    movie = movie,
+                                    onClick = {
+                                        returnFocus.mark("${movie.apiLineId}:${movie.id}", index)
+                                        actions.openDetail(movie.id, movie.apiLineId)
+                                    },
+                                    modifier = returnFocus
+                                        .modifier("${movie.apiLineId}:${movie.id}", index)
+                                        .then(
+                                            if (index == 0 && returnFocus.lastKey == null) {
+                                                Modifier.focusRequester(resultsFocus)
+                                            } else {
+                                                Modifier
+                                            },
+                                        ),
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -614,22 +683,16 @@ private fun SearchKeyboardKey(
     }
 }
 
+/** 搜索结果状态区：标题 + 计数 + 流式加载进度/进度条 + 错误文案；由 TV 面板与手机一体化网格共用。 */
 @Composable
-private fun SearchResultsPanel(
-    state: TvBoxUiState,
-    actions: TvBoxViewModel,
-    grid: androidx.compose.foundation.lazy.grid.LazyGridState,
-    returnFocus: ReturnFocus,
-    resultsFocus: FocusRequester,
-    modifier: Modifier = Modifier,
-) {
+private fun SearchResultsHeader(state: TvBoxUiState) {
     val progress = completedSearchProgressText(
         completedSources = state.searchCompletedSources,
         totalSources = state.searchTotalSources,
         resultCount = state.searchResults.size,
     ).takeIf { it.isNotEmpty() }
 
-    Column(modifier = modifier) {
+    Column {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -667,6 +730,20 @@ private fun SearchResultsPanel(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+    }
+}
+
+@Composable
+private fun SearchResultsPanel(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    grid: androidx.compose.foundation.lazy.grid.LazyGridState,
+    returnFocus: ReturnFocus,
+    resultsFocus: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        SearchResultsHeader(state = state)
         Spacer(modifier = Modifier.height(10.dp))
 
         Box(
@@ -674,9 +751,14 @@ private fun SearchResultsPanel(
                 .fillMaxWidth()
                 .weight(1f),
         ) {
+            val loadingProgress = completedSearchProgressText(
+                completedSources = state.searchCompletedSources,
+                totalSources = state.searchTotalSources,
+                resultCount = state.searchResults.size,
+            ).takeIf { it.isNotEmpty() }
             when {
                 state.searchLoading && state.searchResults.isEmpty() -> LoadingState(
-                    text = progress ?: "正在搜索多个影视来源",
+                    text = loadingProgress ?: "正在搜索多个影视来源",
                 )
 
                 state.searchResults.isEmpty() && state.searchQuery.isBlank() ->

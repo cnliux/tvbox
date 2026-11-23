@@ -8,7 +8,6 @@ import java.io.File
 @Serializable
 private data class BlockedCategoriesDocument(
     val version: Int = 1,
-    val updatedAtMs: Long = 0L,
     val categories: List<String> = emptyList(),
 )
 

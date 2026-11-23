@@ -142,7 +142,14 @@ object TvDimens {
     val PageVerticalPadding = 24.dp
     val SectionGap = 16.dp
     val CardRadius = 12.dp
-    val FocusScale = 1.04f
+
+    // 设置页公共尺寸（SettingsBits 与手机/TV 两个设置页共用）。
+    val SettingsIconBoxSize = 38.dp
+    val SettingsRowIconSize = 20.dp
+    val SettingsGroupDividerIndent = 64.dp
+    val SettingsRowVerticalPadding = 14.dp
+    val SettingsRowInnerSpacing = 10.dp
+    val SettingsRowIconGap = 12.dp
 }
 
 private fun colorScheme(tokens: TvColorTokens): ColorScheme = darkColorScheme(

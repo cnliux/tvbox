@@ -298,15 +298,28 @@ fun Modifier.liveRemoteKeyInput(
     state: LiveRemoteState,
     onStateChange: (LiveRemoteState) -> Unit,
     onEffect: (LiveRemoteEffect) -> Unit,
+): Modifier = liveRemoteKeyInput(router, { state }, onStateChange, onEffect)
+
+/**
+ * [state] 以 lambda 提供：事件到达时读取当前值，而不是捕获组合时的快照。
+ * 连续按键（同一帧内两次 DOWN）必须拿到上一次 effect 写入后的输入，否则会丢字。
+ */
+@Composable
+fun Modifier.liveRemoteKeyInput(
+    router: LiveRemoteKeyRouter,
+    state: () -> LiveRemoteState,
+    onStateChange: (LiveRemoteState) -> Unit,
+    onEffect: (LiveRemoteEffect) -> Unit,
 ): Modifier = onPreviewKeyEvent { event: KeyEvent ->
+    val currentState = state()
     val result = router.handle(
         action = event.nativeKeyEvent.keyCode,
         type = event.type,
-        state = state,
+        state = currentState,
         repeatCount = event.nativeKeyEvent.repeatCount,
     ) ?: return@onPreviewKeyEvent false
 
-    if (result.state != state) onStateChange(result.state)
+    if (result.state != currentState) onStateChange(result.state)
     result.effects.forEach(onEffect)
     true
 }

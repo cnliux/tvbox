@@ -31,8 +31,17 @@ object FlvContinuityProxy {
 
     private val supportedSites = setOf("huya", "douyu")
 
-    fun shouldWrap(site: String, protocol: String): Boolean =
-        protocol.equals("flv", ignoreCase = true) && site.lowercase() in supportedSites
+    /**
+     * 判断是否需要套连续 FLV 代理。
+     *
+     * [url] 是双保险：即使上游 protocol 字段异常，也绝不把 HLS/m3u8 地址
+     * 交给只处理 FLV tag 的 Go 代理（否则会启动失败并误报"回退直连"）。
+     */
+    fun shouldWrap(site: String, protocol: String, url: String = ""): Boolean {
+        if (!protocol.equals("flv", ignoreCase = true) || site.lowercase() !in supportedSites) return false
+        if (url.contains("m3u8", ignoreCase = true)) return false
+        return url.isBlank() || url.contains("flv", ignoreCase = true)
+    }
 
     /**
      * 启动本机代理；返回 null 表示启动失败，调用方回退为直连平台地址。

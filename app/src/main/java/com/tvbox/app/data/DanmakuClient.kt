@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import android.util.Log
+import com.tvbox.app.data.network.HttpClients
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,11 +103,12 @@ internal abstract class BaseDanmakuClient(
     )
     override val messages: SharedFlow<DanmakuMessage> = _messages
 
-    private val client = OkHttpClient.Builder()
+    // 复用全局客户端的 dispatcher/连接池：每个实例 new 一个会在频繁换房时堆积线程。
+    // callTimeout 必须清零，否则默认 60s 会把长连接 WebSocket 掐断。
+    private val client = HttpClients.default.newBuilder()
         .connectTimeout(12, TimeUnit.SECONDS)
-        // 弹幕流是长连接，读超时交给平台心跳保活，不用 HTTP 读超时。
-        // 注意不能开 OkHttp 的 pingInterval：斗鱼会把它判成「Control frames must be final」并断开。
         .readTimeout(0, TimeUnit.MILLISECONDS)
+        .callTimeout(0, TimeUnit.MILLISECONDS)
         .build()
 
     protected val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -114,6 +116,9 @@ internal abstract class BaseDanmakuClient(
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
     private val reconnectAttempts = AtomicInteger(0)
+    /** 本次连接建立时间：只有稳定存活超过阈值才算"真正恢复"。 */
+    @Volatile
+    private var connectedAtMs = 0L
 
     @Volatile
     private var stopped = false
@@ -153,6 +158,7 @@ internal abstract class BaseDanmakuClient(
     override fun close() {
         stopped = true
         connected = false
+        connectedAtMs = 0L
         heartbeatJob?.cancel()
         reconnectJob?.cancel()
         runCatching { socket?.close(1000, null) }
@@ -191,7 +197,8 @@ internal abstract class BaseDanmakuClient(
                     return
                 }
                 connected = true
-                reconnectAttempts.set(0)
+                // 不在这里清零：风控房间会"连上立刻断"，清零会使重连上限永远失效。
+                connectedAtMs = System.currentTimeMillis()
                 log("【弹幕已连接】$url")
                 runCatching { onConnected(webSocket) }
                 startHeartbeat(webSocket)
@@ -236,6 +243,12 @@ internal abstract class BaseDanmakuClient(
 
     private fun scheduleReconnect() {
         if (stopped || reconnectJob?.isActive == true) return
+        val openedAt = connectedAtMs
+        connectedAtMs = 0L
+        // 只有稳定连接过才视为恢复；短连接累计次数，触发上限后停止打扰平台。
+        if (openedAt > 0L && System.currentTimeMillis() - openedAt >= STABLE_CONNECTION_MS) {
+            reconnectAttempts.set(0)
+        }
         if (reconnectAttempts.get() >= MAX_CONSECUTIVE_RECONNECTS) {
             log("【弹幕重连】已达 ${MAX_CONSECUTIVE_RECONNECTS} 次上限，停止重试")
             return
@@ -259,6 +272,8 @@ internal abstract class BaseDanmakuClient(
         private const val RECONNECT_DELAY_MS = 3_000L
         /** 连续重连次数上限，超过即停止，避免房间不存在/风控时无限打平台服务器。 */
         private const val MAX_CONSECUTIVE_RECONNECTS = 8
+        /** 连接稳定存活超过该时长才把重连计数清零（30 秒内断开视为异常短连接）。 */
+        private const val STABLE_CONNECTION_MS = 30_000L
         /** 重连退避封顶（60s）。 */
         private const val MAX_RECONNECT_BACKOFF_MS = 60_000L
     }
@@ -398,10 +413,8 @@ internal class DouyuDanmakuClient(private val roomId: String) :
 internal class HuyaDanmakuClient(private val roomId: String) :
     BaseDanmakuClient("wss://wsapi.huya.com", 60_000L) {
 
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
-        .build()
+    // 只是一次性 HTTP 请求，直接复用全局默认客户端口径（10s/20s）。
+    private val http = HttpClients.default
 
     override fun onConnected(ws: WebSocket) {
         // 页面请求是阻塞的，放到 IO 线程，避免卡住 WebSocket 回调线程；连上先发一次心跳。

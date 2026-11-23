@@ -12,6 +12,8 @@ import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.NetworkException
 import com.tvbox.app.data.network.NetworkRetryPolicy
 import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.domain.parseLiveSourceEndpoint
+import com.tvbox.app.domain.withFallbackUserAgent
 import java.io.IOException
 
 /** Saves plain-text config exports to the public Downloads folder. */
@@ -82,10 +84,24 @@ internal class SourceConfigFetcher {
         ) {
             throw IOException("订阅地址必须以 http:// 或 https:// 开头")
         }
+        // 订阅地址支持行内头部参数（`url|User-Agent=xxx`）：行内值优先，其次全局自定义 UA，
+        // 最后回退与 TVBox Decoder 同口径的内置 UA。
+        val endpoint = com.tvbox.app.domain.parseLiveSourceEndpoint(normalized)
+        val headers = endpoint.headers.withFallbackUserAgent(
+            com.tvbox.app.data.network.GlobalUserAgent.value,
+        )
+        val userAgent = headers.entries
+            .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) }
+            ?.value
+            ?: "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3"
+        val otherHeaders = headers.filter { !it.key.equals("User-Agent", ignoreCase = true) }
         // 与 TVBox Decoder 同口径：跟随重定向、UA 标识、BOM 去除、20MB 上限。
         val request = okhttp3.Request.Builder()
-            .url(normalized)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3")
+            .url(endpoint.url)
+            .header("User-Agent", userAgent)
+            .apply {
+                otherHeaders.forEach { (key, value) -> header(key, value) }
+            }
             .build()
         try {
             client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet).use { response ->

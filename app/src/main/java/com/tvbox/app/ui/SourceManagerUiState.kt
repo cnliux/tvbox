@@ -13,4 +13,8 @@ data class SourceManagerUiState(
     val detailMessage: String? = null,
     val importing: Boolean = false,
     val importMessage: String? = null,
+    /** 视频源健康管理：后台体检进行中（静默，不阻塞用户手动测速入口）。 */
+    val healthCheckRunning: Boolean = false,
+    /** 最近一轮后台体检的摘要文本；null 表示尚未体检过。 */
+    val lastHealthCheckSummary: String? = null,
 )

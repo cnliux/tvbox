@@ -12,6 +12,7 @@ import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.UpdateChannel
+import com.tvbox.app.domain.UserAgentSetting
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.json.Json
@@ -78,6 +79,9 @@ internal object SettingsStorageKeys {
     const val PER_SOURCE_TIMEOUT_MS = "per_source_timeout_ms"
     const val HISTORY_PRIVACY_MODE = "history_privacy_mode"
     const val DECODER_DEVICE_WHITELIST = "decoder_device_whitelist"
+    // 自定义 User-Agent 与视频源健康管理（本轮新增）。
+    const val CUSTOM_USER_AGENT = "custom_user_agent"
+    const val SOURCE_HEALTH_CHECK_ENABLED = "source_health_check_enabled"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -179,6 +183,10 @@ internal fun readLegacySettings(
         ),
         historyPrivacyMode = boolean(SettingsStorageKeys.HISTORY_PRIVACY_MODE, false),
         decoderDeviceWhitelist = string(SettingsStorageKeys.DECODER_DEVICE_WHITELIST, ""),
+        customUserAgent = UserAgentSetting.sanitize(
+            string(SettingsStorageKeys.CUSTOM_USER_AGENT, ""),
+        ),
+        sourceHealthCheckEnabled = boolean(SettingsStorageKeys.SOURCE_HEALTH_CHECK_ENABLED, true),
     )
 }
 

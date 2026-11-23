@@ -54,7 +54,11 @@ object MacCmsNetwork {
                         hours?.let { addQueryParameter("h", it.toString()) }
                         ids?.takeIf { it.isNotBlank() }?.let { addQueryParameter("ids", it) }
                     }.build()
-                    val request = Request.Builder().url(url).get().build()
+                    val request = Request.Builder().url(url).get().apply {
+                        // 自定义 UA：部分源服务器按 UA 白名单放行，缺省会 403/空数据。
+                        com.tvbox.app.data.network.GlobalUserAgent.value.takeIf { it.isNotBlank() }
+                            ?.let { header("User-Agent", it) }
+                    }.build()
                     return HttpClients.default
                         .executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
                         .use { response ->

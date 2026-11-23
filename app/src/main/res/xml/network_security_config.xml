@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置策略：
+
+  直播源、订阅地址由用户自行导入，其中包含大量仅提供 http 的旧 IPTV/Plugin 地址，
+  因此 base-config 必须保留明文通行——若全局禁止，绝大多数用户源会直接失效。
+
+  作为补偿，这里对**应用内置的固定 API 域名**强制 HTTPS 并禁用明文，
+  这些域名都是我们主动请求的（豆瓣、聚合搜索、OTA、GitHub），不存在兼容负担。
+  用户自定义源即使指向这些域名也走 HTTPS，不会影响功能。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 内置影视/搜索接口：强制 HTTPS -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="true">douban.com</domain>
+        <domain includeSubdomains="true">360kan.com</domain>
+        <domain includeSubdomains="true">360.cn</domain>
+        <domain includeSubdomains="true">github.com</domain>
+        <domain includeSubdomains="true">githubusercontent.com</domain>
+        <domain includeSubdomains="true">jsdelivr.net</domain>
+        <domain includeSubdomains="true">gh-proxy.com</domain>
+        <domain includeSubdomains="true">gh-proxy.org</domain>
+        <domain includeSubdomains="true">ghproxy.net</domain>
+    </domain-config>
+
+    <!-- 仅 Debug 允许抓包用的用户 CA，Release 不信任，避免中间人风险 -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
+</network-security-config>

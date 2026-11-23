@@ -57,6 +57,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -101,6 +102,7 @@ import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.PlaybackProgressSample
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.partitionUserAgent
 import com.tvbox.app.domain.roomVideoScaleKey
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.PlatformLiveCategory
@@ -222,6 +224,9 @@ private fun PlatformLiveParentCategoriesScreen(
         runCatching { firstCardFocusRequester.requestFocus() }
     }
     val site = state.platformLiveSelectedSite
+    val childCounts = remember(state.platformLiveCategories) {
+        state.platformLiveCategories.groupingBy { it.parentId }.eachCount()
+    }
     PlatformLiveBrowseSurface(
         title = site?.name ?: "直播",
         subtitle = "选择直播大类",
@@ -238,7 +243,7 @@ private fun PlatformLiveParentCategoriesScreen(
             state.platformLiveParentCategories,
             key = { _, category -> category.id },
         ) { index, category ->
-            val childCount = state.platformLiveCategories.count { it.parentId == category.id }
+            val childCount = childCounts[category.id] ?: 0
             PlatformLiveParentCategoryCard(
                 category = category,
                 childCount = childCount,
@@ -259,7 +264,9 @@ private fun PlatformLiveCategoriesScreen(
     val firstCardFocusRequester = remember { FocusRequester() }
     val site = state.platformLiveSelectedSite
     val parentCategory = state.platformLiveSelectedParentCategory
-    val categories = state.platformLiveCategories.filter { it.parentId == parentCategory?.id }
+    val categories = remember(state.platformLiveCategories, parentCategory?.id) {
+        state.platformLiveCategories.filter { it.parentId == parentCategory?.id }
+    }
     val targetIndex = state.platformLiveCategoryIndex.coerceIn(0, categories.lastIndex.coerceAtLeast(0))
     LaunchedEffect(categories, targetIndex) {
         if (categories.isEmpty()) return@LaunchedEffect
@@ -364,6 +371,10 @@ private fun PlatformLiveRoomsScreen(
     }
     val category = state.platformLiveSelectedCategory
     val site = state.platformLiveSelectedSite
+    // 每张卡片原本都要线性扫描收藏列表（N×M）；预建 Set 后为 O(1) 查询。
+    val favoriteRoomIds = remember(state.platformLiveFavorites) {
+        state.platformLiveFavorites.mapTo(HashSet()) { it.id }
+    }
     if (favoritesMode && state.platformLiveRooms.isEmpty()) {
         PageSurface { padding ->
             // 收藏为空是一种正常空态，不再自绘「标题 + 卡片」，统一走 EmptyState；
@@ -403,7 +414,7 @@ private fun PlatformLiveRoomsScreen(
             PlatformLiveRoomCard(
                 room = room,
                 onClick = { actions.openPlatformLiveRoom(room) },
-                isFavorite = state.platformLiveFavorites.any { it.id == room.id },
+                isFavorite = room.id in favoriteRoomIds,
                 onToggleFavorite = { actions.togglePlatformLiveFavorite(room) },
                 favoritesMode = favoritesMode,
                 modifier = if (index == selectedRoomIndex) {
@@ -450,7 +461,7 @@ private fun PlatformLiveBrowseSurface(
             )
             else -> {
                 val resolvedGridState = gridState ?: rememberLazyGridState()
-                val headerVisible by remember {
+                val headerVisible by remember(resolvedGridState) {
                     derivedStateOf {
                         resolvedGridState.firstVisibleItemIndex == 0 && resolvedGridState.firstVisibleItemScrollOffset < 24
                     }
@@ -880,14 +891,11 @@ private fun PlatformLivePlayerScreen(
         key3 = stream?.safeActiveCandidateIndex,
     ) {
         val resolved = stream
-        if (resolved == null || !FlvContinuityProxy.shouldWrap(room.site, resolved.protocol)) {
-            value = null
-            proxyFallback = false
-            return@produceState
-        }
-        val candidate = resolved.activeCandidateOrNull
+        val candidate = resolved?.activeCandidateOrNull
         val candidateUrl = candidate?.url.orEmpty()
-        if (candidateUrl.isBlank()) {
+        if (resolved == null || candidateUrl.isBlank() ||
+            !FlvContinuityProxy.shouldWrap(room.site, resolved.protocol, candidateUrl)
+        ) {
             value = null
             proxyFallback = false
             return@produceState
@@ -973,10 +981,8 @@ private fun PlatformLivePlayerScreen(
                 .setConnectTimeoutMs(15_000)
                 .setReadTimeoutMs(if (usesProxy) 60_000 else 20_000)
             // User-Agent 属于 ExoPlayer 受限请求头，必须走 setUserAgent，其余（Referer/Cookie）走通用请求头。
-            val userAgentEntry = resolved.headers.entries
-                .firstOrNull { it.key.equals("User-Agent", ignoreCase = true) && it.value.isNotBlank() }
-            userAgentEntry?.let { dataSourceFactory.setUserAgent(it.value) }
-            val otherHeaders = resolved.headers.filter { !it.key.equals("User-Agent", ignoreCase = true) }
+            val (platformUserAgent, otherHeaders) = resolved.headers.partitionUserAgent()
+            platformUserAgent?.takeIf { it.isNotBlank() }?.let { dataSourceFactory.setUserAgent(it) }
             if (otherHeaders.isNotEmpty()) {
                 dataSourceFactory.setDefaultRequestProperties(otherHeaders)
             }
@@ -989,6 +995,8 @@ private fun PlatformLivePlayerScreen(
             }
         }
     }
+    // 系统媒体键/耳机线控在应用未获焦时也能控制平台直播播放。
+    rememberPlayerMediaSession(player = player)
     // 解码策略变化会重建播放器：重连当前频道/线路时提示一次（地址变化属正常换流，不提示）。
     val lastPlayerStrategy = remember { mutableStateOf(decoderStrategy) }
     LaunchedEffect(player) {
@@ -1138,6 +1146,11 @@ private fun PlatformLivePlayerScreen(
     // 用 rememberSaveable：手机横屏/切后台引起的重组不应把用户关掉的弹幕又打开。
     var danmakuEnabled by rememberSaveable(room.id) { mutableStateOf(true) }
 
+    // 播放器监听器只在 player 变化时重建，但日志里要记录当前的线路/URL/画面模式；
+    // 用 rememberUpdatedState 避免按值捕获建播放器那一刻的旧值。
+    val currentPlaybackUrl by rememberUpdatedState(playbackUrl)
+    val currentStream by rememberUpdatedState(stream)
+    val currentVideoScaleMode by rememberUpdatedState(videoScaleMode)
     DisposableEffect(player) {
         if (player == null) {
             onDispose { }
@@ -1150,7 +1163,7 @@ private fun PlatformLivePlayerScreen(
                     )
                     android.util.Log.e(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${logSafeText(error.message)}, url=${logSafeUrl(playbackUrl)}, sourceUrl=${logSafeUrl(stream?.url)}, activeCdn=${stream?.activeCandidate?.cdn}, candidateIndex=${stream?.activeCandidateIndex}/${stream?.candidates?.size}"
+                        "【平台直播错误】room=${room.id}, title=${room.title}, code=${error.errorCode}, name=${error.errorCodeName}, msg=${logSafeText(error.message)}, url=${logSafeUrl(currentPlaybackUrl)}, sourceUrl=${logSafeUrl(currentStream?.url)}, activeCdn=${currentStream?.activeCandidate?.cdn}, candidateIndex=${currentStream?.activeCandidateIndex}/${currentStream?.candidates?.size}"
                     )
                     if (!session.canPlay) return
                     // 不展示 ExoPlayer 原始异常文本，统一为可读提示。
@@ -1168,7 +1181,7 @@ private fun PlatformLivePlayerScreen(
                     // 单独记一条日志便于定位“画面卡一下/闪一下”的根因。
                     android.util.Log.d(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【视频尺寸】w=${videoSize.width}, h=${videoSize.height}, pixelRatio=${videoSize.pixelWidthHeightRatio}, mode=${videoScaleMode.storageKey}, url=${logSafeUrl(playbackUrl)}",
+                        "【视频尺寸】w=${videoSize.width}, h=${videoSize.height}, pixelRatio=${videoSize.pixelWidthHeightRatio}, mode=${currentVideoScaleMode.storageKey}, url=${logSafeUrl(currentPlaybackUrl)}",
                     )
                 }
 
@@ -1182,7 +1195,7 @@ private fun PlatformLivePlayerScreen(
                     }
                     android.util.Log.d(
                         PLATFORM_LIVE_LOG_TAG,
-                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(playbackUrl)}"
+                        "【状态】$name, playWhenReady=${player.playWhenReady}, buffered=${player.bufferedPercentage}%, url=${logSafeUrl(currentPlaybackUrl)}"
                     )
                     if (playbackState == Player.STATE_READY) {
                         // 画面恢复即清除失败提示：重解析得到同一地址时 effect 不会重跑，避免提示常驻。
@@ -1268,9 +1281,9 @@ private fun PlatformLivePlayerScreen(
     // 控制条与角标显示 4 秒后自动隐藏，点击画面可再次唤出（与电视直播页一致）。
     PlayerChromeAutoHide(chrome, playing = true, autoHideMs = PLATFORM_LIVE_BADGE_HIDE_DELAY_MS)
 
-    LaunchedEffect(playbackHost?.snapshot?.playbackState, player, playbackUrl, session.canPlay) {
+    LaunchedEffect(playbackHost?.status?.playbackState, player, playbackUrl, session.canPlay) {
         if (player == null || stream == null || !session.canPlay) return@LaunchedEffect
-        if (playbackHost?.snapshot?.playbackState == Player.STATE_ENDED) {
+        if (playbackHost?.status?.playbackState == Player.STATE_ENDED) {
             // 虎牙等平台的 FLV 带签名有效期，到点被服务端正常关闭 → 属于 Ended，
             // 应重新解析拿新地址（沿用当前 CDN），不能当成 CDN 故障去轮换线路。
             PlayerLog.w(PLATFORM_LIVE_LOG_TAG, "【播放结束】room=${room.id}, 判定为流被关闭，走同线路重解析")
@@ -1329,7 +1342,10 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) { runCatching { playerFocusRequester.requestFocus() } }
+    // 触摸模式不抢焦点，避免手机端出现焦点框/抢占触摸控件；与本文件其它列表页一致。
+    LaunchedEffect(Unit) {
+        if (!isMobile) runCatching { playerFocusRequester.requestFocus() }
+    }
 
     // 自动/手动切换线路的结果必须有明确可见提示：仅靠 2 秒角标在电视端几乎看不到。
     LaunchedEffect(state.platformLiveNotice) {
@@ -1634,7 +1650,7 @@ private fun PlatformLivePlayerScreen(
                         },
                     playing = player?.let { it.playWhenReady && !session.interrupted } ?: false,
                     resizeMode = videoScaleMode,
-                    buffering = playbackHost?.snapshot?.isBuffering == true,
+                    buffering = playbackHost?.isBuffering == true,
                     playbackInfo = diagnostics?.info,
                     decoderStrategy = state.appSettings.decoderStrategy,
                     decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,

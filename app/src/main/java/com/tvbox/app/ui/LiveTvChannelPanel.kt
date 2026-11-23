@@ -250,7 +250,7 @@ internal fun LiveChannelOverlayPanel(
                 verticalAlignment = Alignment.CenterVertically,
                 contentPadding = PaddingValues(horizontal = 1.dp),
             ) {
-                itemsIndexed(groups) { index, group ->
+                itemsIndexed(groups, key = { _, group -> group }) { index, group ->
                     LiveGroupPill(
                         // #281：折叠分组用 ▶ 标识，展开用 ▼，光标落在分组标题时按确认切换。
                         label = if (index > 0) "${if (group in collapsedGroups) "▶" else "▼"} $group" else group,
@@ -596,7 +596,7 @@ internal fun LiveLineOverlay(
                 modifier = Modifier.height(220.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(channel.lines) { index, line ->
+                itemsIndexed(channel.lines, key = { _, line -> line.url }) { index, line ->
                     val isPicked = index == pickedIndex
                     val isPlaying = index == state.liveLineIndex
                     val hasResult = state.liveLineLatencies.containsKey(line.url)

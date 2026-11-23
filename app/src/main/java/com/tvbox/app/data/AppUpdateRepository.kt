@@ -313,7 +313,6 @@ class DefaultAppUpdateRepository(
             manifest = update.toManifestDto(),
             appDownloader = id == 0L,
             activeUrl = candidate.url,
-            cdnId = candidate.id,
         ).also(::saveTask)
     }
 
@@ -751,7 +750,6 @@ private data class PendingSystemDownload(
     val manualInstallOnly: Boolean = false,
     /** 当前实际下载线路；旧版本持久化的任务没有该字段，回退到清单 apkUrl。 */
     val activeUrl: String = "",
-    val cdnId: String = "",
 )
 
 private val PendingSystemDownload.downloadUrl: String

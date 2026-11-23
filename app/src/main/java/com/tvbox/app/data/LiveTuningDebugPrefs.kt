@@ -61,9 +61,6 @@ object LiveTuningDebugPrefs {
             idleTimeoutMs = 9_000L, shortBackoffBaseMs = 2_000L, shortBackoffMaxMs = 12_000L),
     )
 
-    /** 支持现场调参的站点集合（UI 按钮显示条件）。 */
-    val SUPPORTED_SITES = setOf("douyu", "huya")
-
     fun siteOf(raw: String?): Site? = when (raw?.trim()?.lowercase()) {
         "douyu" -> Site.DOUYU
         "huya" -> Site.HUYA

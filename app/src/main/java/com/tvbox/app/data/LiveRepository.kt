@@ -7,6 +7,8 @@ import com.tvbox.app.data.network.executeCancellable
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.extractM3uEpgUrl
 import com.tvbox.app.domain.parseLiveChannels
+import com.tvbox.app.domain.parseLiveSourceEndpoint
+import com.tvbox.app.domain.withFallbackUserAgent
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -75,8 +77,17 @@ class DefaultLiveRepository : LiveRepository {
 
         orderedUrls.forEach { sourceUrl ->
             try {
+                // 订阅地址支持行内参数（`url|User-Agent=xxx`），行内 UA 优先，其次全局自定义 UA；
+                // 部分源服务器校验 UA/Referer，缺省请求头会导致订阅无效。
+                val endpoint = parseLiveSourceEndpoint(sourceUrl)
                 val request = Request.Builder()
-                    .url(sourceUrl)
+                    .url(endpoint.url)
+                    .apply {
+                        val headers = endpoint.headers.withFallbackUserAgent(
+                            com.tvbox.app.data.network.GlobalUserAgent.value,
+                        )
+                        headers.forEach { (key, value) -> header(key, value) }
+                    }
                     .build()
                 val rawText = try {
                     HttpClients.default.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
@@ -84,7 +95,7 @@ class DefaultLiveRepository : LiveRepository {
                 } catch (error: NetworkException.Http) {
                     lastError = IOException("直播源加载失败：${error.statusCode}")
                     lastLoadError = "直播源加载失败（HTTP ${error.statusCode}）"
-                    android.util.Log.w(LIVE_SOURCE_TAG, "【源加载失败】${logSafeUrl(sourceUrl)} HTTP ${error.statusCode}")
+                    android.util.Log.w(LIVE_SOURCE_TAG, "【源加载失败】${logSafeUrl(endpoint.url)} HTTP ${error.statusCode}")
                     return@forEach
                 }
                 // 源自带的节目单地址（M3U 头部 url-tvg 等）；TXT 源没有该声明，保持 null。
@@ -98,7 +109,7 @@ class DefaultLiveRepository : LiveRepository {
                 if (channels.isNotEmpty()) {
                     android.util.Log.i(
                         LIVE_SOURCE_TAG,
-                        "【源加载成功】${logSafeUrl(sourceUrl)} channels=${channels.size} lines=${channels.sumOf { it.lines.size }}",
+                        "【源加载成功】${logSafeUrl(endpoint.url)} channels=${channels.size} lines=${channels.sumOf { it.lines.size }}",
                     )
                     return@withContext channels
                 }

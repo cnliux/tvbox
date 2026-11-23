@@ -62,7 +62,6 @@ data class ImportUiState(
     val errorKind: SubscriptionErrorKind? = null,
     val skippedCount: Int = 0,
     val previewCount: Int = 0,
-    val lastConfigPreserved: Boolean = true,
 )
 
 fun importStatusMessage(state: ImportUiState): String {

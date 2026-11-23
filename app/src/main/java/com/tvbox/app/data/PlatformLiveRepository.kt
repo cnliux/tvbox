@@ -107,15 +107,23 @@ class EmbeddedPlatformLiveRepository(
         val response = runCatching { json.decodeFromString<PlatformLiveResolveResponse>(body) }
             .getOrElse { throw IOException("平台直播解析结果格式错误", it) }
         if (!response.live) throw IOException("该房间当前未开播")
+        // 每条候选独立推断协议：桥接层顶层 protocol 只代表首条线路，
+        // 若混合 FLV/HLS 会被统一覆盖，导致续流代理误判（漏代理或把 m3u8 交给 FLV 代理）。
         val rawCandidates = response.streams
-            .mapNotNull { it.toDomainOrNull(response.protocol) }
+            .mapNotNull { dto ->
+                dto.toDomainOrNull(response.protocol)?.copy(
+                    protocol = LiveLineNormalizer.inferProtocol(dto.url, response.protocol),
+                )
+            }
             .ifEmpty {
                 listOfNotNull(
                     PlatformLiveStreamCandidateDto(
                         cdn = "默认",
                         protocol = response.protocol,
                         url = response.url,
-                    ).toDomainOrNull(response.protocol),
+                    ).toDomainOrNull(response.protocol)?.copy(
+                        protocol = LiveLineNormalizer.inferProtocol(response.url, response.protocol),
+                    ),
                 )
             }
         val baseHeaders = response.headers
@@ -131,28 +139,22 @@ class EmbeddedPlatformLiveRepository(
         //  - 按规范化地址去重，避免「移动端」候选与 PC 候选实际是同一路流。
         val repaired = LiveLineNormalizer.normalizeCandidates(
             site = room.site,
-            protocol = response.protocol,
-            candidates = rawCandidates.map { it.cdn to it.url },
+            candidates = rawCandidates.map { Triple(it.cdn, it.protocol, it.url) },
         )
         if (repaired.isEmpty()) {
             throw IOException("解析服务未返回有效播放地址")
         }
         // 并发测各线路首字节延迟（TTFB），供线路列表显示「AL · 220ms」副标题。
         // 只读约 2KB 就断开，对 CDN 与流量几乎无成本；失败记 -1，UI 不显示副标题。
-        val probeHeaders = LiveLineNormalizer.headersFor(
-            site = room.site,
-            url = repaired.first().second,
-            baseHeaders = baseHeaders,
-        )
         val latencies = LiveLineLatency.measure(
-            repaired.map { (_, url) ->
+            repaired.map { (_, _, url) ->
                 url to LiveLineNormalizer.headersFor(room.site, url, baseHeaders)
             },
         )
-        val candidates = repaired.mapIndexed { index, (cdn, url) ->
+        val candidates = repaired.mapIndexed { index, (cdn, protocol, url) ->
             PlatformLiveStreamCandidate(
                 cdn = cdn,
-                protocol = response.protocol,
+                protocol = protocol,
                 url = url,
                 latencyMs = latencies.getOrElse(index) { -1 },
             )

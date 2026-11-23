@@ -8,6 +8,7 @@ import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -110,6 +111,39 @@ class LegacySettingsSnapshotTest {
         assertEquals(8, settings.doubanHotFallbackLines)
         assertEquals(300, settings.historyMaxItems)
         assertEquals(6, settings.maxParallelSourceRequests)
+    }
+
+    @Test
+    fun `自定义 UA 与健康管理按新键解析`() {
+        val settings = readLegacySettings(
+            snapshotOf(
+                SettingsStorageKeys.CUSTOM_USER_AGENT to " okhttp/4.12\n",
+                SettingsStorageKeys.SOURCE_HEALTH_CHECK_ENABLED to false,
+            ),
+        )
+        // 读取侧统一清洗：换行与首尾空白不落库。
+        assertEquals("okhttp/4.12", settings.customUserAgent)
+        assertFalse(settings.sourceHealthCheckEnabled)
+    }
+
+    @Test
+    fun `新键缺失时 UA 为空且健康管理默认开启`() {
+        val settings = readLegacySettings(LegacySettingsSnapshot(emptyMap()))
+        assertEquals("", settings.customUserAgent)
+        assertTrue(settings.sourceHealthCheckEnabled)
+    }
+
+    @Test
+    fun `写设置回读自定义 UA 与健康管理往返一致`() {
+        val settings = com.tvbox.app.domain.AppSettings(
+            customUserAgent = "VLC/3.0.20",
+            sourceHealthCheckEnabled = false,
+        )
+        val preferences = androidx.datastore.preferences.core.mutablePreferencesOf()
+        preferences.writeSettings(settings)
+        val restored = readLegacySettings(LegacySettingsSnapshot(preferences.toSettingsValues()))
+        assertEquals("VLC/3.0.20", restored.customUserAgent)
+        assertFalse(restored.sourceHealthCheckEnabled)
     }
 
     @Test

@@ -424,8 +424,6 @@ internal data class PlayerChromeActions(
     val onSelectSpeed: (Float) -> Unit = { _ -> },
     val onSelectResize: (VideoScaleMode) -> Unit = {},
     val onOpenLinePanel: () -> Unit = {},
-    val onOpenChannels: () -> Unit = {},
-    val onOpenRoomPanel: () -> Unit = {},
     val onBack: () -> Unit = {},
     val onCast: () -> Unit = {},
     val onFavorite: () -> Unit = {},
@@ -1072,15 +1070,21 @@ private fun PlayerChromePanel(
             ),
         ) + data.subtitleTracks
     }
-    val labels: List<AnnotatedString> = when (panel) {
-        // 选集只显示剧集内容：源标题里的「1.」「第01集」前缀会与网格位置重复，
-        // 显示成「1. 1.」这种编号叠编号。
-        PlayerPanel.Episodes -> data.episodes.mapIndexed { index, title ->
-            AnnotatedString(displayEpisodeTitle(title, index))
+    // 进度更新每 250ms 触发一次重组，但标签只依赖面板与列表引用；缓存避免重复 map。
+    val labels: List<AnnotatedString> = remember(
+        panel, data.episodes, orderedIndexes, data.sources,
+        data.sourceLatencies, data.audioTracks, subtitleOptions,
+    ) {
+        when (panel) {
+            // 选集只显示剧集内容：源标题里的「1.」「第01集」前缀会与网格位置重复，
+            // 显示成「1. 1.」这种编号叠编号。
+            PlayerPanel.Episodes -> data.episodes.mapIndexed { index, title ->
+                AnnotatedString(displayEpisodeTitle(title, index))
+            }
+            PlayerPanel.Sources -> orderedIndexes.map { sourceTabLabel(data.sources[it], data.sourceLatencies) }
+            PlayerPanel.Audio -> data.audioTracks.map { AnnotatedString(it.label) }
+            PlayerPanel.Subtitle -> subtitleOptions.map { AnnotatedString(it.label) }
         }
-        PlayerPanel.Sources -> orderedIndexes.map { sourceTabLabel(data.sources[it], data.sourceLatencies) }
-        PlayerPanel.Audio -> data.audioTracks.map { AnnotatedString(it.label) }
-        PlayerPanel.Subtitle -> subtitleOptions.map { AnnotatedString(it.label) }
     }
     val selected = when (panel) {
         PlayerPanel.Episodes -> data.episodeIndex
@@ -1097,13 +1101,15 @@ private fun PlayerChromePanel(
     // 线路面板会按实测延迟重排，兜底切源后顺序/文案同样会变。若 effect 只看 panel + size，
     // 重排后下标没变就不会重跑，焦点会落到旧位置对应的按钮（甚至已不存在的按钮）。
     // 用「有序标签 + 当前选中位置 + 选中文案」拼确定性签名，任何重排/换标都触发重新定位。
-    val focusSignature = buildString {
-        append(panel.name).append('\u0000').append(selected).append('\u0000')
-        labels.forEachIndexed { index, label ->
-            if (index > 0) append('\u0000')
-            append(label.text)
+    val focusSignature = remember(labels, panel, selected) {
+        buildString {
+            append(panel.name).append('\u0000').append(selected).append('\u0000')
+            labels.forEachIndexed { index, label ->
+                if (index > 0) append('\u0000')
+                append(label.text)
+            }
+            append('\u0000').append(labels.getOrNull(selected)?.text.orEmpty())
         }
-        append('\u0000').append(labels.getOrNull(selected)?.text.orEmpty())
     }
     val pickerFocus = remember(focusSignature) { List(labels.size) { FocusRequester() } }
     val grid = rememberLazyGridState()
@@ -1372,7 +1378,7 @@ private fun PlayerSettingsPanel(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                itemsIndexed(items) { index, item ->
+                itemsIndexed(items, key = { _, item -> item.target }) { index, item ->
                     SettingsRowItem(
                         item = item,
                         onSelect = { onOpenPanel(item.target) },

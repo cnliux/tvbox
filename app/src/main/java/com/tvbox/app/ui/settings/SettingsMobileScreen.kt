@@ -74,6 +74,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
+import com.tvbox.app.data.checkAllLiveSources
 import com.tvbox.app.domain.DecoderStrategy
 import kotlinx.coroutines.launch
 import com.tvbox.app.domain.DeviceMode
@@ -88,7 +89,14 @@ import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.ui.RemoteManageDialog
 import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
+import com.tvbox.app.ui.components.ChoiceChips
+import com.tvbox.app.ui.components.DangerConfirmDialog
+import com.tvbox.app.ui.components.HeroStat
+import com.tvbox.app.ui.components.QuantityChoiceChips
+import com.tvbox.app.ui.components.SettingsGroupDivider
+import com.tvbox.app.ui.components.TextValueEditor
 import com.tvbox.app.ui.theme.TvColors
+import com.tvbox.app.ui.theme.TvDimens
 
 /**
  * 手机端设置页 —— 全新两级结构：分类入口网格 → 分类详情。
@@ -113,25 +121,19 @@ fun SettingsMobileScreen(
         RemoteManageDialog(state = state, actions = actions)
     }
     if (confirmClearHistory) {
-        AlertDialog(
-            onDismissRequest = { confirmClearHistory = false },
-            title = { Text("清空历史记录", color = TvColors.TextPrimary) },
-            text = { Text("确定要清空所有观看历史记录吗？此操作不可撤销。", color = TvColors.TextSecondary) },
-            confirmButton = {
-                Button(onClick = { confirmClearHistory = false; actions.clearHistory() }) { Text("清空", color = MaterialTheme.colorScheme.onPrimary) }
-            },
-            dismissButton = { TextButton(onClick = { confirmClearHistory = false }) { Text("取消", color = TvColors.TextSecondary) } },
+        DangerConfirmDialog(
+            title = "清空历史记录",
+            text = "确定要清空所有观看历史记录吗？此操作不可撤销。",
+            onConfirm = { confirmClearHistory = false; actions.clearHistory() },
+            onDismiss = { confirmClearHistory = false },
         )
     }
     if (confirmClearPlaybackStats) {
-        AlertDialog(
-            onDismissRequest = { confirmClearPlaybackStats = false },
-            title = { Text("清空线路统计", color = TvColors.TextPrimary) },
-            text = { Text("确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。", color = TvColors.TextSecondary) },
-            confirmButton = {
-                Button(onClick = { confirmClearPlaybackStats = false; actions.clearPlaybackStats() }) { Text("清空", color = MaterialTheme.colorScheme.onPrimary) }
-            },
-            dismissButton = { TextButton(onClick = { confirmClearPlaybackStats = false }) { Text("取消", color = TvColors.TextSecondary) } },
+        DangerConfirmDialog(
+            title = "清空线路统计",
+            text = "确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。",
+            onConfirm = { confirmClearPlaybackStats = false; actions.clearPlaybackStats() },
+            onDismiss = { confirmClearPlaybackStats = false },
         )
     }
 
@@ -261,19 +263,6 @@ private fun SettingsHeroCard(state: TvBoxUiState) {
                 HeroStat(label = "设备", value = state.appSettings.deviceMode.summaryLabel(detectedMode), modifier = Modifier.weight(1f))
             }
         }
-    }
-}
-
-@Composable
-private fun HeroStat(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier = modifier) {
-        Text(text = label, color = TvColors.TextSecondary, style = MaterialTheme.typography.labelMedium)
-        Text(
-            text = value,
-            color = TvColors.TextPrimary,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
     }
 }
 
@@ -465,7 +454,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Build,
             title = "界面主题",
@@ -480,7 +469,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Build,
             title = "字体大小",
@@ -495,7 +484,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "继续观看",
@@ -507,7 +496,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "启动时检查更新",
@@ -519,7 +508,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "播放器详细日志",
@@ -531,7 +520,7 @@ private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Info,
             title = "更新渠道",
@@ -562,7 +551,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // 「一起看」重连调优：斗鱼/虎牙各三档策略即时写回 Go，现场定位"总是重连"的最佳组合。
         val context = LocalContext.current
         listOf(LiveTuningDebugPrefs.Site.DOUYU, LiveTuningDebugPrefs.Site.HUYA).forEach { site ->
@@ -589,7 +578,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                     )
                 },
             )
-            DividerInGroup()
+            SettingsGroupDivider()
         }
         SettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -605,7 +594,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "解码策略",
@@ -620,7 +609,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // #54/#266 按设备型号前缀强制硬解；空表示不启用，多个前缀用逗号分隔。
         SettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -634,7 +623,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // #277 切台频道名横幅时长：自动档 TV 4s / 手机 2s。
         SettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -654,7 +643,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页每行卡片数",
@@ -669,7 +658,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "首页热播数量",
@@ -680,17 +669,14 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.HomeHotContentCount.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.HomeHotContentCount,
                     selected = state.appSettings.homeHotContentCount,
-                    label = {
-                        if (it == QuantitySettings.HomeHotContentCount.default) "默认" else "$it"
-                    },
                     onSelect = actions::updateHomeHotContentCount,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "直播卡片数量",
@@ -705,7 +691,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "继续观看数量",
@@ -716,12 +702,9 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.ContinueWatchingCount.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.ContinueWatchingCount,
                     selected = state.appSettings.continueWatchingCount,
-                    label = {
-                        if (it == QuantitySettings.ContinueWatchingCount.default) "默认" else "$it"
-                    },
                     onSelect = actions::updateContinueWatchingCount,
                 )
             },
@@ -730,7 +713,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
         // 仅在电视端 LiveScreen 生效：数字选台是遥控器功能，手机直播页无此交互；
         // 手机端 EPG 全量渲染、相关频道按同分组展示，均不读取这些配置。放在手机设置里
         // 改了也没有任何效果，故不在手机端展示。
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "剧集排序",
@@ -744,7 +727,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SkipSecondsRow(
             icon = Icons.Default.PlayArrow,
             title = "片头跳过",
@@ -752,7 +735,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             seconds = state.appSettings.introSkipSeconds,
             onSecondsChange = actions::updateIntroSkipSeconds,
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SkipSecondsRow(
             icon = Icons.Default.PlayArrow,
             title = "片尾跳过",
@@ -760,7 +743,7 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             seconds = state.appSettings.outroSkipSeconds,
             onSecondsChange = actions::updateOutroSkipSeconds,
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "线路统计",
@@ -803,7 +786,7 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
             title = "IPTV 直播源",
@@ -816,7 +799,7 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // #282：一键检测所有已配置直播源，逐个连接并做结构校验。
         SettingsRow(
             icon = Icons.Default.Info,
@@ -840,7 +823,7 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
             title = "平台直播",
@@ -848,6 +831,36 @@ private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 "已屏蔽 ${state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() }} 个站点"
             } else "管理虎牙/斗鱼/哔哩",
             trailing = { TextButton(onClick = actions::openPlatformLive) { Text("管理", color = TvColors.Accent) } },
+        )
+        SettingsGroupDivider()
+        // 视频源健康管理：后台周期静默测速 + 按延迟自动排序；副标题显示最近一轮体检结果。
+        SettingsRow(
+            icon = Icons.Default.Info,
+            title = "视频源健康管理",
+            subtitle = state.source.lastHealthCheckSummary
+                ?: if (state.appSettings.sourceHealthCheckEnabled) "已开启，每 30 分钟后台测速并自动排序" else "已关闭",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.sourceHealthCheckEnabled,
+                    onCheckedChange = actions::updateSourceHealthCheckEnabled,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        // 自定义 User-Agent：视频接口、订阅拉取与直播播放共用；订阅地址也可追加 |User-Agent= 参数按源覆盖。
+        SettingsRow(
+            icon = Icons.AutoMirrored.Filled.List,
+            title = "自定义 User-Agent",
+            subtitle = state.appSettings.customUserAgent.ifBlank {
+                "默认 ${com.tvbox.app.domain.UserAgentSetting.Default}；订阅地址可追加 |User-Agent=参数 按源覆盖"
+            },
+            stackedTrailing = true,
+            trailing = {
+                TextValueEditor(
+                    value = state.appSettings.customUserAgent,
+                    onSave = actions::updateCustomUserAgent,
+                )
+            },
         )
     }
 }
@@ -865,7 +878,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // #318 历史隐私模式：只阻止新记录写入，不清空已有历史。
         SettingsRow(
             icon = Icons.Default.Delete,
@@ -878,7 +891,7 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "历史保留条数",
@@ -889,15 +902,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.HistoryMaxItems.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.HistoryMaxItems,
                     selected = state.appSettings.historyMaxItems,
-                    label = { if (it == QuantitySettings.HistoryMaxItems.default) "默认" else "$it" },
                     onSelect = actions::updateHistoryMaxItems,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "搜索热词数量",
@@ -908,15 +920,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.HotWordCount.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.HotWordCount,
                     selected = state.appSettings.hotWordCount,
-                    label = { if (it == QuantitySettings.HotWordCount.default) "默认" else "$it" },
                     onSelect = actions::updateHotWordCount,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "拼音候选数量",
@@ -927,17 +938,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.SearchSuggestionCount.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.SearchSuggestionCount,
                     selected = state.appSettings.searchSuggestionCount,
-                    label = {
-                        if (it == QuantitySettings.SearchSuggestionCount.default) "默认" else "$it"
-                    },
                     onSelect = actions::updateSearchSuggestionCount,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "豆瓣热播每页条数",
@@ -948,15 +956,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.DoubanHotPageSize.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.DoubanHotPageSize,
                     selected = state.appSettings.doubanHotPageSize,
-                    label = { if (it == QuantitySettings.DoubanHotPageSize.default) "默认" else "$it" },
                     onSelect = actions::updateDoubanHotPageSize,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "热播回退源数",
@@ -967,17 +974,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.DoubanHotFallbackLines.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.DoubanHotFallbackLines,
                     selected = state.appSettings.doubanHotFallbackLines,
-                    label = {
-                        if (it == QuantitySettings.DoubanHotFallbackLines.default) "默认" else "$it"
-                    },
                     onSelect = actions::updateDoubanHotFallbackLines,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Delete,
             title = "多源搜索并发数",
@@ -988,17 +992,14 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             ),
             stackedTrailing = true,
             trailing = {
-                ChoiceChips(
-                    options = QuantitySettings.MaxParallelSourceRequests.choices,
+                QuantityChoiceChips(
+                    setting = QuantitySettings.MaxParallelSourceRequests,
                     selected = state.appSettings.maxParallelSourceRequests,
-                    label = {
-                        if (it == QuantitySettings.MaxParallelSourceRequests.default) "默认" else "$it"
-                    },
                     onSelect = actions::updateMaxParallelSourceRequests,
                 )
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         // #94 单源超时：低于预算则放弃慢源，避免个别源拖住整页搜索/详情。
         SettingsRow(
             icon = Icons.Default.Delete,
@@ -1027,12 +1028,12 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showPrivacyPolicy by remember { mutableStateOf(false) }
     SettingsGroup {
         InfoRow(icon = Icons.Default.Info, title = "应用名称", subtitle = "聚合视频")
-        DividerInGroup()
+        SettingsGroupDivider()
         // #217：当前版本补充版本号（versionCode），便于反馈问题时精确定位构建。
         InfoRow(icon = Icons.Default.Info, title = "当前版本", subtitle = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})")
-        DividerInGroup()
+        SettingsGroupDivider()
         InfoRow(icon = Icons.Default.Info, title = "开源协议", subtitle = "GPLv3")
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Info,
             title = "隐私政策",
@@ -1043,7 +1044,7 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Build,
             title = "导出崩溃日志",
@@ -1057,7 +1058,7 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }) { Text("导出", color = TvColors.Accent) }
             },
         )
-        DividerInGroup()
+        SettingsGroupDivider()
         SettingsRow(
             icon = Icons.Default.Info,
             title = "检查更新",
@@ -1108,7 +1109,7 @@ private fun OtaCdnStatusSection(actions: TvBoxViewModel) {
             trailing = {},
         )
         if (rows.isNotEmpty()) {
-            DividerInGroup()
+            SettingsGroupDivider()
             rows.forEachIndexed { index, row ->
                 SettingsRow(
                     icon = Icons.Default.Build,
@@ -1124,7 +1125,7 @@ private fun OtaCdnStatusSection(actions: TvBoxViewModel) {
                         }
                     },
                 )
-                if (index < rows.lastIndex) DividerInGroup()
+                if (index < rows.lastIndex) SettingsGroupDivider()
             }
         }
     }
@@ -1142,7 +1143,7 @@ private fun StartupTimelineSection(actions: TvBoxViewModel) {
             trailing = {},
         )
         if (phases.isNotEmpty()) {
-            DividerInGroup()
+            SettingsGroupDivider()
             val order = listOf(
                 StartupPhase.ProcessStart,
                 StartupPhase.ApplicationInit,
@@ -1158,7 +1159,7 @@ private fun StartupTimelineSection(actions: TvBoxViewModel) {
                         subtitle = "${ms}ms",
                         trailing = {},
                     )
-                    if (index < order.size - 1) DividerInGroup()
+                    if (index < order.size - 1) SettingsGroupDivider()
                 }
             }
         }
@@ -1187,15 +1188,6 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun DividerInGroup() {
-    HorizontalDivider(
-        modifier = Modifier.padding(start = 64.dp),
-        color = TvColors.Border.copy(alpha = 0.5f),
-        thickness = 0.5.dp,
-    )
-}
-
-@Composable
 private fun SettingsRow(
     icon: ImageVector,
     title: String,
@@ -1220,12 +1212,12 @@ private fun SettingsRow(
         ) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(TvDimens.SettingsIconBoxSize)
                     .clip(RoundedCornerShape(10.dp))
                     .background(TvColors.AccentSoft.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(20.dp))
+                Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(TvDimens.SettingsRowIconSize))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -1282,12 +1274,12 @@ private fun SkipSecondsRow(
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(TvDimens.SettingsIconBoxSize)
                     .clip(RoundedCornerShape(10.dp))
                     .background(TvColors.AccentSoft.copy(alpha = 0.6f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(20.dp))
+                Icon(icon, contentDescription = null, tint = TvColors.Accent, modifier = Modifier.size(TvDimens.SettingsRowIconSize))
             }
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
@@ -1321,65 +1313,6 @@ private fun SkipSecondsRow(
                 inactiveTrackColor = TvColors.SurfaceRaised,
             ),
         )
-    }
-}
-
-/** #54/#266 文本型设置输入：先改草稿，点「保存」才写回设置，避免逐字符写盘。 */
-@Composable
-private fun TextValueEditor(value: String, onSave: (String) -> Unit) {
-    var draft by remember(value) { mutableStateOf(value) }
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        TextField(
-            value = draft,
-            onValueChange = { draft = it },
-            singleLine = true,
-            modifier = Modifier.weight(1f),
-        )
-        Spacer(Modifier.width(8.dp))
-        TextButton(onClick = { onSave(draft) }) { Text("保存", color = TvColors.Accent) }
-    }
-}
-
-@Composable
-private fun <T> ChoiceChips(
-    options: List<T>,
-    selected: T,
-    label: (T) -> String,
-    onSelect: (T) -> Unit,
-) {
-    // 修复：选项文字不再强制单行省略（大字号下会被截成「强…」「9:1…」），
-    // 未选中项颜色由 TextSecondary 提亮，避免深色底上辨识不清。
-    // 选项组独占一整行后，FlowRow 有完整宽度，一般只需一行即可排下。
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        options.forEach { option ->
-            val isSelected = option == selected
-            Box(
-                modifier = Modifier
-                    // 48dp 是手机端建议的最小触摸目标。
-                    .heightIn(min = 48.dp)
-                    .widthIn(min = 48.dp, max = 240.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (isSelected) TvColors.Accent.copy(alpha = 0.22f)
-                        else TvColors.SurfaceRaised.copy(alpha = 0.75f)
-                    )
-                    .clickable(role = Role.Button) { onSelect(option) }
-                    .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = label(option),
-                    color = if (isSelected) TvColors.Accent else TvColors.TextPrimary.copy(alpha = 0.9f),
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-            }
-        }
     }
 }
 

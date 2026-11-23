@@ -49,6 +49,15 @@ class PlaybackHostTest {
     }
 
     @Test
+    fun stateSnapshotExposesBufferingWithoutProgress() {
+        val buffering = PlaybackStateSnapshot(playbackState = Player.STATE_BUFFERING)
+        assertTrue(buffering.isBuffering)
+        assertFalse(PlaybackStateSnapshot(playbackState = Player.STATE_READY).isBuffering)
+        // 状态对象不携带进度：轮询进度不会改变它。
+        assertEquals(Player.STATE_BUFFERING, buffering.playbackState)
+    }
+
+    @Test
     fun networkErrorsMapToReadableMessages() {
         assertEquals(
             "网络超时，请稍后重试",

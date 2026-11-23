@@ -110,6 +110,8 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putLong(SettingsStorageKeys.PER_SOURCE_TIMEOUT_MS, settings.perSourceTimeoutMs)
     putBoolean(SettingsStorageKeys.HISTORY_PRIVACY_MODE, settings.historyPrivacyMode)
     putString(SettingsStorageKeys.DECODER_DEVICE_WHITELIST, settings.decoderDeviceWhitelist)
+    putString(SettingsStorageKeys.CUSTOM_USER_AGENT, settings.customUserAgent)
+    putBoolean(SettingsStorageKeys.SOURCE_HEALTH_CHECK_ENABLED, settings.sourceHealthCheckEnabled)
 }
 
 /** 把 DataStore 内容还原成旧快照形状，交给同一套解析函数读取。 */
