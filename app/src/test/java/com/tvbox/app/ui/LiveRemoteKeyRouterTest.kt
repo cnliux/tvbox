@@ -1,0 +1,102 @@
+package com.tvbox.app.ui
+
+import android.view.KeyEvent as AndroidKeyEvent
+import androidx.compose.ui.input.key.KeyEventType
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+/**
+ * 锁定直播遥控状态机的四条关键语义：
+ * 确认键两段式、面板状态隔离、数字输入拦截、BACK 逐级弹栈。
+ */
+class LiveRemoteKeyRouterTest {
+
+    private val router = LiveRemoteKeyRouter()
+
+    @Test
+    fun confirmKeyDoesNothingUntilKeyUp() {
+        val start = LiveRemoteState()
+
+        val down = router.handle(AndroidKeyEvent.KEYCODE_DPAD_CENTER, KeyEventType.KeyDown, start)
+        assertEquals(start, down?.state)
+        assertTrue(down?.effects.isNullOrEmpty())
+
+        val up = router.handle(AndroidKeyEvent.KEYCODE_DPAD_CENTER, KeyEventType.KeyUp, start)
+        assertEquals(UIState.CONTROLLER, up?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.OpenController), up?.effects)
+    }
+
+    @Test
+    fun panelStatePassesEverythingExceptBackToChildren() {
+        val panel = LiveRemoteState(uiState = UIState.CHANNEL_LIST)
+
+        assertNull(router.handle(AndroidKeyEvent.KEYCODE_DPAD_UP, KeyEventType.KeyDown, panel))
+        assertNull(router.handle(AndroidKeyEvent.KEYCODE_DPAD_CENTER, KeyEventType.KeyUp, panel))
+        assertNull(router.handle(AndroidKeyEvent.KEYCODE_DPAD_LEFT, KeyEventType.KeyUp, panel))
+
+        val backDown = router.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyDown, panel)
+        assertEquals(panel, backDown?.state)
+
+        val backUp = router.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyUp, panel)
+        assertEquals(UIState.FULLSCREEN, backUp?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.ClosePanel), backUp?.effects)
+    }
+
+    @Test
+    fun numberEntryBlocksChannelSwitching() {
+        val digit = router.handle(AndroidKeyEvent.KEYCODE_1, KeyEventType.KeyDown, LiveRemoteState())
+        assertEquals("1", digit?.state?.numberInput)
+        assertEquals(listOf(LiveRemoteEffect.NumberChanged("1")), digit?.effects)
+
+        val blocked = router.handle(AndroidKeyEvent.KEYCODE_DPAD_DOWN, KeyEventType.KeyDown, digit!!.state)
+        assertEquals(digit.state, blocked?.state)
+        assertTrue(blocked?.effects.isNullOrEmpty())
+
+        val commit = router.handle(AndroidKeyEvent.KEYCODE_ENTER, KeyEventType.KeyUp, digit.state)
+        assertEquals(listOf(LiveRemoteEffect.CommitNumber), commit?.effects)
+    }
+
+    @Test
+    fun backUnwindsOneLayerAtATime() {
+        val typing = LiveRemoteState(numberInput = "12", numberInputNonce = 2)
+        val cleared = router.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyUp, typing)
+        assertEquals("", cleared?.state?.numberInput)
+        assertEquals(listOf(LiveRemoteEffect.NumberChanged("")), cleared?.effects)
+
+        val controller = LiveRemoteState(uiState = UIState.CONTROLLER)
+        val closed = router.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyUp, controller)
+        assertEquals(UIState.FULLSCREEN, closed?.state?.uiState)
+
+        val exit = router.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyUp, LiveRemoteState())
+        assertEquals(listOf(LiveRemoteEffect.ExitLive), exit?.effects)
+    }
+
+    @Test
+    fun sourceSwitchCarriesContinuityHintForHuyaDouyu() {
+        val huya = LiveRemoteKeyRouter(isContinuitySource = { true })
+            .handle(AndroidKeyEvent.KEYCODE_DPAD_RIGHT, KeyEventType.KeyDown, LiveRemoteState())
+        assertTrue(
+            huya?.effects?.contains(LiveRemoteEffect.SourceSwitched(true)) == true,
+        )
+        assertTrue(huya?.effects?.contains(LiveRemoteEffect.NextSource) == true)
+
+        val other = LiveRemoteKeyRouter(isContinuitySource = { false })
+            .handle(AndroidKeyEvent.KEYCODE_DPAD_LEFT, KeyEventType.KeyDown, LiveRemoteState())
+        assertTrue(
+            other?.effects?.contains(LiveRemoteEffect.SourceSwitched(false)) == true,
+        )
+    }
+
+    @Test
+    fun repeatedKeyIsSwallowedWithoutEffect() {
+        val result = router.handle(
+            AndroidKeyEvent.KEYCODE_DPAD_DOWN,
+            KeyEventType.KeyDown,
+            LiveRemoteState(),
+            repeatCount = 3,
+        )
+        assertTrue(result?.effects.isNullOrEmpty())
+    }
+}

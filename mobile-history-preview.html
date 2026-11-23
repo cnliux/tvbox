@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>手机版历史页 - 更新提示与源名位置预览</title>
+  <title>手机版历史页 - 自由编辑预览</title>
   <style>
     :root {
       --bg: #121212;
@@ -15,377 +15,524 @@
       --primary-container: rgba(138, 180, 248, 0.16);
       --danger: #ff8a80;
       --outline: #3a3a3a;
+      --status-h: 44px;
+      --nav-h: 48px;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-      background: #0a0a0a;
-      color: var(--on-surface);
-      display: flex;
-      justify-content: center;
-      padding: 24px 12px 40px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", sans-serif;
+      background: #0a0a0a; color: var(--on-surface);
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-start;
+      padding: 12px;
     }
-    .page {
-      width: 100%;
-      max-width: 980px;
-      display: grid;
-      grid-template-columns: 390px 1fr;
-      gap: 24px;
-      align-items: start;
+
+    /* ── 顶部场景切换 ── */
+    .scene-bar {
+      display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; justify-content: center;
     }
-    @media (max-width: 860px) {
-      .page { grid-template-columns: 1fr; justify-items: center; }
-      .notes { max-width: 390px; }
+    .scene-btn {
+      padding: 5px 12px; border-radius: 20px; border: 1px solid #444;
+      background: #1e1e1e; color: #aaa; font-size: 11px; cursor: pointer; transition: all .15s;
     }
+    .scene-btn:hover { border-color: #666; color: #fff; }
+    .scene-btn.active { background: var(--primary); border-color: var(--primary); color: #000; font-weight: 600; }
+
+    .hint-text-top { font-size: 11px; color: #555; text-align: center; margin-bottom: 10px; }
+
+    /* ── 双机对比 ── */
+    .compare-row {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px; width: 100%; max-width: 700px;
+    }
+    @media (max-width: 680px) { .compare-row { grid-template-columns: 1fr; } }
+    .phone-col { display: flex; flex-direction: column; align-items: center; }
+    .phone-label {
+      font-size: 11px; font-weight: 600; margin-bottom: 6px; padding: 2px 10px; border-radius: 999px;
+    }
+    .phone-label.bad  { background: rgba(255,80,80,.2);   color: #ffaaaa; }
+    .phone-label.good { background: rgba(110,220,140,.18); color: #b7f5c7; }
+
+    /* ── 手机壳 ── */
     .phone {
-      width: 390px;
-      min-height: 844px;
-      background: var(--bg);
-      border-radius: 28px;
-      border: 1px solid #333;
-      overflow: hidden;
-      box-shadow: 0 20px 50px rgba(0,0,0,.5);
+      width: 300px; height: 640px;
+      background: var(--bg); border-radius: 20px; border: 1px solid #444;
+      overflow: hidden; box-shadow: 0 10px 36px rgba(0,0,0,.6);
+      display: flex; flex-direction: column; position: relative;
     }
+
+    /* 状态栏（绝对定位，盖在内容上）*/
     .status-bar {
-      height: 44px;
-      padding: 0 20px;
-      display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
-      font-size: 14px;
-      font-weight: 600;
-      color: #ddd;
-      padding-bottom: 6px;
+      position: absolute; top: 0; left: 0; right: 0;
+      height: var(--status-h); flex-shrink: 0; z-index: 20;
+      padding: 0 12px;
+      display: flex; align-items: flex-end; justify-content: space-between;
+      font-size: 11px; font-weight: 600; color: #ccc; padding-bottom: 3px;
+      background: linear-gradient(to bottom, #0d0d0dee, transparent);
     }
-    .header {
-      display: flex;
-      align-items: center;
-      padding: 10px 16px;
+
+    /* 遮挡遮罩 */
+    .obstruction-overlay {
+      position: absolute; top: 0; left: 0; right: 0;
+      height: var(--status-h);
+      background: repeating-linear-gradient(45deg, rgba(255,60,60,.2) 0px, rgba(255,60,60,.2) 4px, transparent 4px, transparent 8px);
+      pointer-events: none; z-index: 15;
+      display: flex; align-items: center; justify-content: center;
+      color: #ff6b6b; font-size: 10px; font-weight: 700;
     }
-    .header h1 {
-      flex: 1;
-      margin: 0;
-      font-size: 24px;
-      font-weight: 700;
+    .phone.fixed .obstruction-overlay { display: none; }
+
+    /* 内容区：before 无补偿，fixed 有 statusBars 补偿 */
+    .content-wrap { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+    .phone.before .content-wrap { padding-top: 0; }
+    .phone.fixed   .content-wrap { padding-top: var(--status-h); }
+
+    /* ── 可横向滑动的顶栏（标题 + 操作按钮合并为一行）── */
+    .top-scroll {
+      display: flex; align-items: center;
+      padding: 44px 8px 4px; /* 44px = status-h 让内容从状态栏下方开始 */
+      gap: 6px;
+      overflow-x: auto;
+      overflow-y: hidden;
+      white-space: nowrap;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      flex-shrink: 0;
     }
+    .top-scroll::-webkit-scrollbar { display: none; }
+
+    .top-scroll h1 { font-size: 17px; font-weight: 700; margin: 0; flex-shrink: 0; }
     .clear-btn {
-      color: var(--primary);
-      background: none;
-      border: none;
-      font-size: 15px;
-      padding: 10px 8px;
-      min-height: 48px;
-      cursor: default;
+      color: var(--primary); background: none; border: none;
+      font-size: 12px; padding: 4px 8px; min-height: 28px; cursor: pointer; flex-shrink: 0;
     }
-    .content { padding: 4px 12px 24px; }
+    .chip-btn {
+      padding: 3px 8px; border-radius: 999px; font-size: 10px;
+      color: var(--primary); background: var(--primary-container); border: none;
+      cursor: pointer; flex-shrink: 0;
+    }
+    .hint-text { font-size: 9px; color: var(--on-surface-variant); flex-shrink: 0; }
+
+    /* ── 滚动列表 ── */
+    .scroll-list { flex: 1; overflow-y: auto; padding: 2px 6px 10px; }
     .section-title {
-      margin: 8px 0 6px 4px;
-      font-size: 14px;
-      font-weight: 600;
-      color: var(--primary);
+      margin: 3px 0 2px; font-size: 11px; font-weight: 600; color: var(--primary);
+      cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 4px; border-radius: 4px;
     }
+    .section-title:hover { background: rgba(138,180,248,.1); }
+    .section-title .arrow { font-size: 8px; transition: transform .2s; display: inline-block; }
+    .section-title.collapsed .arrow { transform: rotate(-90deg); }
+
+    /* ── 卡片 ── */
     .card {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 10px;
-      margin-bottom: 8px;
-      background: rgba(42,42,42,.5);
-      border-radius: 10px;
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px; margin-bottom: 4px;
+      background: rgba(42,42,42,.55); border-radius: 7px;
+      position: relative; cursor: grab; transition: opacity .15s, transform .15s;
     }
+    .card.dragging { opacity: .4; transform: scale(.96); }
+    .card.drag-over { border: 1.5px dashed var(--primary); background: rgba(138,180,248,.08); }
     .poster {
-      width: 60px;
-      height: 82px;
-      border-radius: 6px;
+      width: 44px; height: 60px; border-radius: 4px; flex: 0 0 auto;
       background: linear-gradient(160deg, #3a3f55, #252836);
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #778;
-      font-size: 12px;
-      position: relative;
-      overflow: hidden;
+      display: flex; align-items: center; justify-content: center;
+      color: #778; font-size: 9px; position: relative; overflow: hidden;
     }
     .poster::after {
-      content: "";
-      position: absolute;
-      inset: 0;
+      content: ""; position: absolute; inset: 0;
       background: linear-gradient(to top, rgba(0,0,0,.35), transparent 45%);
     }
     .info { flex: 1; min-width: 0; }
-    .title {
-      font-size: 16px;
-      font-weight: 500;
-      line-height: 1.3;
-      margin: 0 0 4px;
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-    .meta-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
-      margin-bottom: 6px;
-      min-height: 22px;
-    }
+    .title { font-size: 12px; font-weight: 500; line-height: 1.2; margin: 0 0 2px;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .meta-row { display: flex; align-items: center; gap: 3px; flex-wrap: wrap; margin-bottom: 2px; min-height: 16px; }
     .source-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-      line-height: 16px;
-      font-weight: 600;
-      color: #d7e6ff;
-      background: rgba(138, 180, 248, 0.22);
-      border: 1px solid rgba(138, 180, 248, 0.35);
-      white-space: nowrap;
-      max-width: 120px;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      display: inline-flex; align-items: center; padding: 1px 5px; border-radius: 999px;
+      font-size: 8px; font-weight: 600; color: #d7e6ff;
+      background: rgba(138,180,248,.22); border: 1px solid rgba(138,180,248,.35);
+      white-space: nowrap; max-width: 70px; overflow: hidden; text-overflow: ellipsis;
     }
-    .episode {
-      font-size: 13px;
-      color: var(--on-surface-variant);
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      flex: 1;
-      min-width: 0;
-    }
-    .progress-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 4px;
-    }
-    .bar {
-      flex: 1;
-      height: 4px;
-      border-radius: 2px;
-      background: #3f3f3f;
-      overflow: hidden;
-    }
-    .bar > i {
-      display: block;
-      height: 100%;
-      background: var(--primary);
-      border-radius: 2px;
-    }
-    .progress-text {
-      font-size: 11px;
-      color: var(--on-surface-variant);
-      white-space: nowrap;
-    }
-    .sub-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .time {
-      font-size: 11px;
-      color: var(--on-surface-variant);
-    }
-    .update-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 1px 6px;
-      border-radius: 4px;
-      font-size: 11px;
-      line-height: 16px;
-      color: var(--primary);
-      background: var(--primary-container);
-      white-space: nowrap;
-    }
-    .update-badge.new {
-      color: #9ef0b0;
-      background: rgba(110, 220, 140, 0.16);
-    }
+    .episode { font-size: 10px; color: var(--on-surface-variant); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
+    .progress-row { display: flex; align-items: center; gap: 4px; margin-bottom: 2px; }
+    .bar { flex: 1; height: 2px; border-radius: 2px; background: #3f3f3f; overflow: hidden; }
+    .bar > i { display: block; height: 100%; background: var(--primary); border-radius: 2px; }
+    .progress-text { font-size: 8px; color: var(--on-surface-variant); white-space: nowrap; }
+    .sub-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+    .time { font-size: 8px; color: var(--on-surface-variant); }
+    .update-badge { display: inline-flex; padding: 1px 4px; border-radius: 3px; font-size: 8px; color: var(--primary); background: var(--primary-container); white-space: nowrap; }
+    .update-badge.new { color: #9ef0b0; background: rgba(110,220,140,.16); }
     .del {
-      width: 48px;
-      height: 48px;
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--danger);
-      font-size: 20px;
+      width: 26px; height: 26px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+      color: var(--danger); font-size: 12px; background: none; border: none; cursor: pointer; border-radius: 50%;
     }
-    .notes {
-      color: #d8d8d8;
-      line-height: 1.65;
-      font-size: 14px;
+    .del:hover { background: rgba(255,138,128,.18); }
+
+    /* 编辑表单 */
+    .card-edit-form { display: none; flex-direction: column; gap: 3px; width: 100%; padding-top: 4px; border-top: 1px solid #333; margin-top: 2px; }
+    .card.editing .card-edit-form { display: flex; }
+    .card.editing .card-preview  { display: none; }
+    .card.editing { outline: 2px dashed var(--primary); }
+    .card-edit-form input { width: 100%; padding: 3px 5px; border-radius: 3px; border: 1px solid #333; background: #242424; color: var(--on-surface); font-size: 10px; }
+    .form-actions { display: flex; gap: 3px; margin-top: 1px; }
+    .form-actions button { padding: 2px 7px; border-radius: 3px; border: none; font-size: 9px; cursor: pointer; font-weight: 600; }
+    .btn-save  { background: var(--primary); color: #000; }
+    .btn-cancel { background: #333; color: #ccc; }
+
+    /* nav bar */
+    .nav-bar {
+      height: var(--nav-h); display: flex; align-items: center; justify-content: space-around;
+      background: #1a1a1a; border-top: 1px solid #2a2a2a; flex-shrink: 0;
     }
-    .notes h2 {
-      margin: 0 0 10px;
-      font-size: 20px;
-      color: #fff;
-    }
-    .notes h3 {
-      margin: 18px 0 8px;
-      font-size: 15px;
-      color: #fff;
-    }
-    .notes ul { margin: 6px 0 0 20px; padding: 0; }
-    .notes li { margin: 6px 0; }
-    code {
-      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-      font-size: 12px;
-      background: #242424;
-      border: 1px solid #333;
-      padding: 1px 5px;
-      border-radius: 4px;
-      color: #e8e8e8;
-    }
-    .tag {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      margin-right: 6px;
-    }
-    .tag.ok { background: rgba(110,220,140,.18); color: #b7f5c7; }
-    .tag.warn { background: rgba(255,200,120,.18); color: #ffe0a8; }
-    .callout {
-      margin-top: 12px;
-      padding: 10px 12px;
-      border-radius: 8px;
-      background: #1b1f2a;
-      border: 1px solid #2e3957;
-      color: #cfe0ff;
-      font-size: 13px;
-    }
+    .nav-item { display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 8px; color: #888; background: none; border: none; cursor: pointer; padding: 2px 6px; }
+    .nav-item.active { color: var(--primary); }
+    .nav-item .icon { font-size: 14px; }
+
+    /* 添加区 */
+    .add-bar { margin-top: 12px; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: center; }
+    .add-bar input { padding: 5px 8px; border-radius: 5px; border: 1px solid #333; background: #1e1e1e; color: var(--on-surface); font-size: 11px; }
+    .add-bar input.wide { width: 130px; }
+    .add-bar input.mid  { width: 80px; }
+    .add-bar input.num  { width: 50px; }
+    .add-bar button { padding: 5px 12px; border-radius: 5px; border: none; background: var(--primary); color: #000; font-size: 11px; font-weight: 600; cursor: pointer; }
+    .add-bar button:hover { opacity: .85; }
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="phone" aria-label="手机版历史页预览">
+
+<div class="scene-bar">
+  <button class="scene-btn" onclick="setScene(this,24)">🌅 无刘海 24dp</button>
+  <button class="scene-btn active" onclick="setScene(this,44)">📱 正常刘海 44dp</button>
+  <button class="scene-btn" onclick="setScene(this,60)">🔲 大挖孔 60dp</button>
+  <button class="scene-btn" onclick="setScene(this,80)">⬛ 厚下巴 80dp</button>
+</div>
+<div class="hint-text-top">拖拽排序 · 点击✕删除 · 双击编辑 · 顶栏可左右滑动</div>
+
+<div class="compare-row">
+
+  <!-- 左：修复前 -->
+  <div class="phone-col">
+    <div class="phone-label bad">✗ 修复前</div>
+    <div class="phone before" id="phoneBefore">
       <div class="status-bar"><span>12:55</span><span>5G ▪ ▮▮▮</span></div>
-      <div class="header">
-        <h1>历史</h1>
-        <button class="clear-btn" type="button">清空</button>
+      <div class="obstruction-overlay">⚠ 状态栏遮挡</div>
+      <div class="content-wrap">
+        <div class="top-scroll">
+          <h1>历史</h1>
+          <button class="clear-btn" onclick="confirmClear('before')">清空</button>
+          <button class="chip-btn">排序</button>
+          <span class="hint-text">长按多选</span>
+        </div>
+        <div class="scroll-list" id="listBefore">
+          <div class="section-title" onclick="toggleSection(this)"><span class="arrow">▾</span>今天</div>
+          <div class="card" draggable="true" data-id="b1" data-side="before">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">庆余年 第二季</p>
+              <div class="meta-row"><span class="source-badge">腾讯视频源</span><span class="episode">第18集 · 朝堂风云</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:62%"></i></div><span class="progress-text">24:10 / 62%</span></div>
+              <div class="sub-row"><span class="time">20:15 观看</span><span class="update-badge">还有 2 集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="card" draggable="true" data-id="b2" data-side="before">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">漫长的季节</p>
+              <div class="meta-row"><span class="source-badge">非凡资源</span><span class="episode">第12集 · 大结局</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:100%"></i></div><span class="progress-text">58:40 / 100%</span></div>
+              <div class="sub-row"><span class="time">18:02 观看</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="section-title" onclick="toggleSection(this)"><span class="arrow">▾</span>昨天</div>
+          <div class="card" draggable="true" data-id="b3" data-side="before">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">凡人修仙传</p>
+              <div class="meta-row"><span class="source-badge">量子线路</span><span class="episode">第76集</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:35%"></i></div><span class="progress-text">07:12 / 35%</span></div>
+              <div class="sub-row"><span class="time">22:41 观看</span><span class="update-badge">还有 8 集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="card" draggable="true" data-id="b4" data-side="before">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">名侦探柯南</p>
+              <div class="meta-row"><span class="source-badge">樱花动漫源</span><span class="episode">第1120集</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:12%"></i></div><span class="progress-text">已看到 02:45</span></div>
+              <div class="sub-row"><span class="time">09:30 观看</span><span class="update-badge new">新集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+        </div>
       </div>
-      <div class="content">
-        <div class="section-title">今天</div>
-
-        <div class="card">
-          <div class="poster">封面</div>
-          <div class="info">
-            <p class="title">庆余年 第二季</p>
-            <div class="meta-row">
-              <span class="source-badge" title="视频源">腾讯视频源</span>
-              <span class="episode">第18集 · 朝堂风云</span>
-            </div>
-            <div class="progress-row">
-              <div class="bar"><i style="width:62%"></i></div>
-              <span class="progress-text">24:10 / 62%</span>
-            </div>
-            <div class="sub-row">
-              <span class="time">20:15 观看</span>
-              <span class="update-badge">还有 2 集</span>
-            </div>
-          </div>
-          <div class="del" title="删除记录">🗑</div>
-        </div>
-
-        <div class="card">
-          <div class="poster">封面</div>
-          <div class="info">
-            <p class="title">漫长的季节</p>
-            <div class="meta-row">
-              <span class="source-badge" title="视频源">非凡资源</span>
-              <span class="episode">第12集 · 大结局</span>
-            </div>
-            <div class="progress-row">
-              <div class="bar"><i style="width:100%"></i></div>
-              <span class="progress-text">58:40 / 100%</span>
-            </div>
-            <div class="sub-row">
-              <span class="time">18:02 观看</span>
-            </div>
-          </div>
-          <div class="del" title="删除记录">🗑</div>
-        </div>
-
-        <div class="section-title">昨天</div>
-
-        <div class="card">
-          <div class="poster">封面</div>
-          <div class="info">
-            <p class="title">凡人修仙传：星海飞驰篇</p>
-            <div class="meta-row">
-              <span class="source-badge" title="视频源">量子线路</span>
-              <span class="episode">第76集</span>
-            </div>
-            <div class="progress-row">
-              <div class="bar"><i style="width:35%"></i></div>
-              <span class="progress-text">07:12 / 35%</span>
-            </div>
-            <div class="sub-row">
-              <span class="time">22:41 观看</span>
-              <span class="update-badge">还有 8 集</span>
-            </div>
-          </div>
-          <div class="del" title="删除记录">🗑</div>
-        </div>
-
-        <div class="card">
-          <div class="poster">封面</div>
-          <div class="info">
-            <p class="title">名侦探柯南</p>
-            <div class="meta-row">
-              <span class="source-badge" title="视频源">樱花动漫源</span>
-              <span class="episode">第1120集</span>
-            </div>
-            <div class="progress-row">
-              <div class="bar"><i style="width:12%"></i></div>
-              <span class="progress-text">已看到 02:45</span>
-            </div>
-            <div class="sub-row">
-              <span class="time">09:30 观看</span>
-              <span class="update-badge new" title="示意：若未来支持后台刷新源站集数，可显示此类提示">源站有新集（示意）</span>
-            </div>
-          </div>
-          <div class="del" title="删除记录">🗑</div>
-        </div>
-
+      <div class="nav-bar">
+        <button class="nav-item"><span class="icon">⌂</span>首页</button>
+        <button class="nav-item active"><span class="icon">☰</span>历史</button>
+        <button class="nav-item"><span class="icon">⌕</span>搜索</button>
+        <button class="nav-item"><span class="icon">▶</span>电视</button>
+        <button class="nav-item"><span class="icon">★</span>直播</button>
       </div>
-    </div>
-
-    <div class="notes">
-      <h2>手机版历史：检查结论与展示调整建议</h2>
-
-      <h3>1) 是否支持内容更新提示</h3>
-      <p><span class="tag ok">已支持显示（现状）</span> <span class="tag warn">检测范围有限</span></p>
-      <ul>
-        <li><strong>数据层：</strong><code>WatchHistoryItem</code> 已有 <code>episodeCount</code>（保存时该线路总集数）、<code>unwatchedEpisodes</code> 与 <code>updateHint</code>（<code>"还有 N 集"</code>）。</li>
-        <li><strong>写入时机：</strong>播放保存进度时写入 <code>episodeCount = source.episodes.size</code>（<code>TvBoxViewModel.savePlaybackProgress</code>），即“上次保存时已知的线路总集数”。</li>
-        <li><strong>手机版 UI：</strong><code>MobileHistoryScreen</code> 的历史行在观看时间后渲染 <code>item.updateHint</code> 徽标（当前文案“还有 N 集”），因此<strong>支持内容更新/未看完集数提示的展示</strong>。</li>
-        <li><strong>边界：</strong>当前提示基于“已知总集数 - 已看集数”，<strong>不会后台主动拉取源站最新集数</strong>来发现“保存后新发布的剧集”。若源站在你上次观看后新增剧集，除非再次进入详情/播放并刷新保存 <code>episodeCount</code>，历史页不会自动感知这类新增更新。上图最后一条的“源站有新集”仅为未来增强的示意样式。</li>
-      </ul>
-      <div class="callout">结论：手机版历史<strong>已支持</strong>“还有 N 集”的更新提示展示；若要支持“源站发布了新集”的自动检测，需要在进入历史页或后台定时刷新各条目的最新集数并对比/更新 <code>episodeCount</code>。</div>
-
-      <h3>2) 视频源名字的显示位置（建议）</h3>
-      <ul>
-        <li><strong>现状：</strong>手机版历史将来源与集名混在同一行显示为 <code>item.sourceName · item.episodeTitle</code>，来源信息存在但不够独立、扫读时容易被集名淹没。</li>
-        <li><strong>建议位置：</strong>将<strong>视频源名做成独立的来源标签（Source Badge/Chip）</strong>，放在标题下方的元信息行首位、集数信息之前（如本预览所示）。</li>
-        <li><strong>原因：</strong>来源是“这条记录来自哪个线路/源”的关键身份信息，独立成标签后层级清晰、便于快速区分同名影片的不同来源；与集数、进度、更新时间分列也避免一行文本过长被截断时丢失来源。</li>
-        <li><strong>备选：</strong>也可放在封面左上/右上角做小角标，但手机列表封面较小，角标易遮挡画面且长源名容纳有限；信息区标签更稳妥。</li>
-      </ul>
-
-      <h3>3) 本预览对应的实现要点（供后续改代码参考）</h3>
-      <ul>
-        <li>将 <code>MobileHistoryRow</code> 中 <code>listOf(item.sourceName, item.episodeTitle).joinToString(" · ")</code> 拆分：<code>item.sourceName</code> 渲染为独立 <code>Surface/Text</code> 标签，<code>item.episodeTitle</code> 单独显示。</li>
-        <li>保留并突出 <code>item.updateHint</code> 徽标（“还有 N 集”）；若后续增加源站新集检测，可扩展为不同色/文案的“已更新/有新集”提示。</li>
-        <li>参考文件：<code>app/src/main/java/com/tvbox/app/ui/MobileHistoryScreen.kt</code>、<code>app/src/main/java/com/tvbox/app/domain/WatchHistory.kt</code>、<code>app/src/main/java/com/tvbox/app/ui/TvBoxViewModel.kt</code>（保存 <code>episodeCount</code>）。</li>
-      </ul>
     </div>
   </div>
+
+  <!-- 右：修复后 -->
+  <div class="phone-col">
+    <div class="phone-label good">✓ 修复后</div>
+    <div class="phone fixed" id="phoneFixed">
+      <div class="status-bar"><span>12:55</span><span>5G ▪ ▮▮▮</span></div>
+      <div class="content-wrap">
+        <div class="top-scroll">
+          <h1>历史</h1>
+          <button class="clear-btn" onclick="confirmClear('fixed')">清空</button>
+          <button class="chip-btn" id="sortBtn" onclick="toggleSort()">排序</button>
+          <span class="hint-text">长按多选</span>
+        </div>
+        <div class="scroll-list" id="listFixed">
+          <div class="section-title" onclick="toggleSection(this)"><span class="arrow">▾</span>今天</div>
+          <div class="card" draggable="true" data-id="1" data-side="fixed">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">庆余年 第二季</p>
+              <div class="meta-row"><span class="source-badge">腾讯视频源</span><span class="episode">第18集 · 朝堂风云</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:62%"></i></div><span class="progress-text">24:10 / 62%</span></div>
+              <div class="sub-row"><span class="time">20:15 观看</span><span class="update-badge">还有 2 集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="card" draggable="true" data-id="2" data-side="fixed">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">漫长的季节</p>
+              <div class="meta-row"><span class="source-badge">非凡资源</span><span class="episode">第12集 · 大结局</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:100%"></i></div><span class="progress-text">58:40 / 100%</span></div>
+              <div class="sub-row"><span class="time">18:02 观看</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="section-title" onclick="toggleSection(this)"><span class="arrow">▾</span>昨天</div>
+          <div class="card" draggable="true" data-id="3" data-side="fixed">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">凡人修仙传</p>
+              <div class="meta-row"><span class="source-badge">量子线路</span><span class="episode">第76集</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:35%"></i></div><span class="progress-text">07:12 / 35%</span></div>
+              <div class="sub-row"><span class="time">22:41 观看</span><span class="update-badge">还有 8 集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+          <div class="card" draggable="true" data-id="4" data-side="fixed">
+            <div class="poster">封面</div>
+            <div class="info card-preview">
+              <p class="title">名侦探柯南</p>
+              <div class="meta-row"><span class="source-badge">樱花动漫源</span><span class="episode">第1120集</span></div>
+              <div class="progress-row"><div class="bar"><i style="width:12%"></i></div><span class="progress-text">已看到 02:45</span></div>
+              <div class="sub-row"><span class="time">09:30 观看</span><span class="update-badge new">新集</span></div>
+            </div>
+            <button class="del" onclick="deleteCard(this)">✕</button>
+          </div>
+        </div>
+      </div>
+      <div class="nav-bar">
+        <button class="nav-item" onclick="switchTab(this.parentElement,'home')"><span class="icon">⌂</span>首页</button>
+        <button class="nav-item active" onclick="switchTab(this.parentElement,'history')"><span class="icon">☰</span>历史</button>
+        <button class="nav-item" onclick="switchTab(this.parentElement,'search')"><span class="icon">⌕</span>搜索</button>
+        <button class="nav-item" onclick="switchTab(this.parentElement,'live')"><span class="icon">▶</span>电视</button>
+        <button class="nav-item" onclick="switchTab(this.parentElement,'platform')"><span class="icon">★</span>直播</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="add-bar">
+  <input type="text" id="newTitle"    placeholder="片名 *"   class="wide" />
+  <input type="text" id="newSource"   placeholder="视频源"  class="mid"  />
+  <input type="text" id="newEp"       placeholder="集数"    class="mid"  />
+  <input type="number" id="newProgress" placeholder="进度%" min="0" max="100" class="num" />
+  <button onclick="addCard()">➕ 添加</button>
+</div>
+
+<script>
+  const root = document.documentElement;
+
+  function setScene(btn, px) {
+    root.style.setProperty('--status-h', px + 'px');
+    document.querySelectorAll('.scene-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  }
+
+  function toggleSection(el) {
+    el.classList.toggle('collapsed');
+    const arrow = el.querySelector('.arrow');
+    if (arrow) arrow.textContent = el.classList.contains('collapsed') ? '▸' : '▾';
+    let next = el.nextElementSibling;
+    while (next) {
+      if (next.classList.contains('section-title')) break;
+      next.style.display = el.classList.contains('collapsed') ? 'none' : '';
+      next = next.nextElementSibling;
+    }
+  }
+
+  function deleteCard(btn) {
+    const card = btn.closest('.card');
+    card.style.transition = 'opacity .18s, transform .18s';
+    card.style.opacity = '0';
+    card.style.transform = 'scale(.92) translateX(20px)';
+    setTimeout(() => card.remove(), 200);
+  }
+
+  function confirmClear(side) {
+    if (!confirm('清空全部记录？不可恢复。')) return;
+    const list = document.getElementById('list' + side.charAt(0).toUpperCase() + side.slice(1));
+    list.querySelectorAll('.card').forEach(c => c.remove());
+  }
+
+  let sortMode = 'recent';
+  function toggleSort() {
+    sortMode = sortMode === 'recent' ? 'added' : 'recent';
+    document.getElementById('sortBtn').textContent = sortMode === 'recent' ? '排序' : '已排序';
+  }
+
+  function switchTab(navBar, tab) {
+    const tabs = ['home','history','search','live','platform'];
+    navBar.querySelectorAll('.nav-item').forEach((item, i) => item.classList.toggle('active', tabs[i] === tab));
+  }
+
+  // ── 双击编辑（事件委托到 #listFixed）──
+  document.getElementById('listFixed').addEventListener('dblclick', e => {
+    const card = e.target.closest('.card');
+    if (!card || e.target.closest('.del')) return;
+    enterEdit(card);
+  });
+
+  function enterEdit(card) {
+    document.querySelectorAll('.card.editing').forEach(c => { if (c !== card) exitEdit(c); });
+    card.classList.add('editing');
+    const info = card.querySelector('.info');
+    const preview = info.querySelector('.card-preview');
+    if (!preview) return;
+    const title    = preview.querySelector('.title')?.textContent    || '';
+    const badge    = preview.querySelector('.source-badge')?.textContent || '';
+    const ep       = preview.querySelector('.episode')?.textContent  || '';
+    const progStr  = (preview.querySelector('.progress-text')?.textContent || '').match(/(\d+)%/);
+    const progress = progStr ? progStr[1] : '0';
+    const timeText = (preview.querySelector('.time')?.textContent || '').replace(' 观看','');
+    const id = card.dataset.id;
+    let form = card.querySelector('.card-edit-form');
+    if (!form) { form = document.createElement('div'); form.className = 'card-edit-form'; info.appendChild(form); }
+    form.innerHTML = `
+      <input type="text" id="ed-t-${id}" value="${esc(title)}" />
+      <div style="display:flex;gap:3px;">
+        <input type="text" id="ed-s-${id}" value="${esc(badge)}" style="flex:1" />
+        <input type="text" id="ed-e-${id}" value="${esc(ep)}" style="flex:1" />
+      </div>
+      <div style="display:flex;gap:3px;">
+        <input type="number" id="ed-p-${id}" value="${progress}" min="0" max="100" style="flex:1" />
+        <input type="text" id="ed-tm-${id}" value="${esc(timeText)}" style="flex:1" />
+      </div>
+      <div class="form-actions">
+        <button class="btn-save" onclick="saveEdit('${id}')">保存</button>
+        <button class="btn-cancel" onclick="exitEdit(this.closest('.card'))">取消</button>
+      </div>
+    `;
+  }
+
+  function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function saveEdit(id) {
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (!card) return;
+    const title    = document.getElementById(`ed-t-${id}`)?.value    ?? '';
+    const src      = document.getElementById(`ed-s-${id}`)?.value    ?? '';
+    const ep       = document.getElementById(`ed-e-${id}`)?.value    ?? '';
+    const prog     = document.getElementById(`ed-p-${id}`)?.value    ?? '0';
+    const time     = document.getElementById(`ed-tm-${id}`)?.value   ?? '刚刚';
+    const preview  = card.querySelector('.card-preview');
+    if (!preview) return;
+    preview.querySelector('.title').textContent    = title;
+    preview.querySelector('.source-badge').textContent = src;
+    preview.querySelector('.episode').textContent  = ep;
+    preview.querySelector('.progress-text').textContent = formatProg(parseInt(prog)||0);
+    preview.querySelector('.bar i').style.width    = `${prog||0}%`;
+    preview.querySelector('.time').textContent     = `${time} 观看`;
+    exitEdit(card);
+  }
+  function exitEdit(card) {
+    if (!card) return;
+    card.classList.remove('editing');
+    const form = card.querySelector('.card-edit-form');
+    if (form) form.remove();
+  }
+  function formatProg(pct) { const cur = Math.round(60*pct/100); return `${cur}:00 / ${pct}%`; }
+
+  // ── 添加卡片 ──
+  function addCard() {
+    const title    = document.getElementById('newTitle').value.trim();
+    const source   = document.getElementById('newSource').value.trim()   || '未知源';
+    const ep       = document.getElementById('newEp').value.trim()       || '';
+    const progress = document.getElementById('newProgress').value        || '0';
+    if (!title) { alert('请输入片名'); return; }
+    const list = document.getElementById('listFixed');
+    const firstSection = list.querySelector('.section-title');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.draggable = true;
+    card.dataset.id = Date.now();
+    card.dataset.side = 'fixed';
+    card.innerHTML = `
+      <div class="poster">封面</div>
+      <div class="info card-preview">
+        <p class="title">${esc(title)}</p>
+        <div class="meta-row"><span class="source-badge">${esc(source)}</span><span class="episode">${esc(ep)}</span></div>
+        <div class="progress-row"><div class="bar"><i style="width:${progress}%"></i></div><span class="progress-text">${formatProg(parseInt(progress)||0)}</span></div>
+        <div class="sub-row"><span class="time">刚刚 观看</span></div>
+      </div>
+      <button class="del" onclick="deleteCard(this)" title="删除">✕</button>
+    `;
+    bindDrag(card);
+    if (firstSection) list.insertBefore(card, firstSection.nextSibling);
+    else list.prepend(card);
+    ['newTitle','newSource','newEp','newProgress'].forEach(id => document.getElementById(id).value = '');
+  }
+
+  // ── HTML5 拖拽排序 ──
+  let dragSrc = null;
+  function bindDrag(card) {
+    card.addEventListener('dragstart', e => {
+      dragSrc = card;
+      card.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      document.querySelectorAll('.card.drag-over').forEach(c => c.classList.remove('drag-over'));
+      dragSrc = null;
+    });
+    card.addEventListener('dragover', e => {
+      e.preventDefault();
+      if (dragSrc && dragSrc !== card) {
+        card.classList.add('drag-over');
+        e.dataTransfer.dropEffect = 'move';
+      }
+    });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      if (dragSrc && dragSrc !== card) {
+        const list = card.parentElement;
+        const cards = [...list.querySelectorAll('.card:not(.dragging)')];
+        const srcIdx = cards.indexOf(dragSrc);
+        const dstIdx = cards.indexOf(card);
+        if (srcIdx < dstIdx) {
+          list.insertBefore(dragSrc, card.nextElementSibling);
+        } else {
+          list.insertBefore(dragSrc, card);
+        }
+      }
+    });
+  }
+  document.querySelectorAll('.card[draggable]').forEach(bindDrag);
+</script>
 </body>
 </html>

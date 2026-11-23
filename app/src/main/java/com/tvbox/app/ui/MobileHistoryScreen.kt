@@ -1,9 +1,11 @@
 package com.tvbox.app.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +15,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -46,13 +48,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.tvbox.app.domain.WatchHistoryItem
@@ -103,8 +109,10 @@ internal fun MobileHistoryScreen(
     // #308：历史搜索——按片名 / 来源 / 分类本地过滤，不改动历史数据本身。
     var historyQuery by remember { mutableStateOf("") }
     val normalizedHistoryQuery = historyQuery.trim()
-    val filteredHistoryItems = remember(state.historyItems, normalizedHistoryQuery) {
-        if (normalizedHistoryQuery.isBlank()) {
+    // 「仅看更新」Chip：只保留有新集提示（newEpisodeHint != null）的记录。
+    var onlyUpdates by remember { mutableStateOf(false) }
+    val filteredHistoryItems = remember(state.historyItems, normalizedHistoryQuery, onlyUpdates) {
+        val queried = if (normalizedHistoryQuery.isBlank()) {
             state.historyItems
         } else {
             val needle = normalizedHistoryQuery
@@ -114,6 +122,7 @@ internal fun MobileHistoryScreen(
                     item.typeName.contains(needle, ignoreCase = true)
             }
         }
+        if (onlyUpdates) queried.filter { it.newEpisodeHint != null } else queried
     }
     // #317：旧数据 addedAtEpochMs=0，回退到 updatedAtEpochMs 参与排序。
     val sortedHistoryItems = remember(filteredHistoryItems, sortMode) {
@@ -126,6 +135,15 @@ internal fun MobileHistoryScreen(
     }
     val selectedItems = remember(state.historyItems, selectedKeys) {
         state.historyItems.filter { historyItemKey(it) in selectedKeys }
+    }
+    // 分组数据上移到列表外计算：Header 作为 LazyColumn 的第一个 item，与分组共用同一次重组结果。
+    val dayStartMs = startOfDayMs(System.currentTimeMillis())
+    val sections = remember(sortedHistoryItems, dayStartMs, sortMode) {
+        if (sortMode == HistorySortMode.ADDED) {
+            listOf(HistorySection("按添加时间", sortedHistoryItems))
+        } else {
+            buildHistorySections(sortedHistoryItems, dayStartMs)
+        }
     }
 
     fun toggleSelection(item: WatchHistoryItem) {
@@ -215,232 +233,285 @@ internal fun MobileHistoryScreen(
             .windowInsetsPadding(WindowInsets.statusBars),
         color = TvColors.Background,
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // 顶部标题 + 操作按钮：多选模式下切换为「全选 / 删除 / 取消」，其余情况保持「清空」。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
+        if (state.historyItems.isEmpty()) {
+            EmptyState(
+                title = "暂无观看历史",
+                subtitle = "在首页选择影片开始观看，进度会自动记录在这里",
+                actionLabel = "去首页",
+                onAction = actions::openHome,
+            )
+        } else {
+            PullToRefreshBox(
+                isRefreshing = state.historyUpdateChecking,
+                onRefresh = { actions.refreshHistory() },
+                modifier = Modifier.fillMaxSize(),
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = if (multiSelectMode) "已选 ${selectedKeys.size} 条" else "历史",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    if (state.historyUpdateChecking) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 2.dp,
-                            )
-                            Text(
-                                text = "正在检查各源更新…",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = TvColors.TextSecondary,
-                            )
-                        }
-                    }
-                }
-                if (multiSelectMode) {
-                    // #309：多选操作。全选只作用于当前（搜索 + 排序后的）可见列表。
-                    TextButton(onClick = { selectedKeys = filteredHistoryItems.map(::historyItemKey).toSet() }) {
-                        Text("全选")
-                    }
-                    TextButton(
-                        onClick = { confirmBatchDelete = true },
-                        enabled = selectedItems.isNotEmpty(),
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) { Text("删除", color = TvColors.Danger) }
-                    TextButton(onClick = { exitMultiSelect() }) { Text("取消") }
-                } else {
-                    TextButton(
-                        onClick = { confirmClear = true },
-                        enabled = state.historyItems.isNotEmpty(),
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) { Text("清空") }
-                }
-            }
-
-            // #309/#311/#317：辅助操作行——排序切换、失效源清理入口。
-            // 简约设计：弱化为小号次级文字按钮，去掉「长按多选」提示文案（手势可自然发现）。
-            if (state.historyItems.isNotEmpty() && !multiSelectMode) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextButton(onClick = {
-                        sortMode = if (sortMode == HistorySortMode.RECENT) {
-                            HistorySortMode.ADDED
-                        } else {
-                            HistorySortMode.RECENT
-                        }
-                    }) {
-                        Text(
-                            text = "排序：${sortMode.label}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TvColors.TextSecondary,
-                        )
-                    }
-                    TextButton(
-                        onClick = { confirmCleanStale = true },
-                        enabled = staleItems.isNotEmpty(),
-                    ) {
-                        Text(
-                            text = "清理失效源${if (staleItems.isEmpty()) "" else "(${staleItems.size})"}",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = TvColors.TextSecondary,
-                        )
-                    }
-                }
-            }
-
-            // #308：历史搜索框。仅在有历史时显示。
-            // 简约设计：去外框 label，改为浅色圆角胶囊 + 内嵌放大镜图标，与整体风格统一。
-            if (state.historyItems.isNotEmpty()) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = TvColors.SurfaceRaised.copy(alpha = 0.6f),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = null,
-                            tint = TvColors.TextTertiary,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Box(modifier = Modifier.weight(1f)) {
-                            if (historyQuery.isEmpty()) {
-                                Text(
-                                    text = "搜索片名 / 来源 / 分类",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = TvColors.TextTertiary,
-                                    maxLines = 1,
-                                )
-                            }
-                            BasicTextField(
-                                value = historyQuery,
-                                onValueChange = { historyQuery = it },
-                                singleLine = true,
-                                textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                    color = TvColors.TextPrimary,
-                                ),
-                                cursorBrush = SolidColor(TvColors.Accent),
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                        }
-                        if (historyQuery.isNotEmpty()) {
-                            Text(
-                                text = "✕",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = TvColors.TextTertiary,
-                                modifier = Modifier
-                                    .clickable { historyQuery = "" }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-            if (state.historyItems.isEmpty()) {
-                EmptyState(
-                    title = "暂无观看历史",
-                    subtitle = "在首页选择影片开始观看，进度会自动记录在这里",
-                    actionLabel = "去首页",
-                    onAction = actions::openHome,
-                )
-            } else if (filteredHistoryItems.isEmpty()) {
-                EmptyState(
-                    title = "没有匹配的历史",
-                    subtitle = "试试其他关键词，或清空搜索框查看全部记录",
-                )
-            } else {
-                // 分组计算依赖「本地自然日」：跨过午夜（或跨年）后若列表未变，首次计算时冻结的
-                // 「今天/昨天」标签会错误地停留在旧日期。这里把本地日零点时间戳纳入 remember key，
-                // 使页面在午夜之后任意一次重组（回到 Tab / 数据变化）时都按新日期重新分组。
-                val dayStartMs = startOfDayMs(System.currentTimeMillis())
-                // #317：按日期分组只适用于「最近观看」；「添加时间」排序下按 updatedAt 分组会打乱
-                // 排序结果，因此直接展示单一分组。
-                val sections = remember(sortedHistoryItems, dayStartMs, sortMode) {
-                    if (sortMode == HistorySortMode.ADDED) {
-                        listOf(HistorySection("按添加时间", sortedHistoryItems))
-                    } else {
-                        buildHistorySections(sortedHistoryItems, dayStartMs)
-                    }
-                }
-                PullToRefreshBox(
-                    isRefreshing = state.historyUpdateChecking,
-                    onRefresh = { actions.refreshHistory() },
+                LazyColumn(
                     modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(0.dp),
                 ) {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
-                        verticalArrangement = Arrangement.spacedBy(0.dp),
-                    ) {
-                    sections.forEachIndexed { sectionIndex, section ->
-                        // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
-                        // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
-                        // 分组头不用 label 作 key：日期标签（如「M月d日」）跨年会重复，改用分组序号保证唯一。
-                        // 简约设计：分组头不再使用强调色胶囊底，改为弱化次级文字。
-                        item(key = "header_$sectionIndex") {
-                            Text(
-                                text = section.label,
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold,
-                                color = TvColors.TextSecondary,
+                    // 沉浸式 Header：搜索框 + 筛选 Chip 作为第一个 item，随列表一起向上滚动。
+                    item(key = "history_immersive_header") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            // 第一行：极简搜索框（44dp / #1A1D26 / 极细边框）。
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = ImmersiveHistoryTokens.Surface,
+                                border = BorderStroke(0.5.dp, ImmersiveHistoryTokens.Border),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(start = 4.dp, top = 14.dp, bottom = 2.dp),
-                            )
-                        }
-                        // 使用与多选选中集合相同的稳定 key（apiLineId:movieId:episodeIndex），
-                        // 保证同一影片不同集数各自独立，且选中状态在重组后不丢失。
-                        items(items = section.items, key = { historyItemKey(it) }) { entry ->
-                            MobileHistoryRow(
-                                item = entry,
-                                multiSelectMode = multiSelectMode,
-                                selected = historyItemKey(entry) in selectedKeys,
-                                onClick = {
-                                    if (multiSelectMode) toggleSelection(entry)
-                                    else actions.resumeHistory(entry, TvScreen.History)
-                                },
-                                // #309：长按进入多选并选中当前条目；已进入多选则继续切换选中。
-                                onLongClick = {
-                                    if (!multiSelectMode) {
-                                        multiSelectMode = true
-                                        selectedKeys = setOf(historyItemKey(entry))
-                                    } else {
-                                        toggleSelection(entry)
+                                    .height(44.dp),
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = ImmersiveHistoryTokens.TextMuted,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Box(modifier = Modifier.weight(1f)) {
+                                        if (historyQuery.isEmpty()) {
+                                            Text(
+                                                text = "搜索片名 / 来源",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = ImmersiveHistoryTokens.TextMuted,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                        BasicTextField(
+                                            value = historyQuery,
+                                            onValueChange = { historyQuery = it },
+                                            singleLine = true,
+                                            textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                                color = TvColors.TextPrimary,
+                                            ),
+                                            cursorBrush = SolidColor(ImmersiveHistoryTokens.SelectedText),
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
                                     }
-                                },
-                                onDelete = { pendingDelete = entry },
-                            )
-                            // 扁平列表：用细分隔线代替卡片底色，视觉更轻。
-                            HorizontalDivider(
-                                modifier = Modifier.padding(start = 76.dp),
-                                thickness = 0.5.dp,
-                                color = TvColors.Border.copy(alpha = 0.6f),
-                            )
+                                    when {
+                                        historyQuery.isNotEmpty() -> Text(
+                                            text = "✕",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = ImmersiveHistoryTokens.TextMuted,
+                                            modifier = Modifier
+                                                .clickable { historyQuery = "" }
+                                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        )
+                                        state.historyUpdateChecking -> CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = ImmersiveHistoryTokens.SelectedText,
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 第二行：横向滑动 Chip 组；多选态复用同一行位置放操作 Chip。
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (multiSelectMode) {
+                                    HistoryChip(
+                                        label = "全选",
+                                        onClick = { selectedKeys = filteredHistoryItems.map(::historyItemKey).toSet() },
+                                    )
+                                    HistoryChip(
+                                        label = "删除(${selectedKeys.size})",
+                                        danger = true,
+                                        enabled = selectedItems.isNotEmpty(),
+                                        onClick = { confirmBatchDelete = true },
+                                    )
+                                    HistoryChip(label = "取消", onClick = { exitMultiSelect() })
+                                } else {
+                                    // 「最近观看」Chip 兼作排序入口：RECENT 高亮，点击切换为「添加时间」。
+                                    HistoryChip(
+                                        label = sortMode.label,
+                                        selected = sortMode == HistorySortMode.RECENT,
+                                        onClick = {
+                                            sortMode = if (sortMode == HistorySortMode.RECENT) {
+                                                HistorySortMode.ADDED
+                                            } else {
+                                                HistorySortMode.RECENT
+                                            }
+                                        },
+                                    )
+                                    HistoryChip(
+                                        label = "清理失效源",
+                                        enabled = staleItems.isNotEmpty(),
+                                        onClick = { confirmCleanStale = true },
+                                    )
+                                    HistoryChip(
+                                        label = "仅看更新",
+                                        selected = onlyUpdates,
+                                        onClick = { onlyUpdates = !onlyUpdates },
+                                    )
+                                    HistoryChip(
+                                        label = "清空历史",
+                                        danger = true,
+                                        onClick = { confirmClear = true },
+                                    )
+                                }
+                                // 末尾留白，保证最后一个 Chip 能完整滑入视口。
+                                Spacer(modifier = Modifier.width(4.dp))
+                            }
                         }
                     }
+
+                    if (filteredHistoryItems.isEmpty()) {
+                        item(key = "history_no_match") {
+                            // 不用 EmptyState：其内部 fillMaxSize() 在 LazyColumn 的无限高约束下会失控。
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 64.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(
+                                        text = "没有匹配的历史",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = TvColors.TextPrimary,
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Text(
+                                        text = "试试其他关键词，或清空搜索框查看全部记录",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvColors.TextSecondary,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        sections.forEachIndexed { sectionIndex, section ->
+                            // 使用独立 sticky key：同一影片在同源的多个观看记录（不同集数）必须各自拥有
+                            // 稳定标识，否则 LazyColumn 在重组时可能把 scroll 状态、焦点与动画错乱到错误条目上。
+                            // 分组头不用 label 作 key：日期标签（如「M月d日」）跨年会重复，改用分组序号保证唯一。
+                            // 简约设计：分组头不再使用强调色胶囊底，改为弱化次级文字。
+                            item(key = "header_$sectionIndex") {
+                                Text(
+                                    text = section.label,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = TvColors.TextSecondary,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 4.dp, top = 14.dp, bottom = 2.dp),
+                                )
+                            }
+                            // 使用与多选选中集合相同的稳定 key（apiLineId:movieId:episodeIndex），
+                            // 保证同一影片不同集数各自独立，且选中状态在重组后不丢失。
+                            items(items = section.items, key = { historyItemKey(it) }) { entry ->
+                                MobileHistoryRow(
+                                    item = entry,
+                                    multiSelectMode = multiSelectMode,
+                                    selected = historyItemKey(entry) in selectedKeys,
+                                    onClick = {
+                                        if (multiSelectMode) toggleSelection(entry)
+                                        else actions.resumeHistory(entry, TvScreen.History)
+                                    },
+                                    // #309：长按进入多选并选中当前条目；已进入多选则继续切换选中。
+                                    onLongClick = {
+                                        if (!multiSelectMode) {
+                                            multiSelectMode = true
+                                            selectedKeys = setOf(historyItemKey(entry))
+                                        } else {
+                                            toggleSelection(entry)
+                                        }
+                                    },
+                                    onDelete = { pendingDelete = entry },
+                                )
+                                // 扁平列表：用细分隔线代替卡片底色，视觉更轻。
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(start = 76.dp),
+                                    thickness = 0.5.dp,
+                                    color = TvColors.Border.copy(alpha = 0.6f),
+                                )
+                            }
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * 「现代沉浸式 Chip」历史头部专用设计令牌，集中在此便于统一换肤，不污染全局 [TvColors] 主题。
+ * 颜色严格对应设计稿：#1A1D26 / #94A3B8 / #34D399 / #EF4444 / #888888。
+ */
+private object ImmersiveHistoryTokens {
+    val Surface = Color(0xFF1A1D26)
+    val Border = Color(0xFF2A2F3A)
+    val TextMuted = Color(0xFF94A3B8)
+    val SelectedBackground = Color(0x1A34D399)
+    val SelectedText = Color(0xFF34D399)
+    val SelectedBorder = Color(0x4D34D399)
+    val Danger = Color(0xFFEF4444)
+    val Source = Color(0xFF888888)
+}
+
+/**
+ * 历史头部筛选胶囊：默认深灰+细边框，选中半透明绿，警告态红字。
+ * 16dp 圆角配 32dp 高度即标准胶囊；禁用态整体降透明度但仍保留轮廓。
+ */
+@Composable
+private fun HistoryChip(
+    label: String,
+    selected: Boolean = false,
+    danger: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    val container = if (selected) {
+        ImmersiveHistoryTokens.SelectedBackground
+    } else {
+        ImmersiveHistoryTokens.Surface
+    }
+    val outline = if (selected) {
+        ImmersiveHistoryTokens.SelectedBorder
+    } else {
+        ImmersiveHistoryTokens.Border
+    }
+    val foreground = when {
+        danger -> ImmersiveHistoryTokens.Danger
+        selected -> ImmersiveHistoryTokens.SelectedText
+        else -> ImmersiveHistoryTokens.TextMuted
+    }
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = container,
+        border = BorderStroke(1.dp, outline),
+        modifier = Modifier
+            .height(32.dp)
+            .alpha(if (enabled) 1f else 0.4f)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = foreground,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -456,10 +527,10 @@ private fun MobileHistoryRow(
     onDelete: () -> Unit,
 ) {
     var posterFailed by remember(item.posterUrl) { mutableStateOf(false) }
-    // 方案5（渐变进度 + 来源延续）：
+    // 沉浸式列表项（降噪）：
     // - 标题「剧名·第N集」+ 新集 badge；
-    // - 元信息「上次看到 NN% · 继续观看」（无时长数据时回退到具体时间点）；
-    // - 蓝→紫渐变进度条；来源以海报底部小标签延续呈现。
+    // - 元信息「[来源] 上次看到 NN% · 继续观看」，来源用深灰前缀与进度文字区分；
+    // - 蓝→紫渐变进度条；海报不再叠加任何来源文字，画面保持干净。
     val title = remember(item.movieName, item.episodeTitle, item.episodeIndex) {
         val episode = item.episodeTitle.takeIf { it.isNotBlank() }
             ?.let { displayEpisodeTitle(it, item.episodeIndex) }
@@ -505,20 +576,7 @@ private fun MobileHistoryRow(
                     color = TvColors.TextSecondary,
                 )
             }
-            // 来源小标签：压在海报底部，延续「从哪个源继续看」的语境。
-            if (hasSourceLabel) {
-                Text(
-                    text = item.sourceName,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = TvColors.TextPrimary,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xCC0B0F14))
-                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                )
-            }
+            // 海报上不再叠加来源文字：来源已移至右侧进度行前缀，避免遮挡画面。
         }
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -539,8 +597,16 @@ private fun MobileHistoryRow(
                 }
             }
             Spacer(modifier = Modifier.height(4.dp))
+            // [tym] 上次看到 74% · 继续观看 —— 来源用深灰 + 方括号降噪，进度文字保持次级灰。
             Text(
-                text = progressText,
+                text = buildAnnotatedString {
+                    if (hasSourceLabel) {
+                        withStyle(style = SpanStyle(color = ImmersiveHistoryTokens.Source)) {
+                            append("[${item.sourceName}] ")
+                        }
+                    }
+                    append(progressText)
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = TvColors.TextSecondary,
                 maxLines = 1,
