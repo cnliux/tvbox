@@ -1,4 +1,4 @@
-## 未发布
+## v1.0.36 - 2026-11-23
 
 自定义 User-Agent（对齐 TVBox/IPTV 生态惯例）：
 
@@ -13,8 +13,6 @@
 - 用户手动一键测速进行中时本轮体检自动跳过；重新打开开关立即触发一次体检。
 - 「视频接口管理」页与设置页副标题展示最近一轮体检摘要（时间 + 正常数 + 是否已排序）。
 
-## 未发布
-
 重复代码收敛（设置页 / 测速 / 请求头）：
 
 - 新增 `ui/components/SettingsBits.kt`：`SettingsGroupDivider`（原两份逐字相同的分组分割线）、`HeroStat`（参数化合并手机/TV 两份）、`DangerConfirmDialog`（两设置页 4 个清空确认弹窗）、触摸版/遥控器版 `ChoiceChips` 与 `TvChoiceChips`、`QuantityChoiceChips`（20 处「默认」标签样板收敛）、`TextValueEditor`（手机/TV 参数化合并，TV 走 fieldModifier + saveButton 插槽保留焦点行为）。
@@ -24,6 +22,15 @@
 - `TvDimens` 新增设置页公共尺寸（图标盒 38dp、图标 20dp、分割线缩进 64dp 等）。
 - 不做：直播取流块抽工厂（播放关键路径，改动风险大于收益）；TV/手机 ChoiceChips 强行合并（焦点语义不同，以插槽接入 `QuantityChoiceChips` 代替）。
 - 净减约 280 行重复代码；全量 623 个单元测试通过。
+
+UI 组件与领域逻辑收敛（slot API / 焦点 / domain）：
+
+- 新增 `ui/components/TvFocusableSurface.kt`：用 `content` slot 收敛 `HeaderActionButton`、`CategoryPill`、`SearchKeyboardKey` 三处重复的焦点链与三档配色；modifier 顺序与焦点顺序不变。
+- 新增 `ui/FocusRequest.kt`：`rememberTvFocusRequest` / `TvFocusRequest` 统一各处默认焦点请求；错误态、空态、更新弹窗、直播面板、播放器、搜索页已迁移，键盘处理与焦点顺序不变。
+- 首页「继续观看」的开关、条数与加载门控收敛到 `TvBoxUiState.continueWatchingItems` / `continueWatchingLoading`，调用点不再各自拼装。
+- 危险操作确认文案收敛到 `domain.DangerousAction`，新增 `ClearPlaybackStats`，三处 UI 硬编码文案改走 domain。
+- 设备形态判定收敛到 `domain.classifyDeviceForm` / `detectClientType`，`PlatformLiveGoBridge` 删除本地重复判定；tv/mobile/web 三档与异常兜底保持原样。
+- 版本号同步：build.gradle.kts → v1.0.36 / code 20036。
 
 ## v1.0.35 - 2026-11-23
 
