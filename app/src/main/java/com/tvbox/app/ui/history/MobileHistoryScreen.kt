@@ -2,6 +2,7 @@ package com.tvbox.app.ui.history
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -46,13 +47,17 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,7 +65,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.ui.MobileNavScreen
+import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
+import com.tvbox.app.ui.TvScreen
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.history.component.HistoryCardRow
 import com.tvbox.app.ui.history.component.HistoryProgressBar
@@ -68,6 +75,7 @@ import com.tvbox.app.ui.history.component.PosterWithDecor
 import com.tvbox.app.ui.history.component.SectionHeader
 import com.tvbox.app.ui.history.component.StatusRow
 import com.tvbox.app.ui.theme.TvColors
+import kotlinx.coroutines.launch
 
 /**
  * 手机模式「历史」Tab：针对竖屏触屏重新设计，不再复用电视端的网格 + 焦点体系。
@@ -83,6 +91,7 @@ internal fun MobileHistoryScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
+    val scope = rememberCoroutineScope()
     var confirmClear by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<WatchHistoryItem?>(null) }
     // #309：长按条目进入多选模式，选中项用稳定标识（apiLineId:movieId:episodeIndex）记录。
@@ -478,7 +487,7 @@ internal fun MobileHistoryScreen(
                                     contentDescription = "跳到 ${newCount} 部有更新的记录"
                                 }
                                 .clickable {
-                                    listState.animateScrollToItem(firstNewIndex)
+                                    scope.launch { listState.animateScrollToItem(firstNewIndex) }
                                     showJumpBtn = false
                                 },
                             contentAlignment = Alignment.Center,
@@ -516,3 +525,43 @@ internal enum class HistorySortMode(val label: String) {
 
 internal fun historyItemKey(item: WatchHistoryItem): String =
     "${item.apiLineId}:${item.movieId}:${item.episodeIndex}"
+
+/**
+ * 历史筛选/操作 Chip：横向滑动一排里的小胶囊。
+ * - [selected]：当前生效（仅排序 / 有更新筛选用）
+ * - [accent]：琥珀"有更新"强调
+ * - [danger]：删除类危险操作
+ * - [enabled]：灰态（失效源为空 / 无选中项时）
+ */
+@Composable
+private fun HistoryChip(
+    label: String,
+    onClick: () -> Unit,
+    selected: Boolean = false,
+    danger: Boolean = false,
+    accent: Boolean = false,
+    enabled: Boolean = true,
+) {
+    val (bg, fg) = when {
+        !enabled -> HistoryTokens.CaughtUpBg to HistoryTokens.MetaDim
+        danger   -> HistoryTokens.NewTextBg to HistoryTokens.NewText
+        accent   -> HistoryTokens.NewTextBg to HistoryTokens.NewText
+        selected -> HistoryTokens.NewTextBg to HistoryTokens.NewText
+        else     -> Color(0xFF222222) to HistoryTokens.Meta
+    }
+    Surface(
+        modifier = Modifier.height(32.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = bg,
+        onClick = onClick,
+        enabled = enabled,
+    ) {
+        Text(
+            text = label,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = fg,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+        )
+    }
+}

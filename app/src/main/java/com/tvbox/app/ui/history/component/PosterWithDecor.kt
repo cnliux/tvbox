@@ -26,14 +26,16 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.RectangleOutline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.tvbox.app.ui.components.rememberTvImageLoader
@@ -45,41 +47,15 @@ import kotlin.math.PI
 import kotlin.math.sin
 
 /**
- * 书签形角标 Shape（右上圆角 + 左下圆角）。
+ * 书签形角标：右上圆角 + 左下圆角。
  *
  * Clip 冲突注释（KDoc）：
  *   外层 Box 已 clip(RoundedCornerShape(HistoryTokens.M.Radius)) 保证海报四角圆润；
  *   角标必须位于该 clip 内部，只能贴右上/左下两角做差异化半径，**不能飘出**。
  *   想"飘出封面"得把角标提到 clip 外层再包 Box(propagateMinConstraints=false)，本次不改。
  *   shadow() 给角标加光晕会被 clip 吃掉——这是 Compose 第一大坑。要发光用 drawBehind {…}。
+ *   实现：直接用 RoundedCornerShape(topEnd=…, bottomStart=…) 完成差异化圆角，无需自定义 Shape。
  */
-private class BookmarkShape(
-    private val topEndR: Dp,
-    private val bottomStartR: Dp,
-) : Shape {
-    override fun outline(size: Size, layoutDirection: android.util.LayoutDirection, parent: Outline): Outline {
-        // ⚠️ 这里无法直接拿到 Density —— Shape.outline() 是非 Composition 的普通方法。
-        // 因此 radius 以 dp 值近似 px（大多数设备 ~1.5x）；对 8dp/6dp 这种小数值误差不超 1px，
-        // 视觉上不影响。若后续需要精确控制，改用 Path.addRoundRect(FloatArray) + 手写密度换算。
-        return RectangleOutline(Path().apply {
-            addRoundRect(
-                android.graphics.RectF(0f, 0f, size.width, size.height),
-                floatArrayOf(
-                    0f, 0f,                            // topLeft = sharp
-                    topEndR.value.dpToApproxPx(), 0f, // topRight ≈ radius
-                    size.width, 0f,
-                    size.width, size.height,           // bottomRight = sharp
-                    size.width, size.height,
-                    0f, size.height,
-                    0f, size.height,                   // bottomLeft = sharp
-                ),
-            )
-        })
-    }
-
-    /** dp → px 粗略换算：1dp ≈ 1.5px（mdpi=1× hdpi=1.5× xxhdpi=2× …）。实际设备误差在 ±1dp 内可接受。 */
-    private fun Float.dpToApproxPx(): Float = this * 1.5f
-}
 
 @Composable
 fun PosterWithDecor(
@@ -127,8 +103,14 @@ fun PosterWithDecor(
                 ),
         )
 
-        // 底部通栏 CoverTag。
-        CoverTag(decor.tag, decor.latestEp)
+        // 底部通栏 CoverTag（对齐到底部）。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter),
+        ) {
+            CoverTag(decor.tag, decor.latestEp)
+        }
 
         // 右上角角标（badge != None 才渲染）。
         if (decor.badge != CoverBadgeState.None) {
@@ -153,7 +135,6 @@ private fun UpdatedToTag(latestEp: Int?) {
         modifier = Modifier
             .fillMaxWidth()
             .height(HistoryTokens.M.TagH)
-            .align(Alignment.BottomCenter)
             .background(
                 Brush.verticalGradient(
                     listOf(HistoryTokens.NewFrom.copy(alpha = 0.92f), HistoryTokens.NewTo.copy(alpha = 0.62f)),
@@ -179,7 +160,6 @@ private fun TodayPremiereTag() {
         modifier = Modifier
             .fillMaxWidth()
             .height(HistoryTokens.M.TagH)
-            .align(Alignment.BottomCenter)
             .background(
                 Brush.verticalGradient(
                     listOf(HistoryTokens.NewFrom.copy(alpha = 0.92f), HistoryTokens.NewTo.copy(alpha = 0.62f)),
@@ -212,7 +192,6 @@ private fun CaughtUpTag() {
         modifier = Modifier
             .fillMaxWidth()
             .height(HistoryTokens.M.TagH)
-            .align(Alignment.BottomCenter)
             .background(HistoryTokens.CaughtUpBg),
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -233,7 +212,7 @@ private fun Badge(badge: CoverBadgeState, pulse: Boolean) {
             .offset(x = HistoryTokens.M.BadgeEdge, y = HistoryTokens.M.BadgeEdge)
             .size(26.dp)
             .semantics { role = Role.Image }
-            .clip(BookmarkShape(topEndR = 6.dp, bottomStartR = 8.dp))
+            .clip(RoundedCornerShape(topEnd = 6.dp, bottomStart = 8.dp))
             .background(Brush.linearGradient(listOf(HistoryTokens.NewFrom, HistoryTokens.NewTo))),
         contentAlignment = Alignment.Center,
     ) {
@@ -257,8 +236,9 @@ private fun PulseDot(pulse: Boolean) {
     // 简化呼吸：基于 System.currentTimeMillis 的正弦波，1.8s 周期。
     // 注意：不在重组里产生副作用；LaunchedEffect 用于同步进度条之外的动效。
     val t = System.currentTimeMillis() / 1800f
-    val scale = 1f + 0.18f * (0.5f + 0.5f * sin(t * 2 * PI))
-    val alpha = 0.85f + 0.15f * (0.5f + 0.5f * sin(t * 2 * PI))
+    val wave = (0.5f + 0.5f * sin(t * 2 * PI)).toFloat()
+    val scale = 1f + 0.18f * wave
+    val alpha = 0.85f + 0.15f * wave
     Canvas(modifier = Modifier.size(HistoryTokens.M.DotSize)) {
         drawCircle(
             color = HistoryTokens.NewDot,

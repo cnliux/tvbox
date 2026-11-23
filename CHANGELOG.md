@@ -1,3 +1,13 @@
+## v1.0.39 - 2026-11-23
+
+修复 v1.0.38 历史页编译失败（备份分支代码从未通过 CI 编译验证，本版补齐）：
+
+- `PosterWithDecor.kt`：新版 Compose `Shape` 接口方法由 `outline()` 改为 `createOutline()` 且签名不同，删除自定义 `BookmarkShape`，改用 `RoundedCornerShape(topEnd/bottomStart)` 实现右上/左下差异化圆角；修正 `align()` 只能用于 BoxScope 子元素的调用位置；`sin()` 返回 Double 补 `.toFloat()`；补 `role` import。
+- `MobileHistoryScreen.kt`：补 `TvBoxUiState`/`TvScreen`/`clickable`/`clip`/`role`/`contentDescription` import（旧代码缺 import 导致 41 个连锁 Unresolved）；实现从未定义的 `HistoryChip` composable；`animateScrollToItem` 改用 `rememberCoroutineScope`+`launch`。
+- `StatusRow.kt`：补 `remember` import。
+- 删除旧测试 `ui/MobileHistorySectionsTest.kt`（依赖已删除的旧历史页实现，编译失败）；新测试位于 `ui/history/` 同包内。
+- 本地 `compileDebugKotlin` 与 `compileDebugUnitTestKotlin` 均 BUILD SUCCESSFUL。
+
 ## v1.0.38 - 2026-11-23
 
 手机历史页卡片化重构正式接入（手机端）：
