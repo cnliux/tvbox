@@ -34,7 +34,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,8 +42,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -85,6 +82,7 @@ import com.tvbox.app.domain.NewEpisodeHint
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.ui.TvScreen
 import com.tvbox.app.ui.formatPlayerTime
+import com.tvbox.app.ui.rememberTvFocusRequest
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
 
@@ -294,44 +292,26 @@ private fun HeaderActionButton(
     legacyStyle: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
-    val shape = if (legacyStyle) RoundedCornerShape(50) else RoundedCornerShape(10.dp)
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = modifier
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-                idleBorder = TvColors.Border,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(role = Role.Button, onClick = onClick)
-            .focusable(),
-        shape = shape,
-        color = when {
-            focused && legacyStyle -> TvColors.Accent
-            focused -> TvColors.SurfaceRaised
-            else -> TvColors.Surface
-        },
-        contentColor = if (focused && legacyStyle) TvColors.Background else TvColors.TextPrimary,
-        tonalElevation = if (focused) 5.dp else 0.dp,
-        shadowElevation = if (focused) 8.dp else 0.dp,
-    ) {
+    TvFocusableSurface(
+        shape = if (legacyStyle) RoundedCornerShape(50) else RoundedCornerShape(10.dp),
+        onClick = onClick,
+        focusedContainerColor = if (legacyStyle) TvColors.Accent else TvColors.SurfaceRaised,
+        idleContainerColor = TvColors.Surface,
+        modifier = modifier,
+        focusedContentColor = if (legacyStyle) TvColors.Background else TvColors.TextPrimary,
+        idleContentColor = TvColors.TextPrimary,
+        focusedTonalElevation = 5.dp,
+        focusedShadowElevation = 8.dp,
+        contentMinHeight = 48.dp,
+    ) { focused ->
         // 顶栏动作按钮的文字高度约 32dp，触摸模式下低于 48dp 最小热区；外层补足并垂直居中。
-        Box(
-            modifier = Modifier.heightIn(min = 48.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = text,
-                modifier = Modifier.padding(
-                    horizontal = if (legacyStyle) 20.dp else 14.dp,
-                ),
-                style = if (legacyStyle) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
-                fontWeight = if (focused || legacyStyle) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-            )
-        }
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = if (legacyStyle) 20.dp else 14.dp),
+            style = if (legacyStyle) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelLarge,
+            fontWeight = if (focused || legacyStyle) FontWeight.Medium else FontWeight.Normal,
+            maxLines = 1,
+        )
     }
 }
 
@@ -368,8 +348,7 @@ fun ErrorState(
     onSecondaryAction: (() -> Unit)? = null,
 ) {
     // #236：错误页默认焦点落在"重试"，避免 TV 遥控器进入后焦点悬空在背景。
-    val retryFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { retryFocus.requestFocus() } }
+    val retryFocus = rememberTvFocusRequest(key = Unit)
     // 删除诊断日志：已确认 message 正常传入，问题在于文字颜色继承了外层 LocalContentColor
     Column(
         modifier = modifier
@@ -410,7 +389,7 @@ fun ErrorState(
                 onClick = onRetry,
                 modifier = Modifier
                     .heightIn(min = 48.dp)
-                    .focusRequester(retryFocus)
+                    .then(retryFocus.anchor)
                     .semantics { traversalIndex = 0f },
             ) {
                 Text("重试")
@@ -440,11 +419,8 @@ fun EmptyState(
     actionModifier: Modifier = Modifier,
 ) {
     // #235：无外部 focusRequester 时，空态动作按钮自身即为默认焦点。
-    val fallbackFocus = remember { FocusRequester() }
     val hasAction = actionLabel != null && onAction != null
-    LaunchedEffect(hasAction) {
-        if (hasAction) runCatching { fallbackFocus.requestFocus() }
-    }
+    val fallbackFocus = rememberTvFocusRequest(key = hasAction, enabled = hasAction)
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -475,7 +451,7 @@ fun EmptyState(
                 onClick = onAction,
                 modifier = Modifier
                     .heightIn(min = 48.dp)
-                    .focusRequester(fallbackFocus)
+                    .then(fallbackFocus.anchor)
                     .semantics { traversalIndex = 0f }
                     .then(actionModifier),
             ) {
@@ -492,46 +468,28 @@ fun CategoryPill(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(50)
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = modifier
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-                idleBorder = if (selected) TvColors.Accent.copy(alpha = 0.7f) else TvColors.Border,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics { stateDescription = if (selected) "已选中" else "未选中" }
-            .focusable(),
-        shape = shape,
-        color = when {
-            focused -> TvColors.SurfaceRaised
-            selected -> TvColors.AccentSoft
-            else -> TvColors.Surface
-        },
-        contentColor = when {
-            focused -> TvColors.TextPrimary
-            selected -> TvColors.AccentStrong
-            else -> TvColors.TextSecondary
-        },
+    TvFocusableSurface(
+        shape = RoundedCornerShape(50),
+        onClick = onClick,
+        focusedContainerColor = TvColors.SurfaceRaised,
+        idleContainerColor = TvColors.Surface,
+        modifier = modifier,
+        focusedContentColor = TvColors.TextPrimary,
+        idleContentColor = TvColors.TextSecondary,
+        selected = selected,
+        selectedContainerColor = TvColors.AccentSoft,
+        selectedContentColor = TvColors.AccentStrong,
+        selectedIdleBorder = TvColors.Accent.copy(alpha = 0.7f),
+        contentMinHeight = 48.dp,
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        stateText = if (selected) "已选中" else "未选中",
     ) {
-        // 文字撑高约 46dp，触摸模式下不足 48dp 最小热区，统一抬到 48dp 并垂直居中。
-        Box(
-            modifier = Modifier
-                .heightIn(min = 48.dp)
-                .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.titleSmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

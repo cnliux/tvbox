@@ -101,6 +101,7 @@ import com.tvbox.app.domain.correspondingEpisodeIndex
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
 import com.tvbox.app.domain.WatchHistoryItem
+import com.tvbox.app.domain.continueWatching
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.findBestTitleMatchIndex
@@ -327,6 +328,18 @@ data class TvBoxUiState(
 
     val isShowingDoubanHot: Boolean
         get() = homeFeedMode == HomeFeedMode.DoubanHot && !doubanHotFallbackActive
+
+    /** 首页「继续观看」：开关、条数上限与排序/去重/进度过滤统一由 domain 处理。 */
+    val continueWatchingItems: List<WatchHistoryItem>
+        get() = if (appSettings.homeContinueWatchingEnabled) {
+            historyItems.continueWatching(appSettings.continueWatchingCount)
+        } else {
+            emptyList()
+        }
+
+    /** 历史尚未读完时首页整体延迟渲染，避免「继续观看」行出现/消失造成布局跳动。 */
+    val continueWatchingLoading: Boolean
+        get() = appSettings.homeContinueWatchingEnabled && !historyLoaded
 
     val homeItemCount: Int
         get() = if (isShowingDoubanHot) {

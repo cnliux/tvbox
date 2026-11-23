@@ -75,7 +75,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.checkAllLiveSources
+import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.DecoderStrategy
+import com.tvbox.app.domain.dangerousActionConfirmation
 import kotlinx.coroutines.launch
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LiveInfoBannerDuration
@@ -123,7 +125,7 @@ fun SettingsMobileScreen(
     if (confirmClearHistory) {
         DangerConfirmDialog(
             title = "清空历史记录",
-            text = "确定要清空所有观看历史记录吗？此操作不可撤销。",
+            text = dangerousActionConfirmation(DangerousAction.ClearHistory),
             onConfirm = { confirmClearHistory = false; actions.clearHistory() },
             onDismiss = { confirmClearHistory = false },
         )
@@ -131,7 +133,7 @@ fun SettingsMobileScreen(
     if (confirmClearPlaybackStats) {
         DangerConfirmDialog(
             title = "清空线路统计",
-            text = "确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现。",
+            text = dangerousActionConfirmation(DangerousAction.ClearPlaybackStats),
             onConfirm = { confirmClearPlaybackStats = false; actions.clearPlaybackStats() },
             onDismiss = { confirmClearPlaybackStats = false },
         )

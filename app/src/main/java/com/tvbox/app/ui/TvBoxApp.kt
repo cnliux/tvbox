@@ -1,40 +1,41 @@
 package com.tvbox.app.ui
 
-import android.view.KeyEvent as AndroidKeyEvent
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.Settings
+import android.view.KeyEvent as AndroidKeyEvent
 import android.widget.Toast
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -46,24 +47,22 @@ import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.Alignment
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.*
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.OutlinedTextField
-import com.tvbox.app.data.TextFileExporter
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -72,34 +71,27 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.withFrameNanos
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.SaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
-import androidx.compose.runtime.saveable.SaveableStateHolder
-import com.tvbox.app.domain.continueWatching
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -107,13 +99,24 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+
+import com.tvbox.app.data.TextFileExporter
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
-import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.TvTheme
-import androidx.compose.material3.Icon
+import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.ui.components.AppHeader
 import com.tvbox.app.ui.components.AppNavigationRail
 import com.tvbox.app.ui.components.CategoryPill
@@ -121,21 +124,19 @@ import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.GuidedEmptyState
-import com.tvbox.app.ui.components.RetryableError
-import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.PosterImage
+import com.tvbox.app.ui.components.RetryableError
+import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvDimens
 import com.tvbox.app.ui.theme.TvLayout
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.qrcode.QRCodeWriter
 
 @Composable
 fun TvBoxApp(
@@ -435,10 +436,7 @@ private fun AppUpdateDialog(
     if (!state.updateDialogVisible) return
     val downloadedApkPath = state.updateDownloadedApkPath
     // #240：默认焦点落在"稍后再说"，防止 TV 遥控器按确认键误触发升级；强制更新无该按钮，不改焦点。
-    val laterFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) {
-        if (!update.force) runCatching { laterFocus.requestFocus() }
-    }
+    val laterFocus = rememberTvFocusRequest(key = Unit, enabled = !update.force)
     AlertDialog(
         onDismissRequest = actions::dismissUpdateDialog,
         title = {
@@ -516,7 +514,7 @@ private fun AppUpdateDialog(
                     enabled = !state.updateDownloading,
                     onClick = actions::dismissUpdateDialog,
                     // #240：挂载 FocusRequester，配合上方 LaunchedEffect 让初始焦点落在"稍后再说"。
-                    modifier = Modifier.focusRequester(laterFocus),
+                    modifier = Modifier.then(laterFocus.anchor),
                 ) {
                     Text("稍后再说")
                 }
@@ -1385,7 +1383,7 @@ private fun MovieGrid(
     onDismissNotice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (state.appSettings.homeContinueWatchingEnabled && !state.historyLoaded) {
+    if (state.continueWatchingLoading) {
         // 先等历史读完再渲染信息流：否则「继续观看」晚到时会把下方内容整体下移。
         LoadingState(text = "正在准备首页内容…", modifier = modifier)
         return
@@ -1404,11 +1402,7 @@ private fun MovieGrid(
         }
         loadMoreFocused = false
     }
-    val recent = if (state.appSettings.homeContinueWatchingEnabled) {
-        state.historyItems.continueWatching(state.appSettings.continueWatchingCount)
-    } else {
-        emptyList()
-    }
+    val recent = state.continueWatchingItems
     val itemOffset = (if (recent.isNotEmpty()) 1 else 0) + (if (state.homeNotice != null) 1 else 0)
     // 首屏按设置条数展示；一旦用户触发「加载更多」（page > 1）就解除该上限。
     // 之前这里直接 take(设置值) 并把 hotCapReached 作为加载更多的开关，滑到底
@@ -1598,7 +1592,7 @@ private fun MobileHomeFeed(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
-    if (state.appSettings.homeContinueWatchingEnabled && !state.historyLoaded) {
+    if (state.continueWatchingLoading) {
         // 历史尚未读完时整体延迟渲染，避免「继续观看」行出现/消失造成列表上下跳。
         LoadingState(text = "正在准备首页内容…")
         return
@@ -1686,9 +1680,7 @@ private fun MobileHomeFeed(
             }
         }
         // 继续观看
-        val recent = if (state.appSettings.homeContinueWatchingEnabled) {
-            state.historyItems.continueWatching(state.appSettings.continueWatchingCount)
-        } else emptyList()
+        val recent = state.continueWatchingItems
         if (recent.isNotEmpty()) {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Text(

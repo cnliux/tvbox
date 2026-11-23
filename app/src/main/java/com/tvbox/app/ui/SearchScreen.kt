@@ -89,6 +89,7 @@ import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
+import com.tvbox.app.ui.components.TvFocusableSurface
 import com.tvbox.app.ui.theme.TvColors
 
 private val FallbackSearchHotWords = listOf(
@@ -116,11 +117,11 @@ fun SearchScreen(
     }
     val grid = rememberLazyGridState()
     val returnFocus = rememberReturnFocus()
-    val searchFieldFocus = remember { FocusRequester() }
-    val resultsFocus = remember { FocusRequester() }
+    val searchFieldFocus = rememberTvFocusRequest()
+    val resultsFocus = rememberTvFocusRequest()
     val moveToResults: () -> Unit = {
         if (state.searchResults.isNotEmpty()) {
-            runCatching { resultsFocus.requestFocus() }
+            resultsFocus.request()
         }
     }
     // 离开搜索页（点进详情/播放、切底部 Tab、按返回）时把关键词与结果一起清掉。
@@ -144,7 +145,7 @@ fun SearchScreen(
         }
     }
     LaunchedEffect(Unit) {
-        if (returnFocus.lastKey == null) runCatching { searchFieldFocus.requestFocus() }
+        if (returnFocus.lastKey == null) searchFieldFocus.request()
     }
     // #8 空列表焦点兜底：搜索无结果（非错误/加载中）时把焦点拉回搜索框，避免焦点悬空
     // 无法用方向键继续操作；错误态由 ErrorState 的重试按钮承接焦点，不抢焦点。
@@ -154,7 +155,7 @@ fun SearchScreen(
             state.searchError == null &&
             !state.searchLoading
         ) {
-            runCatching { searchFieldFocus.requestFocus() }
+            searchFieldFocus.request()
         }
     }
     // 焦点恢复在 PageSurface 内按布局做下标换算：宽屏结果网格从 0 开始，
@@ -220,7 +221,7 @@ fun SearchScreen(
                     SearchControlPanel(
                         state = state,
                         fieldValue = fieldValue,
-                        fieldFocus = searchFieldFocus,
+                        fieldFocus = searchFieldFocus.requester,
                         onValueChange = {
                             fieldValue = it
                             actions.updateSearchQuery(it.text)
@@ -279,7 +280,7 @@ fun SearchScreen(
                         SearchCompactBar(
                             state = state,
                             fieldValue = fieldValue,
-                            fieldFocus = searchFieldFocus,
+                            fieldFocus = searchFieldFocus.requester,
                             onMoveToResults = moveToResults,
                             onValueChange = {
                                 fieldValue = it
@@ -339,7 +340,7 @@ fun SearchScreen(
                                         .modifier("${movie.apiLineId}:${movie.id}", index)
                                         .then(
                                             if (index == 0 && returnFocus.lastKey == null) {
-                                                Modifier.focusRequester(resultsFocus)
+                                                resultsFocus.anchor
                                             } else {
                                                 Modifier
                                             },
@@ -654,32 +655,23 @@ private fun SearchKeyboardKey(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val shape = RoundedCornerShape(8.dp)
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = modifier
-            // 遥控键盘按键文字约 44dp 高，触摸模式不足最小热区，统一抬到 48dp。
-            .heightIn(min = 48.dp)
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = "键盘按键 $text" }
-            .focusable(),
-        shape = shape,
-        color = if (focused) TvColors.Accent else TvColors.SurfaceRaised,
-        contentColor = if (focused) TvColors.Background else TvColors.TextPrimary,
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
-            )
-        }
+    TvFocusableSurface(
+        shape = RoundedCornerShape(8.dp),
+        onClick = onClick,
+        focusedContainerColor = TvColors.Accent,
+        idleContainerColor = TvColors.SurfaceRaised,
+        modifier = modifier,
+        focusedContentColor = TvColors.Background,
+        idleContentColor = TvColors.TextPrimary,
+        // 遥控键盘按键文字约 44dp 高，触摸模式不足最小热区，统一抬到 48dp。
+        containerMinHeight = 48.dp,
+        descriptionText = "键盘按键 $text",
+    ) { focused ->
+        Text(
+            text = text,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = if (focused) FontWeight.Bold else FontWeight.Medium,
+        )
     }
 }
 
@@ -793,7 +785,7 @@ private fun SearchResultsPanel(
                                 .modifier("${movie.apiLineId}:${movie.id}", index)
                                 .then(
                                     if (index == 0 && returnFocus.lastKey == null) {
-                                        Modifier.focusRequester(resultsFocus)
+                                        resultsFocus.anchor
                                     } else {
                                         Modifier
                                     },

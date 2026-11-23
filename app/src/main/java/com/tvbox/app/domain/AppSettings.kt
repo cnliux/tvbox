@@ -268,15 +268,10 @@ enum class DeviceMode(val storageKey: String, val displayName: String, val descr
          * 结果永不写回用户保存的 deviceMode（手动值优先级最高）。
          */
         fun detectFromSystem(context: android.content.Context): DeviceMode = try {
-            val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE)
-                as? android.app.UiModeManager
-            val isLeanback = uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
-                context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
-            detect(
-                isLeanback = isLeanback,
-                screenWidthDp = context.resources.configuration.screenWidthDp,
-                hasTouch = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN),
-            )
+            when (readDeviceForm(context)) {
+                DeviceForm.Television, DeviceForm.Tablet -> Television
+                DeviceForm.Mobile -> Mobile
+            }
         } catch (_: Exception) {
             // 判定异常时保守回退电视布局（10-foot UI 在手机上仍可用，反之不可）。
             Television
@@ -287,13 +282,54 @@ enum class DeviceMode(val storageKey: String, val displayName: String, val descr
          * Leanback/电视系统 > 无触摸或大屏（≥720dp）→ 电视；
          * 有触摸 + 小屏（<600dp）→ 手机；600–719dp 中间地带（平板/折叠屏）保守取电视。
          */
-        internal fun detect(isLeanback: Boolean, screenWidthDp: Int, hasTouch: Boolean): DeviceMode = when {
-            isLeanback -> Television
-            !hasTouch || screenWidthDp >= 720 -> Television
-            screenWidthDp < 600 -> Mobile
-            else -> Television
-        }
+        internal fun detect(isLeanback: Boolean, screenWidthDp: Int, hasTouch: Boolean): DeviceMode =
+            when (classifyDeviceForm(isLeanback, screenWidthDp, hasTouch)) {
+                DeviceForm.Television, DeviceForm.Tablet -> Television
+                DeviceForm.Mobile -> Mobile
+            }
     }
+}
+
+/**
+ * 设备形态原始分档：设备模式识别与平台直播 Go 桥接的 clientType 共用同一套系统特征判定，
+ * 避免两处各自维护一份判定矩阵。[DeviceForm.Tablet] 是 600–719dp 有触摸的中间地带：
+ * 设备模式按电视处理，Go 侧保留历史 web 档。
+ */
+internal enum class DeviceForm { Television, Mobile, Tablet }
+
+internal fun classifyDeviceForm(
+    isLeanback: Boolean,
+    screenWidthDp: Int,
+    hasTouch: Boolean,
+): DeviceForm = when {
+    isLeanback -> DeviceForm.Television
+    !hasTouch || screenWidthDp >= 720 -> DeviceForm.Television
+    screenWidthDp < 600 -> DeviceForm.Mobile
+    else -> DeviceForm.Tablet
+}
+
+/** 读取系统特征并归并为设备形态；异常由调用方按各自兜底策略处理。 */
+private fun readDeviceForm(context: android.content.Context): DeviceForm {
+    val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE)
+        as? android.app.UiModeManager
+    val isLeanback = uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
+        context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    return classifyDeviceForm(
+        isLeanback = isLeanback,
+        screenWidthDp = context.resources.configuration.screenWidthDp,
+        hasTouch = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN),
+    )
+}
+
+/** 平台直播 Go 桥接的 clientType：与设备模式共用系统特征判定，保持原有 tv/mobile/web 三档。 */
+fun detectClientType(context: android.content.Context): String = try {
+    when (readDeviceForm(context)) {
+        DeviceForm.Television -> "tv"
+        DeviceForm.Mobile -> "mobile"
+        DeviceForm.Tablet -> "web"
+    }
+} catch (_: Exception) {
+    "web"
 }
 
 /** 计算生效的设备模式（纯函数）：手动值优先，Auto 时采用系统识别结果。 */

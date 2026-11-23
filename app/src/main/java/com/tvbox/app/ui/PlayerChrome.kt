@@ -524,11 +524,10 @@ private fun PlayerChromeTv(
 ) {
     val buttonScroll = rememberScrollState()
     var progressFocused by remember { mutableStateOf(false) }
-    val playFocus = remember { FocusRequester() }
+    val playFocus = rememberTvFocusRequest(key = state.panel, enabled = state.panel == PlayerPanel.None)
     var preview by remember { mutableStateOf<Float?>(null) }
     var lastSeekTime by remember { mutableStateOf(Long.MIN_VALUE) }
     val compact = LocalConfiguration.current.screenWidthDp < 800
-    LaunchedEffect(state.panel) { if (state.panel == PlayerPanel.None) runCatching { playFocus.requestFocus() } }
     Box(modifier.fillMaxSize()) {
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
@@ -623,7 +622,7 @@ private fun PlayerChromeTv(
                 ) {
                     ControlButton(if (data.playing) "暂停" else "播放", {
                         actions.onToggle(); state.interaction++
-                    }, Modifier.focusRequester(playFocus), primary = true)
+                    }, Modifier.then(playFocus.anchor), primary = true)
                     if (capabilities.episodes) {
                         ControlButton("上一集", { actions.onPrevious(); state.interaction++ }, enabled = data.episodeIndex > 0)
                         ControlButton("下一集", { actions.onNext(); state.interaction++ }, enabled = data.episodeIndex < data.episodes.lastIndex)
@@ -1350,12 +1349,8 @@ private fun PlayerSettingsPanel(
             add(PlayerSettingsItem("播放地址", "查看当前播放 URL", PlayerPanel.Url))
         }
     }
-    val firstFocus = remember { FocusRequester() }
+    val firstFocus = rememberTvFocusRequest(key = Unit, delayMs = 60L)
     val listState = rememberLazyListState()
-    LaunchedEffect(Unit) {
-        delay(60)
-        runCatching { firstFocus.requestFocus() }
-    }
     Surface(
         modifier.fillMaxHeight(0.6f),
         color = Color(0xFA202020),
@@ -1382,7 +1377,7 @@ private fun PlayerSettingsPanel(
                     SettingsRowItem(
                         item = item,
                         onSelect = { onOpenPanel(item.target) },
-                        modifier = if (index == 0) Modifier.focusRequester(firstFocus) else Modifier,
+                        modifier = if (index == 0) Modifier.then(firstFocus.anchor) else Modifier,
                     )
                 }
             }
@@ -1951,8 +1946,7 @@ private fun SkipSettingsPanel(
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val firstFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { runCatching { firstFocus.requestFocus() } }
+    val firstFocus = rememberTvFocusRequest(key = Unit)
     Surface(modifier, color = Color(0xFA202020), contentColor = Color.White, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1961,7 +1955,7 @@ private fun SkipSettingsPanel(
             }
             Text("开始跳过：每次开播自动跳过片头", style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.7f))
-            SkipOptionRow(introSkipOptions, introSeconds, onIntroSkip, firstFocus)
+            SkipOptionRow(introSkipOptions, introSeconds, onIntroSkip, firstFocus.requester)
             Text("结束跳过：距离片尾还剩这么多秒时自动下一集", style = MaterialTheme.typography.bodySmall,
                 color = Color.White.copy(alpha = 0.7f))
             SkipOptionRow(outroSkipOptions, outroSeconds, onOutroSkip)

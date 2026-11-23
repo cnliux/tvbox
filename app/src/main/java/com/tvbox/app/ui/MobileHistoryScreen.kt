@@ -58,7 +58,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.WatchHistoryItem
+import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.NewEpisodeBadge
@@ -157,7 +159,7 @@ internal fun MobileHistoryScreen(
         AlertDialog(
             onDismissRequest = { confirmClear = false },
             title = { Text("清空历史") },
-            text = { Text("将删除全部观看记录，且无法恢复。") },
+            text = { Text(dangerousActionConfirmation(DangerousAction.ClearHistory)) },
             confirmButton = {
                 Button(onClick = {
                     confirmClear = false

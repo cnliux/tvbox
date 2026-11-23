@@ -52,12 +52,13 @@ fun tvFocusPath(groups: List<SettingGroupState>, startIndex: Int = 0): List<Stri
     }
 }
 
-enum class DangerousAction { ClearSources, ClearHistory }
+enum class DangerousAction { ClearSources, ClearHistory, ClearPlaybackStats }
 
 /** 危险操作必须二次确认；文案写明不可撤销的具体后果。 */
 fun dangerousActionConfirmation(action: DangerousAction): String = when (action) {
     DangerousAction.ClearSources -> "清空后所有已导入的视频/直播源都会被删除，且无法撤销，需要重新导入或扫码同步。确认继续？"
     DangerousAction.ClearHistory -> "清除后所有观看历史与续播进度都会被删除，且无法恢复。确认继续？"
+    DangerousAction.ClearPlaybackStats -> "确定要清空线路质量统计吗？清空后播放管家会重新学习线路表现，已清空的数据无法恢复。"
 }
 
 fun requiresSecondConfirmation(action: DangerousAction): Boolean = true
@@ -65,4 +66,5 @@ fun requiresSecondConfirmation(action: DangerousAction): Boolean = true
 fun dangerousActionLabel(action: DangerousAction): String = when (action) {
     DangerousAction.ClearSources -> "清空源配置"
     DangerousAction.ClearHistory -> "清除观看历史"
+    DangerousAction.ClearPlaybackStats -> "清空线路统计"
 }

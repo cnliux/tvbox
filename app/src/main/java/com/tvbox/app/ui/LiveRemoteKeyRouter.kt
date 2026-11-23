@@ -14,7 +14,6 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalFocusManager
 import kotlinx.coroutines.delay
 
 /**
@@ -329,18 +328,12 @@ fun Modifier.liveRemoteKeyInput(
  * hasFocus 覆盖子控件，所以焦点在面板按钮之间移动时不会被抢回来。
  */
 @Composable
-fun rememberLivePanelFocusRequester(active: Boolean): FocusRequester {
-    val requester = remember { FocusRequester() }
-    val focusManager = LocalFocusManager.current
-    LaunchedEffect(active) {
-        if (active) {
-            runCatching { requester.requestFocus() }
-        } else {
-            focusManager.clearFocus()
-        }
-    }
-    return requester
-}
+fun rememberLivePanelFocusRequester(active: Boolean): FocusRequester =
+    rememberTvFocusRequest(
+        key = active,
+        enabled = active,
+        clearFocusWhenDisabled = true,
+    ).requester
 
 fun Modifier.livePanelFocusTrap(
     active: Boolean,
@@ -355,13 +348,8 @@ fun Modifier.livePanelFocusTrap(
 
 /** 面板恢复全屏时把焦点还给播放器根节点。 */
 @Composable
-fun rememberLiveRootFocusRequester(restoreWhen: Boolean): FocusRequester {
-    val requester = remember { FocusRequester() }
-    LaunchedEffect(restoreWhen) {
-        if (restoreWhen) runCatching { requester.requestFocus() }
-    }
-    return requester
-}
+fun rememberLiveRootFocusRequester(restoreWhen: Boolean): FocusRequester =
+    rememberTvFocusRequest(key = restoreWhen, enabled = restoreWhen).requester
 
 fun Modifier.livePanelAnchor(requester: FocusRequester): Modifier = this.focusRequester(requester)
 
