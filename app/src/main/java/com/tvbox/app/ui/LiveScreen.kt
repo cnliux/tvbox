@@ -43,6 +43,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -244,13 +247,6 @@ private fun LivePlayerScreen(
 
     fun keepChannelListVisibleWhileBrowsing() {
         if (channelListVisible) channelListInteraction++
-    }
-
-    fun handleNumberKey(number: Int): Boolean {
-        channelNumberInput = (channelNumberInput + number.toString()).takeLast(MAX_CHANNEL_NUMBER_DIGITS)
-        bumpBars()
-        channelNumberNonce++
-        return true
     }
 
     // 数字输入期间的即时匹配：输入 "0" 就列出所有 0 开头的频道，确认键直接进台。
@@ -643,79 +639,99 @@ private fun LivePlayerScreen(
 
     PromptTimer(nonce = promptNonce, hideDelayMs = PROMPT_HIDE_DELAY_MS) { promptVisible = false }
 
-    // 遥控键位收敛到共享 PlayerChannelKeyMap：页面只提供频道/线路语义与浮层状态。
-    val channelKeyMap = remember {
-        PlayerChannelKeyMap(
-            PlayerChannelKeyMap.Callbacks(
-                isChannelListVisible = { false },
-                closeChannelList = {},
-                isLineControlVisible = { false },
-                closeLineControl = {},
-                keepChannelListVisibleWhileBrowsing = {},
-                isNumberInputActive = { false },
-                onNumberKey = {},
-                onNumberMove = {},
-                onNumberCommit = {},
-                onNumberDelete = {},
-                onPreviousChannel = {},
-                onNextChannel = {},
-                onPreviousLine = {},
-                onNextLine = {},
-                onOpenChannelList = {},
-                onConfirm = {},
-            ),
+    // 遥控键位统一由 LiveRemoteKeyRouter 裁决；页面只把副作用映射回现有 action。
+    // UIState 从现有浮层状态派生，避免「路由状态」与「实际浮层」两套状态不同步。
+    val remoteState = LiveRemoteState(
+        uiState = when {
+            channelListVisible -> UIState.CHANNEL_LIST
+            showLineControl -> UIState.CONTROLLER
+            else -> UIState.FULLSCREEN
+        },
+        numberInput = channelNumberInput,
+        numberInputNonce = channelNumberNonce,
+    )
+    val remoteRouter = remember {
+        LiveRemoteKeyRouter(
+            // 电视直播源没有虎牙/斗鱼站点语义，续流提示在这里不会触发。
+            isContinuitySource = { false },
+            // 全屏且无浮层时放行给 PlayerChromeBackHandler，复用它已有的面板/退出层级。
+            exitLiveOnBackInFullscreen = false,
+            // 按需求使用「上下换台 / 左右切源（线路）」。
+            directionMapping = LiveRemoteDirectionMapping.UP_DOWN_CHANNEL,
+            // 失败卡在场时确认键交给「重试 / 下一台」按钮。
+            hasBlockingFailureCard = { streamBlocked },
         )
     }
-    channelKeyMap.callbacks = PlayerChannelKeyMap.Callbacks(
-        isChannelListVisible = { channelListVisible },
-        closeChannelList = {
-            channelListVisible = false
-            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-        },
-        isLineControlVisible = { showLineControl },
-        closeLineControl = {
-            showLineControl = false
-            if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
-        },
-        keepChannelListVisibleWhileBrowsing = { keepChannelListVisibleWhileBrowsing() },
-        isNumberInputActive = { channelNumberInput.isNotEmpty() },
-        onNumberKey = { handleNumberKey(it) },
-        onNumberMove = { delta ->
-            if (visibleNumberMatches.isNotEmpty()) {
-                numberMatchFocus = if (delta < 0) {
-                    (numberMatchFocus - 1).coerceAtLeast(0)
-                } else {
-                    (numberMatchFocus + 1).coerceAtMost(visibleNumberMatches.lastIndex)
-                }
+
+    fun handleRemoteEffect(effect: LiveRemoteEffect) {
+        when (effect) {
+            LiveRemoteEffect.PreviousChannel -> {
+                actions.playPreviousLiveChannel()
+                bumpBars()
             }
-        },
-        onNumberCommit = { commitNumberInput(useFocusedMatch = visibleNumberMatches.isNotEmpty()) },
-        onNumberDelete = {
-            channelNumberInput = channelNumberInput.dropLast(1)
-            channelNumberNonce++
-        },
-        onPreviousChannel = { actions.playPreviousLiveChannel() },
-        onNextChannel = { actions.playNextLiveChannel() },
-        onPreviousLine = { actions.playPreviousLiveLine() },
-        onNextLine = { actions.playNextLiveLine() },
-        onOpenChannelList = { showChannelList() },
-        onConfirm = {
-            if (session.interrupted) {
-                player.seekToDefaultPosition()
-                session.play(player)
-            } else {
-                // 确认键唤出频道浮层（底部「线路」按钮负责打开线路弹层）。
+            LiveRemoteEffect.NextChannel -> {
+                actions.playNextLiveChannel()
+                bumpBars()
+            }
+            LiveRemoteEffect.PreviousSource -> {
+                actions.playPreviousLiveLine()
+                bumpBars()
+            }
+            LiveRemoteEffect.NextSource -> {
+                actions.playNextLiveLine()
+                bumpBars()
+            }
+            LiveRemoteEffect.OpenController -> {
+                channelListVisible = false
+                previewChannel = null
+                showLineControl = true
+                bumpBars()
+            }
+            LiveRemoteEffect.OpenChannelList -> {
+                showLineControl = false
                 showChannelList()
             }
-        },
-        isFailureCardVisible = { streamBlocked },
-        onSettings = {
-            chrome.openPanel(PlayerPanel.Settings)
-        },
-        onInfo = {
-            chrome.openPanel(PlayerPanel.Info)
-        },
-    )
+            LiveRemoteEffect.ClosePanel -> {
+                showLineControl = false
+                channelListVisible = false
+                previewChannel = null
+                bumpBars()
+                if (isTelevision) runCatching { playerFocusRequester.requestFocus() }
+            }
+            is LiveRemoteEffect.NumberChanged -> {
+                channelNumberInput = effect.value
+                channelNumberNonce++
+                bumpBars()
+            }
+            LiveRemoteEffect.CommitNumber -> {
+                commitNumberInput(useFocusedMatch = visibleNumberMatches.isNotEmpty())
+            }
+            is LiveRemoteEffect.NumberMove -> {
+                if (visibleNumberMatches.isNotEmpty()) {
+                    numberMatchFocus = (numberMatchFocus + effect.delta)
+                        .coerceIn(0, visibleNumberMatches.lastIndex)
+                }
+            }
+            LiveRemoteEffect.TogglePlayback -> {
+                if (session.interrupted) {
+                    player.seekToDefaultPosition()
+                    session.play(player)
+                } else if (player.playWhenReady) {
+                    bufferMonitor.onPaused()
+                    session.pause(player)
+                } else {
+                    session.play(player)
+                }
+                bumpBars()
+            }
+            LiveRemoteEffect.OpenSettings -> chrome.openPanel(PlayerPanel.Settings)
+            LiveRemoteEffect.OpenInfo -> chrome.openPanel(PlayerPanel.Info)
+            is LiveRemoteEffect.SourceSwitched -> {
+                if (effect.continuityHint) showPrompt("已切换至备用线路（自动续流中）")
+            }
+            LiveRemoteEffect.ExitLive -> actions.goBack()
+        }
+    }
 
     val barsAlpha by animateFloatAsState(
         targetValue = if (chrome.visible) 1f else 0f,
@@ -742,7 +758,19 @@ private fun LivePlayerScreen(
                     },
                 )
             }
-            .playerKeyInput(channelKeyMap, chrome)
+            .onPreviewKeyEvent { event ->
+                // 原 PlayerChannelKeyMap 的「任意键点亮信息条」语义保留在这里。
+                if (event.type == KeyEventType.KeyUp) chrome.bump()
+                false
+            }
+            .liveRemoteKeyInput(
+                router = remoteRouter,
+                state = remoteState,
+                // 状态由 showLineControl / channelListVisible / channelNumberInput 派生，
+                // 路由结果通过下面的 effect 落到这些现有状态上。
+                onStateChange = {},
+                onEffect = ::handleRemoteEffect,
+            )
             .focusable(),
     ) {
         PlayerSurface(

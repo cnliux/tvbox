@@ -36,6 +36,9 @@ import kotlinx.coroutines.delay
 
 enum class UIState { FULLSCREEN, CONTROLLER, CHANNEL_LIST }
 
+/** 方向键语义：默认按需求用「上下换台 / 左右切源」，也可切回项目原有的「左右切台 / 上下换线」。 */
+enum class LiveRemoteDirectionMapping { UP_DOWN_CHANNEL, LEFT_RIGHT_CHANNEL }
+
 /** numberInputNonce 每次输入变化都自增，用于取消上一次「2 秒自动提交」定时器。 */
 data class LiveRemoteState(
     val uiState: UIState = UIState.FULLSCREEN,
@@ -53,6 +56,10 @@ sealed interface LiveRemoteEffect {
     data object ClosePanel : LiveRemoteEffect
     data object ExitLive : LiveRemoteEffect
     data object CommitNumber : LiveRemoteEffect
+    data class NumberMove(val delta: Int) : LiveRemoteEffect
+    data object TogglePlayback : LiveRemoteEffect
+    data object OpenSettings : LiveRemoteEffect
+    data object OpenInfo : LiveRemoteEffect
     data class NumberChanged(val value: String) : LiveRemoteEffect
     data class SourceSwitched(val continuityHint: Boolean) : LiveRemoteEffect
 }
@@ -68,6 +75,9 @@ class LiveRemoteKeyRouter(
     private val maxNumberDigits: Int = 4,
     /** 若项目已有 PlayerChromeBackHandler 负责退出，可传 false，由现有链路处理最后一层 BACK。 */
     private val exitLiveOnBackInFullscreen: Boolean = true,
+    private val directionMapping: LiveRemoteDirectionMapping = LiveRemoteDirectionMapping.UP_DOWN_CHANNEL,
+    /** 失败卡（重试/下一台）在场时确认键必须让给当前聚焦按钮。 */
+    private val hasBlockingFailureCard: () -> Boolean = { false },
 ) {
     /**
      * 纯函数：输入物理键码 + Compose 事件类型，输出新状态 + 副作用。
@@ -86,7 +96,8 @@ class LiveRemoteKeyRouter(
         // 长按连发一律吞掉但不重复执行，避免换台/切源像机关枪。
         if (repeatCount > 0) return LiveRemoteResult(state)
 
-        // BACK：任何状态都消费，按弹栈语义在 ACTION_UP 执行。
+        // BACK：面板/数字输入态消费并按弹栈语义在 ACTION_UP 执行；
+        // 全屏且无遮挡时若 exitLiveOnBackInFullscreen=false，则放行给已有的 BackHandler 链路。
         if (action == AndroidKeyEvent.KEYCODE_BACK) {
             return if (up) onBack(state) else LiveRemoteResult(state)
         }
@@ -98,9 +109,15 @@ class LiveRemoteKeyRouter(
         // 数字输入态是 FULLSCREEN 上的模态：方向键/菜单键全部吞掉，防误换台。
         if (state.numberInput.isNotEmpty()) return handleNumberEntry(action, up, state)
 
+        val upDownChannel = directionMapping == LiveRemoteDirectionMapping.UP_DOWN_CHANNEL
+        val channelUpKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_UP else AndroidKeyEvent.KEYCODE_DPAD_LEFT
+        val channelDownKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_DOWN else AndroidKeyEvent.KEYCODE_DPAD_RIGHT
+        val sourcePrevKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_LEFT else AndroidKeyEvent.KEYCODE_DPAD_UP
+        val sourceNextKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_RIGHT else AndroidKeyEvent.KEYCODE_DPAD_DOWN
+
         return when (action) {
-            // ── 全屏：左右切源，上下换台 ──────────────────────────────
-            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
+            // ── 全屏：按映射解释为换台 / 切源 ──────────────────────────
+            sourcePrevKey -> {
                 if (down) {
                     LiveRemoteResult(
                         state,
@@ -113,7 +130,7 @@ class LiveRemoteKeyRouter(
                     LiveRemoteResult(state)
                 }
             }
-            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
+            sourceNextKey -> {
                 if (down) {
                     LiveRemoteResult(
                         state,
@@ -126,11 +143,11 @@ class LiveRemoteKeyRouter(
                     LiveRemoteResult(state)
                 }
             }
-            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+            channelUpKey -> {
                 if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.PreviousChannel))
                 else LiveRemoteResult(state)
             }
-            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+            channelDownKey -> {
                 if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.NextChannel))
                 else LiveRemoteResult(state)
             }
@@ -139,6 +156,8 @@ class LiveRemoteKeyRouter(
             AndroidKeyEvent.KEYCODE_DPAD_CENTER,
             AndroidKeyEvent.KEYCODE_ENTER,
             -> {
+                // 失败卡上的「重试 / 下一台」按钮需要拿到 OK，页面级不能抢。
+                if (hasBlockingFailureCard()) return null
                 if (up) LiveRemoteResult(state.copy(uiState = UIState.CONTROLLER), listOf(LiveRemoteEffect.OpenController))
                 else LiveRemoteResult(state)
             }
@@ -146,6 +165,24 @@ class LiveRemoteKeyRouter(
             // 菜单键同样两段式，避免面板刚出现就被 UP 误点。
             AndroidKeyEvent.KEYCODE_MENU -> {
                 if (up) LiveRemoteResult(state.copy(uiState = UIState.CHANNEL_LIST), listOf(LiveRemoteEffect.OpenChannelList))
+                else LiveRemoteResult(state)
+            }
+
+            // 媒体播放/暂停与设置/信息键：保留原页面能力，避免接入后按键失效。
+            AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            AndroidKeyEvent.KEYCODE_MEDIA_PLAY,
+            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
+            AndroidKeyEvent.KEYCODE_MEDIA_STOP,
+            -> {
+                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.TogglePlayback))
+                else LiveRemoteResult(state)
+            }
+            AndroidKeyEvent.KEYCODE_SETTINGS -> {
+                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.OpenSettings))
+                else LiveRemoteResult(state)
+            }
+            AndroidKeyEvent.KEYCODE_INFO -> {
+                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.OpenInfo))
                 else LiveRemoteResult(state)
             }
 
@@ -182,7 +219,7 @@ class LiveRemoteKeyRouter(
         }
     }
 
-    private fun onBack(state: LiveRemoteState): LiveRemoteResult = when {
+    private fun onBack(state: LiveRemoteState): LiveRemoteResult? = when {
         state.numberInput.isNotEmpty() -> {
             val cleared = state.copy(
                 numberInput = "",
@@ -196,8 +233,9 @@ class LiveRemoteKeyRouter(
                 listOf(LiveRemoteEffect.ClosePanel),
             )
         }
+        // 没有本地弹层可关时交还给已有的 PlayerChromeBackHandler，避免两处重复消费。
         exitLiveOnBackInFullscreen -> LiveRemoteResult(state, listOf(LiveRemoteEffect.ExitLive))
-        else -> LiveRemoteResult(state)
+        else -> null
     }
 
     private fun handleNumberEntry(action: Int, up: Boolean, state: LiveRemoteState): LiveRemoteResult {
@@ -206,6 +244,15 @@ class LiveRemoteKeyRouter(
             return if (!up) appendDigit(state, digit) else LiveRemoteResult(state)
         }
         return when (action) {
+            // 输入台号时上下键只移动候选高亮，绝不触发背景换台。
+            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
+                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.NumberMove(-1)))
+                else LiveRemoteResult(state)
+            }
+            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
+                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.NumberMove(1)))
+                else LiveRemoteResult(state)
+            }
             AndroidKeyEvent.KEYCODE_DEL -> {
                 if (up) {
                     LiveRemoteResult(state)
@@ -386,7 +433,11 @@ fun LivePlayerRemoteShell(
                     LiveRemoteEffect.OpenChannelList,
                     LiveRemoteEffect.ClosePanel,
                     is LiveRemoteEffect.NumberChanged,
-                    -> Unit // uiState / numberInput 已由 router 的 result.state 同步
+                    is LiveRemoteEffect.NumberMove,
+                    LiveRemoteEffect.TogglePlayback,
+                    LiveRemoteEffect.OpenSettings,
+                    LiveRemoteEffect.OpenInfo,
+                    -> Unit // 该骨架不承载这些能力；页面接入时映射到自己的 action。
                     is LiveRemoteEffect.SourceSwitched -> if (effect.continuityHint) onShowContinuityHint()
                     LiveRemoteEffect.CommitNumber -> commitNumber()
                     LiveRemoteEffect.ExitLive -> onExitLive()

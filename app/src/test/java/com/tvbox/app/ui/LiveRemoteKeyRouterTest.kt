@@ -99,4 +99,46 @@ class LiveRemoteKeyRouterTest {
         )
         assertTrue(result?.effects.isNullOrEmpty())
     }
+
+    @Test
+    fun backCanBeDelegatedWhenNoOverlayIsOpen() {
+        val delegating = LiveRemoteKeyRouter(exitLiveOnBackInFullscreen = false)
+        assertNull(
+            delegating.handle(AndroidKeyEvent.KEYCODE_BACK, KeyEventType.KeyUp, LiveRemoteState()),
+        )
+    }
+
+    @Test
+    fun failureCardKeepsConfirmForFocusedButton() {
+        val withFailureCard = LiveRemoteKeyRouter(hasBlockingFailureCard = { true })
+        assertNull(
+            withFailureCard.handle(
+                AndroidKeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEventType.KeyUp,
+                LiveRemoteState(),
+            ),
+        )
+    }
+
+    @Test
+    fun numberEntryArrowMovesCandidateHighlightWithoutSwitchingChannel() {
+        val typing = LiveRemoteState(numberInput = "1")
+        val result = router.handle(AndroidKeyEvent.KEYCODE_DPAD_DOWN, KeyEventType.KeyUp, typing)
+        assertEquals(listOf(LiveRemoteEffect.NumberMove(1)), result?.effects)
+    }
+
+    @Test
+    fun legacyDirectionMappingKeepsLeftRightChannelSwitching() {
+        val legacy = LiveRemoteKeyRouter(
+            directionMapping = LiveRemoteDirectionMapping.LEFT_RIGHT_CHANNEL,
+        )
+        assertEquals(
+            listOf(LiveRemoteEffect.PreviousChannel),
+            legacy.handle(AndroidKeyEvent.KEYCODE_DPAD_LEFT, KeyEventType.KeyDown, LiveRemoteState())?.effects,
+        )
+        assertEquals(
+            listOf(LiveRemoteEffect.PreviousSource, LiveRemoteEffect.SourceSwitched(false)),
+            legacy.handle(AndroidKeyEvent.KEYCODE_DPAD_UP, KeyEventType.KeyDown, LiveRemoteState())?.effects,
+        )
+    }
 }
