@@ -1,3 +1,13 @@
+## v1.0.38 - 2026-11-23
+
+手机历史页卡片化重构正式接入（手机端）：
+
+- 新增 `ui/history/` 包：`MobileHistoryScreen`（新列表页）+ `HistoryUtils` + `CoverDecor` + `HistoryTokens` + `component/{HistoryCardRow, PosterWithDecor, StatusRow, HistoryProgressBar, SectionHeader}`。
+- 定高 86dp 单行截断卡片：标题 16.sp/maxLines=1/Ellipsis 永不缩放换行；2dp 琥珀竖条（仅 hasNew）锚点 + 封面四态角标 + 顶部遮罩保浅色封面可读。
+- 琥珀"有更新"筛选 Chip、跳未读悬浮钮、长按多选批量删除。
+- 路由：`MobileNavScreen.History → ui.history.MobileHistoryScreen`；TV 端历史页保持原样零变更（仍走 `TvScreen.History → HistoryScreen`）。
+- 删除旧版 `ui/MobileHistoryScreen.kt`（com.tvbox.app.ui 包），由新包实现取代。
+
 ## v1.0.37 - 2026-11-23
 
 重发版本：对齐远端 main（含 v1.0.36 后续的 slot API 复用组件、图标 import 修复、update.json 自动提交），在此基础上仅递增版本号，重新构建发布。

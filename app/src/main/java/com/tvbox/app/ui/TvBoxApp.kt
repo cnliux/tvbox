@@ -134,6 +134,7 @@ import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.RetryableError
 import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.tvFocusScale
+import com.tvbox.app.ui.history.MobileHistoryScreen
 import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
