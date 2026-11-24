@@ -4,8 +4,11 @@ import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.CustomVideoApiLine
 import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.FastSeekSetting
+import com.tvbox.app.domain.HistoryLayout
 import com.tvbox.app.domain.LiveInfoBannerDuration
 import com.tvbox.app.domain.PerSourceTimeout
+import com.tvbox.app.domain.PlayerBrightnessSetting
 import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
@@ -82,6 +85,16 @@ internal object SettingsStorageKeys {
     // 自定义 User-Agent 与视频源健康管理（本轮新增）。
     const val CUSTOM_USER_AGENT = "custom_user_agent"
     const val SOURCE_HEALTH_CHECK_ENABLED = "source_health_check_enabled"
+    // 设置页对照参考稿新增项：画面亮度 / 自动下一集 / 播放手势 / 快进步长 / 历史布局 / 封面角标 / 崩溃只本地。
+    const val PLAYER_BRIGHTNESS = "player_brightness"
+    const val AUTO_NEXT_EPISODE = "auto_next_episode"
+    const val PLAYER_GESTURES = "player_gestures"
+    const val FAST_SEEK_STEP = "fast_seek_step"
+    const val HISTORY_LAYOUT = "history_layout"
+    const val HISTORY_COVER_BADGE = "history_cover_badge"
+    const val CRASH_LOG_LOCAL_ONLY = "crash_log_local_only"
+    // 源失败熔断（连续超时自动休眠，对照设置页方案）。
+    const val SOURCE_CIRCUIT_BREAKER = "source_circuit_breaker"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -153,17 +166,13 @@ internal fun readLegacySettings(
         mobileOnboarded = boolean(SettingsStorageKeys.MOBILE_ONBOARDED, false),
         liveSourceDefaultIndex = int(SettingsStorageKeys.LIVE_SOURCE_DEFAULT_INDEX, -1),
         episodeSortReverse = boolean(SettingsStorageKeys.EPISODE_SORT_REVERSE, false),
-        videoGridColumns = int(SettingsStorageKeys.VIDEO_GRID_COLUMNS, 0),
         epgUrl = string(SettingsStorageKeys.EPG_URL, ""),
-        platformLiveGridColumns = int(SettingsStorageKeys.PLATFORM_LIVE_GRID_COLUMNS, 0),
-        continueWatchingCount = quantity(SettingsStorageKeys.CONTINUE_WATCHING_COUNT, QuantitySettings.ContinueWatchingCount),
         epgCardRows = quantity(SettingsStorageKeys.EPG_CARD_ROWS, QuantitySettings.EpgCardRows),
         liveNumberMatchRows = quantity(SettingsStorageKeys.LIVE_NUMBER_MATCH_ROWS, QuantitySettings.LiveNumberMatchRows),
         liveNumberSearchLimit = quantity(SettingsStorageKeys.LIVE_NUMBER_SEARCH_LIMIT, QuantitySettings.LiveNumberSearchLimit),
         relatedChannelCount = quantity(SettingsStorageKeys.RELATED_CHANNEL_COUNT, QuantitySettings.RelatedChannelCount),
         hotWordCount = quantity(SettingsStorageKeys.HOT_WORD_COUNT, QuantitySettings.HotWordCount),
         searchSuggestionCount = quantity(SettingsStorageKeys.SEARCH_SUGGESTION_COUNT, QuantitySettings.SearchSuggestionCount),
-        homeHotContentCount = quantity(SettingsStorageKeys.HOME_HOT_CONTENT_COUNT, QuantitySettings.HomeHotContentCount),
         doubanHotPageSize = quantity(SettingsStorageKeys.DOUBAN_HOT_PAGE_SIZE, QuantitySettings.DoubanHotPageSize),
         doubanHotFallbackLines = quantity(SettingsStorageKeys.DOUBAN_HOT_FALLBACK_LINES, QuantitySettings.DoubanHotFallbackLines),
         historyMaxItems = quantity(SettingsStorageKeys.HISTORY_MAX_ITEMS, QuantitySettings.HistoryMaxItems),
@@ -187,6 +196,20 @@ internal fun readLegacySettings(
             string(SettingsStorageKeys.CUSTOM_USER_AGENT, ""),
         ),
         sourceHealthCheckEnabled = boolean(SettingsStorageKeys.SOURCE_HEALTH_CHECK_ENABLED, true),
+        sourceCircuitBreakerEnabled = boolean(SettingsStorageKeys.SOURCE_CIRCUIT_BREAKER, true),
+        playerBrightness = PlayerBrightnessSetting.clamp(
+            int(SettingsStorageKeys.PLAYER_BRIGHTNESS, PlayerBrightnessSetting.Default),
+        ),
+        autoNextEpisodeEnabled = boolean(SettingsStorageKeys.AUTO_NEXT_EPISODE, true),
+        playerGesturesEnabled = boolean(SettingsStorageKeys.PLAYER_GESTURES, true),
+        fastSeekStepSeconds = FastSeekSetting.clamp(
+            int(SettingsStorageKeys.FAST_SEEK_STEP, FastSeekSetting.DefaultStepSeconds),
+        ),
+        historyLayout = HistoryLayout.fromStorageKey(
+            string(SettingsStorageKeys.HISTORY_LAYOUT, HistoryLayout.Card.storageKey),
+        ),
+        historyCoverBadgeEnabled = boolean(SettingsStorageKeys.HISTORY_COVER_BADGE, true),
+        crashLogLocalOnly = boolean(SettingsStorageKeys.CRASH_LOG_LOCAL_ONLY, true),
     )
 }
 

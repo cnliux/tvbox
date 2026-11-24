@@ -117,6 +117,7 @@ import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.ui.components.AppHeader
@@ -1412,7 +1413,7 @@ private fun MovieGrid(
     // 既不出「加载更多」也不触发自动加载，正是「下滑无法加载更多」的残留根因。
     val hotItems = if (state.isShowingDoubanHot) {
         if (state.page > 1) state.doubanHotMovies
-        else state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+        else state.doubanHotMovies.take(QuantitySettings.HomeHotContentCount.default)
     } else {
         emptyList()
     }
@@ -1449,9 +1450,7 @@ private fun MovieGrid(
             }
         }
         LazyVerticalGrid(
-            columns = state.appSettings.videoGridColumns.takeIf { it > 0 }
-                ?.let { GridCells.Fixed(it) }
-                ?: GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
+            columns = GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
             state = gridState,
             contentPadding = PaddingValues(bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(18.dp),
@@ -1620,7 +1619,7 @@ private fun MobileHomeFeed(
     // 同上：首屏按设置条数展示，加载更多后解除上限，保证自动加载能持续推进。
     val hotItems = if (state.isShowingDoubanHot) {
         if (state.page > 1) state.doubanHotMovies
-        else state.doubanHotMovies.take(state.appSettings.homeHotContentCount)
+        else state.doubanHotMovies.take(QuantitySettings.HomeHotContentCount.default)
     } else {
         emptyList()
     }
@@ -1745,9 +1744,7 @@ private fun MobileHomeFeed(
                 val gridPadding = 8.dp
                 val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (108.dp + gridSpacing))
                     .toInt().coerceAtLeast(1)
-                val requested = state.appSettings.videoGridColumns
-                val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
-                SkeletonGrid(columns = columns, modifier = Modifier.fillMaxWidth())
+                SkeletonGrid(columns = capacity, modifier = Modifier.fillMaxWidth())
             }
             state.homeError != null -> RetryableError(
                 message = state.homeError.orEmpty(),
@@ -1776,10 +1773,8 @@ private fun MobileHomeFeed(
                     val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
                         .toInt()
                         .coerceAtLeast(1)
-                    val requested = state.appSettings.videoGridColumns
-                    val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(columns),
+                        columns = GridCells.Fixed(capacity),
                         state = movieGridState,
                         contentPadding = PaddingValues(start = gridPadding, top = 6.dp, end = gridPadding, bottom = 24.dp),
                         horizontalArrangement = Arrangement.spacedBy(gridSpacing),

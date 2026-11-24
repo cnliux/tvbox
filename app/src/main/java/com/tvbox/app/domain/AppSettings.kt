@@ -41,14 +41,8 @@ data class AppSettings(
     val liveSourceDefaultIndex: Int = -1,
     /** 剧集排序顺序：false=正序（1,2,3…），true=倒序（…,3,2,1）。 */
     val episodeSortReverse: Boolean = false,
-    /** 首页视频卡片每行数量；0 表示跟随布局自适应。 */
-    val videoGridColumns: Int = 0,
     /** 电视直播节目单 XMLTV 接口地址；空表示未配置。 */
     val epgUrl: String = "",
-    /** 平台直播卡片每行数量；0 表示跟随布局默认（触屏 4 / 遥控 6）。 */
-    val platformLiveGridColumns: Int = 0,
-    /** 首页「继续观看」卡片数量。 */
-    val continueWatchingCount: Int = QuantitySettings.ContinueWatchingCount.default,
     /** 电视直播 EPG 窄卡展示的节目条数。 */
     val epgCardRows: Int = QuantitySettings.EpgCardRows.default,
     /** 数字选台浮层展示的候选行数。 */
@@ -61,8 +55,6 @@ data class AppSettings(
     val hotWordCount: Int = QuantitySettings.HotWordCount.default,
     /** 拼音首字母扩展出的候选片名数量。 */
     val searchSuggestionCount: Int = QuantitySettings.SearchSuggestionCount.default,
-    /** 首页「豆瓣热播」区域显示的条目数上限。 */
-    val homeHotContentCount: Int = QuantitySettings.HomeHotContentCount.default,
     /** 豆瓣热播每页条数。 */
     val doubanHotPageSize: Int = QuantitySettings.DoubanHotPageSize.default,
     /** 打开豆瓣热播时依次尝试的视频源数量。 */
@@ -96,6 +88,22 @@ data class AppSettings(
      * 结果持久化并按延迟自动排序（快源靠前、失效源靠后），不影响用户当前观看。
      */
     val sourceHealthCheckEnabled: Boolean = true,
+    /** 源失败熔断：连续 5 次超时的源自动休眠 10 分钟（对照设置页方案「源失败熔断」）。 */
+    val sourceCircuitBreakerEnabled: Boolean = true,
+    /** 画面亮度覆盖：0=跟随系统，1..100=按百分比叠加亮度层。 */
+    val playerBrightness: Int = PlayerBrightnessSetting.Default,
+    /** 片尾自动进入下一集：开启后配合 [outroSkipSeconds] 在片尾倒计时自动续播。 */
+    val autoNextEpisodeEnabled: Boolean = true,
+    /** 手机端播放器手势：左右调亮度/音量、横滑进度。 */
+    val playerGesturesEnabled: Boolean = true,
+    /** 快进/快退步长（秒），供播放器 seek 按钮与长按加速使用。 */
+    val fastSeekStepSeconds: Int = FastSeekSetting.DefaultStepSeconds,
+    /** 历史页布局模式：卡片 / 紧凑 / 网格。 */
+    val historyLayout: HistoryLayout = HistoryLayout.Card,
+    /** 历史封面「更新角标」：有更新剧集的条目在封面右上角显示角标。 */
+    val historyCoverBadgeEnabled: Boolean = true,
+    /** 崩溃日志只落本地，不上报远端。 */
+    val crashLogLocalOnly: Boolean = true,
 )
 
 /**
@@ -148,15 +156,17 @@ fun Map<String, String>.withFallbackUserAgent(ua: String): Map<String, String> {
 }
 
 /**
- * 解码器策略。只区分两档：
- * - [Auto]：默认硬解优先，解码失败时由 [setEnableDecoderFallback] 自动回落到软件解码；
- * - [HardwareOnly]：选择器只返回硬件解码器；设备确实没有硬解时仍回退可用解码器，避免直接黑屏。
+ * 解码器策略。三档（对照设置页方案）：
+ * - [Auto]：自适应（默认「硬解优先」）：硬解优先，解码失败时由 [setEnableDecoderFallback] 自动回落到软解；
+ * - [HardwareOnly]：强制硬解：选择器只保留硬件解码器；设备确实没有硬解时仍回退可用解码器，避免直接黑屏；
+ * - [SoftwareOnly]：强制软解：选择器只保留非硬件加速的解码器；无可用软解时回退，避免黑屏。
  *
- * 工程未集成 FFmpeg 扩展解码器，因此不提供「强制软解」档。
+ * 工程未集成 FFmpeg 扩展解码器，软解/硬解均基于系统 MediaCodec 的解码器集合。
  */
 enum class DecoderStrategy(val storageKey: String, val displayName: String, val description: String) {
-    Auto("auto", "自动", "硬解优先，失败时自动回落到软解。"),
-    HardwareOnly("hardware_only", "强制硬解", "只选择硬件解码器；设备无可用硬解时回退，避免黑屏。"),
+    Auto("auto", "自适应", "硬解优先，解码失败自动回落到软解。"),
+    HardwareOnly("hardware_only", "硬解", "只选择硬件解码器；设备无可用硬解时回退，避免黑屏。"),
+    SoftwareOnly("software_only", "软解", "只选择软件解码器；硬件解码异常或黑屏时可切换，避免黑屏。"),
     ;
 
     companion object {
@@ -172,6 +182,39 @@ object PlayerSpeedSetting {
     const val Max = 2.0f
 
     fun clamp(value: Float): Float = value.coerceIn(Min, Max)
+}
+
+/** 画面亮度覆盖的默认值与合法区间；0=跟随系统。 */
+object PlayerBrightnessSetting {
+    const val Default = 0
+    const val Min = 0
+    const val Max = 100
+
+    fun clamp(value: Int): Int = value.coerceIn(Min, Max)
+}
+
+/** 快进/快退步长（秒）的默认值与可选档位。 */
+object FastSeekSetting {
+    const val DefaultStepSeconds = 10
+    val choices: List<Int> = listOf(5, 10, 15, 30)
+
+    fun clamp(value: Int): Int = if (value in choices) value else DefaultStepSeconds
+}
+
+/**
+ * 历史页布局模式。仅影响手机端历史页的封面展示密度；
+ * 电视端历史页保持既有卡片布局。
+ */
+enum class HistoryLayout(val storageKey: String, val displayName: String) {
+    Card("card", "卡片"),
+    Compact("compact", "紧凑"),
+    Grid("grid", "网格"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): HistoryLayout =
+            entries.firstOrNull { it.storageKey == value } ?: Card
+    }
 }
 
 /**
@@ -194,12 +237,12 @@ object LiveInfoBannerDuration {
             ?: if (isTelevision) TvDefaultMs else MobileDefaultMs
 }
 
-/** #94 多源搜索/详情的单源超时，默认沿用改造前搜索/详情的 6s 预算。 */
+/** #94 多源搜索/详情的单源超时，默认 8s（对照设置页方案，调小更快但易误杀）。 */
 object PerSourceTimeout {
-    const val DefaultMs = 6_000L
+    const val DefaultMs = 8_000L
     const val MinMs = 1_000L
     const val MaxMs = 30_000L
-    val choices: List<Long> = listOf(2_000L, 3_000L, 4_000L, DefaultMs, 8_000L, 10_000L, 15_000L)
+    val choices: List<Long> = listOf(2_000L, 3_000L, 4_000L, 6_000L, DefaultMs, 10_000L, 15_000L)
 
     fun clamp(value: Long): Long = value.coerceIn(MinMs, MaxMs)
 }
@@ -248,8 +291,8 @@ object QuantitySettings {
     val DoubanHotFallbackLines = QuantitySetting(8, 1, 12, listOf(3, 4, 5, 6, 8, 10, 12))
     /** 观看历史：200 条足够回溯，存储与内存开销可忽略。 */
     val HistoryMaxItems = QuantitySetting(200, 20, 500, listOf(50, 100, 200, 300, 500))
-    /** 多源搜索并发：默认拉满 12（上限同值），修复「多个源只搜到 1~2 个内容」。 */
-    val MaxParallelSourceRequests = QuantitySetting(12, 1, 12, listOf(2, 3, 4, 6, 8, 10, 12))
+    /** 多源搜索并发：默认 6（对照设置页方案；弱盒建议 4，增量去重后收益递减）。 */
+    val MaxParallelSourceRequests = QuantitySetting(6, 1, 12, listOf(2, 3, 4, 6, 8, 10, 12))
 }
 
 enum class DeviceMode(val storageKey: String, val displayName: String, val description: String) {
@@ -432,14 +475,16 @@ fun List<CustomVideoApiLine>.toApiLines(): List<ApiLine> {
  * OTA 更新渠道：决定客户端拉取哪个 update.json 版本。
  * - [Stable]：正式版路径 update.json，对应 release.yml 每次发版后写入的 manifest。
  * - [Beta]：测试版路径 update-beta.json，测试者自行放置，用于预发布尝鲜。
+ * - [Close]：关闭自动更新检查。
  */
 enum class UpdateChannel(
     val storageKey: String,
     val displayName: String,
-    val manifestPath: String,
+    val manifestPath: String?,
 ) {
-    Stable("stable", "稳定版", "update.json"),
-    Beta("beta", "测试版", "update-beta.json"),
+    Stable("stable", "正式版", "update.json"),
+    Beta("beta", "尝鲜", "update-beta.json"),
+    Close("close", "关闭", null),
     ;
 
     companion object {

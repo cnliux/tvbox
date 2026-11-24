@@ -1193,20 +1193,30 @@ internal fun playerInfoRows(
 ): List<PlayerInfoRow> {
     val decoder = info?.decoderName?.takeIf { it.isNotBlank() }
     val actualKind = decoder?.let(::decoderKindLabel)
-    // 强制硬解时按回落轨道分别标注：视频与音频都可能独立回落到软解。
-    val videoFallback = decoderStrategy == DecoderStrategy.HardwareOnly &&
+    // 强制硬解/软解时按回落轨道分别标注：视频与音频都可能独立回落到另一侧。
+    val videoFallback = decoderStrategy != DecoderStrategy.Auto &&
         DecoderTrackKind.Video in fallbackKinds
-    val audioFallback = decoderStrategy == DecoderStrategy.HardwareOnly &&
+    val audioFallback = decoderStrategy != DecoderStrategy.Auto &&
         DecoderTrackKind.Audio in fallbackKinds
     return buildList {
         add(PlayerInfoRow("解码策略", decoderStrategy.displayName))
         add(PlayerInfoRow("分辨率", formatResolution(info?.videoWidth ?: 0, info?.videoHeight ?: 0)))
         add(PlayerInfoRow("解码器", decoder?.let { "$it · $actualKind" } ?: "—"))
         if (videoFallback) {
-            add(PlayerInfoRow("视频回落", "强制硬解 · 实际软解（已回落）"))
+            val label = if (decoderStrategy == DecoderStrategy.HardwareOnly) {
+                "强制硬解 · 实际软解（已回落）"
+            } else {
+                "强制软解 · 实际回退（无可用软解）"
+            }
+            add(PlayerInfoRow("视频回落", label))
         }
         if (audioFallback) {
-            add(PlayerInfoRow("音频回落", "强制硬解 · 实际软解（已回落）"))
+            val label = if (decoderStrategy == DecoderStrategy.HardwareOnly) {
+                "强制硬解 · 实际软解（已回落）"
+            } else {
+                "强制软解 · 实际回退（无可用软解）"
+            }
+            add(PlayerInfoRow("音频回落", label))
         }
         add(PlayerInfoRow("当前码率", formatBitrate(info?.currentBitrateBps ?: -1L)))
         add(PlayerInfoRow("平均码率", formatBitrate(info?.averageBitrateBps ?: -1L)))

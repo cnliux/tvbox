@@ -15,7 +15,7 @@ import com.tvbox.app.ui.theme.TvColors
  */
 object HistoryTokens {
     val Canvas      = Color(0xFF121212)
-    val Divider     = Color(0xFF1C1C1C)
+    val Divider     = Color(0xFF222222)
     val Title       = Color(0xFFEEEEEE)
     val Meta        = Color(0xFF888888)
     val MetaDim     = Color(0xFF5C5C5C)
@@ -57,9 +57,14 @@ object HistoryTokens {
         else NewFrom.copy(alpha = alpha)
 
     object M {
+        // 严格对齐 history_card_refactor_demo.html：行高 86dp，海报 64×86dp 全出血（无内边距）。
+        // 旧版海报 box 64×86 但内部 padding(8/4) 吃掉 12dp，可视仅 52×86，与基准稿不符；
+        // 现去内边距让封面真正 64×86，实现「收紧 + 放大封面」。
         val RowH    = 86.dp
         val PW      = 64.dp
         val PH      = 86.dp
+        val PosterPadStart = 0.dp
+        val PosterPadEnd   = 0.dp
         val Radius  = 6.dp
         val TitleSz = 16.sp
         val MetaSz  = 12.sp
@@ -71,9 +76,18 @@ object HistoryTokens {
         val Gap     = 12.dp
         val ScrimH  = 34.dp
         val DotSize = 8.dp
+        /** 小圆点角标黑描边宽度（基准稿 .cover-badge.dot border 2px）。 */
+        val DotBorder = 2.dp
         val DelBtn  = 48.dp
-        /** 海报上 badge 贴边距；须 ≤ [Radius] 否则视觉上会溢出圆角。 */
-        val BadgeEdge = 6.dp
+        /** 封面角标贴边距：对齐基准稿 top 4px / right 4px。 */
+        val BadgeEdge = 4.dp
+        /** 角标 pill 基准高度（基准稿 .cover-badge：min-width 16 / height 16）。 */
+        val BadgeH   = 16.dp
+        val BadgeMinW = 16.dp
+        val BadgePadH = 4.dp
+        /** 角标 pill 差异化圆角（右上圆角 + 左下圆角，书签形）。 */
+        val BadgeCornerTR = 4.dp
+        val BadgeCornerBL = 8.dp
         /** 底部标签高度；"今日开播"呼吸白点直径。 */
         val TagH    = 20.dp
         val PremiereDot = 4.dp

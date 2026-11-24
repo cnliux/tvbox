@@ -61,9 +61,9 @@ internal fun safePrepare(
 /**
  * 共享播放器工厂：四个播放页只通过这里配置 Renderers，避免各页各建一套 factory。
  *
- * 始终开启 [DefaultRenderersFactory.setEnableDecoderFallback]（默认「自动」档的解码失败回落）；
- * [DecoderStrategy.HardwareOnly] 时再用 [MediaCodecSelector] 只保留硬件解码器。
- * 工程未集成 FFmpeg 扩展解码器，因此不存在「强制软解」。
+ * 始终开启 [DefaultRenderersFactory.setEnableDecoderFallback]（默认「自适应」档的解码失败回落）；
+ * [DecoderStrategy.HardwareOnly] 时再用 [MediaCodecSelector] 只保留硬件解码器，
+ * [DecoderStrategy.SoftwareOnly] 时只保留软件解码器。两者都基于系统 MediaCodec 集合。
  */
 @OptIn(UnstableApi::class)
 internal fun buildManagedExoPlayer(
@@ -74,8 +74,12 @@ internal fun buildManagedExoPlayer(
     val renderersFactory = DefaultRenderersFactory(context)
         .setEnableDecoderFallback(true)
         .apply {
-            if (decoderStrategy == DecoderStrategy.HardwareOnly) {
-                setMediaCodecSelector(hardwareOnlyMediaCodecSelector())
+            when (decoderStrategy) {
+                DecoderStrategy.HardwareOnly ->
+                    setMediaCodecSelector(hardwareOnlyMediaCodecSelector())
+                DecoderStrategy.SoftwareOnly ->
+                    setMediaCodecSelector(softwareOnlyMediaCodecSelector())
+                DecoderStrategy.Auto -> Unit
             }
         }
     return configure(ExoPlayer.Builder(context, renderersFactory))
@@ -167,8 +171,12 @@ internal object ManagedPlayerProbes {
 /** 发生回落的轨道类型：视频/音频分别记录，信息面板据此分别标注。 */
 internal enum class DecoderTrackKind { Video, Audio }
 
-/** 「强制硬解」档回落到软件解码的一次性事件；只含编码类型与轨道类型，不含地址。 */
+/** 回落方向：强制硬解缺硬解、强制软解缺软解。 */
+internal enum class DecoderFallbackDirection { Hardware, Software }
+
+/** 「强制硬解/软解」档回落到可用解码器的一次性事件；只含方向、编码类型与轨道类型，不含地址。 */
 internal data class HardwareDecoderFallbackEvent(
+    val direction: DecoderFallbackDirection,
     val mimeType: String,
     val kind: DecoderTrackKind,
     val sequence: Long,
@@ -205,12 +213,12 @@ internal object HardwareDecoderFallbackNotice {
         }
     }
 
-    fun report(mimeType: String, kind: DecoderTrackKind) {
+    fun report(mimeType: String, kind: DecoderTrackKind, direction: DecoderFallbackDirection) {
         synchronized(lock) {
             if (kind !in stateKinds) stateKinds = stateKinds + kind
             if (stateEvent == null) {
                 sequence += 1
-                stateEvent = HardwareDecoderFallbackEvent(mimeType, kind, sequence)
+                stateEvent = HardwareDecoderFallbackEvent(direction, mimeType, kind, sequence)
             }
         }
     }
@@ -240,7 +248,36 @@ private fun hardwareOnlyMediaCodecSelector(): MediaCodecSelector {
                     DecoderTrackKind.Video
                 }
                 android.util.Log.w("TVBoxPlayer", "强制硬解回落：$mimeType 无可用硬件解码器（${kind.name}）")
-                HardwareDecoderFallbackNotice.report(mimeType, kind)
+                HardwareDecoderFallbackNotice.report(mimeType, kind, DecoderFallbackDirection.Hardware)
+            }
+            all
+        }
+    }
+}
+
+/**
+ * 强制软解：只返回非 `hardwareAccelerated` 的解码器（系统自带软件编解码，如 omx.google / c2.android）。
+ * 设备确实没有对应软解时回退默认候选，避免选择器返回空列表导致取流直接失败；
+ * 回落同样通过 [HardwareDecoderFallbackNotice] 记录，让播放页提示「无可用软解，已回退」。
+ */
+@OptIn(UnstableApi::class)
+private fun softwareOnlyMediaCodecSelector(): MediaCodecSelector {
+    val reportedMimes = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    HardwareDecoderFallbackNotice.reset()
+    return MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
+        val all = MediaCodecSelector.DEFAULT.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunneling)
+        val software = all.filter { !it.hardwareAccelerated }
+        if (software.isNotEmpty()) {
+            software
+        } else {
+            if (reportedMimes.add(mimeType)) {
+                val kind = if (androidx.media3.common.MimeTypes.isAudio(mimeType)) {
+                    DecoderTrackKind.Audio
+                } else {
+                    DecoderTrackKind.Video
+                }
+                android.util.Log.w("TVBoxPlayer", "强制软解回落：$mimeType 无可用软件解码器（${kind.name}）")
+                HardwareDecoderFallbackNotice.report(mimeType, kind, DecoderFallbackDirection.Software)
             }
             all
         }
@@ -257,7 +294,11 @@ internal fun HardwareDecoderFallbackToast() {
         val current = event ?: return@LaunchedEffect
         if (current.sequence > lastSequence) {
             lastSequence = current.sequence
-            Toast.makeText(context, "该编码无可用硬件解码器，已回落到软解", Toast.LENGTH_LONG).show()
+            val message = when (current.direction) {
+                DecoderFallbackDirection.Hardware -> "该编码无可用硬件解码器，已回落到软解"
+                DecoderFallbackDirection.Software -> "该编码无可用软件解码器，已回退"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
         }
     }
 }

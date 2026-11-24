@@ -94,6 +94,9 @@ import com.tvbox.app.domain.PlaybackAgentDecision
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
 import com.tvbox.app.domain.PlayerSpeedSetting
+import com.tvbox.app.domain.PlayerBrightnessSetting
+import com.tvbox.app.domain.FastSeekSetting
+import com.tvbox.app.domain.HistoryLayout
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
@@ -332,7 +335,7 @@ data class TvBoxUiState(
     /** 首页「继续观看」：开关、条数上限与排序/去重/进度过滤统一由 domain 处理。 */
     val continueWatchingItems: List<WatchHistoryItem>
         get() = if (appSettings.homeContinueWatchingEnabled) {
-            historyItems.continueWatching(appSettings.continueWatchingCount)
+            historyItems.continueWatching(QuantitySettings.ContinueWatchingCount.default)
         } else {
             emptyList()
         }
@@ -343,7 +346,7 @@ data class TvBoxUiState(
 
     val homeItemCount: Int
         get() = if (isShowingDoubanHot) {
-            doubanHotMovies.size.coerceAtMost(appSettings.homeHotContentCount)
+            doubanHotMovies.size.coerceAtMost(QuantitySettings.HomeHotContentCount.default)
         } else {
             movies.size
         }
@@ -536,6 +539,7 @@ class TvBoxViewModel(
             repository.setMaxParallelSourceRequests(settings.maxParallelSourceRequests)
             // #94 启动时把已保存的单源超时推给仓库，搜索/详情立即按该预算执行。
             repository.setPerSourceTimeoutMs(settings.perSourceTimeoutMs)
+            repository.setSourceCircuitBreakerEnabled(settings.sourceCircuitBreakerEnabled)
             // 自定义 UA：视频接口请求、订阅拉取与直播播放兜底共用同一口径。
             com.tvbox.app.data.network.GlobalUserAgent.value = UserAgentSetting.resolve(settings.customUserAgent)
             applyLiveSourceConfig(settings)
@@ -2068,37 +2072,9 @@ class TvBoxViewModel(
         }
     }
 
-    /** 更新首页视频卡片每行数量；0 表示跟随布局自适应。 */
-    fun updateVideoGridColumns(columns: Int) {
-        val settings = _state.value.appSettings.copy(videoGridColumns = columns.coerceIn(0, 8))
-        commitSettings(settings)
-    }
-
-    /** 更新平台直播卡片每行数量；0 表示跟随布局默认。 */
-    fun updatePlatformLiveGridColumns(columns: Int) {
-        val settings = _state.value.appSettings.copy(platformLiveGridColumns = columns.coerceIn(0, 10))
-        commitSettings(settings)
-    }
-
-    /** 更新首页「豆瓣热播」区域显示的条目数上限。 */
-    fun updateHomeHotContentCount(count: Int) {
-        val settings = _state.value.appSettings.copy(
-            homeHotContentCount = QuantitySettings.HomeHotContentCount.clamp(count),
-        )
-        commitSettings(settings)
-    }
-
     /** 关闭首页提示条（如热播/详情失败提示），避免状态变化后仍长期残留。 */
     fun dismissHomeNotice() {
         _state.update { it.copy(homeNotice = null) }
-    }
-
-    /** 更新首页「继续观看」卡片数量。 */
-    fun updateContinueWatchingCount(count: Int) {
-        val settings = _state.value.appSettings.copy(
-            continueWatchingCount = QuantitySettings.ContinueWatchingCount.clamp(count),
-        )
-        commitSettings(settings)
     }
 
     /** 更新电视直播 EPG 窄卡节目条数。 */
@@ -2231,6 +2207,57 @@ class TvBoxViewModel(
         }
     }
 
+    /** 源失败熔断开关：连续超时的源自动休眠，避免反复打到坏源拖慢首屏。 */
+    fun updateSourceCircuitBreakerEnabled(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(sourceCircuitBreakerEnabled = enabled)
+        commitSettings(settings)
+        repository.setSourceCircuitBreakerEnabled(enabled)
+    }
+
+    /** 画面亮度覆盖（0=跟随系统，1..100=百分比）。 */
+    fun updatePlayerBrightness(value: Int) {
+        val clamped = PlayerBrightnessSetting.clamp(value)
+        if (_state.value.appSettings.playerBrightness == clamped) return
+        commitSettings(_state.value.appSettings.copy(playerBrightness = clamped))
+    }
+
+    /** 片尾自动进入下一集开关。 */
+    fun updateAutoNextEpisodeEnabled(enabled: Boolean) {
+        if (_state.value.appSettings.autoNextEpisodeEnabled == enabled) return
+        commitSettings(_state.value.appSettings.copy(autoNextEpisodeEnabled = enabled))
+    }
+
+    /** 手机端播放器手势开关。 */
+    fun updatePlayerGesturesEnabled(enabled: Boolean) {
+        if (_state.value.appSettings.playerGesturesEnabled == enabled) return
+        commitSettings(_state.value.appSettings.copy(playerGesturesEnabled = enabled))
+    }
+
+    /** 快进/快退步长（秒）。 */
+    fun updateFastSeekStepSeconds(value: Int) {
+        val clamped = FastSeekSetting.clamp(value)
+        if (_state.value.appSettings.fastSeekStepSeconds == clamped) return
+        commitSettings(_state.value.appSettings.copy(fastSeekStepSeconds = clamped))
+    }
+
+    /** 历史页布局模式。 */
+    fun updateHistoryLayout(layout: HistoryLayout) {
+        if (_state.value.appSettings.historyLayout == layout) return
+        commitSettings(_state.value.appSettings.copy(historyLayout = layout))
+    }
+
+    /** 历史封面更新角标开关。 */
+    fun updateHistoryCoverBadgeEnabled(enabled: Boolean) {
+        if (_state.value.appSettings.historyCoverBadgeEnabled == enabled) return
+        commitSettings(_state.value.appSettings.copy(historyCoverBadgeEnabled = enabled))
+    }
+
+    /** 崩溃日志只本地开关。 */
+    fun updateCrashLogLocalOnly(enabled: Boolean) {
+        if (_state.value.appSettings.crashLogLocalOnly == enabled) return
+        commitSettings(_state.value.appSettings.copy(crashLogLocalOnly = enabled))
+    }
+
     fun updateDeviceMode(mode: DeviceMode) {
         if (_state.value.appSettings.deviceMode == mode) return
         val settings = _state.value.appSettings.copy(deviceMode = mode)
@@ -2267,6 +2294,61 @@ class TvBoxViewModel(
         if (_state.value.appSettings.fontScale == fontScale) return
         val settings = _state.value.appSettings.copy(fontScale = fontScale)
         commitSettings(settings)
+    }
+
+    /**
+     * 手机端设置页「重置本组」：把指定分组内可直接编辑的 AppSettings 字段恢复为默认值。
+     * categoryName 对应 SettingsMobileScreen 的 MobileSettingCategory.name；
+     * 仅重置该分组展示的标量选项，不触碰源列表/历史等独立管理的数据。
+     */
+    fun resetCategorySettings(categoryName: String) {
+        val current = _state.value.appSettings
+        val d = AppSettings()
+        val settings = when (categoryName) {
+            "Playback" -> current.copy(
+                playerSpeed = d.playerSpeed,
+                playerBrightness = d.playerBrightness,
+                autoNextEpisodeEnabled = d.autoNextEpisodeEnabled,
+                playerGesturesEnabled = d.playerGesturesEnabled,
+                decoderStrategy = d.decoderStrategy,
+                fastSeekStepSeconds = d.fastSeekStepSeconds,
+                playbackAgentAutoSwitchEnabled = d.playbackAgentAutoSwitchEnabled,
+                videoScaleMode = d.videoScaleMode,
+                decoderDeviceWhitelist = d.decoderDeviceWhitelist,
+                liveInfoBannerDurationMs = d.liveInfoBannerDurationMs,
+                episodeSortReverse = d.episodeSortReverse,
+                introSkipSeconds = d.introSkipSeconds,
+                outroSkipSeconds = d.outroSkipSeconds,
+            )
+            "NetworkSources" -> current.copy(
+                sourceHealthCheckEnabled = d.sourceHealthCheckEnabled,
+                customUserAgent = d.customUserAgent,
+                perSourceTimeoutMs = d.perSourceTimeoutMs,
+                maxParallelSourceRequests = d.maxParallelSourceRequests,
+            )
+            "Interface" -> current.copy(
+                deviceMode = d.deviceMode,
+                theme = d.theme,
+                fontScale = d.fontScale,
+                homeContinueWatchingEnabled = d.homeContinueWatchingEnabled,
+                checkUpdatesOnStartup = d.checkUpdatesOnStartup,
+                playerLogEnabled = d.playerLogEnabled,
+                historyLayout = d.historyLayout,
+                historyCoverBadgeEnabled = d.historyCoverBadgeEnabled,
+            )
+            "SystemData" -> current.copy(
+                updateChannel = d.updateChannel,
+                crashLogLocalOnly = d.crashLogLocalOnly,
+                historyPrivacyMode = d.historyPrivacyMode,
+                historyMaxItems = d.historyMaxItems,
+                hotWordCount = d.hotWordCount,
+                searchSuggestionCount = d.searchSuggestionCount,
+                doubanHotPageSize = d.doubanHotPageSize,
+                doubanHotFallbackLines = d.doubanHotFallbackLines,
+            )
+            else -> return
+        }
+        if (settings != current) commitSettings(settings)
     }
 
     /** 手机模式首次启动引导 Banner 已展示，记录该状态避免重复弹出。 */

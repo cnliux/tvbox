@@ -53,6 +53,14 @@ class DefaultMovieRepository(
         sourceTimeoutMs = PerSourceTimeout.clamp(value)
     }
 
+    // 源失败熔断：连续 5 次超时的源休眠 10 分钟；关闭后不剔除任何源（仅排序）。
+    @Volatile
+    private var sourceCircuitBreakerEnabled = true
+
+    override fun setSourceCircuitBreakerEnabled(enabled: Boolean) {
+        sourceCircuitBreakerEnabled = enabled
+    }
+
     @Volatile
     private var customApiLines: List<ApiLine> = emptyList()
 
@@ -585,7 +593,7 @@ class DefaultMovieRepository(
             add(primary)
             addAll(
                 apiLines
-                    .filterNot { it.id == primary.id || sourceHealth.isCoolingDown(it.id) }
+                    .filterNot { it.id == primary.id || sourceHealth.isCoolingDown(it.id, sourceCircuitBreakerEnabled) }
                     .sortedByDescending { sourceHealth.score(it.id) },
             )
         }
@@ -696,6 +704,8 @@ private class SourceHealthTracker(
     fun recordSuccess(lineId: String, latencyMs: Long) {
         val entry = stats.getOrPut(lineId, ::SourceHealthStats)
         entry.successes += 1
+        entry.consecutiveFailures = 0
+        entry.cooldownUntilMs = 0
         entry.averageLatencyMs = if (entry.averageLatencyMs == 0L) {
             latencyMs
         } else {
@@ -707,11 +717,18 @@ private class SourceHealthTracker(
     fun recordFailure(lineId: String) {
         val entry = stats.getOrPut(lineId, ::SourceHealthStats)
         entry.failures += 1
-        entry.cooldownUntilMs = nowMs() + FAILURE_COOLDOWN_MS
+        entry.consecutiveFailures += 1
+        // 连续失败达到阈值才进入休眠（对照设置页方案：连续 5 次超时休眠 10 分钟）。
+        entry.cooldownUntilMs = if (entry.consecutiveFailures >= BREAKER_MAX_CONSECUTIVE_FAILURES) {
+            nowMs() + BREAKER_COOLDOWN_MS
+        } else {
+            0L
+        }
     }
 
     @Synchronized
-    fun isCoolingDown(lineId: String): Boolean {
+    fun isCoolingDown(lineId: String, breakerEnabled: Boolean = true): Boolean {
+        if (!breakerEnabled) return false
         return stats[lineId]?.cooldownUntilMs?.let { it > nowMs() } == true
     }
 
@@ -722,13 +739,17 @@ private class SourceHealthTracker(
     }
 
     private companion object {
-        const val FAILURE_COOLDOWN_MS = 2 * 60_000L
+        /** 连续失败达到该阈值后休眠。 */
+        const val BREAKER_MAX_CONSECUTIVE_FAILURES = 5
+        /** 休眠时长：10 分钟（对照设置页方案）。 */
+        const val BREAKER_COOLDOWN_MS = 10 * 60_000L
     }
 }
 
 private data class SourceHealthStats(
     var successes: Long = 0,
     var failures: Long = 0,
+    var consecutiveFailures: Int = 0,
     var averageLatencyMs: Long = 0,
     var cooldownUntilMs: Long = 0,
 )

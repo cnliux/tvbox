@@ -89,13 +89,16 @@ fun HistoryCardRow(
             Spacer(modifier = Modifier.width(2.dp))
         }
 
-        // 海报 + 装饰（64×86dp）
+        // 海报 + 装饰（64×86dp 全出血，无内边距 → 与基准稿 64×86 严格一致）
         PosterWithDecor(
             itemUrl = item.posterUrl,
             decor = decor,
             modifier = Modifier
                 .size(HistoryTokens.M.PW, HistoryTokens.M.PH)
-                .padding(start = 8.dp, end = 4.dp),
+                .padding(
+                    start = HistoryTokens.M.PosterPadStart,
+                    end = HistoryTokens.M.PosterPadEnd,
+                ),
         )
 
         Spacer(modifier = Modifier.width(HistoryTokens.M.Gap))

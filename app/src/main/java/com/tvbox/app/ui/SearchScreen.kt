@@ -957,8 +957,7 @@ internal fun MobileSearchScreen(
         val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
             .toInt()
             .coerceAtLeast(1)
-        val requested = state.appSettings.videoGridColumns
-        val columns = if (requested > 0) requested.coerceAtMost(capacity).coerceAtLeast(1) else capacity
+        val columns = capacity
         Column(modifier = Modifier.fillMaxSize()) {
             // 搜索框固定在顶部：改关键词不必先滚回列表顶部，符合手机端输入习惯。
             // 搜索页不渲染公共顶栏，状态栏 inset 由这里自行吸收，

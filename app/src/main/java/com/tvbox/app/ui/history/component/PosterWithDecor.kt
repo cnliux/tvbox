@@ -5,12 +5,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -21,21 +23,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.role
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.tvbox.app.ui.components.rememberTvImageLoader
@@ -113,8 +105,15 @@ fun PosterWithDecor(
         }
 
         // 右上角角标（badge != None 才渲染）。
+        // 对齐基准稿 .cover-badge：top 4px / right 4px，小圆点或紧凑 pill，不再是大色块。
         if (decor.badge != CoverBadgeState.None) {
-            Badge(badge = decor.badge, pulse = decor.pulse)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = -HistoryTokens.M.BadgeEdge, y = HistoryTokens.M.BadgeEdge),
+            ) {
+                Badge(badge = decor.badge, unread = decor.unread, pulse = decor.pulse)
+            }
         }
     }
 }
@@ -206,51 +205,82 @@ private fun CaughtUpTag() {
 }
 
 @Composable
-private fun Badge(badge: CoverBadgeState, pulse: Boolean) {
-    Box(
-        modifier = Modifier
-            .offset(x = HistoryTokens.M.BadgeEdge, y = HistoryTokens.M.BadgeEdge)
-            .size(26.dp)
-            .semantics { role = Role.Image }
-            .clip(RoundedCornerShape(topEnd = 6.dp, bottomStart = 8.dp))
-            .background(Brush.linearGradient(listOf(HistoryTokens.NewFrom, HistoryTokens.NewTo))),
-        contentAlignment = Alignment.Center,
-    ) {
-        when (badge) {
-            CoverBadgeState.Dot       -> PulseDot(pulse = pulse)
-            CoverBadgeState.Count     -> DotBullet()
-            CoverBadgeState.NinePlus  -> Text("9+", fontSize = HistoryTokens.M.BadgeSz, fontWeight = FontWeight.Bold, color = Color.White, textAlign = TextAlign.Center)
-            CoverBadgeState.None      -> Unit
-        }
+private fun Badge(badge: CoverBadgeState, unread: Int, pulse: Boolean) {
+    when (badge) {
+        CoverBadgeState.Dot       -> PulseDot(pulse = pulse)
+        CoverBadgeState.Count     -> CountPill(text = unread.coerceAtMost(9).toString())
+        CoverBadgeState.NinePlus  -> CountPill(text = "9+")
+        CoverBadgeState.None      -> Unit
     }
 }
 
+/**
+ * 右上角小圆点角标：对齐基准稿 .cover-badge.dot —— 8dp、2dp 黑描边、渐变填充、呼吸。
+ * 不再用 26dp 大色块，避免「海报上一大块红」的异常观感。
+ */
 @Composable
 private fun PulseDot(pulse: Boolean) {
     if (!pulse) {
-        Canvas(modifier = Modifier.size(HistoryTokens.M.DotSize)) {
-            drawCircle(color = HistoryTokens.NewDot)
+        Canvas(
+            modifier = Modifier
+                .size(HistoryTokens.M.DotSize)
+                .background(Color.Black, CircleShape),
+        ) {
+            // 黑描边圆环：黑色打底，渐变实心圆内缩一个描边宽度，露出 2dp 黑圈。
+            drawCircle(
+                brush = Brush.linearGradient(listOf(HistoryTokens.NewFrom, HistoryTokens.NewTo)),
+                radius = (size.minDimension - HistoryTokens.M.DotBorder.toPx()) / 2f,
+            )
         }
         return
     }
-    // 简化呼吸：基于 System.currentTimeMillis 的正弦波，1.8s 周期。
-    // 注意：不在重组里产生副作用；LaunchedEffect 用于同步进度条之外的动效。
-    val t = System.currentTimeMillis() / 1800f
+    // 简化呼吸：基于 System.currentTimeMillis 的正弦波，1.5s 周期（对齐基准稿 pulse 1.5s）。
+    val t = System.currentTimeMillis() / 1500f
     val wave = (0.5f + 0.5f * sin(t * 2 * PI)).toFloat()
     val scale = 1f + 0.18f * wave
     val alpha = 0.85f + 0.15f * wave
-    Canvas(modifier = Modifier.size(HistoryTokens.M.DotSize)) {
+    Canvas(
+        modifier = Modifier
+            .size(HistoryTokens.M.DotSize)
+            .background(Color.Black, CircleShape),
+    ) {
         drawCircle(
-            color = HistoryTokens.NewDot,
-            radius = (size.minDimension / 2f) * scale,
+            brush = Brush.linearGradient(listOf(HistoryTokens.NewFrom, HistoryTokens.NewTo)),
+            radius = ((size.minDimension - HistoryTokens.M.DotBorder.toPx()) / 2f) * scale,
             alpha = alpha,
         )
     }
 }
 
+/**
+ * 紧凑数字 pill：对齐基准稿 .cover-badge.count/.nine-plus ——
+ * min-width 16 / height 16、padding 0 4px、右上 4 / 左下 8 差异化圆角、10sp 白字。
+ */
 @Composable
-private fun DotBullet() {
-    Canvas(modifier = Modifier.size(10.dp)) {
-        drawCircle(color = Color.White.copy(alpha = 0.9f))
+private fun CountPill(text: String) {
+    Box(
+        modifier = Modifier
+            .height(HistoryTokens.M.BadgeH)
+            .defaultMinSize(minWidth = HistoryTokens.M.BadgeMinW)
+            .clip(
+                RoundedCornerShape(
+                    topStart = 0.dp,
+                    topEnd = HistoryTokens.M.BadgeCornerTR,
+                    bottomEnd = 0.dp,
+                    bottomStart = HistoryTokens.M.BadgeCornerBL,
+                ),
+            )
+            .background(Brush.linearGradient(listOf(HistoryTokens.NewFrom, HistoryTokens.NewTo))),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            fontSize = HistoryTokens.M.BadgeSz,
+            fontWeight = FontWeight.Bold,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = HistoryTokens.M.BadgePadH),
+        )
     }
 }

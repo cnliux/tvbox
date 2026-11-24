@@ -162,7 +162,7 @@ private fun PlatformLiveSitesScreen(
         isEmpty = false,
         emptyMessage = "没有可用平台直播服务",
         onRetry = actions::refreshPlatformLive,
-        columnsOverride = state.appSettings.platformLiveGridColumns,
+        columnsOverride = 0,
     ) {
         item(key = "favorites") {
             PlatformLiveTextCard(
@@ -237,7 +237,7 @@ private fun PlatformLiveParentCategoriesScreen(
         emptyMessage = "没有可用直播大分类",
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
-        columnsOverride = state.appSettings.platformLiveGridColumns,
+        columnsOverride = 0,
     ) {
         itemsIndexed(
             state.platformLiveParentCategories,
@@ -286,7 +286,7 @@ private fun PlatformLiveCategoriesScreen(
         emptyMessage = "没有可用二级分类",
         onRetry = actions::refreshPlatformLive,
         gridState = gridState,
-        columnsOverride = state.appSettings.platformLiveGridColumns,
+        columnsOverride = 0,
     ) {
         itemsIndexed(categories, key = { _, category -> category.id }) { index, category ->
             PlatformLiveCategoryCard(

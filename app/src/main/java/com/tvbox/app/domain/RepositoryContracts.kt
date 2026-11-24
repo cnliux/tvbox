@@ -42,6 +42,8 @@ interface MovieRepository {
     fun setMaxParallelSourceRequests(value: Int) {}
     /** #94 设置多源搜索/详情的单源超时（毫秒）。 */
     fun setPerSourceTimeoutMs(value: Long) {}
+    /** 源失败熔断开关：连续超时的源是否自动休眠一段时间。 */
+    fun setSourceCircuitBreakerEnabled(enabled: Boolean) {}
     suspend fun testSpeed(apiLineId: String): Long?
     suspend fun getCategories(apiLineId: String): List<Category>
     suspend fun getMovies(apiLineId: String, page: Int, typeId: Int? = null, keyword: String? = null): PagedMovies

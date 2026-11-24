@@ -106,7 +106,8 @@ class DefaultAppUpdateRepository(
         currentVersionCode: Long,
         updateChannel: com.tvbox.app.domain.UpdateChannel,
     ): AppUpdate? = withContext(Dispatchers.IO) {
-        val candidates = orderedCandidates(buildOtaManifestCandidates(path = updateChannel.manifestPath))
+        val manifestPath = updateChannel.manifestPath ?: return@withContext null
+        val candidates = orderedCandidates(buildOtaManifestCandidates(path = manifestPath))
         var lastError: Throwable? = null
         for (candidate in candidates) {
             val startedAtMs = System.currentTimeMillis()

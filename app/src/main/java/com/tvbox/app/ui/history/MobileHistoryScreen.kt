@@ -273,12 +273,13 @@ internal fun MobileHistoryScreen(
                         verticalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
                         // 沉浸式 Header：搜索框 + 筛选 Chip 作为第一个 item，随列表一起向上滚动。
+                        // 顶部收紧：搜索框 40→36dp、行间距 10→8dp、底部留白 8→6dp，减少顶部空档。
                         item(key = "history_immersive_header") {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 8.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    .padding(bottom = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
                                 // 第一行：搜索框
                                 Surface(
@@ -287,7 +288,7 @@ internal fun MobileHistoryScreen(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2A2A)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(40.dp),
+                                        .height(36.dp),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp),
@@ -436,7 +437,6 @@ internal fun MobileHistoryScreen(
                                 items(items = section.items, key = { historyItemKey(it) }) { entry ->
                                     val decor = decorCache[entry]
                                         ?: entry.toCoverDecor(pulseEnabled)
-                                    val wasMarkedRead = remember(entry) { mutableStateOf(false) }
 
                                     HistoryCardRow(
                                         item = entry,
@@ -460,11 +460,11 @@ internal fun MobileHistoryScreen(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp)),
                                     )
-                                    // 扁平列表：细分隔线只贯穿右侧文字区域
+                                    // 扁平列表：细分隔线只贯穿右侧文字区域（与文字列左缘对齐）
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(start = 88.dp),
+                                        modifier = Modifier.padding(start = 78.dp),
                                         thickness = HistoryTokens.M.SegH,
-                                        color = Color(0xFF1C1C1C),
+                                        color = HistoryTokens.Divider,
                                     )
                                 }
                             }
