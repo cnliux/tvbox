@@ -2,6 +2,7 @@ package com.tvbox.app.ui.components
 
 import android.graphics.Bitmap
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
@@ -28,6 +29,7 @@ import kotlin.math.roundToInt
  * - RGB_565 无 alpha 海报直接省一半内存；
  * - 内存缓存由 [ImageLoader.kt] 的 maxSizePercent 统一限流。
  */
+@Immutable
 enum class PosterKind(
     /** 缓存 key 后缀：随档位变化，避免同一 url 在不同尺寸下互相挤占。 */
     val tag: String,

@@ -2,7 +2,8 @@
 """T-Q21~T-Q35 十五条探针的汇总入口（T4-29 JSON 契约）。
 
 stdout 只出 JSON；--pretty 时人类可读表格走 stderr。
-退出码：0=通过 1=发现 P1 缺陷 2=环境不可用 3=用法错。
+退出码（tools/_common.py 唯一真源）：0=成功 1=业务失败 2=用法错 3=环境错。
+--json 显式化契约输出；不带 --json 时保持历史输出不变。
 """
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ import json
 import re
 import sys
 from pathlib import Path
+
+from _common import run
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN = ROOT / "app" / "src" / "main"
@@ -92,13 +95,13 @@ PROBES = [
 ]
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--pretty", action="store_true", help="人类可读表格走 stderr")
-    ap.add_argument("--out", default="", help="额外把 JSON 写到指定路径")
-    ap.add_argument("--fail-on", choices=["P0", "P1", "P2", "never"], default="never")
-    args = ap.parse_args()
+def _configure(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--pretty", action="store_true", help="人类可读表格走 stderr")
+    parser.add_argument("--out", default="", help="额外把 JSON 写到指定路径")
+    parser.add_argument("--fail-on", choices=["P0", "P1", "P2", "never"], default="never")
 
+
+def _build(args: argparse.Namespace) -> tuple[int, dict]:
     defects = []
     for pid, title, sev, probe in PROBES:
         try:
@@ -109,19 +112,22 @@ def main() -> int:
         if hit:
             defects.append({"id": pid, "sev": sev, "title": title})
 
-    result = {
-        "schema": 1,
-        "tool": "audit_all",
+    payload = {
         "verdict": "FAIL" if defects else "PASS",
         "probes": len(PROBES),
         "defects": defects,
         "note": "探针为静态启发式；绿灯仅代表未命中已知模式，不等于真机验证。",
     }
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    # 不带 --json 时保持原有「始终输出 JSON」的行为；--json 时由 run() 统一输出契约。
+    if not getattr(args, "json", False):
+        print(json.dumps({"schema": 1, "tool": "audit_all", **payload}, ensure_ascii=False, indent=2))
     if args.out:
         out = Path(args.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        out.write_text(
+            json.dumps({"schema": 1, "tool": "audit_all", **payload}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
     if args.pretty:
         print(f"{'ID':<8} {'SEV':<4} 标题", file=sys.stderr)
@@ -130,10 +136,19 @@ def main() -> int:
         print(f"合计 {len(defects)}/{len(PROBES)} 项命中", file=sys.stderr)
 
     if args.fail_on == "never":
-        return 0
-    order = {"P0": 0, "P1": 1, "P2": 2}
-    threshold = order[args.fail_on]
-    return 1 if any(order[d["sev"]] <= threshold for d in defects) else 0
+        code = 0
+    else:
+        order = {"P0": 0, "P1": 1, "P2": 2}
+        threshold = order[args.fail_on]
+        code = 1 if any(order[d["sev"]] <= threshold for d in defects) else 0
+    return code, {
+        **payload,
+        "errors": [f"{d['id']} {d['title']}" for d in defects],
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run("audit_all", argv, _build, configure=_configure, description=__doc__)
 
 
 if __name__ == "__main__":

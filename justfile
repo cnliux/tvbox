@@ -41,6 +41,10 @@ smoke: build
 audit *ARGS:
     python tools/audit_all.py {{ARGS}}
 
+# T7-44/S7-38：外部 JSON 黄金语料 schema 门禁（只读）
+schema-check:
+    bash tools/check_schema.sh
+
 # Go 长跑基线
 longrun R="6" N="10" S="600":
     cd platform_live_go && go run ./cmd/platform-live-server -host 127.0.0.1 -port 8868 &
@@ -56,7 +60,7 @@ mock:
     python tools/mock_site.py --port 8899 --evil
 
 # 发版前总检查
-release-check: doctor smoke audit
+release-check: doctor smoke audit schema-check
     just longrun 2 2 120
 
 # 发版收尾（T8-52）：自动干 9 步，把必须人工判断的 2 步擦亮了递到面前。

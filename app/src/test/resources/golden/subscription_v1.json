@@ -1,0 +1,29 @@
+{
+  "sites": [
+    {
+      "key": "douyin-hot",
+      "name": "抖音热榜",
+      "type": 1,
+      "api": "https://jm.dkjar.cc/json.php/provide/vod/from/DYGZ",
+      "searchable": 1,
+      "quickSearch": 1,
+      "filterable": 0
+    },
+    {
+      "key": "bb-movie",
+      "name": "哔哩哔哩电影",
+      "type": 1,
+      "api": "https://cj.bytecdn.pro/m3u8.php/provide/vod"
+    },
+    {
+      "key": "legacy-shell",
+      "name": "不支持的爬虫源",
+      "type": 0,
+      "api": "https://legacy.example.com/api.php/provide/vod"
+    }
+  ],
+  "lives": [
+    { "name": "直播-虎牙", "type": "txt", "url": "https://live.example.com/huya.m3u" },
+    { "name": "直播-斗鱼", "type": "txt", "url": "https://live.example.com/douyu.m3u#备用" }
+  ]
+}

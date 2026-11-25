@@ -10,12 +10,17 @@ CI 用 `--check` 验证两者与列表一致，diff 非空则 fail。
 用法：
     python3 tools/gen_nsc.py             # 覆盖生成
     python3 tools/gen_nsc.py --check     # 只校验，不一致退出 1
+
+退出码（tools/_common.py 唯一真源）：0=成功 1=不一致 2=用法错 3=环境错。
+--json 时 stdout 只输出契约 JSON；不带 --json 保持原有输出。
 """
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
+
+from _common import run
 
 # 内置域名（我们主动请求的高敏域，含 OTA / GitHub 代理）。用户自导入的源不在此列，
 # 其 http 兼容仍由 base-config 的 cleartextTrafficPermitted=true 承担。
@@ -107,27 +112,36 @@ def _enum_names(domains: tuple[str, ...]) -> list[str]:
     return names
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _configure(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--root", default=".", help="仓库根目录")
     parser.add_argument("--check", action="store_true", help="只校验生成物是否最新")
-    args = parser.parse_args(argv)
+
+
+def _build(args: argparse.Namespace) -> tuple[int, dict]:
     root = Path(args.root)
 
-    bad = 0
+    errors: list[str] = []
+    generated: list[str] = []
     for path, expected in generated_files(root).items():
         if args.check:
             actual = path.read_text(encoding="utf-8") if path.exists() else ""
             if actual != expected:
-                print(f"::error::{path.relative_to(root)} 与 BUILTIN_DOMAINS 不一致，请运行 python3 tools/gen_nsc.py")
-                bad += 1
+                msg = f"{path.relative_to(root)} 与 BUILTIN_DOMAINS 不一致，请运行 python3 tools/gen_nsc.py"
+                print(f"::error::{msg}")
+                errors.append(msg)
             else:
                 print(f"{path.relative_to(root)}: 已同步")
+                generated.append(path.relative_to(root).as_posix())
         else:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(expected, encoding="utf-8")
             print(f"已生成 {path.relative_to(root)}")
-    return 1 if bad else 0
+            generated.append(path.relative_to(root).as_posix())
+    return (1 if errors else 0), {"errors": errors, "generated": generated, "check": args.check}
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run("gen_nsc", argv, _build, configure=_configure, description=__doc__)
 
 
 if __name__ == "__main__":

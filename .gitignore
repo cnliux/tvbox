@@ -47,6 +47,15 @@ tools/*
 !tools/gen_nsc.py
 # 一起看长跑监控（签名服务自愈 + 随机多轮），需要随仓库复用，避免每次重写。
 !tools/live_longrun_monitor.py
+# T4-29 工具链 JSON 契约 / T7-44 schema 门禁：CI 需要随仓库复用。
+!tools/_common.py
+!tools/gen_oss_notices.py
+!tools/check_action_pins.py
+!tools/check_direct_log.py
+!tools/check_no_secret_in_dex.py
+!tools/pending_todo_lint.py
+!tools/release_verify.py
+!tools/check_schema.sh
 web/
 *.stackdump
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import com.tvbox.app.ui.theme.TvColors
  * 注意：不要在此增加 `focusable()`、`focusGroup()` 或额外的 `focusRequester`；
  * modifier 顺序即 TV 焦点行为，改动会破坏现有焦点顺序和焦点框。
  */
+@Stable
 @Composable
 fun TvFocusableSurface(
     shape: Shape,

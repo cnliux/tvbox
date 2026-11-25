@@ -152,6 +152,8 @@ private fun HeaderActionButton(
         focusedTonalElevation = 5.dp,
         focusedShadowElevation = 8.dp,
         contentMinHeight = 48.dp,
+        // S6-32：顶栏按钮此前只有 Text 标签，读屏只会念「按钮」；补中文语义标签。
+        descriptionText = TvA11y.action(text, "打开"),
     ) { focused ->
         // 顶栏动作按钮的文字高度约 32dp，触摸模式下低于 48dp 最小热区；外层补足并垂直居中。
         Text(
@@ -331,6 +333,8 @@ fun CategoryPill(
         selectedIdleBorder = TvColors.Accent.copy(alpha = 0.7f),
         contentMinHeight = 48.dp,
         contentPadding = PaddingValues(horizontal = 16.dp),
+        // S6-32：分类胶囊此前只有选中态、没有名称标签，TalkBack 无法读出是哪一类。
+        descriptionText = TvA11y.label(label),
         stateText = if (selected) "已选中" else "未选中",
     ) {
         Text(
@@ -628,7 +632,15 @@ fun NewEpisodeBadge(
             modifier
                 .then(Modifier.clickable(role = Role.Button) { onNavigate() })
                 .focusable()
-                .semantics { stateDescription = "跳转到新剧集：${hint.label}" }
+                .semantics {
+                    // S6-32：可点击的更新提示此前只有 stateDescription，缺内容标签。
+                    contentDescription = TvA11y.label(
+                        "新剧集提示",
+                        hint.label,
+                        if (hint.confirmed) "已确认更新" else "仅本机未看",
+                    )
+                    stateDescription = "跳转到新剧集：${hint.label}"
+                }
         } else modifier,
     ) {
         Text(

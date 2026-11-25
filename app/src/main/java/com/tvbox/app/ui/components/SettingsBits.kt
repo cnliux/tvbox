@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
@@ -141,7 +142,11 @@ fun <T> ChoiceChips(
                         else TvColors.SurfaceRaised.copy(alpha = 0.75f)
                     )
                     .clickable(role = Role.Button) { onSelect(option) }
-                    .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
+                    .semantics {
+                        // S6-32：触摸版 chips 此前只有选中态，读屏念不出选项名称。
+                        contentDescription = TvA11y.choice(label(option), isSelected)
+                        stateDescription = if (isSelected) "已选中" else "未选中"
+                    }
                     .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -186,7 +191,11 @@ fun <T> TvChoiceChips(
                     )
                     .tvFocusScale(shape = focusShape)
                     .clickable(role = Role.Button) { onSelect(option) }
-                    .semantics { stateDescription = if (isSelected) "已选中" else "未选中" }
+                    .semantics {
+                        // S6-32：遥控版 chips 此前只有选中态，补完整中文标签。
+                        contentDescription = TvA11y.choice(label(option), isSelected)
+                        stateDescription = if (isSelected) "已选中" else "未选中"
+                    }
                     .focusable()
                     .heightIn(min = 48.dp)
                     .padding(horizontal = 10.dp, vertical = 6.dp),
