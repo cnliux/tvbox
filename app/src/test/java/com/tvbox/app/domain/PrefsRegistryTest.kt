@@ -46,6 +46,40 @@ class PrefsRegistryTest {
         }
     }
 
+    @Test
+    fun t7_45_liveLineQualityRegistered() {
+        // T7-45：线路质量缓存曾漏登，导致 FactoryReset/备份静默跳过
+        assertTrue(
+            "live_line_quality 必须登记在 PrefsRegistry",
+            PrefsRegistry.allNames.contains("live_line_quality")
+        )
+        assertTrue(
+            "live_line_quality 必须参与 PreferencesOnly 档擦除",
+            PrefsRegistry.namesFor(ResetTier.PreferencesOnly).contains("live_line_quality")
+        )
+    }
+
+    @Test
+    fun assertNoOrphanKeys_detectsUnknownKeys() {
+        val observed = setOf("player.seek_step_ms", "seek_step", "remote.profile_schema", "typo_key")
+        val orphans = PrefsKeys.assertNoOrphanKeys(observed)
+        assertEquals(setOf("typo_key"), orphans)
+    }
+
+    @Test
+    fun assertNoOrphanKeys_registeredKeysAreNotOrphans() {
+        val observed = PrefsKeys.all.map { it.name }.toSet()
+        assertTrue("已登记键不应被判为孤儿", PrefsKeys.assertNoOrphanKeys(observed).isEmpty())
+    }
+
+    @Test
+    fun canonicalize_mapsRenamedKeyToCanonicalName() {
+        val result = PrefsKeys.canonicalize(mapOf("seek_step" to 5_000, "probe.ua_override" to "x"))
+        assertEquals(5_000, result["player.seek_step_ms"])
+        assertEquals("x", result["probe.ua_override"])
+        assertFalse("旧键应被改写为规范名", result.containsKey("seek_step"))
+    }
+
     private fun assertNotNull(value: Any?) {
         if (value == null) throw AssertionError("字段不应为 null")
     }

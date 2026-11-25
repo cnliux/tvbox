@@ -55,6 +55,11 @@ object PrefsRegistry {
             tiers = setOf(ResetTier.PreferencesOnly, ResetTier.PreferencesSourcesNetwork, ResetTier.All),
             inBackup = true, wipedOnReset = true),
 
+        // T7-45：线路质量缓存此前漏登，导致 FactoryReset/备份静默跳过该文件。
+        Entry("live_line_quality", "live",
+            tiers = setOf(ResetTier.PreferencesOnly, ResetTier.PreferencesSourcesNetwork, ResetTier.All),
+            inBackup = true, wipedOnReset = true),
+
         Entry("live_channel_search_history", "live",
             tiers = setOf(ResetTier.PreferencesOnly, ResetTier.PreferencesSourcesNetwork, ResetTier.All),
             inBackup = true, wipedOnReset = true),
@@ -235,4 +240,22 @@ object PrefsKeys {
 
     /** 返回某键的规范名（若来自 renamedFrom 则回填规范名）。 */
     fun canonicalName(raw: String): String = all.firstOrNull { it.renamedFrom == raw }?.name ?: raw
+
+    /**
+     * T7-45：孤儿键自检。传入从 prefs 文件实际读出的键名集合，
+     * 返回其中「既不是当前规范名、也不是已登记旧名」的键。
+     *
+     * 纯函数、无 Android 依赖，便于在 JVM 单测与 CI 门禁中复用。
+     * 调用方应把结果视为告警而非直接删除——孤儿键可能是尚未迁移的历史数据，
+     * 直接删会丢用户设置。
+     */
+    fun assertNoOrphanKeys(observed: Set<String>): Set<String> =
+        observed.filterNot { isRegistered(it) }.toSet()
+
+    /**
+     * T7-45：把观测到的键值对按 [renamedFrom] 映射为规范名，供搬迁时写入。
+     * 同名键原样保留；旧名键改为规范名；未登记键原样保留（交给 [assertNoOrphanKeys] 告警）。
+     */
+    fun canonicalize(values: Map<String, Any?>): Map<String, Any?> =
+        values.mapKeys { (key, _) -> canonicalName(key) }
 }

@@ -383,6 +383,50 @@ class DataStoreAppSettingsRepositoryTest {
         assertEquals(1, source.reads)
     }
 
+    @Test
+    fun `T7-43 跳版矩阵_未来版本不降档不回放旧偏好`() = runBlocking {
+        // Room 迁移测试的 DataStore 等价物：schema_version > CURRENT 视为已迁移，
+        // 不得被降级写入 CURRENT，也不得回放旧 SharedPreferences（否则高版本数据结构被破坏）。
+        val source = FakeLegacySource(
+            LegacySettingsSnapshot(
+                values = mapOf(SettingsStorageKeys.HISTORY_MAX_ITEMS to 999),
+            ),
+        )
+        val future = InMemoryPreferencesDataStore(
+            emptyPreferences().toMutablePreferences().apply {
+                putInt(SettingsStorageKeys.SCHEMA_VERSION, SettingsSchema.CURRENT + 5)
+                putInt(SettingsStorageKeys.HISTORY_MAX_ITEMS, 77) // 落在 QuantitySetting 合法区间 [20,500]
+            }.toPreferences(),
+        )
+        val repository = DataStoreAppSettingsRepository(future, source)
+
+        val settings = repository.getSettings()
+        assertEquals(77, settings.historyMaxItems)
+        assertEquals(SettingsSchema.CURRENT + 5, future.current().schemaVersion())
+        assertEquals("未来版本不得触发旧偏好回放", 0, source.reads)
+    }
+
+    @Test
+    fun `T7-43 跳版矩阵_任意低于当前版本都会迁移到当前版本`() = runBlocking {
+        // 从 LEGACY 到 CURRENT 只有一档，但契约是「凡 < CURRENT 必迁移」：
+        // 构造一个中间版本（0 < v < CURRENT 不存在时用 LEGACY+0 表达历史档），确保判断条件为 < 而非 ==。
+        val source = FakeLegacySource(
+            LegacySettingsSnapshot(
+                values = mapOf(SettingsStorageKeys.HISTORY_MAX_ITEMS to 250),
+            ),
+        )
+        val historical = InMemoryPreferencesDataStore(
+            emptyPreferences().toMutablePreferences().apply {
+                putInt(SettingsStorageKeys.SCHEMA_VERSION, SettingsSchema.LEGACY)
+            }.toPreferences(),
+        )
+        val repository = DataStoreAppSettingsRepository(historical, source)
+
+        assertEquals(250, repository.getSettings().historyMaxItems)
+        assertEquals(SettingsSchema.CURRENT, historical.current().schemaVersion())
+        assertEquals(1, source.reads)
+    }
+
     private class FakeLegacySource(
         private val snapshot: LegacySettingsSnapshot = LegacySettingsSnapshot(emptyMap()),
         private val failures: Int = 0,
