@@ -167,7 +167,7 @@ fun PlayerScreen(
         bufferTargetMs = playbackSettings.bufferTargetMs,
         audioOutputMode = playbackSettings.audioOutputMode,
     )
-    val playbackHost = rememberPlaybackHostOrNull(player)!!
+    val playbackHost = rememberPlaybackHost(player)
     // 系统媒体键（含电视遥控器多媒体键/耳机线控）在应用未获焦时也能控制播放/暂停与快进快退。
     rememberPlayerMediaSession(player = player)
     // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。

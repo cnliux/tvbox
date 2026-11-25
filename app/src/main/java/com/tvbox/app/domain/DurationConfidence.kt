@@ -24,7 +24,8 @@ fun durationConfidence(shape: ResponseShape): DurationConfidence {
         if (total != null && total > 0L) return DurationConfidence.HIGH
     }
     val chunked = shape.transferEncoding?.contains("chunked", ignoreCase = true) == true
-    if (!chunked && shape.contentLength != null && shape.contentLength!! > 0L) {
+    val contentLength = shape.contentLength
+    if (!chunked && contentLength != null && contentLength > 0L) {
         return DurationConfidence.LOW
     }
     return DurationConfidence.NONE

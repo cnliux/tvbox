@@ -135,8 +135,9 @@ object M3uTagLexer {
                 }
                 '"' -> { inQuote = true; sb.setLength(0) }
                 ',' -> {
-                    if (key != null) {
-                        result[key!!] = sb.toString().trim()
+                    val currentKey = key
+                    if (currentKey != null) {
+                        result[currentKey] = sb.toString().trim()
                         key = null
                         sb.setLength(0)
                     } else {
@@ -152,8 +153,9 @@ object M3uTagLexer {
             }
             index++
         }
-        if (key != null) {
-            result[key!!] = sb.toString().trim()
+        val finalKey = key
+        if (finalKey != null) {
+            result[finalKey] = sb.toString().trim()
         } else if (sb.isNotBlank()) {
             result.putIfAbsent("name", sb.toString().trim())
         }

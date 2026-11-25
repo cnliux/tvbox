@@ -28,8 +28,10 @@ class SharedHistoryRepository internal constructor(
     // 实际使用的 SharedPreferences：测试时由 testPrefs 注入，生产时从 appContext 懒加载。
     private val prefs: android.content.SharedPreferences
         get() = testPrefs ?: run {
-            check(appContext != null) { "SharedHistoryRepository needs either a Context or injected test SharedPreferences" }
-            appContext!!.applicationContext.getSharedPreferences("watch_history", Context.MODE_PRIVATE)
+            val ctx = appContext ?: throw IllegalStateException(
+                "SharedHistoryRepository needs either a Context or injected test SharedPreferences"
+            )
+            ctx.applicationContext.getSharedPreferences("watch_history", Context.MODE_PRIVATE)
         }
     private val mutex = Mutex()
     private val json = Json {

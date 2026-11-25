@@ -138,10 +138,10 @@ internal class PlaybackHost(
 internal fun rememberPlaybackHost(
     decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
     audioOutputMode: String = "auto",
-): PlaybackHost =
-    rememberPlaybackHostOrNull(
-        rememberManagedExoPlayer(decoderStrategy, audioOutputMode = audioOutputMode),
-    )!!
+): PlaybackHost {
+    val player = rememberManagedExoPlayer(decoderStrategy, audioOutputMode = audioOutputMode)
+    return rememberPlaybackHost(player)
+}
 
 /**
  * 平台直播在解析出可播地址前没有播放器实例；此重载让其余页面共用同一份快照逻辑。
@@ -166,6 +166,32 @@ internal fun rememberPlaybackHostOrNull(
                     host.refreshSnapshot()
                     delay(PLAYBACK_SNAPSHOT_INTERVAL_MS)
                 }
+            }
+        }
+    }
+    return host
+}
+
+/**
+ * 非空播放器重载：`rememberManagedExoPlayer` 总是返回非空实例，因此无需走 nullable 分支，
+ * 调用方也不再用 `!!` 拆包。
+ */
+@Composable
+internal fun rememberPlaybackHost(
+    player: ExoPlayer,
+    resetKey: Any? = null,
+): PlaybackHost {
+    val host = remember(player, resetKey) { PlaybackHost(player) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(host) {
+        host.attach()
+        onDispose { host.detach() }
+    }
+    LaunchedEffect(host, lifecycleOwner) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (true) {
+                host.refreshSnapshot()
+                delay(PLAYBACK_SNAPSHOT_INTERVAL_MS)
             }
         }
     }

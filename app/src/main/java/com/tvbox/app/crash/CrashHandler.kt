@@ -77,7 +77,7 @@ object CrashHandler {
     @Synchronized
     fun recordOperation(operation: String, detail: String? = null) {
         val text = if (detail.isNullOrBlank()) operation else "$operation | $detail"
-        val ts = OPERATION_TIME_FORMAT.get()!!.format(System.currentTimeMillis())
+        val ts = checkNotNull(OPERATION_TIME_FORMAT.get()).format(System.currentTimeMillis())
         recentOperations.addLast("$ts  $text")
         while (recentOperations.size > MAX_RECENT_OPERATIONS) {
             recentOperations.removeFirst()
@@ -241,7 +241,7 @@ object CrashHandler {
         val dir = logDir() ?: return null
         if (!dir.exists() && !dir.mkdirs()) return null
 
-        val timestamp = CRASH_FILE_TIME_FORMAT.get()!!.format(System.currentTimeMillis())
+        val timestamp = checkNotNull(CRASH_FILE_TIME_FORMAT.get()).format(System.currentTimeMillis())
         // 线程名可能带房间号/路径分隔符，做白名单化后再当文件名。
         val safeThread = thread.name.replace(THREAD_NAME_SAFE_REGEX, "_").take(40).ifBlank { "thread" }
         val file = File(dir, "crash_${timestamp}_$safeThread.txt")

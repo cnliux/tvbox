@@ -175,7 +175,8 @@ class MainActivity : ComponentActivity() {
                 .getInt(LegalTerms.VERSION_KEY, -1)
             val h = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
                 .getString(LegalTerms.HASH_KEY, null)
-            val ack = if (v >= 0 && !h.isNullOrBlank()) LegalTerms.Ack(v, h!!, System.currentTimeMillis()) else null
+            val hash = h?.takeIf { it.isNotBlank() }
+            val ack = if (v >= 0 && hash != null) LegalTerms.Ack(v, hash, System.currentTimeMillis()) else null
             LegalTerms.requiresAcknowledgement(ack)
         }
 

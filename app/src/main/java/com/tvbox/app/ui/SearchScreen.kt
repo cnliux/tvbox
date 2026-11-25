@@ -212,10 +212,14 @@ fun SearchScreen(
         ) {
             val wideLayout = maxWidth >= 860.dp
             // 字母浏览：从当前影片目录过滤出以选中首字母开头的影片（仅在宽屏启用）。
-            val alphaMovies = if (wideLayout && selectedInitial != null) {
-                val letter = selectedInitial!!
-                state.movies.filter { movie ->
-                    PinyinInitialsMatcher.firstInitial(movie.name)?.uppercaseChar()?.toString() == letter
+            val alphaMovies = if (wideLayout) {
+                val letter = selectedInitial
+                if (letter != null) {
+                    state.movies.filter { movie ->
+                        PinyinInitialsMatcher.firstInitial(movie.name)?.uppercaseChar()?.toString() == letter
+                    }
+                } else {
+                    null
                 }
             } else {
                 null
