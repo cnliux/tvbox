@@ -2,11 +2,15 @@ package com.tvbox.app.domain
 
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.domain.DurationConfidence
+import com.tvbox.app.domain.ResponseShape
+import com.tvbox.app.domain.durationConfidence
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import okhttp3.Response
 import java.nio.charset.Charset
 import java.util.Collections
 import java.util.LinkedHashMap
@@ -25,6 +29,8 @@ import java.util.LinkedHashMap
  */
 private const val LIVE_PROBE_LOG_TAG = "TVBoxLiveSource"
 private const val LIVE_PROBE_READ_BYTES = 4096
+/** T1-04：GET Range 兜底探活的最大字节数（用于获取 Content-Length / Content-Range）。 */
+private const val LIVE_PROBE_FALLBACK_RANGE_END = 65535L
 
 /** MIME 缺失或无法识别，交给播放器自行判断（保持原有行为）。 */
 const val LIVE_MIME_UNKNOWN = ""
@@ -221,30 +227,82 @@ suspend fun measureLiveLineLatencyMs(
     url: String,
     headers: Map<String, String> = emptyMap(),
 ): Long? {
-    if (!url.startsWith("http", ignoreCase = true)) return null
+    val (latency, _) = probeLiveLineLatencyWithConfidence(url, headers)
+    return latency
+}
+
+/**
+ * T1-04：HEAD 优先测速，失败后 GET Range:0-65535 兜底。
+ *
+ * 先尝试 HEAD：CDN 通常支持 HEAD，无需下载任何字节即可获得 Content-Length / Content-Range，
+ * 便于计算 [DurationConfidence]；当服务端拒绝 HEAD（405/404）时退回到 GET 小范围读取。
+ * 返回 Pair<延迟毫秒, 时长可信度>，任何阶段失败均返回 (null, NONE)。
+ */
+suspend fun probeLiveLineLatencyWithConfidence(
+    url: String,
+    headers: Map<String, String> = emptyMap(),
+): Pair<Long?, DurationConfidence> {
+    if (!url.startsWith("http", ignoreCase = true)) return null to DurationConfidence.NONE
     return withContext(Dispatchers.IO) {
         try {
-            val builder = Request.Builder()
-                .url(url)
-                .header("Range", "bytes=0-${LIVE_PROBE_READ_BYTES - 1}")
-            headers.sanitizedForHttp().forEach { (key, value) ->
-                builder.header(key, value)
-            }
-            val startedAt = System.currentTimeMillis()
-            HttpClients.probe.executeCancellable(builder.build()).use { response ->
-                if (!response.isSuccessful) return@use null
-                // 读到首字节即可结束：这才是播放器真正开始出画的时间点。
-                response.body.byteStream().use { stream ->
-                    val first = stream.read()
-                    if (first < 0) null else System.currentTimeMillis() - startedAt
+            // ── Step 1：先发 HEAD，省流量，同时拿响应形状算置信度 ──
+            val headBuilder = Request.Builder().head().url(url)
+            headers.sanitizedForHttp().forEach { (key, value) -> headBuilder.header(key, value) }
+            var confidence = DurationConfidence.NONE
+            HttpClients.probe.executeCancellable(headBuilder.build()).use { response ->
+                when {
+                    response.isSuccessful -> {
+                        confidence = shapeFromResponse(response).let(::durationConfidence)
+                    }
+                    response.code == 405 || response.code == 404 -> {
+                        // 服务端不支持 HEAD，降级到 GET Range 兜底
+                        confidence = probeGetRangeFallback(url, headers)?.let(::shapeFromResponse)?.let(::durationConfidence) ?: DurationConfidence.NONE
+                    }
+                    else -> return@withContext null to DurationConfidence.NONE
                 }
             }
+            // HEAD 成功但未提供 content-range/content-length（多数流媒体场景），落到 GET 取实际首字节延迟
+            if (confidence != DurationConfidence.NONE) {
+                // HEAD 本身无 body，用 HEAD RTT 作为延迟近似值并附带可信度
+                return@withContext System.currentTimeMillis() to confidence
+            }
+            // 兜底 GET：读首字节计时
+            probeGetRangeFallback(url, headers)?.let { resp ->
+                val startedAt = System.currentTimeMillis()
+                resp.body.byteStream().use { stream ->
+                    val first = stream.read()
+                    if (first >= 0) {
+                        return@withContext (System.currentTimeMillis() - startedAt) to confidence
+                    }
+                }
+            }
+            null to confidence
         } catch (cancelled: CancellationException) {
-            // 切台/离页取消必须立即透传，不能像探测失败那样被吞成 null（与
-            // probeLiveLineMimeType 保持一致），否则测速协程会拖到短超时才结束。
             throw cancelled
         } catch (_: Throwable) {
-            null
+            null to DurationConfidence.NONE
         }
     }
 }
+
+/** GET Range:0-65535 兜底探活：读首字节计时并解析响应形状。 */
+private suspend fun probeGetRangeFallback(
+    url: String,
+    headers: Map<String, String>,
+): Response? = withContext(Dispatchers.IO) {
+    runCatching {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Range", "bytes=0-$LIVE_PROBE_FALLBACK_RANGE_END")
+        headers.sanitizedForHttp().forEach { (key, value) -> builder.header(key, value) }
+        HttpClients.probe.executeCancellable(builder.build())
+    }.getOrNull()?.takeIf { it.isSuccessful }
+}
+
+/** 从响应中提取 [ResponseShape]，供 [DurationConfidence] 计算使用。 */
+private fun shapeFromResponse(response: Response): ResponseShape = ResponseShape(
+    status = response.code,
+    contentRange = response.header("Content-Range"),
+    contentLength = response.header("Content-Length")?.toLongOrNull(),
+    transferEncoding = response.header("Transfer-Encoding"),
+)

@@ -26,7 +26,8 @@ app/libs/
 
 # 本地调试/文档/工具/UI 调参页（不推送到 GitHub，保留本地）
 # 例外：tools/bind-platform-live.* 是 CI 构建 platformlive.aar 的必需脚本（build.gradle.kts/release.yml 引用），保持入库。
-LOCAL_DEV.md
+# 本地私有版（设备 IP / 密钥路径）；公开版 LOCAL_DEV.md 入库
+LOCAL_DEV.local.md
 STABILITY_REPORT.md
 devLog/
 # 过程文档（代码审查、缺陷修复报告、改造台账、方案计划）只留本地，不入版本库；
@@ -37,6 +38,13 @@ plan/
 tools/*
 !tools/bind-platform-live.sh
 !tools/bind-platform-live.ps1
+!tools/doctor.sh
+!tools/doctor.ps1
+!tools/verify_release_smoke.sh
+!tools/verify_release_smoke.ps1
+!tools/audit_all.py
+!tools/watch.sh
+!tools/gen_nsc.py
 # 一起看长跑监控（签名服务自愈 + 随机多轮），需要随仓库复用，避免每次重写。
 !tools/live_longrun_monitor.py
 web/

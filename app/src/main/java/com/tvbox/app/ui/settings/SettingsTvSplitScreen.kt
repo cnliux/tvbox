@@ -78,17 +78,25 @@ import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.HistoryPolicy
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.DirectTuneTimeout
 import com.tvbox.app.domain.ThemeAccent
 import com.tvbox.app.domain.AUDIO_OUTPUT_MODE_OPTIONS
 import com.tvbox.app.domain.audioOutputModeLabel
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
+import com.tvbox.app.domain.PlayerControlLayout
+import com.tvbox.app.domain.PlayerSurface
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.RemoteKeyAction
 import com.tvbox.app.domain.RemoteKeyBindings
+import com.tvbox.app.domain.keepOnly
+import com.tvbox.app.domain.learnKey
+import com.tvbox.app.ui.settings.remote.RemoteProfileDialog
+import com.tvbox.app.ui.settings.remote.remoteBindingRows
 import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.ui.TvBoxUiState
@@ -579,6 +587,7 @@ private fun TvSearchDetail(state: TvBoxUiState) {
 private fun TvControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showShortcutHelp by remember { mutableStateOf(false) }
     var showKeyBindingEditor by remember { mutableStateOf(false) }
+    var showProfileDialog by remember { mutableStateOf(false) }
     TvSettingsGroup {
         // #224：遥控器快捷键说明入口（纯 UI，键位参考 PlayerInput.kt / TvBoxApp.kt）。
         TvSettingsRow(
@@ -598,6 +607,75 @@ private fun TvControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             trailing = {
                 TvFocusButton(text = "编辑", onClick = { showKeyBindingEditor = true })
             },
+        )
+        SettingsGroupDivider()
+        TvSettingsRow(
+            icon = Icons.Default.Settings,
+            title = "遥控器预设与迁移",
+            subtitle = "标准 / 老盒子 / 无障碍 · 导出导入 remote_profile.json",
+            trailing = {
+                TvFocusButton(text = "管理", onClick = { showProfileDialog = true })
+            },
+        )
+    }
+    // 三类播放器按钮按场景独立增删；核心控件（播放/切集/切台/切房/返回）始终显示。
+    TvSettingsGroup {
+        TvSettingsRow(
+            icon = Icons.Default.Build,
+            title = "播放器按钮（按场景）",
+            subtitle = "点播 / 电视直播 / 平台直播各自独立配置",
+            trailing = {},
+        )
+        SettingsGroupDivider()
+        PlayerSurface.entries.forEach { surface ->
+            TvSettingsRow(
+                icon = Icons.Default.Build,
+                title = "— ${surface.label} —",
+                subtitle = "该场景的默认按钮集合",
+                trailing = {},
+            )
+            SettingsGroupDivider()
+            PlayerControlLayout.configurableButtons(surface).forEach { button ->
+                TvSettingsRow(
+                    icon = Icons.Default.Build,
+                    title = button.displayName,
+                    subtitle = "${surface.label}：显示「${button.displayName}」按钮",
+                    trailing = {
+                        Switch(
+                            checked = PlayerControlLayout.isVisible(
+                                state.appSettings.playerHiddenControlsBySurface, surface, button,
+                            ),
+                            onCheckedChange = { visible ->
+                                actions.updateAppSettings { s ->
+                                    s.copy(
+                                        playerHiddenControlsBySurface = PlayerControlLayout.setVisible(
+                                            s.playerHiddenControlsBySurface, surface, button, visible,
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                    },
+                )
+                SettingsGroupDivider()
+            }
+        }
+        TvSettingsRow(
+            icon = Icons.Default.Build,
+            title = "恢复三个场景默认按钮",
+            subtitle = "清空所有场景的自定义隐藏项",
+            trailing = {
+                TvFocusButton(text = "恢复", onClick = {
+                    actions.updateAppSettings { s -> s.copy(playerHiddenControlsBySurface = emptyMap()) }
+                })
+            },
+        )
+    }
+    if (showProfileDialog) {
+        RemoteProfileDialog(
+            bindings = state.appSettings.remoteKeyBindings,
+            onApply = { next -> actions.updateAppSettings { s -> s.copy(remoteKeyBindings = next) } },
+            onDismiss = { showProfileDialog = false },
         )
     }
     if (showShortcutHelp) {
@@ -636,6 +714,16 @@ private fun TvControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
             onReset = {
                 actions.updateAppSettings { s -> s.copy(remoteKeyBindings = RemoteKeyBindings.Default) }
+            },
+            onLearn = { action, deviceId, keyCode, scanCode ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.learnKey(action, deviceId, keyCode, scanCode))
+                }
+            },
+            onKeep = { action, keyCode ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.keepOnly(action, keyCode))
+                }
             },
             onDismiss = { showKeyBindingEditor = false },
         )
@@ -692,6 +780,20 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                     setting = QuantitySettings.LiveNumberSearchLimit,
                     selected = state.appSettings.liveNumberSearchLimit,
                     onSelect = actions::updateLiveNumberSearchLimit,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "数字选台超时",
+            subtitle = DirectTuneTimeout.displayName(state.appSettings.liveNumberAutoCommitMs),
+            trailing = {
+                TvChoiceChips(
+                    options = DirectTuneTimeout.choices,
+                    selected = state.appSettings.liveNumberAutoCommitMs,
+                    label = { DirectTuneTimeout.displayName(it) },
+                    onSelect = actions::updateLiveNumberAutoCommitMs,
                 )
             },
         )
@@ -824,6 +926,36 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
             },
         )
         SettingsGroupDivider()
+        // S1-06：观看历史记录策略三档（完整 / 仅片名 / 关闭）。
+        TvSettingsRow(
+            icon = Icons.Default.Delete,
+            title = "历史记录策略",
+            subtitle = historyPolicySummary(state.appSettings.historyPolicy),
+            trailing = {
+                TvChoiceChips(
+                    options = HistoryPolicy.entries,
+                    selected = state.appSettings.historyPolicy,
+                    label = { it.displayName },
+                    onSelect = actions::updateHistoryPolicy,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        // S1-06：搜索历史存活天数。
+        TvSettingsRow(
+            icon = Icons.Default.Delete,
+            title = "搜索历史保留",
+            subtitle = searchHistoryTtlSummary(state.appSettings.searchHistoryTtlDays),
+            trailing = {
+                TvChoiceChips(
+                    options = listOf(0, 1, 7, 30, 90, 365),
+                    selected = state.appSettings.searchHistoryTtlDays,
+                    label = { searchHistoryTtlSummary(it) },
+                    onSelect = actions::updateSearchHistoryTtlDays,
+                )
+            },
+        )
+        SettingsGroupDivider()
         // #318 历史隐私模式：只阻止新记录写入，不清空已有历史。
         TvSettingsRow(
             icon = Icons.Default.Delete,
@@ -871,6 +1003,7 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
 @Composable
 private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showPrivacyPolicy by remember { mutableStateOf(false) }
+    var showOssNotices by remember { mutableStateOf(false) }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Info,
@@ -896,6 +1029,15 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
         SettingsGroupDivider()
         TvSettingsRow(
             icon = Icons.Default.Info,
+            title = "开源许可",
+            subtitle = "查看全部第三方依赖的许可证与版权声明",
+            trailing = {
+                TvFocusButton(text = "查看", onClick = { showOssNotices = true })
+            },
+        )
+        SettingsGroupDivider()
+        TvSettingsRow(
+            icon = Icons.Default.Info,
             title = "隐私政策",
             subtitle = "本地数据处理与网络访问说明",
             trailing = {
@@ -916,6 +1058,9 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
 
+        if (showOssNotices) {
+            OssNoticesDialog(onDismiss = { showOssNotices = false })
+        }
         if (showPrivacyPolicy) {
             AlertDialog(
                 onDismissRequest = { showPrivacyPolicy = false },
@@ -934,9 +1079,9 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 /**
  * TV 端自定义键位绑定编辑器：与手机端「自定义键位绑定」同语义，但全部用遥控器操作。
  * - 先聚焦「监听按键」按确认开始捕获，再按实体遥控键得到键码；
- * - 上下移动焦点到目标动作行，按确认把已捕获的键码追加到该动作；
+ * - 上下移动焦点到目标动作行，按确认把已捕获的键码设为该动作；
  * - 用户自定义过的动作显示 ✕，聚焦后按确认清除该动作的自定义键。
- * 默认绑定始终生效，自定义键是「追加」而非替换，避免改绑后丢常用键。
+ * 自定义键会「替换」该动作的默认键；清除自定义则恢复默认。
  */
 @Composable
 private fun TvRemoteKeyBindingEditorDialog(
@@ -944,9 +1089,13 @@ private fun TvRemoteKeyBindingEditorDialog(
     onAssign: (RemoteKeyAction, Int) -> Unit,
     onClear: (RemoteKeyAction) -> Unit,
     onReset: () -> Unit,
+    onLearn: (RemoteKeyAction, String, Int, Int) -> Unit,
+    onKeep: (RemoteKeyAction, Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var pendingKey by remember { mutableStateOf<Int?>(null) }
+    var pendingScan by remember { mutableStateOf(0) }
+    var pendingDevice by remember { mutableStateOf("") }
     var listening by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -966,7 +1115,10 @@ private fun TvRemoteKeyBindingEditorDialog(
                             // 捕获态：吃掉硬件键码，其余键不拦截（交给焦点系统）。
                             Modifier.onKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyDown) {
-                                    pendingKey = event.nativeKeyEvent.keyCode
+                                    val native = event.nativeKeyEvent
+                                    pendingKey = native.keyCode
+                                    pendingScan = native.scanCode
+                                    pendingDevice = native.deviceId.toString()
                                     listening = false
                                     true
                                 } else {
@@ -989,7 +1141,8 @@ private fun TvRemoteKeyBindingEditorDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "按键码：${pendingKey?.let { "0x%03X".format(it) } ?: "未选择"}",
+                        text = "按键码：${pendingKey?.let { "0x%03X".format(it) } ?: "未选择"}" +
+                            " · scanCode：${if (pendingScan > 0) "0x%03X".format(pendingScan) else "不支持"}",
                         style = MaterialTheme.typography.bodyMedium,
                     )
                     TvFocusButton(
@@ -998,19 +1151,21 @@ private fun TvRemoteKeyBindingEditorDialog(
                         onClick = { listening = true },
                     )
                 }
+                Text(
+                    text = "绑定时同时记录 scanCode，用于区分同 keyCode 的物理键；冲突项在下方以红字标出。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextSecondary,
+                )
                 HorizontalDivider()
                 Column(
                     modifier = Modifier.heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
-                    RemoteKeyAction.entries.forEach { action ->
-                        val keys = current.keysFor(action)
-                        val customKeys = current.custom[action.id].orEmpty()
-                        val summary = if (keys.isEmpty()) {
-                            "未绑定"
-                        } else {
-                            keys.sorted().joinToString(" / ") { "0x%03X".format(it) }
-                        }
+                    val rows = remoteBindingRows(current)
+                    rows.forEach { row ->
+                        val keys = current.keysFor(row.action)
+                        val action = row.action
+                        val conflict = row.conflicts.firstOrNull()
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -1018,16 +1173,29 @@ private fun TvRemoteKeyBindingEditorDialog(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = action.displayName,
+                                    text = row.displayName,
                                     style = MaterialTheme.typography.bodyMedium,
                                 )
                                 Text(
-                                    text = summary,
+                                    text = row.boundKeysSummary,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (keys.isEmpty()) TvColors.TextSecondary else TvColors.Accent,
                                 )
+                                if (conflict != null) {
+                                    Text(
+                                        text = "⚠ ${conflict.summary}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = TvColors.Danger,
+                                    )
+                                }
                             }
-                            if (customKeys.isNotEmpty()) {
+                            if (conflict != null) {
+                                TvFocusButton(
+                                    text = "仅保留此键",
+                                    onClick = { onKeep(action, conflict.keyCode) },
+                                )
+                            }
+                            if (row.hasCustomBinding) {
                                 TvFocusButton(
                                     text = "✕ 清除",
                                     onClick = { onClear(action) },
@@ -1039,6 +1207,7 @@ private fun TvRemoteKeyBindingEditorDialog(
                                     onClick = {
                                         val code = pendingKey ?: return@TvFocusButton
                                         onAssign(action, code)
+                                        if (pendingScan > 0) onLearn(action, pendingDevice, code, pendingScan)
                                     },
                                 )
                             }
@@ -1046,7 +1215,7 @@ private fun TvRemoteKeyBindingEditorDialog(
                     }
                 }
                 Text(
-                    text = "默认绑定始终生效，自定义键是「追加」而非替换，避免改绑后丢常用键。",
+                    text = "自定义键会「替换」该动作的默认键；清除自定义则恢复默认。",
                     style = MaterialTheme.typography.bodySmall,
                     color = TvColors.TextSecondary,
                 )

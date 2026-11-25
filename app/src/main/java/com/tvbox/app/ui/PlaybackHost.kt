@@ -15,6 +15,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.tvbox.app.domain.DecoderStrategy
+import com.tvbox.app.domain.PlaybackFailureCode
 import kotlinx.coroutines.delay
 
 /** 播放器可观察快照：四处播放页统一从这一份状态读进度、时长与播放意图。 */
@@ -182,6 +183,18 @@ internal fun playbackErrorMessage(errorCode: Int): String = when (errorCode) {
     PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
     -> "当前线路格式不支持，正在尝试其他线路"
     else -> "播放失败，正在尝试其他线路"
+}
+
+/**
+ * T3-22：把 ExoPlayer 错误码映射为结构化 [PlaybackFailureCode]。
+ * 返回 null 表示没有更精确的归属，由调用方回退到 [playbackErrorMessage]。
+ */
+internal fun failureCodeFromExo(errorCode: Int): PlaybackFailureCode? = when (errorCode) {
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> PlaybackFailureCode.ConnectionRefused
+    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> PlaybackFailureCode.ConnectionRefused
+    PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS -> PlaybackFailureCode.ForbiddenOrGone
+    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> PlaybackFailureCode.ContainerUnsupported
+    else -> null
 }
 
 internal const val PLAYBACK_SNAPSHOT_INTERVAL_MS = 250L

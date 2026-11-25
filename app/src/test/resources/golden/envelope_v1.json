@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "kind": "source_config",
+  "minReader": 1,
+  "createdBy": "1/1",
+  "checksum": "aabbccdd0000111122223333444455556666777788889999aaaabbbbccccdddd",
+  "format": "tvbox-source-backup",
+  "version": "1",
+  "sites": [
+    { "id": "douyin-hot", "name": "抖音热榜", "api": "https://jm.dkjar.cc/json.php/provide/vod/from/DYGZ" },
+    { "id": "bb-movie", "name": "哔哩哔哩电影", "api": "https://cj.bytecdn.pro/m3u8.php/provide/vod" }
+  ],
+  "lives": [
+    "https://live.example.com/huya.m3u",
+    "https://live.example.com/douyu.m3u"
+  ],
+  "order": ["douyin-hot", "bb-movie"],
+  "weights": { "douyin-hot": 10, "bb-movie": 8 }
+}

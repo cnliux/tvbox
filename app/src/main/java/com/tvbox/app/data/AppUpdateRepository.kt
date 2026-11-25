@@ -779,6 +779,7 @@ internal fun parseAppUpdateManifest(
         apkMirrors = dto.apkMirrors.map { it.trim() }
             .filter(::isSecureOtaUrl)
             .distinct(),
+        releaseHighlights = dto.releaseHighlights.map { it.trim() }.filter { it.isNotBlank() },
     )
 }
 
@@ -800,6 +801,8 @@ private data class UpdateManifestDto(
     @SerialName("minVersionCode") val minVersionCode: Long = 0L,
     /** 清单发布通道：`stable`（正式）或 `canary`（预览），缺省按正式通道处理。 */
     @SerialName("channel") val channel: String = "stable",
+    /** S7-40：CHANGELOG「你会感觉到」三行；老清单缺省为空。 */
+    @SerialName("release_highlights") val releaseHighlights: List<String> = emptyList(),
 )
 
 private const val USER_AGENT = "TVBox-Android"
@@ -924,6 +927,7 @@ private fun UpdateManifestDto.toDomain() = AppUpdate(
     versionCode, versionName, apkUrl, apkSha256, apkSize, force, changelog, apkMirrors,
     minVersionCode = minVersionCode,
     channel = channel,
+    releaseHighlights = releaseHighlights,
 )
 
 private fun AppUpdate.toManifestDto() = UpdateManifestDto(
@@ -937,4 +941,5 @@ private fun AppUpdate.toManifestDto() = UpdateManifestDto(
     apkMirrors = apkMirrors,
     minVersionCode = minVersionCode,
     channel = channel,
+    releaseHighlights = releaseHighlights,
 )

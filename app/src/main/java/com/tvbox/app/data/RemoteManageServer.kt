@@ -1,6 +1,8 @@
 package com.tvbox.app.data
 
-import android.util.Log
+import com.tvbox.app.util.TLog
+import com.tvbox.app.domain.RemoteLoginThrottle
+import com.tvbox.app.domain.RemoteManagePolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -91,6 +93,8 @@ class RemoteManageServer(
     private val controlToken: String = "",
     /** 显式开启无 token 控制（危险）；默认 false，即所有写操作都要鉴权。 */
     private val allowUnauthenticatedControl: Boolean = false,
+    /** S1-01：默认只听 127.0.0.1；显式 opt-in 才监听 0.0.0.0。 */
+    private val lanEnabled: Boolean = false,
 ) {
     @Volatile
     private var serverSocket: ServerSocket? = null
@@ -101,6 +105,9 @@ class RemoteManageServer(
 
     @Volatile
     private var sessionToken: String = ""
+
+    /** S1-01：同网段离线爆破退避；只按来源 IP 记失败，不记录任何身份信息。 */
+    private val loginThrottle = RemoteLoginThrottle()
 
     /**
      * 服务私有的协程作用域：acceptLoop 与每个客户端都作为它的子协程。
@@ -122,7 +129,7 @@ class RemoteManageServer(
     suspend fun start(): RemoteManageSession = withContext(Dispatchers.IO) {
         stop()
         val myGeneration = generation.get()
-        val socket = createServerSocket()
+        val socket = createServerSocket(lanEnabled)
         if (generation.get() != myGeneration) {
             runCatching { socket.close() }
             throw IllegalStateException("远程管理服务已停止")
@@ -136,7 +143,7 @@ class RemoteManageServer(
             allowUnauthenticatedControl -> ""
             else -> newSessionToken()
         }
-        val host = localIpv4Address()
+        val host = RemoteManagePolicy.displayHost(lanEnabled, localIpv4Address())
         scope.launch {
             acceptLoop(socket, myGeneration)
         }
@@ -213,18 +220,32 @@ class RemoteManageServer(
                     }
                 }
 
+                val clientIp = runCatching { socket.inetAddress?.hostAddress.orEmpty() }.getOrDefault("")
+
                 when (method) {
                     "GET" -> when {
                         // 只读状态端点：有意开放，不要求 token（见类注释的安全边界）。
                         target.startsWith("/blocked-categories.json") ->
                             writeJsonResponse(socket, blockedCategoriesJson())
-                        !isAuthorized(queryValue(target, TOKEN_QUERY_KEY) ?: headers[TOKEN_HEADER].orEmpty()) ->
+                        // S1-01：先做 IP 退避判断，退避期内连常量时间比较都不做。
+                        loginThrottle.isLocked(clientIp) ->
+                            writeHtmlResponse(socket, "尝试次数过多，请 30 秒后重试。", status = "429 Too Many Requests")
+                        // S1-01：Header 优先，query 仅兼容旧版二维码。
+                        !isAuthorized(
+                            headers[TOKEN_HEADER].orEmpty()
+                                .ifBlank { queryValue(target, TOKEN_QUERY_KEY).orEmpty() }
+                        ) -> {
+                            loginThrottle.recordFailure(clientIp)
                             writeHtmlResponse(
                                 socket,
                                 "管理页面需要有效 token，请使用电视端显示的完整地址访问。",
                                 status = "403 Forbidden",
                             )
-                        else -> writeHtmlResponse(socket, page(queryValue(target, "message"), sessionToken))
+                        }
+                        else -> {
+                            loginThrottle.recordSuccess(clientIp)
+                            writeHtmlResponse(socket, page(queryValue(target, "message"), sessionToken))
+                        }
                     }
                     "POST" -> {
                         val declaredLength = headers["content-length"]?.toLongOrNull() ?: 0L
@@ -236,14 +257,21 @@ class RemoteManageServer(
                             writeHtmlResponse(socket, "请求体过大，已拒绝。", status = "413 Payload Too Large")
                             return
                         }
+                        if (loginThrottle.isLocked(clientIp)) {
+                            writeHtmlResponse(socket, "尝试次数过多，请 30 秒后重试。", status = "429 Too Many Requests")
+                            return
+                        }
                         val body = readBody(reader, declaredLength.toInt())
                         val form = parseForm(body)
-                        val suppliedToken = form[TOKEN_QUERY_KEY].orEmpty()
-                            .ifBlank { headers[TOKEN_HEADER].orEmpty() }
+                        // S1-01：Header 优先，表单隐藏字段仅兼容旧版页面。
+                        val suppliedToken = headers[TOKEN_HEADER].orEmpty()
+                            .ifBlank { form[TOKEN_QUERY_KEY].orEmpty() }
                         if (!isAuthorized(suppliedToken)) {
+                            loginThrottle.recordFailure(clientIp)
                             writeHtmlResponse(socket, "token 无效或已过期，请刷新电视端页面后重试。", status = "403 Forbidden")
                             return
                         }
+                        loginThrottle.recordSuccess(clientIp)
                         val request = RemoteManageRequest(
                             action = form["action"].orEmpty(),
                             id = form["id"].orEmpty(),
@@ -727,18 +755,19 @@ class RemoteManageServer(
                 }
                 .toMap()
         }.getOrElse { error ->
-            Log.w("TVBoxRemoteManage", "表单解析失败：${error.message}")
+            TLog.w("TVBoxRemoteManage") { "表单解析失败：${error.message}" }
             emptyMap()
         }
     }
 
-    private fun createServerSocket(): ServerSocket {
-        // 先设置 reuseAddress 再 bind：stop() 后能立即复用同一端口，不受 TIME_WAIT 影响。
+    private fun createServerSocket(lan: Boolean): ServerSocket {
+        // S1-01：默认只听回环。先设置 reuseAddress 再 bind：stop() 后可立即复用同端口。
+        val host = RemoteManagePolicy.bindHost(lan)
         fun bind(port: Int): ServerSocket = ServerSocket().apply {
             reuseAddress = true
-            bind(InetSocketAddress(port))
+            bind(InetSocketAddress(host, port))
         }
-        return runCatching { bind(PREFERRED_PORT) }.getOrElse { bind(0) }
+        return runCatching { bind(RemoteManagePolicy.PREFERRED_PORT) }.getOrElse { bind(0) }
     }
 
     private fun localIpv4Address(): String {
@@ -768,7 +797,6 @@ class RemoteManageServer(
     }
 
     private companion object {
-        const val PREFERRED_PORT = 9978
         const val MAX_REQUEST_BODY_BYTES = 1_000_000L
         const val MAX_CONCURRENT_CLIENTS = 8
         const val CLIENT_READ_TIMEOUT_MS = 15_000

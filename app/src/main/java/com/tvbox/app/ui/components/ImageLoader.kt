@@ -40,10 +40,11 @@ private object TvImageLoaderHolder {
         return ImageLoader.Builder(context)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .memoryCache {
-                // 最多 25% 可用内存，硬上限 64MB（TV 盒子通常 2~4GB RAM）
+                // S5-28：内存缓存降到可用内存的 15%（硬上限 64MB），TV 盒子 2~4GB 时
+                // 避免首页 30 张 1000×1500 海报在焦点缩放时缓存 2 份把 Graphics 顶到 150MB+。
                 val memoryClass = (context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)
                     ?.memoryClass ?: 256
-                val maxBytes = (memoryClass * 1024 * 1024 * 0.25).toInt().coerceAtMost(64 * 1024 * 1024)
+                val maxBytes = (memoryClass * 1024 * 1024 * 0.15).toInt().coerceAtMost(64 * 1024 * 1024)
                 MemoryCache.Builder(context)
                     .maxSizeBytes(maxBytes)
                     .build()
@@ -51,7 +52,7 @@ private object TvImageLoaderHolder {
             .diskCache {
                 DiskCache.Builder()
                     .directory(context.cacheDir.resolve("image_cache"))
-                    .maxSizeBytes(256 * 1024 * 1024) // 硬上限 256MB
+                    .maxSizeBytes(200 * 1024 * 1024) // S5-28：磁盘缓存降到 200MB
                     .build()
             }
             .crossfade(false) // TV 场景关闭 crossfade，减少 GPU 压力

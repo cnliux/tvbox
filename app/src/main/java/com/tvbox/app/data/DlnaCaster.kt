@@ -11,6 +11,7 @@ import kotlinx.coroutines.withContext
 import com.tvbox.app.data.network.HttpClients
 import com.tvbox.app.data.network.NetworkException
 import com.tvbox.app.data.network.executeCancellable
+import com.tvbox.app.util.UntrustedInput
 import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -76,7 +77,11 @@ class DlnaCaster(context: Context) {
                 }
             }
         } finally {
-            runCatching { multicastLock?.release() }
+            // S5-31：正常路径立即释放并从总闸注销；异常路径仍有 onTrimMemory 兜底。
+            multicastLock?.let { guarded ->
+                runCatching { guarded.lock.release() }
+                com.tvbox.app.util.PowerResourceRegistry.unregister(guarded.handle)
+            }
         }
         locations
             .mapNotNull { location ->
@@ -91,13 +96,17 @@ class DlnaCaster(context: Context) {
     }
 
     suspend fun play(device: DlnaDevice, videoUrl: String, title: String): Result<Unit> = withContext(Dispatchers.IO) {
-        val metadata = buildMetadata(videoUrl, title)
+        // S1-05：URL 来自 SSDP Describe 响应，可被同网段伪造；只接受安全的 http(s) 公网地址，
+        // 拦住 file:// / content:// 以及打本机 FLV 代理的回环地址。
+        val safeUrl = UntrustedInput.requireHttpUrl(videoUrl)
+            ?: return@withContext Result.failure(IllegalArgumentException("不安全的投屏地址，已拒绝"))
+        val metadata = buildMetadata(safeUrl, title)
         val setUri = sendSoap(
             device = device,
             action = "SetAVTransportURI",
             arguments = buildString {
                 append("<InstanceID>0</InstanceID>")
-                append("<CurrentURI>").append(escapeXml(videoUrl)).append("</CurrentURI>")
+                append("<CurrentURI>").append(escapeXml(safeUrl)).append("</CurrentURI>")
                 append("<CurrentURIMetaData>").append(escapeXml(metadata)).append("</CurrentURIMetaData>")
             },
         )
@@ -120,13 +129,21 @@ class DlnaCaster(context: Context) {
         scope.launch { stop(device) }
     }
 
-    private fun acquireMulticastLock(): WifiManager.MulticastLock? = runCatching {
+    /** S5-31：锁 + 总闸句柄，正常 finally 注销，漏路径由 onTrimMemory 兜底。 */
+    private class GuardedLock(
+        val lock: WifiManager.MulticastLock,
+        val handle: com.tvbox.app.util.PowerResourceRegistry.Releasable,
+    )
+
+    private fun acquireMulticastLock(): GuardedLock? = runCatching {
         val wifiManager = appContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
             ?: return@runCatching null
-        wifiManager.createMulticastLock("tvbox-dlna").apply {
-            setReferenceCounted(false)
-            acquire()
-        }
+        val lock = wifiManager.createMulticastLock("tvbox-dlna")
+        lock.setReferenceCounted(false)
+        lock.acquire()
+        val handle = com.tvbox.app.util.PowerResourceRegistry.Releasable { runCatching { lock.release() } }
+        com.tvbox.app.util.PowerResourceRegistry.register(handle)
+        GuardedLock(lock, handle)
     }.getOrNull()
 
     private fun parseLocation(response: String): String? {

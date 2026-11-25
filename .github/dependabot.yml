@@ -1,73 +1,26 @@
-# =============================================================================
-# Dependabot 自动依赖更新配置
-# -----------------------------------------------------------------------------
-# 用途：本文件是《聚合视频TVBox全项目优化方案.md》第十七章 P44（SBOM/依赖审计）
-#       中"自动依赖更新"部分的落地配置，用于持续跟进三方依赖的安全补丁与版本更新。
-#
-# 配套说明：
-#   - CI 侧的 SBOM 生成与依赖审计任务将在后续单独开启，与本配置配合形成
-#     "自动升级 + SBOM 留痕 + 漏洞告警" 的完整依赖治理闭环。本轮仅引入 Dependabot。
-#
-# ignore 列表用途：
-#   Dependabot 默认会尝试升级到最新版本，但以下依赖的 major 版本跳跃会带来
-#   较大的破坏面或需要独立评审，因此显式忽略其 major 升级，只允许 minor/patch：
-#     - com.android.tools.build:gradle  ：AGP 大版本升级常伴随构建脚本与 API 破坏性变更
-#     - github.com/dop251/goja          ：JS 引擎升级涉及运行时行为差异，需独立评审（关联 P31）
-#   如需推进这些依赖的大版本升级，请临时移除对应 ignore 条目并单独开 PR 评审。
-# =============================================================================
-
 version: 2
 updates:
-  # ---- Gradle（Android / Kotlin 依赖）----
-  - package-ecosystem: "gradle"
+  # S4-20：pin 与 dependabot 互补——只 pin 不 bump 会烂，只 bump 不 pin 等于没锁。
+  - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: "weekly"
-      # UTC 01:00 = 北京时间（Asia/Shanghai）周一 09:00
-      cron: '0 1 * * 1'
-      timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
-    ignore:
-      # AGP 大版本升级破坏面大，单独评审
-      - dependency-name: "com.android.tools.build:gradle"
-        update-types: ["version-update:semver-major"]
+      interval: weekly
+    open-pull-requests-limit: 10
+    commit-message:
+      prefix: "chore(deps)"
 
-  # ---- Go modules（platform_live_go）----
-  - package-ecosystem: "gomod"
+  - package-ecosystem: gradle
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+
+  - package-ecosystem: gomod
     directory: "/platform_live_go"
     schedule:
-      interval: "weekly"
-      cron: '0 1 * * 1'
-      timezone: "Asia/Shanghai"
+      interval: weekly
     open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
-    ignore:
-      # JS 引擎升级需独立评审（关联 P31）
-      - dependency-name: "github.com/dop251/goja"
-        update-types: ["version-update:semver-major"]
-
-  # ---- GitHub Actions ----
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      cron: '0 1 * * 1'
-      timezone: "Asia/Shanghai"
-    open-pull-requests-limit: 5
-    groups:
-      minor-and-patch:
-        applies-to: version-updates
-        update-types:
-          - "minor"
-          - "patch"
+    commit-message:
+      prefix: "chore(deps)"

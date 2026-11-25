@@ -1,0 +1,48 @@
+name: Pending items freshness
+
+# P0-03：PENDING_ITEMS.md 是开源项目的入口文档。若其「最后核对基线」与当前发布版本
+# （update.json.versionName）不一致，说明清单可能已与代码脱节，在 PR 里贴 warning 提示。
+# 只 warn 不 fail，避免发版流程噪音；核对动作留给人工 review。
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Compare PENDING_ITEMS baseline with update.json version
+        shell: bash
+        run: |
+          if [ ! -f update.json ]; then
+            echo "::warning::update.json 不存在，跳过 PENDING_ITEMS 基线核对"
+            exit 0
+          fi
+          if [ ! -f PENDING_ITEMS.md ]; then
+            echo "::warning::PENDING_ITEMS.md 不存在，跳过基线核对"
+            exit 0
+          fi
+          UPDATE_VER=$(python3 -c "import json;print(json.load(open('update.json')).get('versionName',''))" 2>/dev/null || echo "")
+          # 基线行使用全角冒号「：」；提取其后的版本号 token（如 v1.0.43）。
+          BASELINE=$(grep -oE '最后核对基线[：:][^0-9]*v?[0-9]+\.[0-9]+\.[0-9]+' PENDING_ITEMS.md | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          # 统一去掉 v 前缀再比较（update.json 是 1.0.42，基线是 v1.0.43）。
+          UPDATE_NORM=$(echo "$UPDATE_VER" | sed -E 's/^v//' | tr -d ' ')
+          BASELINE_NORM=$(echo "$BASELINE" | sed -E 's/^v//' | tr -d ' ')
+          echo "update.json.versionName=$UPDATE_NORM"
+          echo "PENDING_ITEMS 最后核对基线=$BASELINE_NORM"
+          if [ -z "$BASELINE_NORM" ]; then
+            echo "::warning::PENDING_ITEMS.md 缺少「最后核对基线」标记，请补上（如 v1.0.43）"
+            exit 0
+          fi
+          if [ "$UPDATE_NORM" != "$BASELINE_NORM" ]; then
+            echo "::warning::PENDING_ITEMS 最后核对基线（$BASELINE_NORM）与 update.json.versionName（$UPDATE_NORM）不一致，请确认清单是否已与代码脱节"
+          else
+            echo "PENDING_ITEMS 基线与发布版本一致，无需处理"
+          fi

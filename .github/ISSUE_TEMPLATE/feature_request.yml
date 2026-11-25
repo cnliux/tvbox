@@ -1,0 +1,29 @@
+name: ✨ 功能建议
+description: 新功能 / 改进 —— 请先回答"现在你怎么绕过去的"
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: feature
+    attributes:
+      label: 你想要什么
+      description: 一句话说清需求
+      placeholder: 例如 支持后台播放
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: 现在你怎么绕过去的？
+      description: 强制填写。答不上来 / 没有绕行方案的需求通常是伪需求
+      placeholder: 例如 只能锁屏前暂停，不能边干别的边听
+    validations:
+      required: true
+
+  - type: textarea
+    id: value
+    attributes:
+      label: 对谁有价值、大概多常用
+      placeholder: |
+        例如 家里老人看直播，每天用；对点播用户无感。

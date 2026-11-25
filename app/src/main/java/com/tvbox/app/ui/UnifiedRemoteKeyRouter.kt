@@ -6,6 +6,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.type
 import com.tvbox.app.domain.RemoteKeyAction
 import com.tvbox.app.domain.RemoteKeyBindings
+import com.tvbox.app.domain.resolveHardware
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.seekStepMsForHold
 
@@ -53,6 +54,9 @@ internal class UnifiedRemoteKeyRouter(
         /** 直播专属：打开「线路 / 切源」浮层（设置键的高频语义，区别于 MENU 的频道/节目列表）。 */
         data object OpenLineOverlay : Action
 
+        /** 通用停止：点播=暂停并保持控制栏，直播=停止并退出到列表语义。 */
+        data object Stop : Action
+
         // 直播/平台直播专属动作
         data object PreviousChannel : Action
         data object NextChannel : Action
@@ -90,6 +94,11 @@ internal class UnifiedRemoteKeyRouter(
     private var repeatCapable: Boolean = true
     private var firstDownTimeMs: Long = Long.MIN_VALUE
 
+    /** P1-07：OK/PlayPause 跨键防抖。部分盒子把一次按压同时上报 DPAD_CENTER 与
+     *  MEDIA_PLAY_PAUSE（不同 keyCode，同一次物理按压）；300ms 内只处理第一个。 */
+    private var lastConfirmOrPlayEventTimeMs: Long = Long.MIN_VALUE
+    private var lastConfirmOrPlayAction: RemoteKeyAction? = null
+
     override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
         val native = event.nativeKeyEvent
         if (chrome.visible) chrome.interaction++
@@ -111,8 +120,10 @@ internal class UnifiedRemoteKeyRouter(
             return false
         }
 
-        // 根据绑定表查该键码触发了哪些动作；按优先级执行第一个命中的。
-        val actions = bindings.actionsFor(keyCode)
+        // P1-09：按键学习过的遥控器按 scanCode > deviceId+keyCode > keyCode 裁决；
+        // 未学习时 resolveHardware 返回 null，行为与改动前完全一致。
+        val preferred = bindings.resolveHardware(native.deviceId.toString(), keyCode, native.scanCode)
+        val actions = preferred?.let(::listOf) ?: bindings.actionsFor(keyCode)
         if (actions.isEmpty()) {
             // 未绑定键：交给页面的 onUnhandledKey（数字选台等）。
             return onUnhandledKey(event)
@@ -133,11 +144,36 @@ internal class UnifiedRemoteKeyRouter(
         eventTime: Long,
         repeatCount: Int,
     ): Boolean {
+        // P1-07：OK/PlayPause 跨键防抖。仅对「确认/播放暂停」这对逻辑动作生效；
+        // 若 300ms 内已处理过其中另一个，则本次抑制，避免一次按压双触发。
+        if (isConfirmOrPlayPause(action) && suppressConfirmOrPlay(isKeyDown, action, eventTime)) {
+            return true // 已消费但不重复触发
+        }
         return when (mode) {
             PlayerMode.Seek -> dispatchSeek(action, isKeyDown, isKeyUp, eventTime, repeatCount, chrome)
             PlayerMode.Channel -> dispatchChannel(action, isKeyUp, chrome)
             PlayerMode.Room -> dispatchRoom(action, isKeyUp, chrome)
         }
+    }
+
+    /** 该动作是否属于「确认/播放暂停」防抖组。 */
+    private fun isConfirmOrPlayPause(action: RemoteKeyAction): Boolean =
+        action == RemoteKeyAction.Confirm || action == RemoteKeyAction.PlayPause
+
+    /**
+     * 跨键防抖裁决：同一物理按压若被上报成 Confirm 与 PlayPause 两个 keyCode，
+     * 只处理先到的那一个；[DEBOUNCE_MS] 内的另一个被抑制。返回 true 表示应抑制。
+     */
+    private fun suppressConfirmOrPlay(isKeyDown: Boolean, action: RemoteKeyAction, eventTime: Long): Boolean {
+        if (!isKeyDown) return false
+        val now = eventTime
+        val suppressed = lastConfirmOrPlayAction != null &&
+            lastConfirmOrPlayAction != action &&
+            now - lastConfirmOrPlayEventTimeMs in 0..CONFIRM_PLAY_DEBOUNCE_MS
+        // 记录本次（无论是否被抑制，都刷新时间戳，防止连续三次同键互相穿透）。
+        lastConfirmOrPlayAction = action
+        lastConfirmOrPlayEventTimeMs = now
+        return suppressed
     }
 
     /**
@@ -214,6 +250,18 @@ internal class UnifiedRemoteKeyRouter(
             true
         }
 
+        RemoteKeyAction.Play -> {
+            // P2-12：定向播放键，执行前由页面比对 isPlaying，同态 no-op。
+            if (isKeyUp) callbacks.onAction(Action.Play)
+            true
+        }
+
+        RemoteKeyAction.Pause -> {
+            // P2-12：定向暂停键，执行前由页面比对 isPlaying，同态 no-op。
+            if (isKeyUp) callbacks.onAction(Action.Pause)
+            true
+        }
+
         RemoteKeyAction.Previous -> {
             if (isKeyUp) callbacks.onAction(Action.ChangeEpisode(-1))
             true
@@ -236,6 +284,12 @@ internal class UnifiedRemoteKeyRouter(
 
         RemoteKeyAction.Info -> {
             if (isKeyUp) callbacks.onAction(Action.OpenInfo)
+            true
+        }
+
+        RemoteKeyAction.Stop -> {
+            // 点播：按停止 = 暂停并保持控制栏。
+            if (isKeyUp) callbacks.onAction(Action.Stop)
             true
         }
 
@@ -282,6 +336,12 @@ internal class UnifiedRemoteKeyRouter(
             RemoteKeyAction.Settings -> {
                 // 电视直播：设置键 = 打开线路浮层（切源/线路的高频入口），与 MENU 的频道列表区分。
                 callbacks.onAction(Action.OpenLineOverlay)
+                true
+            }
+
+            RemoteKeyAction.Stop -> {
+                // 直播：按停止 = 停止并退出到列表语义。
+                callbacks.onAction(Action.Stop)
                 true
             }
 
@@ -339,7 +399,20 @@ internal class UnifiedRemoteKeyRouter(
                 true
             }
 
+            RemoteKeyAction.Stop -> {
+                // 直播：按停止 = 停止并退出到列表语义。
+                callbacks.onAction(Action.Stop)
+                true
+            }
+
             else -> false
         }
     }
 }
+
+/**
+ * P1-07：OK 与 PlayPause 跨键防抖窗口。
+ * 部分盒子（小米/天猫魔盒）把一次物理按压同时上报 DPAD_CENTER 与 MEDIA_PLAY_PAUSE
+ * 两个不同 keyCode；300ms 内只处理先到的一个，避免「一次按压双触发」。
+ */
+private const val CONFIRM_PLAY_DEBOUNCE_MS: Long = 300L

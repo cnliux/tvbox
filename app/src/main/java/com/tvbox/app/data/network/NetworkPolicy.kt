@@ -43,7 +43,12 @@ data class NetworkPolicy(
 /** 项目内预设口径：默认业务、直播探测（短超时）、大文件下载（长读 + 大 body cap）。 */
 object NetworkPolicies {
     val default = NetworkPolicy()
-    val probe = NetworkPolicy(callTimeoutMs = 10_000, maxBodyBytes = 1L * 1024 * 1024)
+    val probe = NetworkPolicy(
+        connectTimeoutMs = Timeouts.PROBE.connectMs,
+        readTimeoutMs = Timeouts.PROBE.readMs,
+        callTimeoutMs = Timeouts.PROBE.totalMs,
+        maxBodyBytes = 1L * 1024 * 1024,
+    )
     val largeDownload = NetworkPolicy(readTimeoutMs = 60_000, maxBodyBytes = 200L * 1024 * 1024)
 }
 

@@ -2,6 +2,7 @@ package com.tvbox.app.data
 
 import android.util.Log
 import com.tvbox.app.data.network.HttpClients
+import com.tvbox.app.util.UntrustedInput
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -344,7 +345,9 @@ internal class DouyuDanmakuClient(private val roomId: String) :
             if (type != "chatmsg") return@forEach
             // 注意：不要用 dms（弹幕时间戳）判空来过滤——现网 chatmsg 并不带 dms，
             // 早前按 dms 过滤会把所有弹幕全部丢弃，表现为「弹幕永远不显示」。
-            val text = fields["txt"].orEmpty().trim()
+            // S1-05：弹幕是外部输入，统一收口到契约：限长 80 字符 + 去控制字符，
+            // 防止超长单行在弱盒上造成一帧 500ms 的掉帧。
+            val text = UntrustedInput.sanitizeDanmaku(fields["txt"].orEmpty())
             if (text.isEmpty()) return@forEach
             if (chatSeen < 5) {
                 chatSeen += 1

@@ -14,8 +14,35 @@
 
 # 内置平台直播解析来自 gomobile bind 的 platformlive AAR（Go 实现）。
 # gomobile 生成的类由 native 层反射/JNI 调用注册，需保留。
+# S4-22：fullMode 下连包名与接口签名都可能被改写，显式收口 gomobile JNI 边界。
+-keeppackagenames platformlive.**, go.**
 -keep class platformlive.** { *; }
+-keep interface platformlive.** { *; }
 -keep class go.** { *; }
+-keepclassmembers class * {
+    @org.jetbrains.annotations.NotNull <methods>;
+}
+-dontwarn go.Seq.**
+
+# P2-19：R8 fullMode 下 gomobile 产物容易裁掉 JNI 边界，补两类 keep：
+# ① AAR 内可能存在的 com.tvbox.platformlive 包（Go 桥接类）；
+# ② 所有 native 方法（JNI 注册表按符号名绑定，裁掉即 UnsatisfiedLinkError）。
+-keep class com.tvbox.platformlive.** { *; }
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+
+# T4-26：gomobile proxy 接口由 JNI 反射创建代理，full mode 下裁掉会
+# 抛 IllegalArgumentException: interface not proxied。注解/签名/内部类元数据一并保留。
+-keep interface com.tvbox.platformlive.**Proxy
+-keepattributes *Annotation*,Signature,InnerClasses
+
+# T4-26：kotlinx.serialization 的 $$serializer 在 Release 被剥掉会导致 SourceConfig
+# 导入静默丢字段（订阅少一半源），且因为 -dontwarn 的存在不会有任何提示。
+-keep class **$$serializer { *; }
+-keepclassmembers class * {
+    @kotlinx.serialization.SerialDescriptor <methods>;
+}
 
 # OkHttp 可选 TLS 实现（未打包，仅避免 R8 缺失类警告）。
 -dontwarn okhttp3.internal.platform.**

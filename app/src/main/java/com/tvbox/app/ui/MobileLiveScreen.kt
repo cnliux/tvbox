@@ -98,6 +98,7 @@ import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.LiveChannelLine
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.PlayerSurface
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.partitionUserAgent
 import com.tvbox.app.domain.sanitizedForHttp
@@ -1166,6 +1167,8 @@ private fun MobileLivePlayerScreen(
                         onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
                     ),
                     hiddenControls = state.appSettings.playerHiddenControls,
+                    hiddenControlsBySurface = state.appSettings.playerHiddenControlsBySurface,
+                    surface = PlayerSurface.LiveTv,
                     actions = PlayerChromeActions(
                         onToggle = {
                             // 走 session 记录播放意图：只用 player.pause() 会让策略仍认为用户想播，

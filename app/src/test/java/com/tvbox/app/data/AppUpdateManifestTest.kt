@@ -36,6 +36,20 @@ class AppUpdateManifestTest {
     }
 
     @Test
+    fun releaseHighlightsParseAndTrimWhileLegacyStaysEmpty() {
+        val legacy = requireNotNull(parseAppUpdateManifest(legacyManifest(), currentVersionCode = 19999L))
+        assertTrue("老清单没有 release_highlights 时应为空", legacy.releaseHighlights.isEmpty())
+
+        val raw = legacyManifest().replace(
+            "\"changelog\": [\" 修复 OTA \", \"\", \"   \"]",
+            "\"changelog\": [\" 修复 OTA \"], " +
+                "\"release_highlights\": [\" 数字键能自己改了 \", \"\", \" 恢复出厂是真删 \"]",
+        )
+        val update = requireNotNull(parseAppUpdateManifest(raw, currentVersionCode = 19999L))
+        assertEquals(listOf("数字键能自己改了", "恢复出厂是真删"), update.releaseHighlights)
+    }
+
+    @Test
     fun optionalApkMirrorsKeepOnlyHttpsAndDeduplicate() {
         val raw = """
             {

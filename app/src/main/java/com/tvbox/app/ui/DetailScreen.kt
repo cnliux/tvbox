@@ -49,6 +49,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
@@ -545,6 +546,7 @@ private fun EpisodeGrid(
             EpisodeButton(
                 episode = episode,
                 realIndex = realIndex,
+                totalEpisodes = episodes.size,
                 selected = realIndex == selectedEpisodeIndex,
                 focusRequester = focusRequesters[index],
                 onClick = { onEpisode(realIndex) },
@@ -557,6 +559,7 @@ private fun EpisodeGrid(
 private fun EpisodeButton(
     episode: PlayEpisode,
     realIndex: Int,
+    totalEpisodes: Int,
     selected: Boolean,
     focusRequester: FocusRequester,
     onClick: () -> Unit,
@@ -573,6 +576,11 @@ private fun EpisodeButton(
     } else {
         MaterialTheme.colorScheme.onSurface
     }
+    // P2-15 无障碍：选集项给 TalkBack 一句完整播报，避免只念「按钮」。
+    val episodeLabel = buildString {
+        append("第 ").append(realIndex + 1).append(" 集")
+        if (totalEpisodes > 0) append("，共 ").append(totalEpisodes).append(" 集")
+    }
     Surface(
         modifier = Modifier
             .tvFocusScale(shape = shape)
@@ -581,7 +589,10 @@ private fun EpisodeButton(
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .background(containerColor)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics { stateDescription = if (selected) "已选中" else "未选中" }
+            .semantics {
+                contentDescription = episodeLabel
+                stateDescription = if (selected) "已选中" else "未选中"
+            }
             .focusable(),
         shape = shape,
         color = containerColor,

@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import android.view.WindowManager
+import android.view.KeyEvent
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.runBlocking
 import com.tvbox.app.data.DataStoreAppSettingsRepository
 import com.tvbox.app.data.DefaultAppUpdateRepository
 import com.tvbox.app.data.EmbeddedPlatformLiveRepository
@@ -48,8 +50,10 @@ import com.tvbox.app.data.SharedLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LanResolverGuard
+import com.tvbox.app.domain.LegalTerms
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tvbox.app.crash.CrashHandler
+import com.tvbox.app.ui.FirstRunScreen
 import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.theme.TVBoxTheme
@@ -164,6 +168,17 @@ class MainActivity : ComponentActivity() {
         pendingExportApkPath = savedInstanceState?.getString("pendingExportApk")
         pendingInstallPermissionAction = savedInstanceState?.getString("pendingUpdateApk")
             ?.let { InstallPermissionAction.InstallDownloadedApk(it) }
+
+        // T6-39 + S2-10：首次启动法务契约检查（在协程订阅之后、setContent 之前计算，避免 IO 阻塞渲染）。
+        val showLegalScreen = runBlocking {
+            val v = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
+                .getInt(LegalTerms.VERSION_KEY, -1)
+            val h = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
+                .getString(LegalTerms.HASH_KEY, null)
+            val ack = if (v >= 0 && !h.isNullOrBlank()) LegalTerms.Ack(v, h!!, System.currentTimeMillis()) else null
+            LegalTerms.requiresAcknowledgement(ack)
+        }
+
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 // 返回前台时重算自动识别：插拔 HDMI / 外接键鼠可能改变系统设备特征。
@@ -179,34 +194,41 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
-            val state = viewModel.state.collectAsStateWithLifecycle().value
-            TVBoxTheme(
-                fontScale = state.appSettings.fontScale,
-                themeAccent = state.appSettings.themeAccent,
-            ) {
-                // 首页没有可返回的上层页面：连续按两次返回才退出应用，避免误触直接关闭。
-                BackHandler {
-                    if (state.screen != com.tvbox.app.ui.TvScreen.Home) {
-                        viewModel.goBack()
-                    } else {
-                        val now = System.currentTimeMillis()
-                        if (now - lastHomeBackPressTime < HOME_BACK_EXIT_INTERVAL_MS) {
-                            lastHomeBackPressTime = 0L
-                            finish()
+            if (showLegalScreen) {
+                FirstRunScreen(
+                    onAccepted = { viewModel.openHome() },
+                )
+            } else {
+                val state = viewModel.state.collectAsStateWithLifecycle().value
+                TVBoxTheme(
+                    fontScale = state.appSettings.fontScale,
+                    themeAccent = state.appSettings.themeAccent,
+                ) {
+                    // 首页没有可返回的上层页面：连续按两次返回才退出应用，避免误触直接关闭。
+                    BackHandler {
+                        if (state.screen != com.tvbox.app.ui.TvScreen.Home) {
+                            viewModel.goBack()
                         } else {
-                            lastHomeBackPressTime = now
-                            Toast.makeText(this@MainActivity, "再按一次退出应用", Toast.LENGTH_SHORT).show()
+                            val now = System.currentTimeMillis()
+                            if (now - lastHomeBackPressTime < HOME_BACK_EXIT_INTERVAL_MS) {
+                                lastHomeBackPressTime = 0L
+                                finish()
+                            } else {
+                                lastHomeBackPressTime = now
+                                Toast.makeText(this@MainActivity, "再按一次退出应用", Toast.LENGTH_SHORT).show()
+                            }
                         }
                     }
+                    TvBoxApp(
+                        state = state,
+                        actions = viewModel,
+                        onStartUpdateDownload = ::startBackgroundUpdateDownload,
+                        onInstallUpdate = ::installUpdateApk,
+                        onOpenUpdateSettings = ::openUpdateSystemSettings,
+                        onSaveUpdateApk = ::saveUpdateApk,
+                        onShowHealthPanel = { viewModel.dismissHealthPanel() },
+                    )
                 }
-                TvBoxApp(
-                    state = state,
-                    actions = viewModel,
-                    onStartUpdateDownload = ::startBackgroundUpdateDownload,
-                    onInstallUpdate = ::installUpdateApk,
-                    onOpenUpdateSettings = ::openUpdateSystemSettings,
-                    onSaveUpdateApk = ::saveUpdateApk,
-                )
             }
         }
     }
@@ -450,6 +472,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+    }
+
+    /** T3-24：菜单键连按 5 次触发健康面板。 */
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (keyCode == android.view.KeyEvent.KEYCODE_MENU) {
+            viewModel.recordMenuPress()
+            return true
+        }
+        return super.onKeyUp(keyCode, event)
     }
 }
 

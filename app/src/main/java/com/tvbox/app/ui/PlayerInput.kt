@@ -60,7 +60,13 @@ internal class RemoteKeyCache {
     }
 
     fun trimIfNeeded() {
-        if (entries.size >= maxEntries) entries.clear()
+        // P2-10：极端连发（长按快进 30s+）会周期性撞上 maxEntries。原来用 clear() 全表清空，
+        // 会让去重窗口失效一瞬、偶发一次双跳。这里改为 LRU 逐条淘汰（LinkedHashMap accessOrder=true，
+        // 迭代首个即最久未用），只删最旧一条，保留去重窗口连续。
+        while (entries.size >= maxEntries) {
+            val eldest = entries.keys.firstOrNull() ?: break
+            entries.remove(eldest)
+        }
     }
 }
 

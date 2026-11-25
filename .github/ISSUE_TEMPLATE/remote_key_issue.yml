@@ -1,0 +1,59 @@
+name: 🎮 遥控器键位问题
+description: 某颗键没反应 / 双触发 / 键位错乱 —— 专用模板，一次报告就能变回归用例
+title: "[RemoteKey] "
+labels: ["remote-key", "bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 遥控器键位专用模板
+        本项目的特色痛点。**报一次 + 贴 5 行 `getevent` = 永久变成回归用例**。
+        - 红外盒子与蓝牙盒子行为不同，请务必选对类型。
+        - `adb shell getevent -l` 的输出能看到 scanCode，直接喂给 G3 语料库。
+
+  - type: input
+    id: device
+    attributes:
+      label: 盒子型号
+      placeholder: 例如 小米盒子 4S Pro
+    validations:
+      required: true
+
+  - type: dropdown
+    id: remote_type
+    attributes:
+      label: 遥控器类型
+      options:
+        - 蓝牙 / 2.4G 无线
+        - 红外（IR）
+        - 不确定
+    validations:
+      required: true
+
+  - type: input
+    id: key
+    attributes:
+      label: 哪颗键出问题
+      placeholder: 例如 OK / 播放暂停 / 菜单 / 数字 5
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: 症状
+      placeholder: |
+        例如：按 OK 一次却触发两次（双击）；按快进没反应；菜单键被系统抢走。
+    validations:
+      required: true
+
+  - type: textarea
+    id: getevent
+    attributes:
+      label: '`adb shell getevent -l` 输出（贴 5 行左右）'
+      description: 按键时抓取，能看到 keyCode 与 scanCode
+      placeholder: |
+        /dev/input/event0: EV_KEY KEY_OK DOWN
+        /dev/input/event0: EV_KEY KEY_OK UP
+        ...
+      render: text

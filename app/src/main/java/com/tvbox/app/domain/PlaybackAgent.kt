@@ -3,6 +3,8 @@ package com.tvbox.app.domain
 const val PLAYBACK_HEALTH_COOLDOWN_MS = 30 * 60 * 1000L
 const val PLAYBACK_HEALTH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000L
 const val PLAYBACK_HEALTH_MAX_ENTRIES = 300
+/** 健康表低水位（滞回）：超过高水位时一次性淘汰到该数量，避免高水位附近每次写入都全表排序。 */
+const val PLAYBACK_HEALTH_LOW_WATER = 180
 /** 每条线路保留的成功首帧延迟样本上限（环形截断，避免持久化体积膨胀）。 */
 const val PLAYBACK_HEALTH_MAX_LATENCY_SAMPLES = 20
 /** 首帧延迟达到该值即视为「较慢」，用于播放管家徽章判定。 */
@@ -28,6 +30,12 @@ data class PlaybackHealthEntry(
     val successLatencyMs: List<Long> = emptyList(),
     /** 卡顿样本计数：每次记录缓冲/卡顿时累加，用于计算卡顿率。 */
     val stutterSampleCount: Int = 0,
+    /**
+     * T1-04：最新一条测速响应的时长可信度。
+     * HIGH = Content-Range 含完整 TOTAL，可作时长参考；LOW = 有 Content-Length 但不可信；NONE = 无法判断。
+     * NONE 时该样本不参与健康评分（见 [com.tvbox.app.domain.contributesToScore]）。
+     */
+    val durationConfidence: DurationConfidence = DurationConfidence.NONE,
 ) {
     fun isRecentlyUnhealthy(nowMs: Long, cooldownMs: Long = PLAYBACK_HEALTH_COOLDOWN_MS): Boolean {
         return recentIssueType(nowMs, cooldownMs) != null
@@ -236,16 +244,20 @@ fun prunePlaybackHealthEntries(
     nowMs: Long,
     retentionMs: Long = PLAYBACK_HEALTH_RETENTION_MS,
     maxEntries: Int = PLAYBACK_HEALTH_MAX_ENTRIES,
+    lowWater: Int = PLAYBACK_HEALTH_LOW_WATER,
 ): List<PlaybackHealthEntry> {
     val cutoffMs = nowMs - retentionMs
-    return entries
+    val retained = entries
         .filter { entry ->
             entry.key.isNotBlank() &&
                 entry.latestActivityAtMs > 0L &&
                 entry.latestActivityAtMs >= cutoffMs
         }
         .sortedByDescending { it.latestActivityAtMs }
-        .take(maxEntries.coerceAtLeast(0))
+    // P2-18 滞回：仅当超过高水位才一次性淘汰到低水位，避免在高水位附近每次写入都全表排序。
+    if (retained.size <= maxEntries) return retained
+    val target = lowWater.coerceAtLeast(1).coerceAtMost(maxEntries)
+    return retained.take(target)
 }
 
 data class PlaybackAgentDecision(

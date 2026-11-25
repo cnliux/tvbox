@@ -208,6 +208,8 @@ class LiveRemoteKeyRouter(
                 RemoteKeyAction.Settings -> effects += LiveRemoteEffect.OpenLineControl
                 // 信息键 = 打开节目信息面板（低频）。
                 RemoteKeyAction.Info -> effects += LiveRemoteEffect.OpenInfo
+                // 停止键 = 停止播放并回到列表（直播不可暂停，P1-06）。
+                RemoteKeyAction.Stop -> effects += LiveRemoteEffect.ExitLive
                 else -> Unit // 方向/快进快退/BACK 在直播页无对应语义
             }
         }
@@ -385,6 +387,8 @@ fun LivePlayerRemoteShell(
     onNumberCommitted: (String) -> Unit,
     onExitLive: () -> Unit,
     onShowContinuityHint: () -> Unit,
+    /** 数字选台静默自动提交超时（毫秒）；0=手动确认。见 [com.tvbox.app.domain.DirectTuneTimeout]。 */
+    numberAutoCommitMs: Long = com.tvbox.app.domain.DirectTuneTimeout.DefaultMs,
     playerContent: @Composable (Modifier) -> Unit,
     controllerContent: @Composable (FocusRequester, onClose: () -> Unit) -> Unit,
     channelListContent: @Composable (FocusRequester, onPicked: () -> Unit, onClose: () -> Unit) -> Unit,
@@ -466,6 +470,6 @@ fun LivePlayerRemoteShell(
         }
 
         if (state.numberInput.isNotEmpty()) numberEntryContent(state.numberInput)
-        LiveRemoteNumberAutoCommit(state, ::commitNumber)
+        LiveRemoteNumberAutoCommit(state, ::commitNumber, delayMs = numberAutoCommitMs)
     }
 }

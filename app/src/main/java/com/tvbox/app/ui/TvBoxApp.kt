@@ -63,6 +63,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -116,6 +117,7 @@ import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.HealthPageMetrics
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.ui.components.AppHeader
@@ -145,6 +147,7 @@ fun TvBoxApp(
     onInstallUpdate: (String) -> Unit = {},
     onOpenUpdateSettings: () -> Unit = {},
     onSaveUpdateApk: (String) -> Unit = {},
+    onShowHealthPanel: () -> Unit = {},
 ) {
     val screenStateHolder = rememberSaveableStateHolder()
     val context = LocalContext.current
@@ -198,6 +201,15 @@ fun TvBoxApp(
             onDismiss = actions::consumeNotificationPermissionDenial,
             onRetry = onStartUpdateDownload,
         )
+        // T3-24：连按菜单键 5 次触发的本机健康面板
+        HealthPanel(
+            visible = state.showHealthPanel,
+            snapshot = state.healthSnapshot,
+            onDismiss = {
+                actions.dismissHealthPanel()
+                onShowHealthPanel()
+            },
+        )
     }
 }
 
@@ -224,6 +236,34 @@ private fun NotificationPermissionDeniedDialog(
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("知道了") }
+        },
+    )
+}
+
+/** T3-24：连按菜单键 5 次触发的本机健康面板，展示启动/卡顿/内存指标。 */
+@Composable
+private fun HealthPanel(
+    visible: Boolean,
+    snapshot: com.tvbox.app.domain.HealthSnapshot,
+    onDismiss: () -> Unit,
+) {
+    if (!visible) return
+    val context = LocalContext.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("本机健康诊断") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(HealthPageMetrics.format(snapshot), style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "提示：连续 5 次按菜单键打开此面板；数据仅本地展示，不上报。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
         },
     )
 }
@@ -426,9 +466,11 @@ private fun AppUpdateDialog(
                     text = "当前版本可更新到 ${update.versionName}，请选择是否现在更新。",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                if (update.changelog.isNotEmpty()) {
+                // S7-40：优先显示 CHANGELOG「你会感觉到」的 3 行人话；老清单回退技术 changelog。
+                val visibleNotes = update.releaseHighlights.ifEmpty { update.changelog }
+                if (visibleNotes.isNotEmpty()) {
                     Text(
-                        text = update.changelog.joinToString(separator = "\n") { "- $it" },
+                        text = visibleNotes.joinToString(separator = "\n") { "- $it" },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -512,6 +554,20 @@ private fun HomeScreen(
     if (isMobile) {
         MobileHomeFeed(state = state, actions = actions)
         return
+    }
+    // T3-24：首页 jank 采样——仅在前台时启动。
+    val homeContext = LocalContext.current
+    val appHome = remember { (homeContext.applicationContext as? com.tvbox.app.TvBoxApplication) }
+    val homeLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(Unit) {
+        val tracker = appHome?.frameTracker ?: return@DisposableEffect onDispose {}
+        val lifecycleOwner = homeLifecycleOwner
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) tracker.start()
+            else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) tracker.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     PageSurface { padding ->
         val apiLineName = state.selectedApiLine?.name ?: "资源"
@@ -888,6 +944,8 @@ public fun RemoteManageDialog(
     actions: TvBoxViewModel,
 ) {
     val configUrl = state.remoteManageServerUrl
+    // S1-01：LAN 访问会暴露同网段控制权，开启前必须二次确认（不是 Toast）。
+    var lanConfirmPending by remember { mutableStateOf(false) }
     AlertDialog(
         onDismissRequest = actions::closeRemoteManageDialog,
         title = { Text("手机远程管理") },
@@ -943,6 +1001,33 @@ public fun RemoteManageDialog(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(
+                            checked = state.appSettings.remoteManageLanEnabled,
+                            onCheckedChange = { enabled ->
+                                if (enabled) lanConfirmPending = true
+                                else actions.updateRemoteManageLanEnabled(false)
+                            },
+                        )
+                        Text(
+                            text = "允许局域网访问（同 Wi-Fi 其他设备可控制本机）",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    if (lanConfirmPending) {
+                        Text(
+                            text = "打开后，同一 Wi-Fi 里的其他设备可以控制这台盒子（改设置 / 切源 / 导入订阅）。确认开启？",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { lanConfirmPending = false }) { Text("取消") }
+                            TextButton(onClick = {
+                                lanConfirmPending = false
+                                actions.updateRemoteManageLanEnabled(true)
+                            }) { Text("确认开启") }
+                        }
+                    }
                     if (state.remoteManageMessage != null) {
                         Text(
                             text = state.remoteManageMessage,
@@ -1838,6 +1923,8 @@ private fun SourceManageCard(
     isSelected: Boolean,
     isBlocked: Boolean,
     latencies: Map<String, Long?>,
+    fingerprint: String,
+    onCopyFingerprint: () -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -1862,15 +1949,37 @@ private fun SourceManageCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = buildString {
-                        if (isSelected) append("已选 ")
-                        append(line.name)
-                        if (isBlocked) append("（已屏蔽）")
-                    },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = buildString {
+                            if (isSelected) append("已选 ")
+                            append(line.name)
+                            if (isBlocked) append("（已屏蔽）")
+                        },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    // T2-11：8字符指纹标识，点击复制到剪贴板（siteId 的短形式）。
+                    val badgeShape = RoundedCornerShape(4.dp)
+                    Surface(
+                        modifier = Modifier
+                            .clickable(onClick = onCopyFingerprint)
+                            .tvFocusScale(shape = badgeShape)
+                            .focusable(),
+                        shape = badgeShape,
+                        color = TvColors.Accent.copy(alpha = 0.12f),
+                        contentColor = TvColors.Accent,
+                    ) {
+                        Text(
+                            text = "▪$fingerprint",
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                        )
+                    }
+                }
                 Text(
                     text = buildString {
                         append(latencyLabel)
@@ -2460,16 +2569,26 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                         }
                     }
                     else -> {
+                        // T2-11：从解析后的候选集里构建 line.id → fingerprint 的查找表，避免在 items 内重复计算。
+                        val fingerprintMap = state.resolvedSites
+                            .flatMap { listOf(it.winner) + it.shadowed }
+                            .associate { candidate -> candidate.siteKey to candidate.fingerprint }
                         // 每个源一张卡片：列表长时只有可见项参与组合，比整列 forEach 更省。
                         items(
                             items = visibleSourceLines,
                             key = { "source-${it.id}" },
                         ) { line ->
+                            val fp = fingerprintMap[line.id] ?: ""
                             SourceManageCard(
                                 line = line,
                                 isSelected = line.id == state.selectedApiLine?.id,
                                 isBlocked = line.id in state.appSettings.blockedSourceIds,
                                 latencies = state.sourceLatencies,
+                                fingerprint = fp,
+                                onCopyFingerprint = {
+                                    val clip = android.content.ClipData.newPlainText("site_fingerprint", fp)
+                                    (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
+                                },
                                 onClick = { actionLineId = line.id },
                                 modifier = Modifier.fillMaxWidth(),
                             )

@@ -61,6 +61,8 @@ import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
+import com.tvbox.app.domain.GlobalPlayState
+import com.tvbox.app.domain.PlaybackFailureCode
 import com.tvbox.app.domain.appendPlaybackErrorHint
 import com.tvbox.app.domain.effectiveDecoderStrategy
 import com.tvbox.app.domain.DeviceMode
@@ -515,8 +517,15 @@ fun PlayerScreen(
                 bufferMonitor.onPlaybackFailed()
                 // 不展示 ExoPlayer 原始异常文本，按错误码映射为可读提示；
                 // 能分级时追加可操作的自愈建议（重试 / 换线路 / 换来源）。
+                // T3-22：结构化失败码进 OSD 文案与全局展示文本，用户可贴 E-xxx 定位。
+                val failure = failureCodeFromExo(error.errorCode)
+                val baseMessage = playbackErrorMessage(error.errorCode)
+                val displayText = failure?.let {
+                    "${it.code} · ${it.title}"
+                } ?: baseMessage
+                GlobalPlayState.lastFailureDisplayText = displayText
                 val message = appendPlaybackErrorHint(
-                    playbackErrorMessage(error.errorCode),
+                    displayText,
                     error.message,
                 )
                 handlePlaybackIssue(

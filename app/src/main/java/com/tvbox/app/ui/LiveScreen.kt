@@ -73,6 +73,7 @@ import com.tvbox.app.domain.LiveChannelNumberMatch
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.PlayerSurface
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.liveVideoScaleKey
 import com.tvbox.app.domain.PlaybackBufferDecision
@@ -101,6 +102,20 @@ fun LiveScreen(
 ) {
     val session = rememberPlaybackSession()
     BindPlaybackSession(session, null)
+    // T3-24：直播页面 jank 采样——仅在前台时启动，避免后台无谓开销。
+    val liveContext = LocalContext.current
+    val appLive = remember { (liveContext.applicationContext as? com.tvbox.app.TvBoxApplication) }
+    val liveLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(Unit) {
+        val tracker = appLive?.frameTracker ?: return@DisposableEffect onDispose {}
+        val lifecycleOwner = liveLifecycleOwner
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) tracker.start()
+            else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) tracker.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     // 兼容委托 getter 不支持智能转换，先取局部快照再判空。
     val liveError = state.liveError
     PageSurface { padding ->
@@ -645,7 +660,10 @@ private fun LivePlayerScreen(
 
     LaunchedEffect(channelNumberNonce) {
         if (channelNumberNonce == 0) return@LaunchedEffect
-        delay(CHANNEL_NUMBER_COMMIT_DELAY_MS)
+        // P1-08：数字选台超时四档可配；0=手动确认（不自动提交，等确认键）。
+        val autoCommitMs = state.appSettings.liveNumberAutoCommitMs
+        if (autoCommitMs <= 0L) return@LaunchedEffect
+        delay(autoCommitMs)
         // 已被确认键提前提交时输入为空，此时不应再提示一次"无频道内容"。
         if (channelNumberInput.isEmpty()) return@LaunchedEffect
         promptVisible = false
@@ -911,6 +929,8 @@ private fun LivePlayerScreen(
                 favoriteSelected = actions.isLiveFavorite(currentChannel),
             ),
             hiddenControls = state.appSettings.playerHiddenControls,
+            hiddenControlsBySurface = state.appSettings.playerHiddenControlsBySurface,
+            surface = PlayerSurface.LiveTv,
             actions = PlayerChromeActions(
                 onToggle = {
                     if (session.interrupted) {

@@ -27,6 +27,35 @@ class LiveDomainScoreTest {
     )
 
     @Test
+    fun `manual override outranks statistics and expires`() {
+        val base = mapOf(
+            "bad.test" to score("bad.test", failure = 20, lastFailureAt = now),
+            "good.test" to score("good.test", success = 5, lastSuccessAt = now),
+        )
+        // 用户说「这条明明是好的」→ 即使统计是 20 连败也排到第一。
+        val overridden = setManualDomainOverride(base, "bad.test", true, now)
+        val order = rankLiveLineIndicesByDomain(
+            listOf(line("https://good.test/live.m3u8"), line("https://bad.test/live.m3u8")),
+            overridden,
+            now,
+        )
+        assertEquals(listOf(1, 0), order)
+
+        // 24h 后裁决失效，回落统计排名。
+        val expired = now + LiveDomainScore.MANUAL_OVERRIDE_TTL_MS + 1
+        val orderAfterExpiry = rankLiveLineIndicesByDomain(
+            listOf(line("https://good.test/live.m3u8"), line("https://bad.test/live.m3u8")),
+            overridden,
+            expired,
+        )
+        assertEquals(listOf(0, 1), orderAfterExpiry)
+
+        // 撤销裁决。
+        val cleared = setManualDomainOverride(overridden, "bad.test", null, now)
+        assertEquals(null, cleared["bad.test"]?.manualOverrideAvailable)
+    }
+
+    @Test
     fun `domain is extracted from url`() {
         assertEquals("cdn.example.com", liveLineDomain("https://CDN.example.com/live/1.m3u8?token=x"))
         assertEquals("rtmp.example.com", liveLineDomain("rtmp://rtmp.example.com/live/stream"))
@@ -114,5 +143,26 @@ class LiveDomainScoreTest {
         assertEquals(3, scores.size)
         assertTrue(scores.containsKey("d4.example.com"))
         assertTrue(!scores.containsKey("d0.example.com"))
+    }
+
+    @Test
+    fun `hysteresis trims once to low water not on every write`() {
+        // 超过高水位才触发一次批量淘汰到低水位（滞回），避免高水位附近每次写入都全表排序。
+        var scores = emptyMap<String, LiveDomainScore>()
+        repeat(5) { i ->
+            scores = updateLiveDomainScores(scores, "h$i.example.com", success = true, nowMs = now + i, maxEntries = 5, lowWater = 3)
+        }
+        // 第 5 次写入让 size 到 5（=高水位，未超），不应淘汰。
+        assertEquals(5, scores.size)
+
+        // 第 6 次写入让 size 到 6（>高水位），一次性淘汰到低水位 3。
+        scores = updateLiveDomainScores(scores, "h5.example.com", success = true, nowMs = now + 5, maxEntries = 5, lowWater = 3)
+        assertEquals(3, scores.size)
+        // 保留最近活动的 3 个（h5、h4、h3），淘汰最早 3 个。
+        assertTrue(scores.containsKey("h3.example.com"))
+        assertTrue(scores.containsKey("h4.example.com"))
+        assertTrue(scores.containsKey("h5.example.com"))
+        assertTrue(!scores.containsKey("h0.example.com"))
+        assertTrue(!scores.containsKey("h1.example.com"))
     }
 }

@@ -62,6 +62,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -103,6 +104,7 @@ import com.tvbox.app.data.LiveTuningDebugPrefs
 import androidx.compose.runtime.mutableLongStateOf
 import com.tvbox.app.domain.PlaybackWatchdog
 import com.tvbox.app.domain.PlaybackFailureKind
+import com.tvbox.app.domain.PlayerSurface
 import com.tvbox.app.domain.PlaybackProgressSample
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.partitionUserAgent
@@ -130,6 +132,20 @@ fun PlatformLiveScreen(
     actions: TvBoxViewModel,
 ) {
     BackHandler { actions.goBack() }
+    // T3-24：平台直播页面 jank 采样——仅在前台时启动。
+    val platformContext = LocalContext.current
+    val appPlatform = remember { (platformContext.applicationContext as? com.tvbox.app.TvBoxApplication) }
+    val platformLifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(Unit) {
+        val tracker = appPlatform?.frameTracker ?: return@DisposableEffect onDispose {}
+        val lifecycleOwner = platformLifecycleOwner
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_START) tracker.start()
+            else if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) tracker.stop()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
     when (state.platformLiveDestination) {
         PlatformLiveDestination.Sites -> PlatformLiveSitesScreen(state = state, actions = actions)
         PlatformLiveDestination.Favorites -> PlatformLiveRoomsScreen(state = state, actions = actions, favoritesMode = true)
@@ -1785,6 +1801,8 @@ private fun PlatformLivePlayerScreen(
                     },
                 ),
                 hiddenControls = state.appSettings.playerHiddenControls,
+                hiddenControlsBySurface = state.appSettings.playerHiddenControlsBySurface,
+                surface = PlayerSurface.PlatformLive,
                 actions = PlayerChromeActions(
                     onToggle = {
                         val currentPlayer = player ?: return@PlayerChromeActions

@@ -13,6 +13,31 @@ object UaScope {
     /** 脱敏时保留的尾部字符数。 */
     const val RedactTailChars: Int = 12
 
+    /**
+     * S2-11：保留域——这些域**免疫自定义 UA**。
+     * GitHub / GitHubusercontent 是 OTA 清单与 APK 的落点，一次手滑把全局 UA 改坏，
+     * 就会断在「唯一能修它的更新通道」上，属自锁死。
+     */
+    val immutableHosts: Set<String> = setOf(
+        "github.com", "www.github.com", "api.github.com",
+        "githubusercontent.com", "raw.githubusercontent.com", "objects.githubusercontent.com",
+        "codeload.github.com",
+    )
+
+    /** 判断 host（可带端口）是否属于保留域；大小写与末尾点不敏感。 */
+    fun isImmutableHost(host: String): Boolean {
+        val normalized = host.substringBefore(":").trim().trimEnd('.').lowercase()
+        if (normalized in immutableHosts) return true
+        return immutableHosts.any { normalized.endsWith(".$it") }
+    }
+
+    /**
+     * 按目标域取最终 UA：保留域一律用内置默认，其它域走正常作用域解析。
+     * 网络出口应在发请求前用它覆盖头里的自定义 UA。
+     */
+    fun effectiveForHost(host: String, scope: String, settings: AppSettings): String =
+        if (isImmutableHost(host)) UserAgentSetting.Default else resolve(scope, settings)
+
     /** 脱敏占位符：只保留尾部片段，前缀用省略号替代。 */
     private const val ELLIPSIS = "…"
 

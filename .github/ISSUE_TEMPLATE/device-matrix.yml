@@ -1,0 +1,73 @@
+name: 📺 真机矩阵填报
+description: 报告你的盒子/电视型号与已知怪癖，帮本项目建立真机矩阵（S8-46）
+title: "[Device] "
+labels: ["device-matrix"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        谢谢帮忙！你填的内容会汇总进 `docs/DEVICE_MATRIX.md`，
+        并在 Release body 里点名致谢（**被点名的人会留下来**）。
+
+  - type: input
+    id: model
+    attributes:
+      label: 设备型号
+      placeholder: 例如 小米盒子 4S / 南都 N1 / Google TV Streamer
+    validations:
+      required: true
+
+  - type: dropdown
+    id: android
+    attributes:
+      label: Android 版本
+      options:
+        - "7"
+        - "9"
+        - "10"
+        - "11"
+        - "12"
+        - "13"
+        - "14"
+        - "其他（请在怪癖里写）"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: remote
+    attributes:
+      label: 遥控类型
+      options:
+        - "红外"
+        - "蓝牙"
+        - "两者都有"
+        - "不确定"
+    validations:
+      required: true
+
+  - type: input
+    id: resolution
+    attributes:
+      label: 典型分辨率
+      placeholder: 例如 1080p / 4K
+
+  - type: textarea
+    id: quirks
+    attributes:
+      label: 已知怪癖 / 踩过的坑
+      description: 键位同码、首次进设置要按两次、焦点乱跳、蓝牙断连……越具体越有用
+      placeholder: 例如 首次进设置需按两次确认键；数字键 0 与另一个盒子同码
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: 你验证的版本
+      placeholder: 例如 v1.0.43
+
+  - type: input
+    id: handle
+    attributes:
+      label: 你的 GitHub ID（用于 Release 点名致谢）
+      placeholder: "@yourname"

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T4-26：资源压缩保护。TV 端焦点框一旦被当成无用资源删掉，遥控器就没法用了，
+  而 Debug 构建通常不收缩资源，只有 Release 才现形。
+  当前焦点由 Compose 绘制（res/drawable 下只有 app_banner 与 ic_launcher_foreground），
+  这里先把命名约定锁死：以后任何 *focus* / *sel_* 资源都不会被 R8 剥掉。
+  注意：tools:discard 留空，绝不 discard 任何 tv_ 前缀资源。
+-->
+<resources
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/*focus*,@drawable/*sel_*,@drawable/tv_*"
+    tools:discard="" />

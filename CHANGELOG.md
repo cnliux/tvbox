@@ -1,13 +1,46 @@
-## v1.0.43 - 2026-11-25
+# 更新日志（用户语言版）
 
-手机端历史页视觉收紧与 TV 搜索字母索引：
+> 写法约定（S7-40）：每个版本三段——**你会感觉到**（3 行人话，直接进 OTA 弹窗）、
+> **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
+> 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.44 - 2026-11-26 —「更稳、更安全、更好用」
+
+**你会感觉到**：
+- 首次启动会弹出《内容免责与源合法性确认》，明确「你自选源、内容与平台无关」；
+- 历史记录可以按隐私档位管理：完整 / 仅片名 / 关闭，搜索历史可设 TTL 自动过期；
+- 网络更稳：探活超时分层（不再一刀切 10 秒）、302 跨协议降级可追踪、探针带冷却不再把源「探死」。
+
+**修了什么**：
+- M3U 解析：`M3uTagLexer.parseAttributes` 修复「`key = "value"`（等号两侧带空格）时键名被截成空串」的缺陷，`url-tvg` / `x-tvg-url` 等 EPG 头部属性恢复可读。
+- 首次运行法务契约：`LegalAcknowledgement` 接入 `MainActivity` 首启流程（T6-39 / S2-10）。
+- 网络层契约：`RedirectPolicy` 接入 OkHttp `RedirectTrackingInterceptor`，302 跨 protocol 降级按风险分类记录（T1-03）；`DurationConfidence` 接入 `LiveStreamProbe`，HEAD 预检 + Range 语义对齐时长可信度（T1-04）。
+- 源身份与合并：`ResolvedSite` 接入 `SourceManagerUiState.resolveSourceCandidates`，同名源不再互相覆盖评分/屏蔽/线路偏好（T2-11 / T2-13）。
+- 探针冷却：`ProbeCooldown` 接入 `TvBoxViewModel` 探活调度，防并发把源探死（T2-16）。
+- 内存与稳定性：`MemoryGovernor` 接入 `TvBoxApplication.onTrimMemory`，TIGHT/CRITICAL 档位上报健康页（T3-21）。
+- 播放诊断：`PlaybackFailureCode` 接入 `PlaybackHost` / `PlayerScreen`，结构化失败码替代裸异常；`RemoteBreadcrumb` 记录播放会话出口（T3-22 / T3-23）。
+- 超时预算：`Timeouts` 按 PROBE/DETAIL/POSTER/FIRST_FRAME/OTA 分档，替代「全仓一个 10s」（T1-09）。
+- 历史隐私：`AppSettings` 新增 `HistoryPolicy`（FULL/TITLE_ONLY/OFF）、`searchHistoryTtlDays`、`guestModeActive`；`SearchHistoryStore` 实现 TTL 自动过期与访客模式（S1-06）。
+- 发布一致性：`release.yml` 的 README 版本校验兼容「当前为 `x.y.z`」新表述，避免误判阻断发版。
+
+**已知问题**：部分南都红外盒子首次进入设置需按两次确认键（下个版本修复）。
+
+## v1.0.43 - 2026-11-25 —「找片更快，看得更顺」
+
+**你会感觉到**：
+- 手机「继续观看」的卡片收紧了，一屏能看到更多片子；
+- TV 搜索新增 A-Z 字母索引，按一下拼音首字母就跳到对应结果；
+- 历史页的「清空」等按钮不再被横向滑动裁掉。
+
+**修了什么**：
 - 手机端历史页：卡片整体缩小（海报 128×184 → 96×136dp，保持 2:3），右侧「标题 / 上次看到 / 进度条」三项在紧凑卡片内更饱满，不再因海报过高而下半留白。
 - 手机端历史页顶部收紧：搜索框 36→34dp、筛选按钮 36→32dp、行间距与留白同步压缩。
 - 手机端历史页筛选按钮组改用 FlowRow 自动换行，「清空历史」等按钮不再被横向滑动裁切、完整可见。
 - 手机端历史页标题允许换行到最多 2 行，长片名不再单行截断（2 行内不挤压状态行 / 进度条）。
 - TV 版搜索：新增字母索引栏（A-Z + 全部），点击字母右侧结果区自动加载以该字母（拼音首字母）开头的影片并回到顶部；空态给出明确提示。
 - 新增 `PinyinInitialsMatcher.firstInitial`：取片名拼音首字母，供搜索页字母索引过滤。
+
+**已知问题**：部分南都红外盒子首次进入设置需要按两次确认键（下个版本修复）。
 
 ## v1.0.42 - 2026-11-25
 

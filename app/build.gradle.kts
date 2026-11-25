@@ -52,8 +52,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.0.43"
-val TVBOX_VERSION_CODE = 20043
+val TVBOX_VERSION_NAME = "1.0.44"
+val TVBOX_VERSION_CODE = 20044
 
 android {
     namespace = "com.tvbox.app"
@@ -214,6 +214,10 @@ android {
 // 使用 AGP 8+ 的 androidComponents API（applicationVariants 在新版 AGP 的 Kotlin DSL 中已不可用）。
 androidComponents {
     onVariants { variant ->
+        // T4-25 第三道闸：skipBind 的包在 APK 里烙印，流出去一眼可定性，不再静默错误。
+        if (skipPlatformBind && variant.buildType == "debug") {
+            variant.applicationId.set(variant.applicationId.get() + ".debugnopl")
+        }
         if (variant.buildType == "release") {
             variant.outputs.forEach { output ->
                 output.outputFileName.set("juhe-video-v${TVBOX_VERSION_NAME}.apk")
@@ -393,8 +397,66 @@ val stripPlatformLiveAar = tasks.register("stripPlatformLiveAar") {
     }
 }
 
-tasks.matching { it.name == "preBuild" }.configureEach {
+// T4-25：skipPlatformBind 是一个「无声的正确性开关」，在下方 verifyPlatformBind 任务与
+// androidComponents 烙印处共用；定义在此处保证配置期先于两处使用。
+val skipPlatformBind = project.hasProperty("tvboxSkipPlatformBind")
+
+val verifyPlatformBind = tasks.register("verifyPlatformBind") {
+    group = "verification"
+    description = "校验 platformlive.aar 与 Go 源码指纹一致，并拒绝 skipBind 且 AAR 缺失的残包"
+    // 必须在 bind/strip 之后：fingerprint 文件由 bindPlatformLive 在 doLast 写入。
     dependsOn(stripPlatformLiveAar)
+    outputs.upToDateWhen { false }
+    doLast {
+        if (skipPlatformBind) {
+            check(platformLiveAar.isFile) {
+                "❌ skipBind 且 AAR 缺失：这个包一定没有平台直播，拒绝产出。\n" +
+                    "  → 跑 powershell -File tools/bind-platform-live.ps1，或显式承认这是调试包"
+            }
+            logger.warn("⚠️ tvboxSkipPlatformBind=true：这是未绑定 Go 源码的调试包，APK 将烙印 .debugnopl 后缀")
+            return@doLast
+        }
+        check(platformLiveAar.isFile) {
+            "❌ platformlive.aar 缺失：平台直播解析不可用，拒绝产出残包。\n" +
+                "  → 跑 powershell -File tools/bind-platform-live.ps1"
+        }
+        val stamp = platformLiveFingerprintFile.takeIf { it.isFile }?.readText()?.trim().orEmpty()
+        val current = goSourceFingerprint()
+        check(stamp == current) {
+            "❌ platformlive.aar 与 Go 源码不匹配（可能改了 .go/go.mod 却没重绑）。\n" +
+                "  AAR stamp = $stamp\n  Go  now    = $current\n" +
+                "  → 跑 powershell -File tools/bind-platform-live.ps1"
+        }
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(verifyPlatformBind)
+}
+
+// T4-27：versionCode 单一真源门禁。
+// 本仓是单包多端（运行时 DeviceMode 适配，无 tv/mobile flavor），因此
+// 「三 flavor 靠人肉约定前缀导致 OTA 推错包」在这里变形为：版本号只能有一处
+// 定义、versionCode 只能有一处赋值。杜绝复制粘贴出第二个真源。
+val verifyVersionCode = tasks.register("verifyVersionCode") {
+    group = "verification"
+    description = "校验 versionCode 只有单一真源，杜绝复制粘贴导致的 OTA 错推"
+    inputs.file("build.gradle.kts")
+    outputs.upToDateWhen { false }
+    doLast {
+        val script = file("build.gradle.kts").readText()
+        val definitions = Regex("""val\s+TVBOX_VERSION_CODE\s*=""").findAll(script).count()
+        val assignments = Regex("""versionCode\s*=""").findAll(script).count()
+        val literals = Regex("""versionCode\s*=\s*\d+""").findAll(script).count()
+        check(definitions == 1 && assignments == 1 && literals == 0) {
+            "❌ versionCode 真源不唯一（定义=$definitions / 赋值=$assignments / 硬编码=$literals）。\n" +
+                "  → 只允许顶部 val TVBOX_VERSION_CODE 定义一次，并在 defaultConfig 中赋值一次"
+        }
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(verifyVersionCode)
 }
 
 // 打包前校验必备 assets。
@@ -434,6 +496,71 @@ tasks.matching { it.name == "preBuild" }.configureEach {
     dependsOn(verifyRequiredAssets)
 }
 
+// 统一 TODO/FIXME/HACK 标记的域前缀 lint（P2-14）。
+// 期望格式：`TODO(<域>-<序号>)`，如 `TODO(P0-S4)`、`TODO(P2-14)`。
+// 规则：无域前缀 → warn；`P0-` 前缀 → fail（Release 分支不允许 P0- 遗留，见 §6 验收）。
+val lintTodo = tasks.register("lintTodo") {
+    group = "verification"
+    description = "校验 TODO/FIXME/HACK 标记是否带统一域前缀"
+    doLast {
+        val sourceDirs = listOf(
+            layout.projectDirectory.dir("src/main/java").asFile,
+            layout.projectDirectory.dir("src/test/java").asFile,
+        )
+        val root = rootProject.rootDir
+        val goDir = root.resolve("platform_live_go")
+        val markerPattern = Regex("""\b(TODO|FIXME|HACK)\b""")
+        val prefixPattern = Regex("""(?:TODO|FIXME|HACK)\s*\(\s*([A-Za-z0-9]+)-([A-Za-z0-9]+)\s*\)""")
+        val files = mutableListOf<File>()
+        sourceDirs.filter { it.isDirectory }.forEach { dir ->
+            dir.walkTopDown()
+                .filter { it.isFile && (it.extension == "kt" || it.extension == "java") }
+                .forEach { files.add(it) }
+        }
+        if (goDir.isDirectory) {
+            goDir.walkTopDown()
+                .filter { it.isFile && it.extension == "go" }
+                .forEach { files.add(it) }
+        }
+        var warnCount = 0
+        var failCount = 0
+        val warnings = mutableListOf<String>()
+        val failures = mutableListOf<String>()
+        files.forEach { file ->
+            file.readLines().forEachIndexed { index, line ->
+                if (markerPattern.containsMatchIn(line)) {
+                    if (!prefixPattern.containsMatchIn(line)) {
+                        warnings += "${file.relativeTo(root)}:${index + 1}: ${line.trim()}"
+                        warnCount++
+                    }
+                    if (prefixPattern.find(line)?.groupValues?.get(1)?.startsWith("P0") == true) {
+                        failures += "${file.relativeTo(root)}:${index + 1}: ${line.trim()}"
+                        failCount++
+                    }
+                }
+            }
+        }
+        warnings.forEach { logger.warn(it) }
+        if (failures.isNotEmpty()) {
+            failures.forEach { logger.error(it) }
+            throw GradleException(
+                "lintTodo 失败：$failCount 处 P0- 前缀标记（Release 分支不允许 P0- 遗留）：\n" +
+                    failures.joinToString("\n"),
+            )
+        }
+        logger.lifecycle(
+            "lintTodo 完成：扫描 ${files.size} 个文件，$warnCount 处无域前缀标记（warn），$failCount 处 P0- 前缀（fail）",
+        )
+    }
+}
+
+// S4-23：依赖锁定——同一 commit 今天和三个月后构建出的依赖必须一致。
+// 首次生成：./gradlew :app:dependencies --write-locks，提交 app/gradle.lockfile；
+// CI/supply-chain.yml 用 go mod tidy 检查 Go 侧漂移，Gradle 侧由 lockfile 约束。
+dependencyLocking {
+    lockAllConfigurations()
+}
+
 dependencies {
     // 平台直播解析（虎牙/斗鱼/B站/抖音/快手）由 Go 实现（platform_live_go），
     // 以 gomobile bind 产出 AAR：tools/bind-platform-live.(ps1|sh)
@@ -464,6 +591,7 @@ dependencies {
     implementation(libs.zxing.core)
 
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 
     // Compose UI 测试（instrumentation）：验证面板焦点陷阱等真实焦点行为。
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

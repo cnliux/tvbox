@@ -1,6 +1,7 @@
 package com.tvbox.app.data
 
 import com.tvbox.app.domain.ApiLine
+import com.tvbox.app.domain.Schemas
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -58,41 +59,58 @@ object SourceConfigBackup {
         "(?i)(api[_-]?key|token|secret|password|passwd|authorization|cookie|signature|access[_-]?key)",
     )
 
+    /**
+     * 兼容校验的「规范 body」：仅含 legacy 字段（format/version/sites/lives/order/weights），
+     * checksum 只算这部分 —— 历史备份无 schema 字段时仍能通过，避免全量覆盖导致存量备份无法导入。
+     */
+    private fun legacyBodyJson(
+        lines: List<ApiLine>,
+        liveUrls: List<String>,
+        order: List<String>,
+        weights: Map<String, Int>,
+    ): String = buildJsonObject {
+        put("format", FORMAT)
+        put("version", VERSION)
+        putJsonArray("sites") {
+            lines.forEach { line ->
+                add(
+                    buildJsonObject {
+                        put("id", line.id)
+                        put("name", line.name)
+                        put("api", line.baseUrls.firstOrNull().orEmpty())
+                    },
+                )
+            }
+        }
+        putJsonArray("lives") { liveUrls.forEach { add(it) } }
+        putJsonArray("order") { order.forEach { add(it) } }
+        put(
+            "weights",
+            buildJsonObject {
+                weights.forEach { (id, weight) -> put(id, weight) }
+            },
+        )
+    }.toString()
+
     fun export(
         lines: List<ApiLine>,
         liveUrls: List<String>,
         order: List<String> = emptyList(),
         weights: Map<String, Int> = emptyMap(),
     ): String {
-        val body = buildJsonObject {
-            put("format", FORMAT)
-            put("version", VERSION)
-            putJsonArray("sites") {
-                lines.forEach { line ->
-                    add(
-                        buildJsonObject {
-                            put("id", line.id)
-                            put("name", line.name)
-                            put("api", line.baseUrls.firstOrNull().orEmpty())
-                        },
-                    )
-                }
-            }
-            putJsonArray("lives") { liveUrls.forEach { add(it) } }
-            putJsonArray("order") { order.forEach { add(it) } }
-            put(
-                "weights",
-                buildJsonObject {
-                    weights.forEach { (id, weight) -> put(id, weight) }
-                },
-            )
-        }
-        // #188/#394：对"不含 checksum 的规范 body"计算 SHA-256，导入时同法重算比对，
-        // 防止备份文件被截断/篡改后静默导入损坏配置。
-        val checksum = sha256(body.toString())
+        // #395/T7-44：新备份带 schema 信封，旧客户端 ignoreUnknownKeys=true 自动忽略。
+        // checksum 只覆盖 legacy body（与历史版本格式一致），保证存量备份仍可校验。
+        val legacyBody = legacyBodyJson(lines, liveUrls, order, weights)
+        val checksum = sha256(legacyBody)
         return buildJsonObject {
-            body.entries.forEach { (key, value) -> put(key, value) }
+            put("schema", Schemas.SOURCE_CONFIG)
+            put("kind", Schemas.Kind.SourceConfig.id)
+            put("minReader", Schemas.SOURCE_CONFIG)
+            put("createdBy", "${Schemas.current(Schemas.Kind.SourceConfig)}/${VERSION}")
             put("checksum", checksum)
+            // 展开 legacy body 字段（顺序与历史输出保持一致）
+            val legacy = Json.parseToJsonElement(legacyBody) as JsonObject
+            legacy.entries.forEach { (key, value) -> put(key, value) }
         }.toString()
     }
 
@@ -121,12 +139,15 @@ object SourceConfigBackup {
         // #395：version < VERSION 的低版本备份照样放行——后续字段全部走「缺失即默认值」的兼容解析。
         val isLegacyBackup = version < VERSION
 
-        // #188/#394：带 checksum 的备份先校验完整性；老版本无该字段则放行以兼容历史文件。
+        // #188/#394/T7-44：带 checksum 的备份先校验完整性。
+        // checksum 只对 legacy body（不含 schema/kind/minReader/createdBy/checksum）计算，
+        // 保证历史备份（无信封字段）与新版备份仍能用同一把钥匙校验。
         val expectedChecksum = (root["checksum"] as? JsonPrimitive)?.content?.trim()
         if (!expectedChecksum.isNullOrBlank()) {
+            val legacyKeys = setOf("format", "version", "sites", "lives", "order", "weights")
             val body = buildJsonObject {
                 root.entries.forEach { (key, value) ->
-                    if (key != "checksum") put(key, value)
+                    if (key != "checksum" && key in legacyKeys) put(key, value)
                 }
             }
             if (!sha256(body.toString()).equals(expectedChecksum, ignoreCase = true)) {

@@ -6,7 +6,9 @@ import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.HistoryLayout
+import com.tvbox.app.domain.HistoryPolicy
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.DirectTuneTimeout
 import com.tvbox.app.domain.LiveRemoteDirectionMapping
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.PlayerBrightnessSetting
@@ -72,6 +74,7 @@ internal object SettingsStorageKeys {
     const val EPG_CARD_ROWS = "epg_card_rows"
     const val LIVE_NUMBER_MATCH_ROWS = "live_number_match_rows"
     const val LIVE_NUMBER_SEARCH_LIMIT = "live_number_search_limit"
+    const val LIVE_NUMBER_AUTO_COMMIT_MS = "live_number_auto_commit_ms"
     const val RELATED_CHANNEL_COUNT = "related_channel_count"
     const val HOT_WORD_COUNT = "hot_word_count"
     const val SEARCH_SUGGESTION_COUNT = "search_suggestion_count"
@@ -98,6 +101,10 @@ internal object SettingsStorageKeys {
     const val HISTORY_LAYOUT = "history_layout"
     const val HISTORY_COVER_BADGE = "history_cover_badge"
     const val CRASH_LOG_LOCAL_ONLY = "crash_log_local_only"
+    // S1-06：历史记录策略、TTL 与访客模式。
+    const val HISTORY_POLICY = "history_policy"
+    const val SEARCH_HISTORY_TTL_DAYS = "search_history_ttl_days"
+    const val GUEST_MODE_ACTIVE = "guest_mode_active"
     // 源失败熔断（连续超时自动休眠，对照设置页方案）。
     const val SOURCE_CIRCUIT_BREAKER = "source_circuit_breaker"
     // 手机端设置中心 v2 新增键。
@@ -119,6 +126,7 @@ internal object SettingsStorageKeys {
     const val GESTURE_LOCK = "gesture_lock"
     const val AUDIO_OUTPUT_MODE = "audio_output_mode"
     const val PLAYER_HIDDEN_CONTROLS = "player_hidden_controls"
+    const val PLAYER_HIDDEN_CONTROLS_BY_SURFACE = "player_hidden_controls_by_surface"
     const val UA_SCOPE_MODE = "ua_scope_mode"
     const val UA_FOR_API = "ua_for_api"
     const val UA_FOR_SPIDER = "ua_for_spider"
@@ -140,6 +148,7 @@ internal object SettingsStorageKeys {
     const val PLATFORM_THIRD_PARTY_PROXY_TEMPLATES = "platform_third_party_proxy_templates"
     const val LAN_RESOLVER_ENABLED = "lan_resolver_enabled"
     const val LAN_RESOLVER_CONFIRMED = "lan_resolver_confirmed"
+    const val REMOTE_MANAGE_LAN_ENABLED = "remote_manage_lan_enabled"
     const val AI_SEARCH_ENABLED = "ai_search_enabled"
     const val VOICE_SEARCH_ENABLED = "voice_search_enabled"
     const val AI_TEXT_REDACTION = "ai_text_redaction"
@@ -228,6 +237,9 @@ internal fun readLegacySettings(
         epgCardRows = quantity(SettingsStorageKeys.EPG_CARD_ROWS, QuantitySettings.EpgCardRows),
         liveNumberMatchRows = quantity(SettingsStorageKeys.LIVE_NUMBER_MATCH_ROWS, QuantitySettings.LiveNumberMatchRows),
         liveNumberSearchLimit = quantity(SettingsStorageKeys.LIVE_NUMBER_SEARCH_LIMIT, QuantitySettings.LiveNumberSearchLimit),
+        liveNumberAutoCommitMs = DirectTuneTimeout.clamp(
+            long(SettingsStorageKeys.LIVE_NUMBER_AUTO_COMMIT_MS, DirectTuneTimeout.DefaultMs),
+        ),
         relatedChannelCount = quantity(SettingsStorageKeys.RELATED_CHANNEL_COUNT, QuantitySettings.RelatedChannelCount),
         hotWordCount = quantity(SettingsStorageKeys.HOT_WORD_COUNT, QuantitySettings.HotWordCount),
         searchSuggestionCount = quantity(SettingsStorageKeys.SEARCH_SUGGESTION_COUNT, QuantitySettings.SearchSuggestionCount),
@@ -291,6 +303,11 @@ internal fun readLegacySettings(
         gestureLockEnabled = boolean(SettingsStorageKeys.GESTURE_LOCK, false),
         audioOutputMode = string(SettingsStorageKeys.AUDIO_OUTPUT_MODE, "auto"),
         playerHiddenControls = stringList(SettingsStorageKeys.PLAYER_HIDDEN_CONTROLS).toSet(),
+        playerHiddenControlsBySurface = runCatching {
+            json.decodeFromString<Map<String, List<String>>>(
+                string(SettingsStorageKeys.PLAYER_HIDDEN_CONTROLS_BY_SURFACE, "{}"),
+            )
+        }.getOrElse { emptyMap() }.mapValues { (_, keys) -> keys.toSet() },
         uaScopeMode = string(SettingsStorageKeys.UA_SCOPE_MODE, "unified"),
         uaForApi = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_API, "")),
         uaForSpider = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_SPIDER, "")),
@@ -312,6 +329,7 @@ internal fun readLegacySettings(
         platformThirdPartyProxyTemplates = string(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_TEMPLATES, ""),
         lanResolverEnabled = boolean(SettingsStorageKeys.LAN_RESOLVER_ENABLED, false),
         lanResolverConfirmed = boolean(SettingsStorageKeys.LAN_RESOLVER_CONFIRMED, false),
+        remoteManageLanEnabled = boolean(SettingsStorageKeys.REMOTE_MANAGE_LAN_ENABLED, false),
         aiSearchEnabled = boolean(SettingsStorageKeys.AI_SEARCH_ENABLED, false),
         voiceSearchEnabled = boolean(SettingsStorageKeys.VOICE_SEARCH_ENABLED, false),
         aiTextRedactionEnabled = boolean(SettingsStorageKeys.AI_TEXT_REDACTION, true),
@@ -326,6 +344,9 @@ internal fun readLegacySettings(
         historyAutoCleanupEnabled = boolean(SettingsStorageKeys.HISTORY_AUTO_CLEANUP, true),
         resumeConflictPolicy = string(SettingsStorageKeys.RESUME_CONFLICT_POLICY, "ask"),
         crashLogLocalOnly = boolean(SettingsStorageKeys.CRASH_LOG_LOCAL_ONLY, true),
+        historyPolicy = HistoryPolicy.fromStorageKey(string(SettingsStorageKeys.HISTORY_POLICY, HistoryPolicy.FULL.storageKey)),
+        searchHistoryTtlDays = int(SettingsStorageKeys.SEARCH_HISTORY_TTL_DAYS, 30).coerceIn(0, 365),
+        guestModeActive = boolean(SettingsStorageKeys.GUEST_MODE_ACTIVE, false),
     )
 }
 

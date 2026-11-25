@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全漏洞披露（请私密）
+    url: https://github.com/cnliux/tvbox/security/policy
+    about: 发现安全漏洞请走私密漏洞报告，不要公开贴 0-day（见 SECURITY.md）
+  - name: 提交前先搜 issue
+    url: https://github.com/cnliux/tvbox/issues
+    about: 请先搜索是否已有相同问题，避免重复

@@ -252,4 +252,9 @@ data class AppUpdate(
     val minVersionCode: Long = 0L,
     /** 清单发布通道（P39）：`stable`（正式）或 `canary`（预览），缺省按正式通道处理。 */
     val channel: String = "stable",
+    /**
+     * S7-40：从 CHANGELOG「你会感觉到」抽出的 3 行人话，OTA 弹窗优先显示。
+     * 老清单没有该字段时为空，UI 回退到 [changelog]。
+     */
+    val releaseHighlights: List<String> = emptyList(),
 )

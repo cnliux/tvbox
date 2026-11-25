@@ -3,6 +3,7 @@ package com.tvbox.app.crash
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.tvbox.app.domain.GlobalPlayState
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -48,6 +49,12 @@ object AnrWatchdog {
                     // 再等一个周期，给主线程最后一次响应机会。
                     Thread.sleep(CHECK_INTERVAL_MS)
                     if (!pending.get()) continue
+                    // T3-23：ANR检测时记录面包屑，便于复现排查
+                    GlobalPlayState.breadcrumb.record(
+                        System.currentTimeMillis(),
+                        "anr_detected",
+                        "silent_ms=${silentMs}"
+                    )
                     val stack = captureStacks()
                     CrashHandler.writeCrashLog(
                         Thread.currentThread(),

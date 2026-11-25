@@ -1,0 +1,117 @@
+name: 🐛 Bug 报告
+description: 播放不了 / 卡顿 / 崩溃 / 设置不生效 —— 用这个表单能最快定位
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 先看一眼
+        1. 请先在 issue 列表搜一下**是否已有人报过**（避免重复）。
+        2. **请勿贴出任何私密信息**（源订阅里的 token、远程管理口令、AI Key）。
+        3. 越完整的信息 = 越快修复。缺盒子型号与日志的 "播放不了" 基本无法定位。
+
+  - type: dropdown
+    id: device
+    attributes:
+      label: 盒子 / 设备型号
+      description: 你的播放设备（决定是红外还是蓝牙、是弱盒还是旗舰）
+      options:
+        - 小米盒子 4S Pro
+        - 小米电视 ES
+        - 华为智慧屏
+        - 荣耀盒子
+        - 南都/创维老 IPTV（6 键红外）
+        - 天猫魔盒
+        - 当贝盒子
+        - 腾讯极光盒子
+        - 瑞芯微 3566（2G）
+        - 晶晨 S905（2G）
+        - 斐讯 N1
+        - 其他（请在下方补充）
+    validations:
+      required: true
+
+  - type: input
+    id: android_version
+    attributes:
+      label: Android 版本
+      placeholder: 例如 Android 9 / 11 / 13
+    validations:
+      required: true
+
+  - type: input
+    id: app_version
+    attributes:
+      label: 应用版本（自动填，可留空）
+      description: 见「关于」页的 versionName/versionCode
+      placeholder: 例如 1.0.43 (20043)
+
+  - type: dropdown
+    id: scene
+    attributes:
+      label: 发生场景
+      options:
+        - 首页（浏览/搜索）
+        - 点播（进详情/播放/切集）
+        - 电视直播
+        - 平台直播（虎牙/斗鱼/B站/抖音/快手）
+        - OTA 更新
+        - 设置页
+        - 历史 / 收藏
+        - 其他
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source_type
+    attributes:
+      label: 源类型
+      options:
+        - 自建订阅
+        - 内置源
+        - M3U / 直播源
+        - 平台直播（无订阅）
+        - 不确定
+
+  - type: dropdown
+    id: reproducible
+    attributes:
+      label: 是否可稳定复现
+      options:
+        - 每次都能复现
+        - 偶尔出现（>10 分钟一次）
+        - 只出现一次（无法复现）
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: 发生了什么
+      description: 一句话描述 + 你期望的行为
+      placeholder: |
+        例如：进某频道后 3 秒黑屏退出，换其他源正常。
+        期望：能稳定播放。
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志（粘贴区）
+      description: 从「设置 → 诊断」复制脱敏日志（会去掉签名 URL 与个人标识）；也可贴 logcat 相关片段
+      placeholder: |
+        [点我复制脱敏日志] 按钮在设置→诊断页
+        paste logcat / 诊断导出内容 here
+      render: text
+
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: 信息使用同意
+      options:
+        - label: 我同意在修复后附上**黄金截图**作为回归证据（可选，加速修复）
+        - label: 我确认日志已脱敏，不含源订阅 token / 远程口令 / AI Key
+    validations:
+      required: true

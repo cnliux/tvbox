@@ -145,6 +145,47 @@ class SourceConfigBackupTest {
     }
 
     @Test
+    fun exportedBackupCarriesSchemaEnvelopeAndRoundTrips() {
+        // T7-44：新版导出带 schema/kind/minReader/createdBy 信封，parse 仍正常恢复。
+        val raw = SourceConfigBackup.export(
+            lines = listOf(ApiLine(id = "x", name = "X", baseUrls = listOf("https://x.test/"))),
+            liveUrls = emptyList(),
+        )
+        assertTrue(raw.contains("\"schema\":1"))
+        assertTrue(raw.contains("\"kind\":\"source_config\""))
+        assertTrue(raw.contains("\"minReader\":1"))
+        assertTrue(raw.contains("\"createdBy\""))
+        val result = SourceConfigBackup.parse(raw)
+        assertNull(result.error)
+        assertNotNull(result.payload)
+        assertEquals("x", checkNotNull(result.payload).lines.single().id)
+    }
+
+    @Test
+    fun legacyBackupWithoutSchemaFieldStillImports() {
+        // 历史格式（无 schema 信封）应继续可用 —— ignoreUnknownKeys=true 兜底。
+        val legacy = """
+            {"format":"tvbox-source-backup","version":1,
+             "sites":[{"id":"old","name":"旧源","api":"https://old.test/"}],
+             "lives":[],"order":[],"weights":{}}
+        """.trimIndent()
+        val result = SourceConfigBackup.parse(legacy)
+        assertNull(result.error)
+        assertNotNull(result.payload)
+        assertEquals("old", checkNotNull(result.payload).lines.single().id)
+    }
+
+    @Test
+    fun legacyChecksumComputesOverLegacyFieldsOnly() {
+        // 兼容存量备份：checksum 只对 legacy body 计算，加上 schema 信封不影响校验。
+        val lines = listOf(ApiLine(id = "k", name = "K", baseUrls = listOf("https://k.test/")))
+        val raw = SourceConfigBackup.export(lines = lines, liveUrls = emptyList())
+        // 导入时应通过校验（checksum 匹配 legacy body）。
+        val result = SourceConfigBackup.parse(raw)
+        assertNull(result.error)
+    }
+
+    @Test
     fun repeatedRestoreYieldsSameStateWithoutDuplicates() {
         // 幂等恢复：恢复同一份备份两次，最终应用内配置状态应与恢复一次后完全一致，
         // 既不出现重复源，也不出现重复直播/排序/权重条目。

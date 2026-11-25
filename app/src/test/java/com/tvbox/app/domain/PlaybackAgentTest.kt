@@ -255,6 +255,36 @@ class PlaybackAgentTest {
     }
 
     @Test
+    fun prunesPlaybackHealthEntriesWithHysteresis() {
+        // 高水位 5：未超过时不清；第 6 条写入触发一次批量淘汰到低水位 3（滞回）。
+        val entries = (1..5).map { index ->
+            PlaybackHealthEntry(
+                key = "line-$index",
+                lastSuccessAtMs = index * 1_000L,
+            )
+        }
+        // size == 高水位，不触发淘汰。
+        val atHighWater = prunePlaybackHealthEntries(
+            entries = entries,
+            nowMs = 10_000L,
+            retentionMs = 10_000L,
+            maxEntries = 5,
+            lowWater = 3,
+        )
+        assertEquals(5, atHighWater.size)
+
+        // size == 高水位 + 1，一次性淘汰到低水位 3。
+        val overHighWater = prunePlaybackHealthEntries(
+            entries = entries + PlaybackHealthEntry(key = "line-6", lastSuccessAtMs = 6_000L),
+            nowMs = 10_000L,
+            retentionMs = 10_000L,
+            maxEntries = 5,
+            lowWater = 3,
+        )
+        assertEquals(listOf("line-6", "line-5", "line-4"), overHighWater.map { it.key })
+    }
+
+    @Test
     fun reportsNoSwitchWhenEveryAlternativeIsBlocked() {
         val movie = movieWithSources("量子", "如意")
 

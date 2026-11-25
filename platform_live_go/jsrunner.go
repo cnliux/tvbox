@@ -25,13 +25,14 @@ const jsExecTimeout = 8 * time.Second
 const maxJSScriptSize = 2 << 20 // 2MB
 
 // watchdogInterrupt 超时后中断 VM；正常完成后由调用方 close(done) 结束看门狗。
-func watchdogInterrupt(vm *goja.Runtime, done <-chan struct{}) {
-	timer := time.NewTimer(jsExecTimeout)
+// timeout 由调用方注入，便于单测用 250ms 验证「死循环必被中断」，生产仍用 jsExecTimeout。
+func watchdogInterrupt(vm *goja.Runtime, done <-chan struct{}, timeout time.Duration) {
+	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case <-done:
 	case <-timer.C:
-		vm.Interrupt(fmt.Errorf("JS 执行超时（>%s）", jsExecTimeout))
+		vm.Interrupt(fmt.Errorf("JS 执行超时（>%s）", timeout))
 	}
 }
 
@@ -53,6 +54,11 @@ func newJSRuntime() *goja.Runtime {
 // runJSScriptScriptExpression 编译并执行 script，随后求值 expression，
 // 返回该表达式的字符串值（对应 Kotlin DouyinSigner.runJs 的语义）。
 func runJSScriptScriptExpression(script, expression string) (string, error) {
+	return runJSScriptScriptExpressionWithTimeout(script, expression, jsExecTimeout)
+}
+
+// runJSScriptScriptExpressionWithTimeout 是注入执行预算的版本，仅用于测试与灰度调参。
+func runJSScriptScriptExpressionWithTimeout(script, expression string, timeout time.Duration) (string, error) {
 	if len(script) > maxJSScriptSize {
 		return "", fmt.Errorf("JS 脚本过大（%d 字节），已拒绝执行", len(script))
 	}
@@ -65,7 +71,7 @@ func runJSScriptScriptExpression(script, expression string) (string, error) {
 		return "", fmt.Errorf("JS 脚本编译失败：%w", err)
 	}
 	done := make(chan struct{})
-	go watchdogInterrupt(vm, done)
+	go watchdogInterrupt(vm, done, timeout)
 	defer close(done)
 	if _, err := vm.RunProgram(program); err != nil {
 		return "", fmt.Errorf("JS 脚本执行失败：%w", err)
@@ -116,7 +122,7 @@ func RunABogus(signScript, params, userAgent string) (result string, err error) 
 	}
 	defer vm.ClearInterrupt()
 	done := make(chan struct{})
-	go watchdogInterrupt(vm, done)
+	go watchdogInterrupt(vm, done, jsExecTimeout)
 	defer close(done)
 	if _, err := vm.RunProgram(program); err != nil {
 		return fmt.Sprintf(`{"error":"抖音签名脚本执行失败：%s"}`, escapeJSON(err.Error())), nil

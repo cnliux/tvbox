@@ -94,6 +94,7 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putInt(SettingsStorageKeys.EPG_CARD_ROWS, settings.epgCardRows)
     putInt(SettingsStorageKeys.LIVE_NUMBER_MATCH_ROWS, settings.liveNumberMatchRows)
     putInt(SettingsStorageKeys.LIVE_NUMBER_SEARCH_LIMIT, settings.liveNumberSearchLimit)
+    putLong(SettingsStorageKeys.LIVE_NUMBER_AUTO_COMMIT_MS, settings.liveNumberAutoCommitMs)
     putInt(SettingsStorageKeys.RELATED_CHANNEL_COUNT, settings.relatedChannelCount)
     putInt(SettingsStorageKeys.HOT_WORD_COUNT, settings.hotWordCount)
     putInt(SettingsStorageKeys.SEARCH_SUGGESTION_COUNT, settings.searchSuggestionCount)
@@ -139,6 +140,11 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
         SettingsStorageKeys.PLAYER_HIDDEN_CONTROLS,
         json.encodeToString(settings.playerHiddenControls.toList().sorted()),
     )
+    // 按场景隐藏：只写非空项，避免老版本读到一堆空数组。
+    putString(
+        SettingsStorageKeys.PLAYER_HIDDEN_CONTROLS_BY_SURFACE,
+        json.encodeToString(settings.playerHiddenControlsBySurface.mapValues { it.value.toList().sorted() }),
+    )
     putString(SettingsStorageKeys.UA_SCOPE_MODE, settings.uaScopeMode)
     putString(SettingsStorageKeys.UA_FOR_API, settings.uaForApi)
     putString(SettingsStorageKeys.UA_FOR_SPIDER, settings.uaForSpider)
@@ -159,6 +165,7 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putBoolean(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_ENABLED, settings.platformThirdPartyProxyEnabled)
     putString(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_TEMPLATES, settings.platformThirdPartyProxyTemplates)
     putBoolean(SettingsStorageKeys.LAN_RESOLVER_ENABLED, settings.lanResolverEnabled)
+    putBoolean(SettingsStorageKeys.REMOTE_MANAGE_LAN_ENABLED, settings.remoteManageLanEnabled)
     putBoolean(SettingsStorageKeys.LAN_RESOLVER_CONFIRMED, settings.lanResolverConfirmed)
     putBoolean(SettingsStorageKeys.AI_SEARCH_ENABLED, settings.aiSearchEnabled)
     putBoolean(SettingsStorageKeys.VOICE_SEARCH_ENABLED, settings.voiceSearchEnabled)
@@ -174,6 +181,9 @@ internal fun MutablePreferences.writeSettings(settings: AppSettings, json: Json 
     putBoolean(SettingsStorageKeys.HISTORY_AUTO_CLEANUP, settings.historyAutoCleanupEnabled)
     putString(SettingsStorageKeys.RESUME_CONFLICT_POLICY, settings.resumeConflictPolicy)
     putBoolean(SettingsStorageKeys.CRASH_LOG_LOCAL_ONLY, settings.crashLogLocalOnly)
+    // S1-06 历史记录策略与 TTL。
+    putString(SettingsStorageKeys.HISTORY_POLICY, settings.historyPolicy.storageKey)
+    putInt(SettingsStorageKeys.SEARCH_HISTORY_TTL_DAYS, settings.searchHistoryTtlDays)
 }
 
 /** 把 DataStore 内容还原成旧快照形状，交给同一套解析函数读取。 */

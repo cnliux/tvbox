@@ -129,3 +129,21 @@ fun quantitySummary(value: Int, setting: QuantitySetting, unit: String = ""): St
         "当前 $value$suffix，默认 ${setting.default}$suffix"
     }
 }
+
+/** S1-06：历史记录策略的可读摘要。 */
+fun historyPolicySummary(policy: com.tvbox.app.domain.HistoryPolicy): String = when (policy) {
+    com.tvbox.app.domain.HistoryPolicy.FULL -> "完整：保留线路、URL 与秒级进度（默认）"
+    com.tvbox.app.domain.HistoryPolicy.TITLE_ONLY -> "仅片名：只留片名/海报，剥离线路与进度"
+    com.tvbox.app.domain.HistoryPolicy.OFF -> "关闭：不再记录新的观看历史"
+}
+
+/** S1-06：搜索历史保留天数的可读摘要（0=永不清理）。 */
+fun searchHistoryTtlSummary(days: Int): String = when (days) {
+    0 -> "永不清理"
+    1 -> "保留 1 天"
+    7 -> "保留 7 天"
+    30 -> "保留 30 天（默认）"
+    90 -> "保留 90 天"
+    365 -> "保留 365 天"
+    else -> "保留 $days 天"
+}

@@ -50,6 +50,8 @@ data class AppSettings(
     val liveNumberMatchRows: Int = QuantitySettings.LiveNumberMatchRows.default,
     /** 数字选台前缀匹配的频道上限。 */
     val liveNumberSearchLimit: Int = QuantitySettings.LiveNumberSearchLimit.default,
+    /** 数字选台静默自动提交超时（毫秒）：1500 / 2000 / 3000 / 0=手动确认。 */
+    val liveNumberAutoCommitMs: Long = DirectTuneTimeout.DefaultMs,
     /** 手机直播页「相关频道」数量。 */
     val relatedChannelCount: Int = QuantitySettings.RelatedChannelCount.default,
     /** 搜索热词条数。 */
@@ -76,6 +78,23 @@ data class AppSettings(
     val perSourceTimeoutMs: Long = PerSourceTimeout.DefaultMs,
     /** #318 历史隐私模式：开启后不再写入新的观看历史，已有记录保留。 */
     val historyPrivacyMode: Boolean = false,
+    /**
+     * 观看历史记录策略：决定历史条目的「可见度」与持久化行为。
+     * - [FULL]：完整记录（线路、URL、秒级进度均保留），默认值。
+     * - [TITLE_ONLY]：仅保留片名/海报/集数标记；剥离线路 ID、episodeUrl、positionMs 等敏感字段。
+     * - [OFF]：完全停止写入新条目；已有记录原样保留。
+     */
+    val historyPolicy: HistoryPolicy = HistoryPolicy.FULL,
+    /**
+     * 搜索历史记录存活天数；0 = 永不清理，1/7/30 为可选档位。
+     * 同时受 [searchPrivacyMode] 控制（开启时完全跳过写入）。
+     */
+    val searchHistoryTtlDays: Int = 30,
+    /**
+     * 访客模式：启用后所有历史（观看 + 搜索）均不写盘，UI 功能保持正常。
+     * 重启 App 后自动失效（不持久化到跨会话存储）。
+     */
+    val guestModeActive: Boolean = false,
     /** #54/#266 硬解设备白名单：逗号分隔的 Build.MODEL 前缀，命中时强制硬解；空表示不启用。 */
     val decoderDeviceWhitelist: String = "",
     /**
@@ -135,6 +154,12 @@ data class AppSettings(
      * 默认空集 = 全部显示（与既有行为一致）。播放/暂停、上下一集、返回等核心控件始终显示，不在此列。
      */
     val playerHiddenControls: Set<String> = emptySet(),
+    /**
+     * 播放器按钮「按场景」独立隐藏集合（任务：三类播放器按钮重建）。
+     * key = [PlayerSurface.storageKey]（vod / live_tv / platform_live），value = 该场景隐藏的按钮 storageKey。
+     * 与旧版全局 [playerHiddenControls] 叠加生效：全局集合用于兼容老用户，新设置只写本字段。
+     */
+    val playerHiddenControlsBySurface: Map<String, Set<String>> = emptyMap(),
     /** UA 作用域：unified / scoped。 */
     val uaScopeMode: String = "unified",
     val uaForApi: String = "",
@@ -167,6 +192,11 @@ data class AppSettings(
     /** 局域网解析服务默认关闭；首次开启必须先确认安全提示。 */
     val lanResolverEnabled: Boolean = false,
     val lanResolverConfirmed: Boolean = false,
+    /**
+     * S1-01：远程管理服务默认只听 127.0.0.1。显式打开后才会监听 0.0.0.0，
+     * 打开前必须向用户说明「同一 Wi-Fi 里的其他设备可以控制这台盒子」。
+     */
+    val remoteManageLanEnabled: Boolean = false,
     val aiSearchEnabled: Boolean = false,
     val voiceSearchEnabled: Boolean = false,
     val aiTextRedactionEnabled: Boolean = true,
@@ -292,6 +322,24 @@ object FastSeekSetting {
  * 历史页布局模式。仅影响手机端历史页的封面展示密度；
  * 电视端历史页保持既有卡片布局。
  */
+/**
+ * 观看历史记录策略（S1-06）。
+ * - [FULL]：完整记录线路、URL、秒级进度。
+ * - [TITLE_ONLY]：仅保留片名/海报/集数，剥离敏感字段。
+ * - [OFF]：不写入新记录；已有记录原样保留。
+ */
+enum class HistoryPolicy(val storageKey: String, val displayName: String) {
+    FULL("full", "完整"),
+    TITLE_ONLY("title_only", "仅片名"),
+    OFF("off", "关闭"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): HistoryPolicy =
+            entries.firstOrNull { it.storageKey == value } ?: FULL
+    }
+}
+
 enum class HistoryLayout(val storageKey: String, val displayName: String) {
     Card("card", "卡片"),
     Compact("compact", "紧凑"),
@@ -360,6 +408,22 @@ object PerSourceTimeout {
     val choices: List<Long> = listOf(2_000L, 3_000L, 4_000L, 6_000L, DefaultMs, 10_000L, 15_000L)
 
     fun clamp(value: Long): Long = value.coerceIn(MinMs, MaxMs)
+}
+
+/** P1-08 数字选台静默自动提交超时：四档 + 0=手动确认。默认 2000ms 与既有行为逐字节一致。 */
+object DirectTuneTimeout {
+    const val DefaultMs = 2_000L
+    /** 0 表示不自动提交，用户按确认键手动选台。 */
+    const val Manual = 0L
+    val choices: List<Long> = listOf(1_500L, DefaultMs, 3_000L, Manual)
+
+    /** 展示名：手动确认档特判，其余按秒数展示。 */
+    fun displayName(ms: Long): String =
+        if (ms == Manual) "手动确认" else "${ms / 1000} 秒"
+
+    /** 收敛到合法档位；未知值回退默认。 */
+    fun clamp(value: Long): Long =
+        if (value in choices) value else DefaultMs
 }
 
 /** 一个数量类设置项：默认值、合法区间与可选档位。 */

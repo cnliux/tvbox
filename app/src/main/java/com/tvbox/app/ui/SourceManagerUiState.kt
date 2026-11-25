@@ -1,5 +1,9 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.domain.ResolvedSite
+import com.tvbox.app.domain.SiteCandidate
+import com.tvbox.app.domain.SiteResolver
+
 /** 源管理/测速/导入 UI 状态（从 [TvBoxUiState] 拆出；字段语义与原 `source*`/`detailSource*` 保持一致）。 */
 data class SourceManagerUiState(
     val latencies: Map<String, Long?> = emptyMap(),
@@ -17,4 +21,20 @@ data class SourceManagerUiState(
     val healthCheckRunning: Boolean = false,
     /** 最近一轮后台体检的摘要文本；null 表示尚未体检过。 */
     val lastHealthCheckSummary: String? = null,
+    /** T2-13：展开态——当前展开查看 shadowed 来源的 resolved site winner name；null 表示全部折叠。 */
+    val expandedConflictName: String? = null,
 )
+
+/** T2-11/T2-13：按显示名把 [allSourceLines] 解析成候选集并去重冲突。 */
+fun resolveSourceCandidates(allSourceLines: List<com.tvbox.app.domain.ApiLine>): List<ResolvedSite> {
+    val candidates = allSourceLines.mapIndexed { index, line ->
+        // subscriptionId="custom" 表示自定义/手动添加源；有订阅元数据时可替换为真实 id。
+        SiteCandidate(
+            name = line.name,
+            subscriptionId = "custom",
+            siteKey = line.id,
+            order = index,
+        )
+    }
+    return SiteResolver.resolve(candidates)
+}

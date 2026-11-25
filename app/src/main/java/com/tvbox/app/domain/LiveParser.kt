@@ -83,25 +83,6 @@ private val CCTV_NUM_PREFIX_REGEX = Regex("^\\d+(?=CCTV-)")
 /** M3U 头部可能出现的 EPG 属性名，按常见度依次尝试。 */
 private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-url", "epg")
 
-// 属性名是有限集合（tvg-name/group-title/tvg-logo/...），按名字缓存预编译正则，
-// 避免每条 EXTINF 为每个字段重新 Regex(...)。
-private val M3U_ATTRIBUTE_REGEX_CACHE = mutableMapOf<String, Regex>()
-private fun m3uAttributeRegex(name: String): Regex =
-    synchronized(M3U_ATTRIBUTE_REGEX_CACHE) {
-        M3U_ATTRIBUTE_REGEX_CACHE.getOrPut(name) {
-            Regex("(?:^|\\s)${Regex.escape(name)}=\\\"([^\\\"]*)\\\"", RegexOption.IGNORE_CASE)
-        }
-    }
-
-// EPG 头部属性允许 `=` 两侧空白（与 EXTINF 属性正则口径不同），单独缓存。
-private val M3U_EPG_ATTRIBUTE_REGEX_CACHE = mutableMapOf<String, Regex>()
-private fun m3uEpgAttributeRegex(name: String): Regex =
-    synchronized(M3U_EPG_ATTRIBUTE_REGEX_CACHE) {
-        M3U_EPG_ATTRIBUTE_REGEX_CACHE.getOrPut(name) {
-            Regex("(?:^|\\s)${Regex.escape(name)}\\s*=\\s*\"([^\"]+)\"", RegexOption.IGNORE_CASE)
-        }
-    }
-
 /**
  * 从 M3U 头部 `#EXTM3U` 行读取节目单地址（`url-tvg` / `x-tvg-url` / `tvg-url` 等）。
  *
@@ -112,12 +93,14 @@ fun extractM3uEpgUrl(raw: String): String? {
     for (line in raw.lineSequence().take(32)) {
         val trimmed = line.trim()
         if (!trimmed.startsWith("#EXTM3U", ignoreCase = true)) continue
+        // 属性部分在 `#EXTM3U` 之后；直接用 parseAttributes 解析（正确处理引号内冒号/逗号）。
+        val attrsLine = trimmed.substringAfter("#EXTM3U").trim().removePrefix(":").trim()
+        val attrs = M3uTagLexer.parseAttributes(attrsLine)
         for (attribute in M3U_EPG_ATTRIBUTES) {
-            val match = m3uEpgAttributeRegex(attribute).find(trimmed) ?: continue
-            val value = match.groupValues[1]
-                .split(',')
-                .map { it.trim().trim('"') }
-                .firstOrNull { it.startsWith("http://", true) || it.startsWith("https://", true) }
+            val value = attrs[attribute.lowercase()]
+                ?.split(',')
+                ?.map { it.trim().trim('"') }
+                ?.firstOrNull { it.startsWith("http://", true) || it.startsWith("https://", true) }
             if (value != null) return value
         }
     }
@@ -204,31 +187,39 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
 }
 
 private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
-    val displayName = substringAfter(',', missingDelimiterValue = "").trim()
-    val channelName = extractM3uAttribute("tvg-name")
-        .ifBlank { displayName }
-        .ifBlank { extractM3uAttribute("tvg-id") }
-        .ifBlank { return null }
+    val body = substringAfter(":", missingDelimiterValue = "")
+    val attrs = M3uTagLexer.parseAttributes(body)
+    val displayName = attrs["name"]?.let(::cleanHtml)?.trim()?.ifBlank { null } ?: ""
+    val channelNameRaw = attrs["tvg-name"]
+        ?.let(::cleanHtml)?.trim()?.ifBlank { null }
+        ?: attrs["tvg-id"]
+        ?.let(::cleanHtml)?.trim()?.ifBlank { null }
+    val channelName = channelNameRaw ?: displayName.ifEmpty { return null }
     return M3uChannelMetadata(
-        groupName = extractM3uAttribute("group-title")
-            .ifBlank { extractM3uAttribute("group") }
-            .ifBlank { DEFAULT_M3U_GROUP_NAME },
-        channelName = cleanHtml(channelName).trim(),
+        groupName = attrs["group-title"]
+            ?.let(::normalizeText)
+            ?.ifBlank { null }
+            ?: attrs["group"]
+                ?.let(::normalizeText)
+                ?.ifBlank { null }
+            ?: DEFAULT_M3U_GROUP_NAME,
+        channelName = channelName,
         // EXTINF 逗号后的展示名通常是"频道名 高清/标太"这类人工标签，
         // 聚合为同一频道时用它做线路名，比"线路N"更可辨。
-        lineName = cleanHtml(displayName).trim(),
+        lineName = displayName.ifEmpty { "" },
         // 台标字段各家源命名不统一，按常见度依次尝试。
-        logo = extractM3uAttribute("tvg-logo")
-            .ifBlank { extractM3uAttribute("tvg-icon") }
-            .ifBlank { extractM3uAttribute("logo") },
-        tvgId = extractM3uAttribute("tvg-id"),
+        logo = attrs["tvg-logo"]
+            ?.ifBlank { null }
+            ?: attrs["tvg-icon"]
+                ?.ifBlank { null }
+            ?: attrs["logo"]
+            ?: "",
+        tvgId = attrs["tvg-id"]?.ifBlank { null } ?: "",
     )
 }
 
-private fun String.extractM3uAttribute(name: String): String {
-    val match = m3uAttributeRegex(name).find(this)
-    return match?.groupValues?.getOrNull(1).orEmpty().trim()
-}
+private fun normalizeText(raw: String): String =
+    raw.replace('\u3000', ' ').trim()
 
 /** `#EXTVLCOPT:http-user-agent=xxx` → `User-Agent` to `xxx`；不认识的选项返回 null。 */
 private fun String.toExtVlcOptHeaderOrNull(): Pair<String, String>? {

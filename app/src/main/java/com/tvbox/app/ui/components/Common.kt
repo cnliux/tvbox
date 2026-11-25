@@ -378,6 +378,8 @@ fun MediaCard(
     bottomOverlay: (@Composable BoxScope.() -> Unit)? = null,
     coverOverlay: @Composable BoxScope.() -> Unit = {},
     cover: @Composable BoxScope.() -> Unit,
+    /** P2-15 无障碍：非空时整体替换派生标签，供 TalkBack 一次读出更完整信息。 */
+    accessibilityLabel: String? = null,
 ) {
     val shape = RoundedCornerShape(TvDimens.CardRadius)
     val touchMode = LocalTouchMode.current
@@ -392,7 +394,7 @@ fun MediaCard(
     )
     // 卡片内封面、标题、副标题、角标、进度各自是独立语义节点，读屏会逐条朗读；
     // 合并成「片名 + 副标题 + 角标」，整卡作为一个按钮播报。
-    val cardLabel = buildString {
+    val cardLabel = accessibilityLabel ?: buildString {
         append(title)
         if (!subtitle.isNullOrBlank()) append("，").append(subtitle)
         if (!badge.isNullOrBlank()) append("，").append(badge)
@@ -657,15 +659,21 @@ fun MoviePosterCard(
         onClick = onClick,
         modifier = modifier,
         badge = movie.remarks.takeIf { it.isNotBlank() },
+        // P2-15 无障碍：海报整卡一次读出「片名 + 年份 + 备注（评分/更新状态）」，避免 TalkBack 只念「按钮」。
+        accessibilityLabel = buildString {
+            append(movie.name)
+            if (movie.year.isNotBlank()) append("，").append(movie.year)
+            if (movie.remarks.isNotBlank()) append("，").append(movie.remarks)
+        },
         cover = {
             if (movie.posterUrl.isNotBlank() && !posterFailed) {
-                AsyncImage(
-                    model = movie.posterUrl,
+                PosterImage(
+                    url = movie.posterUrl,
+                    kind = PosterKind.CARD,
                     contentDescription = movie.name,
                     contentScale = ContentScale.Crop,
                     onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
-                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
@@ -686,20 +694,7 @@ fun DoubanHotPosterCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     var posterFailed by remember(item.doubanId, item.posterUrl) { mutableStateOf(item.posterUrl.isBlank()) }
-    val imageRequest = remember(item.posterUrl) {
-        ImageRequest.Builder(context)
-            .data(item.posterUrl)
-            .apply {
-                val host = Uri.parse(item.posterUrl).host.orEmpty()
-                if (host.endsWith(".doubanio.com", ignoreCase = true)) {
-                    addHeader("Referer", DOUBAN_REFERER)
-                    addHeader("User-Agent", DOUBAN_USER_AGENT)
-                }
-            }
-            .build()
-    }
 
     MediaCard(
         title = item.title,
@@ -708,13 +703,20 @@ fun DoubanHotPosterCard(
         badge = if (item.score > 0.0) "豆瓣 ${"%.1f".format(item.score)}" else null,
         cover = {
             if (!posterFailed) {
-                AsyncImage(
-                    model = imageRequest,
+                PosterImage(
+                    url = item.posterUrl,
+                    kind = PosterKind.CARD,
                     contentDescription = item.title,
                     contentScale = ContentScale.Crop,
                     onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
-                    imageLoader = rememberTvImageLoader(),
+                    configure = {
+                        val host = Uri.parse(item.posterUrl).host.orEmpty()
+                        if (host.endsWith(".doubanio.com", ignoreCase = true)) {
+                            addHeader("Referer", DOUBAN_REFERER)
+                            addHeader("User-Agent", DOUBAN_USER_AGENT)
+                        }
+                    },
                 )
             } else {
                 Text(
@@ -803,13 +805,13 @@ fun HistoryItemCard(
         },
         cover = {
             if (item.posterUrl.isNotBlank() && !posterFailed) {
-                AsyncImage(
-                    model = item.posterUrl,
+                PosterImage(
+                    url = item.posterUrl,
+                    kind = PosterKind.CARD,
                     contentDescription = item.movieName,
                     contentScale = ContentScale.Crop,
                     onError = { posterFailed = true },
                     modifier = Modifier.fillMaxSize(),
-                    imageLoader = rememberTvImageLoader(),
                 )
             } else {
                 Text(
@@ -835,18 +837,13 @@ fun PosterImage(movie: Movie, modifier: Modifier = Modifier) {
         contentAlignment = Alignment.Center,
     ) {
         if (movie.posterUrl.isNotBlank() && !posterFailed) {
-            val imageLoader = rememberTvImageLoader()
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(movie.posterUrl)
-                    .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                    .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                    .build(),
+            PosterImage(
+                url = movie.posterUrl,
+                kind = PosterKind.HERO,
                 contentDescription = movie.name,
                 contentScale = ContentScale.Crop,
                 onError = { posterFailed = true },
                 modifier = Modifier.fillMaxSize(),
-                imageLoader = imageLoader,
             )
         } else {
             Text("无海报", color = MaterialTheme.colorScheme.onSurfaceVariant)

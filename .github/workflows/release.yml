@@ -17,9 +17,23 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # S4-20：发版是握有签名私钥的高权限流程，挂环境保护（需在仓库 Settings → Environments
+    # 配置 required reviewers）。未配置时 GitHub 会按名称自动创建空环境，不阻断首次发版。
+    environment: release
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
     steps:
+      # S4-20：任何人 push v* tag 都会触发发布流水线。限制触发者必须是维护者，
+      # 防止 tag 名字抢注（fork PR 拿不到 secrets ✅，但 tag 抢注能触发真实发布）。
+      - name: Guard release actor
+        env:
+          RELEASE_ACTOR: ${{ github.event.sender.login }}
+        run: |
+          if [ "$RELEASE_ACTOR" != "cnliux" ]; then
+            echo "::error::只有维护者 cnliux 可以触发 Release（当前触发者：$RELEASE_ACTOR）"
+            exit 1
+          fi
+
       - name: Validate release tag
         run: |
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -28,7 +42,7 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-tags: true
@@ -46,8 +60,9 @@ jobs:
             echo "::error::Tag ${RELEASE_TAG} 与 app 版本 v${VERSION_NAME} 不一致"
             exit 1
           fi
-          # README：第 7 行形如"当前版本 `1.0.40`"，提取反引号内的版本号。
-          README_VERSION=$(grep -oP '当前版本 `\K[^`]+(?=`)' README.md || true)
+          # README：第 7 行形如"当前版本 `1.0.40`"或"当前为 `1.0.43`"，提取反引号内的版本号。
+          # README 已改为「以 build.gradle.kts 为唯一来源、不在此处写死」，故同时兼容两种表述。
+          README_VERSION=$(grep -oP '(当前版本|当前为) `\K[^`]+(?=`)' README.md | head -1 || true)
           if [ -z "$README_VERSION" ]; then
             echo "::error::README.md 未找到形如 '当前版本 \`x.y.z\`' 的版本行，无法校验版本一致性"
             exit 1
@@ -70,19 +85,19 @@ jobs:
           echo "README=${README_VERSION}, CHANGELOG=${CHANGELOG_VERSION} 与 tag 一致"
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: platform_live_go/go.mod
           cache-dependency-path: platform_live_go/go.sum
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       - name: Restore release keystore
         env:
@@ -101,7 +116,7 @@ jobs:
       # AAR 只通过 implementation(files(...)) 打进 APK，不再作为 release 资产分发。
       - name: Restore platformlive AAR cache
         id: cache-aar
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             app/libs/platformlive.aar
@@ -145,6 +160,29 @@ jobs:
             exit 1
           fi
 
+      # P2-19：gomobile JNI 边界不被 R8 fullMode 裁掉。JNI_OnLoad 符号被裁即
+      # 起播平台直播抛 UnsatisfiedLinkError。用 strings 提取导出符号名校验。
+      - name: Verify gomobile JNI preserved
+        run: |
+          mkdir -p /tmp/jni_check
+          cd /tmp/jni_check
+          unzip -o "${GITHUB_WORKSPACE}/dist/${APK_NAME}" 'lib/arm64-v8a/*platformlive*.so' >/dev/null 2>&1 || {
+            echo "::error::APK 内未找到 libplatformlive.so"
+            exit 1
+          }
+          SO=$(find . -name '*platformlive*.so' | head -1)
+          if [ -z "$SO" ]; then
+            echo "::error::APK 内未找到 libplatformlive.so"
+            exit 1
+          fi
+          echo "检查 $SO 的 JNI 符号…"
+          if strings "$SO" | grep -q "JNI_OnLoad"; then
+            echo "JNI_OnLoad 已保留（未被 R8 剥离）"
+          else
+            echo "::error::libplatformlive.so 缺少 JNI_OnLoad，R8 fullMode 可能裁掉了 gomobile JNI 边界"
+            exit 1
+          fi
+
       - name: APK size check
         run: |
           SIZE=$(stat -c%s dist/${APK_NAME})
@@ -162,10 +200,39 @@ jobs:
           VERSION_CODE=$(grep -oP 'TVBOX_VERSION_CODE\s*=\s*\K\d+' app/build.gradle.kts)
           VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
           APK_URL="https://github.com/${{ github.repository }}/releases/download/v${VERSION_NAME}/${APK_NAME}"
-          # update.json 既有 8 个字段结构不变；apkMirrors 是可选的多 CDN 镜像列表，
-          # 老客户端 ignoreUnknownKeys 会忽略它，新客户端优先于内置派生 CDN 使用。
-          cat > update.json <<ENDJSON
-          {
+          # S7-40：从 CHANGELOG 顶部版本段的「你会感觉到」抽 3 行，写进 OTA 弹窗。
+          # 抽不到就留空数组（老客户端 ignoreUnknownKeys 忽略），不阻断发版。
+          HIGHLIGHTS=$(python3 - "$VERSION_NAME" <<'PYEOF'
+          import json, re, sys
+          version = sys.argv[1]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          m = re.search(rf"^## v?{re.escape(version)}\b.*?(?=^## v?\d|\Z)", text, re.S | re.M)
+          lines = []
+          if m:
+              block = m.group(0)
+              h = re.search(r"\*\*你会感觉到\*\*\s*：(.*?)(?=\*\*修了什么\*\*|\Z)", block, re.S)
+              if h:
+                  lines = [re.sub(r"^-\s*", "", x.strip()) for x in h.group(1).splitlines() if x.strip().startswith("-")]
+          print(json.dumps(lines[:3], ensure_ascii=False))
+          PYEOF
+          )
+          # P2-17：apkSha256 为空（构建异常）时禁止发布，杜绝「有 URL 无校验和」的条目被 OTA 拿到。
+          if [ -z "$SHA256" ] || [ -z "$SIZE" ]; then
+            echo "::error::apkSha256 或 apkSize 为空（SHA256=${SHA256} SIZE=${SIZE}），禁止发布 update.json"
+            exit 1
+          fi
+           # T7-44：update.json 新增 schema/minReader/createdBy 信封；老客户端 ignoreUnknownKeys=true 忽略，新客户端走统一 schema 路径。
+           # P2-17：原子写（临时文件 + rename），避免 apkSha256 与 apkUrl 分两次写的窗口被 OTA 读到。
+          cat > update.json.tmp <<ENDJSON
+           {
+             "schema": 1,
+             "kind": "update_manifest",
+             "minReader": 1,
+             "createdBy": "$VERSION_NAME/$VERSION_CODE",
+             "schema": 1,
+             "kind": "update_manifest",
+             "minReader": 1,
+             "createdBy": "$VERSION_NAME/$VERSION_CODE",
             "versionCode": $VERSION_CODE,
             "versionName": "$VERSION_NAME",
             "apkUrl": "$APK_URL",
@@ -173,6 +240,7 @@ jobs:
             "apkSize": $SIZE,
             "force": false,
             "changelog": [],
+            "release_highlights": $HIGHLIGHTS,
             "apkMirrors": [
               "https://gh-proxy.org/$APK_URL",
               "https://gh-proxy.com/$APK_URL",
@@ -180,6 +248,7 @@ jobs:
             ]
           }
           ENDJSON
+          mv -f update.json.tmp update.json
           # P08 补充：update.json 已写入新版本，回读 versionName 做四方对齐的最后一步。
           # 若 update.json 仍是上一版本，说明本次发版流程有遗漏，此处直接报错。
           UPDATE_JSON_VERSION=$(python3 -c "import json;print(json.load(open('update.json'))['versionName'])")
@@ -249,8 +318,32 @@ jobs:
           PYEOF
           cat dist/manifest.json
 
+      # S4-20：侧载分发没有签名 = 用户只能「信我」；加签名后用户才能「验我」。
+      # 公钥需随 README / 端内 OTA 校验发布（与 S1-02 的证书钉扎共用信任根）。
+      # 未配置 COSIGN_PRIVATE_KEY 时跳过，不阻断既有发布流程；配置后每个 APK 产出 .sig 供校验。
+      # S1-04：BuildConfig.AI_API_KEY 若非空会明文进 dex，发布前直接 fail。
+      - name: No plaintext API key in dex
+        run: python3 tools/check_no_secret_in_dex.py --apk dist/*.apk
+
+      - name: Sign release APKs with cosign
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -e
+          if [ -z "$COSIGN_PRIVATE_KEY" ]; then
+            echo "::notice::COSIGN_PRIVATE_KEY 未配置，跳过二进制签名（密钥生成/公钥发布见 README）"
+            exit 0
+          fi
+          curl -sSfL https://github.com/sigstore/cosign/releases/latest/download/cosign-linux-amd64 -o /tmp/cosign
+          chmod +x /tmp/cosign
+          for apk in dist/*.apk; do
+            /tmp/cosign sign-blob --yes --key env://COSIGN_PRIVATE_KEY "$apk" --output-signature "${apk}.sig"
+          done
+          echo "cosign signatures written: $(find dist -name '*.sig' | wc -l)"
+
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
           tag_name: ${{ env.RELEASE_TAG }}
@@ -262,3 +355,39 @@ jobs:
             - 平台直播站点（斗鱼/虎牙等）可管控
             - APK 已使用 release keystore 签名
           generate_release_notes: true
+
+      # S7-39：发布后跑一遍 8 项断言（资产/sha/版本/ABI/密钥/SBOM/半截上传物）。
+      # 任一失败 → 给 Release 打 verification-failed label 并开 issue，而不是等用户来问。
+      - name: Post-release verification
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          python3 tools/release_verify.py --tag "$RELEASE_TAG" --allow-missing-sbom
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --add-label verification-failed || true
+            BODY=$(printf '发布后校验未通过，请检查 Release 资产与 update.json 三方一致性。\n\n_run: %s_' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "发布校验失败：$RELEASE_TAG" --label verification-failed --body "$BODY" || true
+            exit 1
+          fi
+
+      # T8-52：发版前跑一轮本地 checklist（README/CHANGELOG/OSS notice/lockfile/PENDING_ITEMS/schemas/audit）。
+      # 任一失败 → 开 issue 并标 verification-failed；gh CLI 缺失只告警不阻断（CI 已有其余门禁）。
+      - name: Pre-release checklist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          python3 tools/release_checklist.py --tag "$RELEASE_TAG"
+          STATUS=$?
+          set -e
+          if [ "$STATUS" -ne 0 ]; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --add-label verification-failed || true
+            BODY=$(printf '发布前 checklist 未通过，请人工核查：\n\n_run: %s_' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "发布 checklist 失败：$RELEASE_TAG" --label verification-failed --body "$BODY" || true
+            exit 1
+          fi

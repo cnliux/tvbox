@@ -1,0 +1,298 @@
+[
+  {
+    "name": "androidx.activity:activity-compose",
+    "version": "1.13.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.foundation:foundation",
+    "version": "BOM",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.material3:material3",
+    "version": "BOM",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.material:material-icons-core",
+    "version": "BOM",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.runtime:runtime",
+    "version": "BOM",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.ui:ui",
+    "version": "BOM",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.compose.ui:ui-test-junit4",
+    "version": "1.11.2",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "test"
+  },
+  {
+    "name": "androidx.compose.ui:ui-test-manifest",
+    "version": "1.11.2",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "test"
+  },
+  {
+    "name": "androidx.compose:compose-bom",
+    "version": "2026.05.01",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack/compose",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.core:core",
+    "version": "1.18.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.datastore:datastore-preferences",
+    "version": "1.3.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.lifecycle:lifecycle-runtime-compose",
+    "version": "2.10.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.media3:media3-exoplayer",
+    "version": "1.10.1",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/media/media3",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.media3:media3-exoplayer-hls",
+    "version": "1.10.1",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/media/media3",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.media3:media3-session",
+    "version": "1.10.1",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/media/media3",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.media3:media3-ui",
+    "version": "1.10.1",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/media/media3",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.profileinstaller:profileinstaller",
+    "version": "1.4.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "androidx.test.ext:junit",
+    "version": "1.3.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "test"
+  },
+  {
+    "name": "androidx.test:runner",
+    "version": "1.7.0",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "test"
+  },
+  {
+    "name": "androidx.window:window",
+    "version": "1.5.0-beta02",
+    "license": "Apache-2.0",
+    "copyright": "The Android Open Source Project",
+    "url": "https://developer.android.com/jetpack",
+    "scope": "runtime"
+  },
+  {
+    "name": "com.google.zxing:core",
+    "version": "3.5.3",
+    "license": "Apache-2.0",
+    "copyright": "ZXing contributors",
+    "url": "https://github.com/zxing/zxing",
+    "scope": "runtime"
+  },
+  {
+    "name": "com.squareup.okhttp3:okhttp",
+    "version": "5.3.2",
+    "license": "Apache-2.0",
+    "copyright": "Square, Inc.",
+    "url": "https://square.github.io/okhttp/",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:github.com/dlclark/regexp2/v2",
+    "version": "v2.11.0",
+    "license": "MIT",
+    "copyright": "Daniel Clark and contributors",
+    "url": "https://github.com/dlclark/regexp2",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:github.com/dop251/goja",
+    "version": "v0.0.0-20261102140139-622d10077b6c",
+    "license": "MIT",
+    "copyright": "dop251 and contributors",
+    "url": "https://github.com/dop251/goja",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:github.com/go-sourcemap/sourcemap",
+    "version": "v2.1.3+incompatible",
+    "license": "MIT",
+    "copyright": "go-sourcemap contributors",
+    "url": "https://github.com/go-sourcemap/sourcemap",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:github.com/google/pprof",
+    "version": "v0.0.0-20230207041349-798e818bf904",
+    "license": "BSD-3-Clause",
+    "copyright": "Google Inc.",
+    "url": "https://github.com/google/pprof",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:golang.org/x/mobile",
+    "version": "v0.0.0-20261011034528-197770444867",
+    "license": "BSD-3-Clause",
+    "copyright": "The Go Authors",
+    "url": "https://golang.org/x/mobile",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:golang.org/x/mod",
+    "version": "v0.42.0",
+    "license": "BSD-3-Clause",
+    "copyright": "The Go Authors",
+    "url": "https://golang.org/x/mod",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:golang.org/x/sync",
+    "version": "v0.24.0",
+    "license": "BSD-3-Clause",
+    "copyright": "The Go Authors",
+    "url": "https://golang.org/x/sync",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:golang.org/x/text",
+    "version": "v0.43.0",
+    "license": "BSD-3-Clause",
+    "copyright": "The Go Authors",
+    "url": "https://golang.org/x/text",
+    "scope": "runtime"
+  },
+  {
+    "name": "go:golang.org/x/tools",
+    "version": "v0.52.0",
+    "license": "BSD-3-Clause",
+    "copyright": "The Go Authors",
+    "url": "https://golang.org/x/tools",
+    "scope": "runtime"
+  },
+  {
+    "name": "io.coil-kt:coil-compose",
+    "version": "2.7.0",
+    "license": "Apache-2.0",
+    "copyright": "Coil contributors",
+    "url": "https://coil-kt.github.io/coil/",
+    "scope": "runtime"
+  },
+  {
+    "name": "io.github.anilbeesetti:nextlib-media3ext",
+    "version": "1.10.1-0.13.0",
+    "license": "GPL-3.0",
+    "copyright": "Anil Beesetti and contributors",
+    "url": "https://github.com/anilbeesetti/nextlib",
+    "scope": "runtime"
+  },
+  {
+    "name": "junit:junit",
+    "version": "4.13.2",
+    "license": "EPL-1.0",
+    "copyright": "JUnit contributors",
+    "url": "https://junit.org/junit4/",
+    "scope": "test"
+  },
+  {
+    "name": "org.jetbrains.kotlinx:kotlinx-coroutines-android",
+    "version": "1.11.0",
+    "license": "Apache-2.0",
+    "copyright": "JetBrains s.r.o.",
+    "url": "https://github.com/Kotlin/kotlinx.coroutines",
+    "scope": "runtime"
+  },
+  {
+    "name": "org.jetbrains.kotlinx:kotlinx-coroutines-test",
+    "version": "1.11.0",
+    "license": "Apache-2.0",
+    "copyright": "JetBrains s.r.o.",
+    "url": "https://github.com/Kotlin/kotlinx.coroutines",
+    "scope": "test"
+  },
+  {
+    "name": "org.jetbrains.kotlinx:kotlinx-serialization-json",
+    "version": "1.11.0",
+    "license": "Apache-2.0",
+    "copyright": "JetBrains s.r.o.",
+    "url": "https://github.com/Kotlin/kotlinx.serialization",
+    "scope": "runtime"
+  }
+]

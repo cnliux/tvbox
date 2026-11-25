@@ -2,6 +2,7 @@ package com.tvbox.app.data
 
 import android.content.Context
 import android.util.Log
+import com.tvbox.app.domain.DurationConfidence
 import com.tvbox.app.domain.PlaybackEvidence
 import com.tvbox.app.domain.PlaybackHealthEntry
 import com.tvbox.app.domain.PlaybackHealthSnapshot
@@ -37,6 +38,8 @@ data class StoredPlaybackHealthEntry(
     /** 新增字段均有默认值，旧 JSON 解码后自动得到空样本。 */
     val successLatencyMs: List<Long> = emptyList(),
     val stutterSampleCount: Int = 0,
+    /** T1-04：最新一条测速响应的时长可信度；默认 NONE 保持与旧数据兼容。 */
+    val durationConfidence: DurationConfidence = DurationConfidence.NONE,
 ) {
     val latestActivityAtMs: Long
         get() = maxOf(lastFailureAtMs, lastSlowBufferAtMs, lastSuccessAtMs)
@@ -52,6 +55,7 @@ fun PlaybackHealthEntry.toStored(): StoredPlaybackHealthEntry = StoredPlaybackHe
     successCount = successCount,
     successLatencyMs = successLatencyMs,
     stutterSampleCount = stutterSampleCount,
+    durationConfidence = durationConfidence,
 )
 
 fun StoredPlaybackHealthEntry.toDomain(): PlaybackHealthEntry = PlaybackHealthEntry(
@@ -64,6 +68,7 @@ fun StoredPlaybackHealthEntry.toDomain(): PlaybackHealthEntry = PlaybackHealthEn
     successCount = successCount,
     successLatencyMs = successLatencyMs,
     stutterSampleCount = stutterSampleCount,
+    durationConfidence = durationConfidence,
 )
 
 class SharedPreferencesPlaybackHealthStore(
@@ -113,6 +118,14 @@ interface PlaybackHealthRepository {
         latencyMs: Long,
         nowMs: Long,
     ): PlaybackHealthSnapshot = recordSuccess(key, nowMs)
+
+    /** T1-04：带延迟和时长可信度的成功记录，将 [durationConfidence] 一并持久化。 */
+    suspend fun recordSuccessWithConfidence(
+        key: String,
+        latencyMs: Long,
+        durationConfidence: com.tvbox.app.domain.DurationConfidence,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot
 
     /** 追加一条证据事件（最新在前，环形上限 50）；默认实现为空操作。 */
     suspend fun recordEvidence(evidence: PlaybackEvidence): List<PlaybackEvidence> = emptyList()
@@ -185,6 +198,29 @@ class DefaultPlaybackHealthRepository(
         latencyMs: Long,
         nowMs: Long,
     ): PlaybackHealthSnapshot = recordSuccessInternal(key = key, latencyMs = latencyMs, nowMs = nowMs)
+
+    /** T1-04：带延迟和时长可信度的成功记录。 */
+    override suspend fun recordSuccessWithConfidence(
+        key: String,
+        latencyMs: Long,
+        durationConfidence: com.tvbox.app.domain.DurationConfidence,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val current = readPruned(nowMs).associateBy { it.key }.toMutableMap()
+            var entry = current[key] ?: PlaybackHealthEntry(key = key)
+            entry = entry.copy(
+                lastSuccessAtMs = nowMs,
+                successCount = entry.successCount + 1,
+                durationConfidence = durationConfidence,
+            )
+            if (latencyMs > 0L) entry = appendSuccessLatency(entry, latencyMs)
+            current[key] = entry
+            val entries = prunePlaybackHealthEntries(current.values, nowMs)
+            writeIfChanged(entries.map { it.toStored() })
+            entries.toSnapshot()
+        }
+    }
 
     private suspend fun recordSuccessInternal(
         key: String,

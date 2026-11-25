@@ -4,8 +4,23 @@
 兼容 Android 7.0（API 24）及以上，使用 Kotlin、Jetpack Compose 与 Media3 ExoPlayer 构建。同一份 APK 通过运行时设备模式
 在电视与手机之间切换布局与交互：电视端以遥控器操作优先，手机端提供触屏手势与竖屏布局。
 
-当前版本 `1.0.43`（`versionCode=20043`）。Release 原生库只保留 `arm64-v8a`，
+当前版本以发布产物内的 `update.json` 为准（构建版本号见 `app/build.gradle.kts` 的 `TVBOX_VERSION_NAME` / `TVBOX_VERSION_CODE`，当前为 `1.0.44` / `20044`），不在此处写死以免漂移。Release 原生库只保留 `arm64-v8a`，
 启用 R8 full mode 与资源压缩。
+
+### 身份卡（认准这三样，别装错包）
+
+| 项目 | 值 |
+| --- | --- |
+| 唯一官方源码/发布渠道 | `https://github.com/cnliux/tvbox`（Release 资产名 `juhe-video-v*.apk`） |
+| 包名（applicationId） | `com.tvbox.app` |
+| 签名指纹校验 | 以 GitHub Release 描述置顶的 SHA-256 前 8 字节为准；本地可用 `apksigner verify --print-certs <apk>` 核对 |
+| 官方 OTA 清单 | `https://github.com/cnliux/tvbox` 仓库根目录 `update.json`（校验 SHA-256，缺失即拒绝安装） |
+
+> 本项目是 `cnliux/tvbox` fork，不再使用上游 `ZxxXinI/tvbox` 的分发渠道。
+> 任何要求你「关闭校验 / 装另一个签名包 / 先转账再给订阅」的渠道都不是官方渠道。
+> 商标与命名边界见 [TRADEMARKS.md](TRADEMARKS.md)。
+
+> 许可证：GPL-3.0（本项目） · 第三方清单见 [NOTICE.md](NOTICE.md) 与应用内「设置 → 关于 → 开源许可」。
 
 > 本项目只提供客户端播放能力，不内置、不托管任何影视内容。请确保所使用的接口与
 > 直播源具备合法授权。
@@ -208,6 +223,9 @@ TVBOX_RELEASE_KEY_PASSWORD=***
 ## 文档
 
 - 变更记录：[CHANGELOG.md](CHANGELOG.md)
+- 隐私与数据处理：[PRIVACY.md](PRIVACY.md)
+- 安全披露：[SECURITY.md](SECURITY.md) · 与上游的关系：[UPSTREAM.md](UPSTREAM.md)
+- 第三方许可：[OSS_NOTICES.md](OSS_NOTICES.md)（应用内入口：设置 → 关于 → 开源许可）
 - 连续播放验证：[platform_live_go/FLV_CONTINUITY_VALIDATION.md](platform_live_go/FLV_CONTINUITY_VALIDATION.md)
 - 本地调试：`LOCAL_DEV.md`（本地保留，不入库）
 

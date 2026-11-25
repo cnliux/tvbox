@@ -132,6 +132,23 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         label = "历史隐私模式",
         valueSummary = if (settings.historyPrivacyMode) "开启（不记录新历史）" else "关闭",
     ),
+    // S1-06：观看历史记录策略与搜索 TTL。
+    SettingEntry(
+        id = "history_policy",
+        group = SettingGroup.Advanced,
+        label = "历史记录策略",
+        valueSummary = when (settings.historyPolicy) {
+            com.tvbox.app.domain.HistoryPolicy.FULL -> "完整"
+            com.tvbox.app.domain.HistoryPolicy.TITLE_ONLY -> "仅片名"
+            com.tvbox.app.domain.HistoryPolicy.OFF -> "关闭"
+        },
+    ),
+    SettingEntry(
+        id = "search_history_ttl",
+        group = SettingGroup.Advanced,
+        label = "搜索历史保留天数",
+        valueSummary = if (settings.searchHistoryTtlDays <= 0) "永久" else "${settings.searchHistoryTtlDays} 天",
+    ),
     SettingEntry(
         id = "auto_next_countdown",
         group = SettingGroup.Playback,

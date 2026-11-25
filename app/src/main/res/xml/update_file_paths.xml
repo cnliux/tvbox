@@ -9,4 +9,8 @@
     <external-files-path
         name="background_update_apks"
         path="Download/updates/" />
+    <!-- S1-03：脱敏后的崩溃报告落在 App 私有外部目录，仅通过一次性 SAF 授权分享。 -->
+    <external-files-path
+        name="crash_reports"
+        path="crash-reports/" />
 </paths>

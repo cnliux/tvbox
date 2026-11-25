@@ -34,8 +34,10 @@ import com.tvbox.app.data.RemoteManageSite
 import com.tvbox.app.data.RemoteManageSnapshot
 import com.tvbox.app.data.RemoteManageVideoSource
 import com.tvbox.app.domain.AppSettings
+import com.tvbox.app.domain.HistoryPolicy
 import com.tvbox.app.domain.CdnStatusRow
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.DirectTuneTimeout
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.SettingsPageSummary
 import com.tvbox.app.domain.buildSettingsPageSummary
@@ -70,6 +72,7 @@ import com.tvbox.app.domain.rankLinesByQuality
 import com.tvbox.app.domain.lineQualityKey
 import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
+import com.tvbox.app.domain.probeLiveLineLatencyWithConfidence
 import com.tvbox.app.domain.LiveLineFallbackReason
 import com.tvbox.app.domain.RecoveryBackoff
 import com.tvbox.app.domain.AutoSwitchGate
@@ -79,6 +82,8 @@ import com.tvbox.app.domain.startupDeferralMs
 import com.tvbox.app.domain.gateAutoSwitch
 import com.tvbox.app.domain.resetAutoSwitchThrottle
 import com.tvbox.app.domain.mergeMoviesBySourceAndId
+import com.tvbox.app.domain.buildSearchFlow
+import com.tvbox.app.domain.SearchEmission
 import com.tvbox.app.domain.otaFailureReason
 import com.tvbox.app.domain.nextRotatedPlatformLiveCandidate
 import com.tvbox.app.domain.resolveEffectiveEpgUrl
@@ -113,6 +118,9 @@ import com.tvbox.app.domain.findBestTitleMatchIndex
 import com.tvbox.app.domain.findResumePoint
 import com.tvbox.app.domain.playbackHealthKey
 import com.tvbox.app.domain.toApiLines
+import com.tvbox.app.domain.GlobalPlayState
+import com.tvbox.app.domain.RemoteBreadcrumb
+import com.tvbox.app.domain.ResolvedSite
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeoutOrNull
@@ -133,6 +141,15 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -259,6 +276,8 @@ data class TvBoxUiState(
     val update: UpdateUiState = UpdateUiState(),
     /** AI 找片页面状态：仅由 ViewModel 驱动，页面不自行发请求。 */
     val aiSearch: com.tvbox.app.ai.AiSearchUiState = com.tvbox.app.ai.AiSearchUiState(),
+    /** S1-04：无 key 构建不暴露 AI 入口，避免「点了就报错」的半成品按钮。 */
+    val aiSearchAvailable: Boolean = false,
     val appSettings: AppSettings = AppSettings(),
     val playbackHealth: PlaybackHealthSnapshot = PlaybackHealthSnapshot(),
     /** 播放管家的可解释证据时间轴（最新在前，上限 50 条）。 */
@@ -272,6 +291,12 @@ data class TvBoxUiState(
     val settingsSaveError: String? = null,
     /** 通知权限被拒的一次性提示；由 UI 展示「重试授权 / 去设置」后清空。 */
     val notificationPermissionDenial: NotificationPermissionDenial? = null,
+    /** T3-24：菜单键连按计数器，到达阈值后触发健康面板。 */
+    val menuPressCount: Int = 0,
+    /** T3-24：是否弹出健康面板（一次性信号，展示后由 UI 消费清除）。 */
+    val showHealthPanel: Boolean = false,
+    /** T3-24：健康页汇总数据快照，由应用层提供。 */
+    val healthSnapshot: com.tvbox.app.domain.HealthSnapshot = com.tvbox.app.domain.HealthSnapshot(),
 ) {
     // B3 兼容委托：保留原字段名，避免大面积改动 Compose/View 读取点；新逻辑优先写子 state.copy(...)。
     val availableUpdate: AppUpdate? get() = update.availableUpdate
@@ -294,6 +319,8 @@ data class TvBoxUiState(
     val sourceManagerMessage: String? get() = source.managerMessage
     val sourceImporting: Boolean get() = source.importing
     val sourceImportMessage: String? get() = source.importMessage
+    /** T2-11/T2-13：按显示名解析后的源集合，供冲突面板使用。 */
+    val resolvedSites: List<com.tvbox.app.domain.ResolvedSite> get() = resolveSourceCandidates(allSourceLines)
 
     val liveChannels: List<LiveChannel> get() = live.channels
     val liveChannelIndex: Int get() = live.channelIndex
@@ -399,9 +426,14 @@ class TvBoxViewModel(
     private val aiSearchRepository by lazy { com.tvbox.app.ai.AiSearchRepository() }
     private var aiSearchJob: kotlinx.coroutines.Job? = null
 
+    init {
+        // S1-04：无 key 构建直接隐藏 AI 入口，不展示「点了就报错」的死按钮。
+        _state.value = _state.value.copy(aiSearchAvailable = aiSearchRepository.apiKeyConfigured)
+    }
+
     /** 搜索记录存储懒创建：JVM 单测无 Android Context 时不触发。 */
     private val searchHistory by lazy {
-        searchHistoryStore ?: com.tvbox.app.data.SearchHistoryStore(appContext)
+        searchHistoryStore ?: com.tvbox.app.data.SearchHistoryStore(appContext, ttlDays = _state.value.appSettings.searchHistoryTtlDays)
     }
 
     /** 设置页当前值摘要（第 261–270 轮）：UI 可直接渲染，无需进入子页。 */
@@ -441,7 +473,13 @@ class TvBoxViewModel(
     private var homeJob: Job? = null
     private var categoriesJob: Job? = null
     private var doubanHotResolveJob: Job? = null
-    private var searchJob: Job? = null
+    /** 搜索触发信号：updateSearchQuery（输入中，防抖）与 submitSearch（显式提交，立即）共用。
+     * 缓冲溢出丢弃最旧请求，保证最新查询词不被丢失（搜索只需最新词，无需排队）。 */
+    private val searchRequests = MutableSharedFlow<SearchRequest>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST,
+    )
+    private var searchPipelineJob: Job? = null
     private var searchHotWordsJob: Job? = null
     private var detailJob: Job? = null
     /** 最近一次详情请求（movieId 到 apiLineId），用于 detailMovie 尚未加载成功时的重试。 */
@@ -521,6 +559,8 @@ class TvBoxViewModel(
     private var detailSourceTestJob: Job? = null
     /** 视频源健康管理循环：应用运行期间按周期静默体检，开关关闭时循环空转。 */
     private var sourceHealthJob: Job? = null
+    /** T2-16：各视频源的探活冷却状态（避免把活源自己探死）。 */
+    private val probeCooldownStates = mutableMapOf<String, com.tvbox.app.domain.ProbeCooldown.State>()
     private var detailAutoTestedKey: String? = null
     private var remoteManageServer: RemoteManageServer? = null
     /** 远程网页里最近一次“获取分类”的视频源与其分类列表。 */
@@ -543,6 +583,54 @@ class TvBoxViewModel(
         }
         loadPlatformLiveFavorites()
         loadLiveFavorites()
+        // S5-27：搜索改 flatMapLatest + debounce。快速切换查询词时，旧搜索流被 flatMapLatest
+        // 取消，迟到回包不会覆盖新查询的结果（用户投诉「搜索很蠢 / 结果闪一下跳回无关内容」）。
+        // 输入中的请求走 280ms 防抖（TV 遥控逐字符输入，280ms 不吃手感）；
+        // 显式提交（回车/热词点击）跳过防抖立即执行。
+        searchPipelineJob = viewModelScope.launch {
+            searchRequests
+                .debounce { request -> if (request.immediate) 0L else SEARCH_DEBOUNCE_MS }
+                .map { it.query }
+                .distinctUntilChanged()
+                .flatMapLatest { query ->
+                    if (query.isBlank()) {
+                        flowOf(null)
+                    } else {
+                        _state.update { it.copy(searchLoading = true, searchError = null) }
+                        buildSearchFlow(
+                            query = query,
+                            selectedApiLineId = _state.value.selectedApiLineId,
+                            expandInitials = searchKeywordExpander::expandInitials,
+                            suggestionCount = _state.value.appSettings.searchSuggestionCount,
+                            search = repository::searchProgressively,
+                        )
+                            .onCompletion { cause ->
+                                // 正常跑完（所有源已返回/无源）才复位 loading；
+                                // 取消（新查询接管）由新查询自己置位，避免旧流复位误闪 loading。
+                                if (cause == null) {
+                                    _state.update { it.copy(searchLoading = false, searchError = null) }
+                                }
+                            }
+                            .map<SearchEmission, SearchEmission?> { it }
+                    }
+                }
+                .collect { emission ->
+                    if (emission == null) {
+                        resetSearchResultsState()
+                    } else {
+                        _state.update {
+                            it.copy(
+                                searchResults = emission.results,
+                                searchResultsBySource = emission.resultsBySource,
+                                searchCompletedSources = emission.completedSources,
+                                searchTotalSources = emission.totalSources,
+                                searchLoading = false,
+                                searchError = null,
+                            )
+                        }
+                    }
+                }
+        }
         // 切台/换源后当前频道身份改变：统一终止在途测速，避免旧协程继续占用网络或写回旧结果。
         // 只切线路（lineIndex）不改变身份，用户主动发起的测速不会被误取消。
         viewModelScope.launch {
@@ -845,6 +933,37 @@ class TvBoxViewModel(
     fun openSettings() {
         _state.update { it.copy(screen = TvScreen.Settings, update = it.update.copy(error = null)) }
         refreshPlaybackHealth()
+    }
+
+    /** T3-24：记录一次菜单键按下，达到阈值时触发健康面板展示。 */
+    fun recordMenuPress() {
+        val current = _state.value
+        val nextCount = current.menuPressCount + 1
+        GlobalPlayState.menuPressCount = nextCount
+        // T3-23：菜单连按也是异常出口之一，记录进 64 帧面包屑便于事后定位。
+        GlobalPlayState.breadcrumb.record(
+            System.currentTimeMillis(),
+            "menuPress",
+            "count=$nextCount",
+        )
+        if (nextCount >= com.tvbox.app.domain.HealthPageMetrics.MENU_PRESSES_TO_OPEN) {
+            // 重置计数器并生成快照
+            GlobalPlayState.menuPressCount = 0
+            val app = (appContext as? com.tvbox.app.TvBoxApplication)
+            val snapshot = com.tvbox.app.domain.HealthSnapshot(
+                longFrames = app?.frameTracker?.collectAndReset()?.coerceAtLeast(0) ?: 0,
+                throttled = app?.throttleCount ?: 0,
+                tier = app?.memoryTier ?: com.tvbox.app.domain.MemoryGovernor.Tier.RICH,
+            )
+            _state.update { it.copy(menuPressCount = 0, showHealthPanel = true, healthSnapshot = snapshot) }
+        } else {
+            _state.update { it.copy(menuPressCount = nextCount) }
+        }
+    }
+
+    /** T3-24：消费健康面板展示信号（UI 显示后调用以清除）。 */
+    fun dismissHealthPanel() {
+        _state.update { it.copy(showHealthPanel = false) }
     }
 
     /** 打开 AI 找片：入口只在设置项开启时可见；Key 状态只读展示。 */
@@ -1304,11 +1423,21 @@ class TvBoxViewModel(
         commitSettings(settings)
     }
 
+    /** S1-01：远程管理 LAN 开关。开启会暴露同网段访问权限，调用方须先向用户二次确认。 */
+    fun updateRemoteManageLanEnabled(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(remoteManageLanEnabled = enabled)
+        commitSettings(settings)
+        // 服务正在运行时改开关需要重启才能改变 bind 地址。
+        if (_state.value.remoteManageDialogVisible) openRemoteManageDialog()
+    }
+
     fun openRemoteManageDialog() {
         closeRemoteManageDialog(stopOnly = true)
         val server = RemoteManageServer(
             snapshot = ::buildRemoteManageSnapshot,
             onSubmit = ::handleRemoteManageRequest,
+            // S1-01：默认只听回环；只有用户在设置里显式 opt-in 才监听 0.0.0.0。
+            lanEnabled = _state.value.appSettings.remoteManageLanEnabled,
         )
         remoteManageServer = server
         _state.update {
@@ -1591,14 +1720,14 @@ class TvBoxViewModel(
 
     fun updateSearchQuery(query: String) {
         _state.update { it.copy(searchQuery = query, searchError = null) }
+        // 输入过程中的自动搜索：走 280ms 防抖，快速输入只保留最后一个字符序列的搜索。
+        searchRequests.tryEmit(SearchRequest(query = query.trim(), immediate = false))
     }
-    
-    fun clearSearch() {
-        // 清空结果的同时取消仍在流式返回的多源搜索，避免旧结果在返回首页后又写回状态。
-        searchJob?.cancel()
+
+    /** 空查询/清空搜索时把结果区复位（不写 searchQuery，由调用方负责）。 */
+    private fun resetSearchResultsState() {
         _state.update {
             it.copy(
-                searchQuery = "",
                 searchResults = emptyList(),
                 searchResultsBySource = emptyMap(),
                 searchSourceFilter = "",
@@ -1608,6 +1737,14 @@ class TvBoxViewModel(
                 searchTotalSources = 0,
             )
         }
+    }
+
+    fun clearSearch() {
+        // 清空结果的同时取消仍在流式返回的多源搜索，避免旧结果在返回首页后又写回状态。
+        // flatMapLatest 会在收到空查询时取消在途内层流并复位结果区。
+        _state.update { it.copy(searchQuery = "", searchSourceFilter = "") }
+        searchRequests.tryEmit(SearchRequest(query = "", immediate = true))
+        resetSearchResultsState()
     }
 
     fun openDoubanHotDetail(item: DoubanHotItem) {
@@ -1678,106 +1815,20 @@ class TvBoxViewModel(
             _state.update { it.copy(searchResults = emptyList(), searchError = "请输入搜索关键词") }
             return
         }
-        searchJob?.cancel()
+        // 显式提交（回车/搜索按钮/热词点击）：跳过防抖立即执行，并把结果区复位为加载态。
+        // 实际搜索由 init 里的 flatMapLatest 管道承接，这里只发信号，保证乱序回包仍被取消保护。
         recordSearchHistory(query)
-        searchJob = viewModelScope.launch {
-            _state.update {
-                it.copy(
-                    searchLoading = true,
-                    searchError = null,
-                    searchResults = emptyList(),
-                    searchResultsBySource = emptyMap(),
-                    searchCompletedSources = 0,
-                    searchTotalSources = 0,
-                )
-            }
-            try {
-                // 拼音首字母（如 xclf）无法在 MacCMS 服务端命中，先扩展为候选中文片名再搜索。
-                val keywords = searchKeywordExpander.expandInitials(
-                    query,
-                    limit = _state.value.appSettings.searchSuggestionCount,
-                )
-                    .ifEmpty { listOf(query) }
-                    .distinct()
-                var totalSources = 0
-                var mergedResults: List<Movie> = emptyList()
-                var mergedBySource: Map<String, List<Movie>> = emptyMap()
-                // 多候选关键词并行搜索：拼音首字母可能扩展出多个候选中文片名，
-                // 全量并发缩短总延迟；首个（可信度最高）候选一旦产出结果即忽略其余，
-                // 避免低可信候选的结果反过来稀释/延后主结果。
-                val foundResults = BooleanArray(keywords.size)
-                coroutineScope {
-                    keywords.forEachIndexed { index, keyword ->
-                        launch {
-                            repository.searchProgressively(
-                                apiLineId = _state.value.selectedApiLineId,
-                                page = 1,
-                                keyword = keyword,
-                            ).collect { update ->
-                                // 多源搜索是流式的：关键词已改写或用户已离开搜索页时，
-                                // 旧请求的增量结果不得写回，否则会覆盖新搜索或返回后残留上一次数据。
-                                if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) {
-                                    return@collect
-                                }
-                                // 主候选已出结果后，较低可信候选的增量不再并入，避免稀释主结果。
-                                if (foundResults[0] && index > 0) {
-                                    return@collect
-                                }
-                                totalSources = maxOf(totalSources, update.totalSources)
-                                if (update.movies.isNotEmpty() && index == 0) {
-                                    foundResults[0] = true
-                                }
-                                mergedResults = mergeSearchResults(mergedResults, update.movies)
-                                mergedBySource = mergeSearchResultsBySource(mergedBySource, update.moviesBySource)
-                                _state.update {
-                                    it.copy(
-                                        searchResults = mergedResults,
-                                        searchResultsBySource = mergedBySource,
-                                        searchCompletedSources = update.completedSources,
-                                        searchTotalSources = maxOf(totalSources, update.completedSources),
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-                if (_state.value.searchQuery.trim() != query || _state.value.screen != TvScreen.Search) return@launch
-                _state.update {
-                    it.copy(
-                        searchLoading = false,
-                        searchCompletedSources = totalSources,
-                        searchTotalSources = totalSources,
-                        // 零结果是正常空态，不是请求错误；错误分支只保留网络/解析失败。
-                        searchError = null,
-                    )
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                _state.update {
-                    it.copy(searchLoading = false, searchError = error.userMessage())
-                }
-            }
+        _state.update {
+            it.copy(
+                searchLoading = true,
+                searchError = null,
+                searchResults = emptyList(),
+                searchResultsBySource = emptyMap(),
+                searchCompletedSources = 0,
+                searchTotalSources = 0,
+            )
         }
-    }
-
-    private fun mergeSearchResults(existing: List<Movie>, incoming: List<Movie>): List<Movie> =
-        mergeMoviesBySourceAndId(existing, incoming)
-
-    /**
-     * 合并每源原始结果：每个源内部按 (apiLineId, movieId) 去重，源与源之间互不干扰，
-     * 让同一部片在多个源命中时各源分组下都能看到。
-     */
-    private fun mergeSearchResultsBySource(
-        existing: Map<String, List<Movie>>,
-        incoming: Map<String, List<Movie>>,
-    ): Map<String, List<Movie>> {
-        if (incoming.isEmpty()) return existing
-        val merged = existing.toMutableMap()
-        incoming.forEach { (sourceId, movies) ->
-            merged[sourceId] = mergeMoviesBySourceAndId(merged[sourceId].orEmpty(), movies)
-        }
-        return merged
+        searchRequests.tryEmit(SearchRequest(query = query, immediate = true))
     }
 
     /** 手机端切换搜索源筛选（空=全部源）。仅影响展示，不重新发起搜索。 */
@@ -2236,6 +2287,14 @@ class TvBoxViewModel(
         commitSettings(settings)
     }
 
+    /** P1-08：更新数字选台静默自动提交超时（毫秒）；0=手动确认。 */
+    fun updateLiveNumberAutoCommitMs(ms: Long) {
+        val settings = _state.value.appSettings.copy(
+            liveNumberAutoCommitMs = DirectTuneTimeout.clamp(ms),
+        )
+        commitSettings(settings)
+    }
+
     /** 更新手机直播页「相关频道」数量。 */
     fun updateRelatedChannelCount(count: Int) {
         val settings = _state.value.appSettings.copy(
@@ -2317,6 +2376,26 @@ class TvBoxViewModel(
     fun updateHistoryPrivacyMode(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(historyPrivacyMode = enabled)
         commitSettings(settings)
+    }
+
+    /** S1-06 更新观看历史记录策略：完整 / 仅片名 / 关闭。 */
+    fun updateHistoryPolicy(policy: HistoryPolicy) {
+        val settings = _state.value.appSettings.copy(historyPolicy = policy)
+        commitSettings(settings)
+    }
+
+    /** S1-06 更新搜索历史存活天数（0=永不清理，1/7/30 为可选档位）。 */
+    fun updateSearchHistoryTtlDays(days: Int) {
+        val clamped = days.coerceIn(0, 365)
+        val settings = _state.value.appSettings.copy(searchHistoryTtlDays = clamped)
+        commitSettings(settings)
+    }
+
+    /** S1-06 切换访客模式：关闭所有历史写入（观看 + 搜索），不持久化至跨会话存储。 */
+    fun toggleGuestMode() {
+        val settings = _state.value.appSettings.copy(guestModeActive = !_state.value.appSettings.guestModeActive)
+        commitSettings(settings)
+        searchHistory.isVisitorMode = settings.guestModeActive
     }
 
     /** #54/#266 更新硬解设备白名单（逗号分隔的 Build.MODEL 前缀）。 */
@@ -2667,9 +2746,9 @@ class TvBoxViewModel(
                 coroutineScope {
                     lines.map { line ->
                         async {
-                            val latency = try {
+                            val (latency, confidence) = try {
                                 // 测速请求与播放共用同一 UA 口径：线路头部 > 用户自定义 UA。
-                                measureLiveLineLatencyMs(
+                                probeLiveLineLatencyWithConfidence(
                                     line.url,
                                     line.headers.withFallbackUserAgent(
                                         com.tvbox.app.domain.UserAgentSetting.resolve(
@@ -2681,13 +2760,27 @@ class TvBoxViewModel(
                                 // 切台/离页取消必须立即透传，否则迟到的 null 会污染新频道结果。
                                 throw cancelled
                             } catch (_: Throwable) {
-                                null
+                                null to com.tvbox.app.domain.DurationConfidence.NONE
                             }
                             val snapshot = resultsMutex.withLock {
                                 results[line.url] = latency
                                 results.toMap()
                             }
                             publish(snapshot)
+                            // T1-04：将时长可信度写入健康记录（幂等，不影响 UI）。
+                            if (latency != null) {
+                                val key = "live_${channel.key()}|${line.url}"
+                                viewModelScope.launch {
+                                    runCatching {
+                                        playbackHealthRepository.recordSuccessWithConfidence(
+                                            key = key,
+                                            latencyMs = latency,
+                                            durationConfidence = confidence,
+                                            nowMs = System.currentTimeMillis(),
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }.awaitAll()
                 }
@@ -3375,7 +3468,7 @@ class TvBoxViewModel(
             coroutineScope {
                 candidates.forEachIndexed { index, candidate ->
                     launch(Dispatchers.IO) {
-                        val latency = measureLiveLineLatencyMs(candidate.url, baseHeaders)
+                        val (latency, confidence) = probeLiveLineLatencyWithConfidence(candidate.url, baseHeaders)
                         val latencyInt = latency?.toInt()?.coerceAtLeast(1) ?: -1
                         // 只在房间/线路未变时回写，避免用户切台后旧结果覆盖新流。
                         _state.update { s ->
@@ -3391,6 +3484,19 @@ class TvBoxViewModel(
                             s.copy(platformLive = cur.copy(
                                 stream = curStream.copy(candidates = updated),
                             ))
+                        }
+                        // T1-04：写入时长可信度到健康记录。
+                        if (latency != null) {
+                            viewModelScope.launch {
+                                runCatching {
+                                    playbackHealthRepository.recordSuccessWithConfidence(
+                                        key = "platform_${candidate.url}",
+                                        latencyMs = latency,
+                                        durationConfidence = confidence,
+                                        nowMs = System.currentTimeMillis(),
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -3662,6 +3768,12 @@ class TvBoxViewModel(
                 playerPlayWhenReady = target.playWhenReady,
             )
         }
+        // T3-23：记录换源操作面包屑
+        GlobalPlayState.breadcrumb.record(
+            System.currentTimeMillis(),
+            "source_switch",
+            "from=${current.playerSourceIndex} to=$index"
+        )
         return true
     }
 
@@ -3685,8 +3797,6 @@ class TvBoxViewModel(
         val source = movie.playSources.getOrNull(current.playerSourceIndex) ?: return
         val episode = source.episodes.getOrNull(current.playerEpisodeIndex) ?: return
         if (episode.url.isBlank()) return
-        // #318 历史隐私模式：开启后不再写入新的观看/续播记录，已有历史保持原样。
-        if (current.appSettings.historyPrivacyMode) return
 
         val item = WatchHistoryItem(
             movieId = movie.id,
@@ -3987,12 +4097,29 @@ class TvBoxViewModel(
         _state.update {
             it.copy(source = it.source.copy(healthCheckRunning = true))
         }
+        // T2-16：只探测「不在冷却窗口内」的源，避免把活源自己探死。
+        val nowMs = System.currentTimeMillis()
+        val probeable = lines.map { it.id }.filter { id ->
+            com.tvbox.app.domain.ProbeCooldown.shouldProbe(probeCooldownStates[id], nowMs)
+        }
         val results = try {
-            measureSourceLatencies(
-                lines.map { it.id },
-                parallelism = SourceHealthSetting.Parallelism,
-                test = { repository.testSpeed(it) },
-            )
+            if (probeable.isEmpty()) {
+                emptyMap()
+            } else {
+                measureSourceLatencies(
+                    probeable,
+                    parallelism = SourceHealthSetting.Parallelism,
+                    test = { repository.testSpeed(it) },
+                    onResult = { id, latency, _, _ ->
+                        // T2-16：探测成功回 ALIVE、失败降 SLOW，绝不直接落 DEAD。
+                        probeCooldownStates[id] = if (latency == null) {
+                            com.tvbox.app.domain.ProbeCooldown.onProbeFailure(probeCooldownStates[id], nowMs)
+                        } else {
+                            com.tvbox.app.domain.ProbeCooldown.onProbeSuccess(probeCooldownStates[id], nowMs)
+                        }
+                    },
+                )
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } finally {
@@ -5577,6 +5704,21 @@ private const val HISTORY_UPDATE_TIMEOUT_MS = 12_000L
 /** 整批历史更新检查的总兜底预算：即使多条历史、源全挂也不让 spinner 拖过该时长。 */
 private const val HISTORY_UPDATE_BATCH_TIMEOUT_MS = 15_000L
 
+/**
+ * 搜索防抖窗口（S5-27）：TV 遥控输入是逐字符的，280ms 刚好不吃手感。
+ * 用户快速输入时只保留最后一个字符序列的搜索，避免逐字符发出三个并发请求。
+ */
+private const val SEARCH_DEBOUNCE_MS = 280L
+
+/**
+ * 一次搜索触发请求：query 为已 trim 的关键词，immediate 为 true 表示用户显式提交
+ * （回车/搜索按钮/热词点击），应跳过防抖立即执行；false 表示输入过程中的自动搜索。
+ */
+private data class SearchRequest(
+    val query: String,
+    val immediate: Boolean,
+)
+
 private class DefaultAppUpdateRepositoryPlaceholder : AppUpdateRepository {
     override suspend fun checkForUpdate(
         currentVersionCode: Long,
@@ -5601,6 +5743,14 @@ private class DefaultPlaybackHealthRepositoryPlaceholder : PlaybackHealthReposit
     ): PlaybackHealthSnapshot = PlaybackHealthSnapshot()
 
     override suspend fun recordSuccess(key: String, nowMs: Long): PlaybackHealthSnapshot = PlaybackHealthSnapshot()
+
+    /** T1-04：占位实现，不做持久化。 */
+    override suspend fun recordSuccessWithConfidence(
+        key: String,
+        latencyMs: Long,
+        durationConfidence: com.tvbox.app.domain.DurationConfidence,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot = PlaybackHealthSnapshot()
 
     override suspend fun clear(): PlaybackHealthSnapshot = PlaybackHealthSnapshot()
 }
