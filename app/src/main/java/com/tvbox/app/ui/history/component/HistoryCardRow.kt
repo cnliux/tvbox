@@ -135,7 +135,7 @@ fun HistoryCardRow(
             }
         }
 
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(12.dp))
 
         // 删除按钮（多选态切 Checkbox）
         if (multiSelectMode) {

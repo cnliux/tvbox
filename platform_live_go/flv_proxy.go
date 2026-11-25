@@ -409,6 +409,10 @@ func logGoError(format string, args ...interface{}) {
 // 运行时致命错误（如 `sync: unlock of unlocked mutex`、并发 map 写、栈溢出）
 // 由 runtime.throw 直接 abort，recover 无效，必须从根因上避免（见巡检报告）。
 func (p *flvProxy) runGuarded(name string, fn func()) {
+	// nil receiver 防御：goroutine 兜底函数本身不应解引用 nil p。
+	if p == nil {
+		return
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			logGoError("flvProxy %s goroutine panic: %v", name, r)
@@ -801,6 +805,9 @@ func (p *flvProxy) hasClient() bool {
 }
 
 func (p *flvProxy) run() {
+	if p == nil {
+		return
+	}
 	defer close(p.done)
 	for {
 		if !p.waitClient() {
@@ -831,6 +838,10 @@ func (p *flvProxy) waitClient() bool {
 // streamLoop 在播放器连接存续期间不断拉流：正常 EOF 立即重解析续拉，
 // 连续硬失败才换下一条候选线路。
 func (p *flvProxy) streamLoop() {
+	// nil receiver 防御：与 pullSegment 同理，避免重连竞态下 nil 解引用整进程崩溃。
+	if p == nil {
+		return
+	}
 	candidateIndex := p.candidateIndex
 	failures := 0
 	// 连续短/空段计数：用于指数退避与触发候选切换，正常长度的段会清零。
@@ -1138,6 +1149,14 @@ func (p *flvProxy) pull(candidate LiveStreamCandidate, headers map[string]string
 // pullSegment 拉取一段上游 FLV 并缝进本地输出。
 // 返回：leaseExpired=租约到期计划内断开；handover=已就绪的第二条连接；err=实际故障。
 func (p *flvProxy) pullSegment(candidate LiveStreamCandidate, headers map[string]string, leaseDeadline time.Time, opts *pullOptions) (bool, *preparedStream, error) {
+	// nil receiver 防御：正常路径下 streamLoop 持有的 p 来自 newFlvProxy 返回值
+	// （失败会返回 error 而非 nil），handover 也复用同一实例，p 不会为 nil。但真实
+	// 重连/换线路场景中观测到过 nil receiver 触发 SIGSEGV（Go 对方法内 nil 解引用
+	// 会整进程 fatal，runGuarded 的 recover 兜不住）。这里在入口把潜在的整进程崩溃
+	// 降级为普通 error，交给 streamLoop 走既有软重连路径，绝不终止进程。
+	if p == nil {
+		return false, nil, newError("代理会话已结束（nil receiver），跳过本段拉流")
+	}
 	// 计划内交接：本段直接消费已预建好的连接，不再发起新请求。
 	if opts != nil && opts.usePrepared != nil {
 		stream := opts.usePrepared
@@ -1266,6 +1285,11 @@ func (p *flvProxy) consume(reader *bufio.Reader) error {
 
 // consumeWithOptions 与 consume 同路径，额外支持「计划内关键帧交接」信号。
 func (p *flvProxy) consumeWithOptions(reader *bufio.Reader, handover *handoverState) error {
+	// nil receiver 防御：consume 会被 pullSegment 在长事务里调用，重连竞态下若
+	// 代理已结束，这里 nil 解引用会整进程 fatal，故入口先拦一道。
+	if p == nil {
+		return newError("代理会话已结束（nil receiver）")
+	}
 	header := make([]byte, flvProxyHeaderSize+flvProxyPrevTagSizeLen)
 	if _, err := io.ReadFull(reader, header); err != nil {
 		// 上游在 FLV 头之前就关闭：直播会话的正常结束形态之一（空段），

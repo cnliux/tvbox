@@ -119,6 +119,10 @@ type pullOptions struct {
 // prepareNextConnection 解析新地址、连上 CDN，并读到第一个视频关键帧。
 // 任何一步失败都返回 nil，调用方回落到原有的 EOF 后续拉路径，不会让播放中断。
 func (p *flvProxy) prepareNextConnection(ctx context.Context, resolve resolveCandidateFunc) *preparedStream {
+	// nil receiver 防御：prepare 在独立 goroutine 里跑，重连竞态下 p 可能已结束。
+	if p == nil {
+		return nil
+	}
 	if ctx.Err() != nil {
 		return nil
 	}

@@ -460,9 +460,9 @@ internal fun MobileHistoryScreen(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp)),
                                     )
-                                    // 扁平列表：细分隔线只贯穿右侧文字区域（与文字列左缘对齐）
+                                    // 扁平列表：细分隔线对齐文字列左缘（竖条2dp+海报128dp+gap14dp=144dp）
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(start = 110.dp),
+                                        modifier = Modifier.padding(start = 144.dp),
                                         thickness = HistoryTokens.M.SegH,
                                         color = HistoryTokens.Divider,
                                     )
@@ -551,8 +551,8 @@ private fun HistoryChip(
         else     -> TvColors.Surface to TvColors.TextSecondary
     }
     Surface(
-        modifier = Modifier.height(32.dp),
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.height(36.dp),
+        shape = RoundedCornerShape(18.dp),
         color = bg,
         onClick = onClick,
         enabled = enabled,
@@ -562,7 +562,7 @@ private fun HistoryChip(
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             color = fg,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
         )
     }
 }

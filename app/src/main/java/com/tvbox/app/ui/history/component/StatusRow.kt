@@ -1,40 +1,23 @@
 package com.tvbox.app.ui.history.component
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.ui.history.HistoryTokens
 
 /**
- * 状态行：[● +1集] [○ 直播] · 上次看到第N集
+ * 状态行：显示"上次看到 第N集"。
  *
- * 空间不足时按**固定顺序**降级：先丢来源 badge → 再丢前缀只留"91集" → 最后才动标题。
- * 标题是最后一道防线，永远不为 badge 让路。
+ * 更新/追平状态由海报底部 CoverTag 统一标识，本行只负责观看进度，避免与海报标签重复。
+ * 单行显示，超长省略；占满文字列宽度（父级 HistoryCardRow 的 weight(1f) Column）。
  */
 @Composable
 fun StatusRow(item: WatchHistoryItem) {
-    val updateHint = item.newEpisodeHint
     val epDisplay = remember(item.episodeTitle, item.episodeIndex) {
         val t = item.episodeTitle.takeIf { it.isNotBlank() }
             ?.let { displayEpisodeTitle(it, item.episodeIndex) }
@@ -42,40 +25,14 @@ fun StatusRow(item: WatchHistoryItem) {
         t
     }
 
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    // 简化：海报底部 CoverTag 已负责"有更新/今日开播/已追平"状态标识，
+    // 右侧只显示观看进度，避免信息重复且节省横向空间（防止"上次看到..."被裁）。
+    Text(
+        text = "上次看到 $epDisplay",
+        fontSize = HistoryTokens.M.MetaSz,
+        color = HistoryTokens.Meta,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
         modifier = Modifier.fillMaxWidth(),
-    ) {
-        // 更新提示 badge（有新增集数才显示）：按内容自适应宽度，绝不 truncate。
-        updateHint?.let { hint ->
-            val color = if (hint.confirmed) HistoryTokens.NewFrom else HistoryTokens.LiveGreen
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(color.copy(alpha = 0.15f))
-                    .padding(horizontal = 6.dp, vertical = 2.dp),
-            ) {
-                Text(
-                    text = "${if (hint.confirmed) "●" else "○"} ${hint.label}",
-                    fontSize = HistoryTokens.M.BadgeSz,
-                    color = color,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.weight(1f))
-
-        // 元数据："上次看到 第N集"：右对齐、按内容自适应，只与 badge 竞争剩余空间。
-        Text(
-            text = "上次看到 $epDisplay",
-            fontSize = HistoryTokens.M.MetaSz,
-            color = HistoryTokens.Meta,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-    }
+    )
 }

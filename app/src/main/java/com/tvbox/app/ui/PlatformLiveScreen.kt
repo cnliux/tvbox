@@ -954,6 +954,17 @@ private fun PlatformLivePlayerScreen(
     if (isMobile) {
         // 手机模式直播播放页沉浸全屏，退出时恢复系统栏与屏幕方向。
         FullscreenWhilePlayingPageVisible(activity)
+        // 手机端进播放页直接横屏全屏，跳过竖屏小窗：参照 PlayerScreen 的进入锁向方式。
+        // 锁向放在独立 DisposableEffect 里：onDispose 恢复 initialRequestedOrientation，
+        // 即使用户在播放中途用方向按钮切回竖屏，退出仍回到进入前的方向设置。
+        DisposableEffect(activity) {
+            if (activity != null &&
+                activity.requestedOrientation != android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            ) {
+                activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            }
+            onDispose { }
+        }
     }
     // initialRequestedOrientation 是 remember(activity) 的固定快照，显式放进 key：
     // 即使活动实例/快照发生变化，旧 effect 也先按旧快照恢复，再由新 effect 接管。
