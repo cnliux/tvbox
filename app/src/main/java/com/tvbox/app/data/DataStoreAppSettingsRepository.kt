@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.preferencesDataStore
@@ -16,6 +17,38 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+
+/**
+ * T6-42 人因合规设置的偏好键。命名沿用 [SettingsStorageKeys] 的 snake_case 约定；
+ * 注册表文件（PrefsRegistry）不在本文件职责内，主 agent 统一登记时请复用这里的键名字符串。
+ */
+internal object HumanFactorsPrefsKeys {
+    /** 少儿锁 PIN 摘要（SHA-256 前 16 位十六进制），空串表示未设置。 */
+    const val KIDS_LOCK_PIN_HASH = "kids_lock_pin_hash"
+    /** 使用时长就寝锁上限（分钟），0 表示无限制。 */
+    const val SCREEN_TIME_LIMIT_MINUTES = "screen_time_limit_minutes"
+    /** 车载模式开关。 */
+    const val DRIVING_MODE = "driving_mode"
+}
+
+/** 从偏好快照叠加人因合规三项字段；缺键/类型不符时保持 AppSettings 默认（关闭、无限制）。 */
+internal fun AppSettings.withHumanFactorsFrom(values: Map<String, Any?>): AppSettings = copy(
+    kidsLockPinHash = (values[HumanFactorsPrefsKeys.KIDS_LOCK_PIN_HASH] as? String)
+        ?.trim()?.take(64).orEmpty(),
+    screenTimeLimitMinutes = (values[HumanFactorsPrefsKeys.SCREEN_TIME_LIMIT_MINUTES] as? Int ?: 0)
+        .coerceIn(0, 24 * 60),
+    drivingMode = values[HumanFactorsPrefsKeys.DRIVING_MODE] as? Boolean ?: false,
+)
+
+/** 把人因合规字段写入偏好容器，复用 [putString]/[putInt]/[putBoolean] 既有 codec 原语。 */
+internal fun MutablePreferences.writeHumanFactors(settings: AppSettings) {
+    putString(HumanFactorsPrefsKeys.KIDS_LOCK_PIN_HASH, settings.kidsLockPinHash)
+    putInt(
+        HumanFactorsPrefsKeys.SCREEN_TIME_LIMIT_MINUTES,
+        settings.screenTimeLimitMinutes.coerceIn(0, 24 * 60),
+    )
+    putBoolean(HumanFactorsPrefsKeys.DRIVING_MODE, settings.drivingMode)
+}
 
 /** 旧版设置来源。仅在首次迁移与迁移失败重试时读取，迁移完成后不再参与常规读取。 */
 internal fun interface LegacySettingsSource {
@@ -178,6 +211,7 @@ internal class DataStoreAppSettingsRepository(
             dataStore.updateData { current ->
                 current.toMutablePreferences().apply {
                     writeSettings(settings, json)
+                    writeHumanFactors(settings)
                     markMigrated()
                 }
             }
@@ -253,7 +287,9 @@ internal class DataStoreAppSettingsRepository(
             return runCatching {
                 dataStore.updateData { stored ->
                     stored.toMutablePreferences().apply {
-                        writeSettings(parseSettings(stored), json)
+                        val currentSettings = parseSettings(stored)
+                        writeSettings(currentSettings, json)
+                        writeHumanFactors(currentSettings)
                         markMigrated()
                     }
                 }
@@ -276,6 +312,7 @@ internal class DataStoreAppSettingsRepository(
             dataStore.updateData { stored ->
                 stored.toMutablePreferences().apply {
                     writeSettings(settings, json)
+                    writeHumanFactors(settings)
                     // 屏蔽分类已并入 DataStore；旧 JSON 文件只作为只读备份保留，不再回写。
                     (snapshot.values[SettingsStorageKeys.SOURCE_SPEED_LATENCIES] as? String)
                         ?.takeIf { it.isNotBlank() }
@@ -294,10 +331,12 @@ internal class DataStoreAppSettingsRepository(
         return migrated
     }
 
-    private fun parseSettings(preferences: Preferences): AppSettings =
-        readLegacySettings(LegacySettingsSnapshot(preferences.toSettingsValues()), json) { message, error ->
+    private fun parseSettings(preferences: Preferences): AppSettings {
+        val values = preferences.toSettingsValues()
+        return readLegacySettings(LegacySettingsSnapshot(values), json) { message, error ->
             Log.w(TAG, message, error)
-        }
+        }.withHumanFactorsFrom(values)
+    }
 
     /** 迁移未完成时的只读回退：使用旧快照，失败才退回默认值。 */
     private suspend fun readLegacyFallback(): AppSettings =

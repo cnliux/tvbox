@@ -15,9 +15,10 @@ import kotlinx.serialization.json.Json
  *
  * S1-06 增强：
  * - 每条记录携带写入时间戳（[SearchEntry.createdAtEpochMs]）。
- * - [load()] 自动过滤超过 [ttlDays] 天的过期条目；ttlDays <= 0 表示永不清理。
+ * - [load()] 自动过滤超过 [ttlDays] 天的过期条目，并顺带把过期项从磁盘惰性删除；
+ *   ttlDays <= 0 表示永不清理。
  * - 当 [SearchHistoryStore.isVisitorMode] 为 true 时 [add()] 静默跳过。
- * - 新增 [clearExpired()] 供定时任务调用。
+ * - [clearExpired()] 供显式清理；与 [load()] 的惰性清理共用同一锁内实现。
  */
 class SearchHistoryStore internal constructor(
     private val prefs: android.content.SharedPreferences,
@@ -45,6 +46,9 @@ class SearchHistoryStore internal constructor(
 
     suspend fun load(): List<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
+            // S1-06：惰性清理——读取前顺带把过期条目从磁盘删除，
+            // 避免「只在内存里过滤、磁盘上永远留着旧记录」，无需额外的定时调用方。
+            clearExpiredLocked()
             runCatching {
                 val raw = prefs.getString(KEY_ITEMS, null) ?: return@withContext emptyList()
                 json.decodeFromString<List<SearchEntry>>(raw)
@@ -100,26 +104,30 @@ class SearchHistoryStore internal constructor(
 
     /**
      * 清除所有超过 TTL 的条目。
-     * 供定时任务或 App 启动时调用，避免每次 load() 都扫描全量数据。
+     * 供显式清理调用；[load] 的惰性清理与这里共用同一实现，无需另配定时任务。
      */
-    suspend fun clearExpired() {
-        withContext(Dispatchers.IO) {
-            mutex.withLock {
-                if (ttlDays <= 0) return@withLock // 永不清理时直接返回
-                val nowMs = System.currentTimeMillis()
-                val thresholdMs = ttlDays * 86_400_000L
-                val existing = runCatching {
-                    prefs.getString(KEY_ITEMS, null)?.let {
-                        json.decodeFromString<List<SearchEntry>>(it)
-                    }
-                }.getOrNull() ?: emptyList()
-                val updated = existing.filter { nowMs - it.createdAtEpochMs <= thresholdMs }
-                if (updated.size == existing.size) return@withLock // 没有条目过期，不写盘
-                prefs.edit()
-                    .putString(KEY_ITEMS, json.encodeToString(updated))
-                    .apply()
+    suspend fun clearExpired() = withContext(Dispatchers.IO) {
+        mutex.withLock { clearExpiredLocked() }
+    }
+
+    /**
+     * 过期条目清理的锁内实现：[clearExpired] 与 [load] 的惰性清理共用。
+     * 调用方必须持有 [mutex]；无条目过期时不写盘，避免无谓 I/O。
+     */
+    private fun clearExpiredLocked() {
+        if (ttlDays <= 0) return // 永不清理时直接返回
+        val nowMs = System.currentTimeMillis()
+        val thresholdMs = ttlDays * 86_400_000L
+        val existing = runCatching {
+            prefs.getString(KEY_ITEMS, null)?.let {
+                json.decodeFromString<List<SearchEntry>>(it)
             }
-        }
+        }.getOrNull() ?: emptyList()
+        val updated = existing.filter { nowMs - it.createdAtEpochMs <= thresholdMs }
+        if (updated.size == existing.size) return // 没有条目过期，不写盘
+        prefs.edit()
+            .putString(KEY_ITEMS, json.encodeToString(updated))
+            .apply()
     }
 
     /**

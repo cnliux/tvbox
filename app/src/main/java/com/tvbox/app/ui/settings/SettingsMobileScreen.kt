@@ -84,6 +84,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
@@ -100,6 +101,7 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.HistoryLayout
 import com.tvbox.app.domain.HistoryPolicy
+import com.tvbox.app.domain.KidsLockPolicy
 import com.tvbox.app.domain.LiveInfoBannerDuration
 import com.tvbox.app.domain.metrics
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
@@ -1490,6 +1492,31 @@ private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHist
             },
         )
     }
+    // T6-42 人因合规：少儿锁 / 就寝锁 / 车载模式，默认关闭，运行时拦截由消费侧接入。
+    SettingsGroupGap()
+    SettingsGroup {
+        KidsLockPinRow(state, actions)
+        SettingsGroupDivider()
+        IntChoiceSettingRow(
+            icon = Icons.Default.Settings,
+            title = "使用时长就寝锁",
+            subtitle = if (state.appSettings.screenTimeLimitMinutes == 0) {
+                "关闭，不限制使用时长"
+            } else {
+                "连续使用 ${state.appSettings.screenTimeLimitMinutes} 分钟后锁定"
+            },
+            options = listOf(0, 30, 60, 90, 120, 180),
+            selected = state.appSettings.screenTimeLimitMinutes,
+            label = { if (it == 0) "关闭" else "$it 分钟" },
+            onSelect = { v -> actions.updateAppSettings { s -> s.copy(screenTimeLimitMinutes = v) } },
+        )
+        SettingsGroupDivider()
+        BoolSettingRow(
+            title = "车载模式",
+            subtitle = "简化交互，减少行驶中的操作复杂度",
+            checked = state.appSettings.drivingMode,
+        ) { actions.updateAppSettings { s -> s.copy(drivingMode = it) } }
+    }
     // P0-S4：双因子确认弹窗（长按 + 输入「RESET」）；当前版本仅占位提示。
     if (showFactoryResetDialog) {
         AlertDialog(
@@ -1791,6 +1818,54 @@ private fun BoolSettingRow(
         title = title,
         subtitle = subtitle,
         trailing = { Switch(checked = checked, onCheckedChange = onCheckedChange) },
+    )
+}
+
+/**
+ * T6-42 少儿锁 PIN 设置行：输入框只保留草稿，保存时立刻哈希，
+ * 写进 AppSettings 的永远只有摘要，界面也不回显 PIN。
+ */
+@Composable
+private fun KidsLockPinRow(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var draft by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    val enabled = KidsLockPolicy.isEnabled(state.appSettings.kidsLockPinHash)
+    SettingsRow(
+        icon = Icons.Default.Settings,
+        title = "少儿锁",
+        subtitle = if (enabled) "已开启 · 仅保存 PIN 摘要，不保存明文" else "关闭 · 设置 4~6 位数字 PIN 后开启",
+        stackedTrailing = true,
+        trailing = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextField(
+                    value = draft,
+                    onValueChange = { draft = it; error = null },
+                    placeholder = { Text("4~6 位数字 PIN") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                )
+                error?.let {
+                    Text(it, color = TvColors.Danger, style = MaterialTheme.typography.labelSmall)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        if (!KidsLockPolicy.isValidPin(draft)) {
+                            error = "请输入 4~6 位数字 PIN"
+                        } else {
+                            val hash = KidsLockPolicy.hashPin(draft)
+                            actions.updateAppSettings { s -> s.copy(kidsLockPinHash = hash) }
+                            draft = ""
+                            error = null
+                        }
+                    }) { Text("保存 PIN", color = TvColors.Accent) }
+                    TextButton(onClick = {
+                        actions.updateAppSettings { s -> s.copy(kidsLockPinHash = "") }
+                        draft = ""
+                        error = null
+                    }) { Text("关闭锁", color = TvColors.TextSecondary) }
+                }
+            }
+        },
     )
 }
 

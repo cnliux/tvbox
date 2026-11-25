@@ -94,7 +94,70 @@ class SearchHistoryStoreTest {
         assertEquals(emptyList<String>(), store.load())
     }
 
+    // ── TTL 过期清理：落盘删除而非只在内存过滤 ─────────────────────────
+
+    @Test
+    fun loadLazilyPrunesExpiredEntriesFromDisk() = runBlocking {
+        val fresh = SearchEntry("新剧", System.currentTimeMillis())
+        val old = SearchEntry("过期剧", System.currentTimeMillis() - 35L * 86_400_000L)
+        writeRaw(listOf(fresh, old))
+
+        assertEquals(listOf("新剧"), store.load())
+        // 惰性清理必须回写磁盘，否则下次启动仍带着旧记录。
+        assertEquals(listOf("新剧"), readRaw().map { it.keyword })
+    }
+
+    @Test
+    fun clearExpiredRemovesExpiredEntriesAndIsNoopWhenTtlDisabled() = runBlocking {
+        val fresh = SearchEntry("保留", System.currentTimeMillis())
+        val old = SearchEntry("清理", System.currentTimeMillis() - 400L * 86_400_000L)
+        writeRaw(listOf(fresh, old))
+
+        store.clearExpired()
+        assertEquals(listOf("保留"), readRaw().map { it.keyword })
+
+        val noTtlStore = SearchHistoryStore(prefs, ttlDays = 0)
+        noTtlStore.clearExpired()
+        assertEquals(listOf("保留"), readRaw().map { it.keyword })
+    }
+
+    // ── 访客模式：会话内不落盘，退出后无痕 ─────────────────────────────
+
+    @Test
+    fun visitorSessionLeavesNoTraceAfterExit() = runBlocking {
+        store.isVisitorMode = true
+        store.add("访客搜索词A")
+        store.add("访客搜索词B")
+        assertTrue("访客模式下不得写入磁盘", prefs.getString(SearchHistoryStore.KEY_ITEMS, null).isNullOrBlank())
+
+        // 退出访客模式：会话期间没有任何记录被落盘，因此无需额外「焚毁」动作。
+        store.isVisitorMode = false
+        assertEquals(emptyList<String>(), store.load())
+        assertTrue(prefs.getString(SearchHistoryStore.KEY_ITEMS, null).isNullOrBlank())
+
+        // 退出后恢复正常记录能力。
+        store.add("正常搜索词")
+        assertEquals(listOf("正常搜索词"), store.load())
+    }
+
+    @Test
+    fun visitorModeDoesNotOverwriteExistingHistory() = runBlocking {
+        val existing = SearchEntry("原有记录", System.currentTimeMillis())
+        writeRaw(listOf(existing))
+
+        store.isVisitorMode = true
+        store.add("访客新增词")
+        store.isVisitorMode = false
+
+        assertEquals(listOf("原有记录"), readRaw().map { it.keyword })
+    }
+
     // ── 工具方法 ──────────────────────────────────────────────────────
+    private fun readRaw(): List<SearchEntry> {
+        val raw = prefs.getString(SearchHistoryStore.KEY_ITEMS, null) ?: return emptyList()
+        return json.decodeFromString<List<SearchEntry>>(raw)
+    }
+
     private fun writeRaw(entries: List<SearchEntry>) {
         // SearchEntry 是内部私有类，通过反射获取实例字段后手动构造 JSON。
         val raw = entries.joinToString(prefix = "[", postfix = "]") { e ->

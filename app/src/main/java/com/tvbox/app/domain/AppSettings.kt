@@ -218,6 +218,16 @@ data class AppSettings(
     val liveRemoteDirectionMapping: LiveRemoteDirectionMapping = LiveRemoteDirectionMapping.Default,
     /** 统一遥控键位的用户自定义绑定（语义动作 → 附加物理键）。空表示全部用默认键。 */
     val remoteKeyBindings: RemoteKeyBindings = RemoteKeyBindings.Default,
+    // ---- T6-42 人因合规：全部默认关闭/无限制，不改变既有用户体验 ----
+    /**
+     * 少儿锁 PIN 摘要（SHA-256 前 16 位十六进制），空串表示未设置/已关闭。
+     * 绝不保存明文 PIN；校验统一走 [KidsLockPolicy.matches]。
+     */
+    val kidsLockPinHash: String = "",
+    /** 使用时长就寝锁：单次连续使用上限（分钟）；0 表示无限制。 */
+    val screenTimeLimitMinutes: Int = 0,
+    /** 车载模式：限制交互复杂度（简化 UI、减少多级菜单），默认关闭。 */
+    val drivingMode: Boolean = false,
 )
 
 /**

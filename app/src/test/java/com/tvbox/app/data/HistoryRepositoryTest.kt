@@ -119,6 +119,42 @@ class HistoryRepositoryTest {
         assertTrue(prefs.getString("items", null).isNullOrBlank())
     }
 
+    // ── OFF 策略：拒绝新写入但保留已有记录 ────────────────────────────
+
+    @Test
+    fun offPolicyKeepsExistingItemsAndDoesNotWriteNewOne() = runBlocking {
+        val existing = baseItem(movieId = 11, positionMs = 1_000L)
+        writeRaw(listOf(existing))
+        val rawBefore = prefs.getString("items", null)
+        val wrappedRepo = SharedHistoryRepository(prefs) { AppSettings(historyPolicy = HistoryPolicy.OFF) }
+
+        val result = wrappedRepo.saveProgress(baseItem(movieId = 12, positionMs = 2_000L))
+
+        assertEquals(1, result.size)
+        assertEquals(11, result[0].movieId)
+        assertEquals(rawBefore, prefs.getString("items", null))
+    }
+
+    // ── 访客模式：会话内不写盘，退出后无痕 ─────────────────────────────
+
+    @Test
+    fun guestSessionWritesNothingAndLeavesNoTraceAfterExit() = runBlocking {
+        var guestMode = true
+        val wrappedRepo = SharedHistoryRepository(prefs) { AppSettings(guestModeActive = guestMode) }
+
+        val blocked = wrappedRepo.saveProgress(baseItem(movieId = 21))
+        assertTrue(blocked.isEmpty())
+        assertTrue("访客模式下不得写入观看历史", prefs.getString("items", null).isNullOrBlank())
+
+        guestMode = false
+        assertEquals(emptyList<com.tvbox.app.domain.WatchHistoryItem>(), wrappedRepo.getHistory())
+        assertTrue(prefs.getString("items", null).isNullOrBlank())
+
+        val saved = wrappedRepo.saveProgress(baseItem(movieId = 22))
+        assertEquals(1, saved.size)
+        assertEquals(22, saved[0].movieId)
+    }
+
     // ── 工具方法 ──────────────────────────────────────────────────────
     private fun baseItem(
         movieId: Int,
