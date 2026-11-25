@@ -28,7 +28,7 @@ fun SectionHeader(label: String, count: Int, modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .padding(top = 20.dp, bottom = 8.dp, start = 4.dp, end = 16.dp),
+            .padding(top = 16.dp, bottom = 6.dp, start = 4.dp, end = 16.dp),
         contentAlignment = Alignment.BottomStart,
     ) {
         Text(

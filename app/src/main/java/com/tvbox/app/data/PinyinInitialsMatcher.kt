@@ -40,6 +40,24 @@ object PinyinInitialsMatcher {
     }
 
     /**
+     * 取片名首字母（用于搜索页字母索引）：返回片名第一个可识别字符的大写拼音首字母。
+     *
+     * - 片名以英文字母开头时直接返回该字母的大写；
+     * - 片名以汉字开头时查 GB2312 表返回拼音首字母；
+     * - 表外生僻字 / 非字母数字开头（如数字、标点）返回 null，由调用方归入"#"分组。
+     */
+    fun firstInitial(name: String): Char? {
+        for (ch in name.trim()) {
+            if (ch in 'a'..'z') return ch.uppercaseChar()
+            if (ch in 'A'..'Z') return ch
+            if (ch.isDigit()) return null
+            val initial = pinyinInitials[ch] ?: continue
+            return initial.uppercaseChar()
+        }
+        return null
+    }
+
+    /**
      * 每组 [字母 to 该字母的 GB2312 常用汉字串]。构造时字母与汉字严格对应，无手工对齐风险。
      */
     private val groups: List<Pair<Char, String>> = listOf(

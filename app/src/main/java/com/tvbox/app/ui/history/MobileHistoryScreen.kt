@@ -4,10 +4,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,7 +25,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -86,6 +86,7 @@ import kotlinx.coroutines.launch
  * - 顶部不显示任何说明性提示，标题与「清空」按钮共用一行，节省竖屏空间；
  * - 空态动作用 [TvBoxViewModel.openHome] 跳转首页（历史是底部 Tab，没有"返回上一页"语义）。
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun MobileHistoryScreen(
     state: TvBoxUiState,
@@ -269,17 +270,17 @@ internal fun MobileHistoryScreen(
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 24.dp),
                         verticalArrangement = Arrangement.spacedBy(0.dp),
                     ) {
                         // 沉浸式 Header：搜索框 + 筛选 Chip 作为第一个 item，随列表一起向上滚动。
-                        // 顶部收紧：搜索框 40→36dp、行间距 10→8dp、底部留白 8→6dp，减少顶部空档。
+                        // 顶部收紧：搜索框 34dp、行间距 6dp、底部留白 4dp，压缩顶部空档。
                         item(key = "history_immersive_header") {
                             Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(bottom = 6.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    .padding(bottom = 4.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 // 第一行：搜索框
                                 Surface(
@@ -288,7 +289,7 @@ internal fun MobileHistoryScreen(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2A2A)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(36.dp),
+                                        .height(34.dp),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp),
@@ -340,13 +341,12 @@ internal fun MobileHistoryScreen(
                                     }
                                 }
 
-                                // 第二行：横向滑动 Chip 组
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .horizontalScroll(rememberScrollState()),
+                                // 第二行：Chip 组自动换行（FlowRow），保证「清空历史」等按钮完整可见，
+                                // 不再因横向滑动被裁切；换行时用更紧凑的行距。
+                                androidx.compose.foundation.layout.FlowRow(
+                                    modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     if (multiSelectMode) {
                                         HistoryChip(
@@ -390,7 +390,6 @@ internal fun MobileHistoryScreen(
                                             onClick = { confirmClear = true },
                                         )
                                     }
-                                    Spacer(modifier = Modifier.width(4.dp))
                                 }
                             }
                         }
@@ -460,9 +459,9 @@ internal fun MobileHistoryScreen(
                                             .fillMaxWidth()
                                             .clip(RoundedCornerShape(8.dp)),
                                     )
-                                    // 扁平列表：细分隔线对齐文字列左缘（竖条2dp+海报128dp+gap14dp=144dp）
+                                    // 扁平列表：细分隔线对齐文字列左缘（竖条2dp+海报96dp+gap12dp=110dp）
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(start = 144.dp),
+                                        modifier = Modifier.padding(start = 110.dp),
                                         thickness = HistoryTokens.M.SegH,
                                         color = HistoryTokens.Divider,
                                     )
@@ -551,18 +550,18 @@ private fun HistoryChip(
         else     -> TvColors.Surface to TvColors.TextSecondary
     }
     Surface(
-        modifier = Modifier.height(36.dp),
-        shape = RoundedCornerShape(18.dp),
+        modifier = Modifier.height(32.dp),
+        shape = RoundedCornerShape(16.dp),
         color = bg,
         onClick = onClick,
         enabled = enabled,
     ) {
         Text(
             text = label,
-            fontSize = 13.sp,
+            fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             color = fg,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
         )
     }
 }

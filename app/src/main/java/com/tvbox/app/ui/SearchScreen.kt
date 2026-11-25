@@ -78,6 +78,7 @@ import androidx.compose.foundation.layout.size
 import coil.compose.AsyncImage
 import com.tvbox.app.ui.components.MediaCard
 import com.tvbox.app.ui.components.rememberTvImageLoader
+import com.tvbox.app.data.PinyinInitialsMatcher
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.SearchSourceGroup
@@ -133,6 +134,9 @@ fun SearchScreen(
     var savedQuery by rememberSaveable { mutableStateOf(state.searchQuery) }
     var fieldValue by remember { mutableStateOf(queryFieldValue(state.searchQuery)) }
     val hotWords = state.searchHotWords.ifEmpty { FallbackSearchHotWords }
+    // #字母索引：TV 宽屏搜索的字母浏览状态。null=非字母浏览（显示普通搜索结果）；
+    // 否则为选中的首字母（A-Z），结果区显示以该字母开头的当前影片目录。
+    var selectedInitial by rememberSaveable { mutableStateOf<String?>(null) }
 
     LaunchedEffect(state.searchQuery) {
         if (fieldValue.text != state.searchQuery) {
@@ -207,10 +211,19 @@ fun SearchScreen(
                 .padding(padding),
         ) {
             val wideLayout = maxWidth >= 860.dp
+            // 字母浏览：从当前影片目录过滤出以选中首字母开头的影片（仅在宽屏启用）。
+            val alphaMovies = if (wideLayout && selectedInitial != null) {
+                val letter = selectedInitial!!
+                state.movies.filter { movie ->
+                    PinyinInitialsMatcher.firstInitial(movie.name)?.uppercaseChar()?.toString() == letter
+                }
+            } else {
+                null
+            }
             RestoreGridFocus(
                 returnFocus,
                 grid,
-                state.searchResults.mapIndexed { index, item ->
+                (alphaMovies ?: state.searchResults).mapIndexed { index, item ->
                     "${item.apiLineId}:${item.id}" to (
                         index + if (wideLayout) 0 else SEARCH_RESULT_LEADING_ITEMS
                         )
@@ -273,12 +286,21 @@ fun SearchScreen(
                         }
                     }
                     Spacer(modifier = Modifier.width(22.dp))
+                    // 字母索引栏：点击字母，结果区自动加载以该字母开头的影片。
+                    AlphabetIndexBar(
+                        selected = selectedInitial,
+                        onSelect = { letter -> selectedInitial = letter },
+                        modifier = Modifier.width(44.dp).fillMaxHeight(),
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
                     SearchResultsPanel(
                         state = state,
                         actions = actions,
                         grid = grid,
                         returnFocus = returnFocus,
                         resultsFocus = resultsFocus,
+                        alphaMovies = alphaMovies,
+                        alphaTitle = selectedInitial,
                         modifier = Modifier
                             .weight(1f)
                             .fillMaxHeight(),
@@ -1057,10 +1079,37 @@ private fun SearchResultsPanel(
     grid: androidx.compose.foundation.lazy.grid.LazyGridState,
     returnFocus: ReturnFocus,
     resultsFocus: TvFocusRequest,
+    alphaMovies: List<Movie>? = null,
+    alphaTitle: String? = null,
     modifier: Modifier = Modifier,
 ) {
+    // 字母浏览模式：结果区显示以选中首字母开头的影片目录（本地过滤 state.movies）。
+    val inAlphaMode = alphaMovies != null
+    val displayMovies = if (inAlphaMode) alphaMovies.orEmpty() else state.searchResults
+    // 切换字母时结果区自动回到顶部，让「点击字母→自动加载」的定位更直观。
+    LaunchedEffect(alphaTitle, inAlphaMode) {
+        if (inAlphaMode) grid.scrollToItem(0)
+    }
     Column(modifier = modifier) {
-        SearchResultsHeader(state = state)
+        if (inAlphaMode) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "字母 ${alphaTitle ?: ""} · ${displayMovies.size} 部",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "来自当前分类影片目录",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextTertiary,
+                )
+            }
+        } else {
+            SearchResultsHeader(state = state)
+        }
         Spacer(modifier = Modifier.height(10.dp))
 
         Box(
@@ -1074,19 +1123,24 @@ private fun SearchResultsPanel(
                 resultCount = state.searchResults.size,
             ).takeIf { it.isNotEmpty() }
             when {
-                state.searchLoading && state.searchResults.isEmpty() -> LoadingState(
+                inAlphaMode && displayMovies.isEmpty() -> AlphaEmptyState(
+                    letter = alphaTitle ?: "",
+                    catalogEmpty = state.movies.isEmpty(),
+                )
+
+                !inAlphaMode && state.searchLoading && state.searchResults.isEmpty() -> LoadingState(
                     text = loadingProgress ?: "正在搜索多个影视来源",
                 )
 
-                state.searchResults.isEmpty() && state.searchQuery.isBlank() ->
+                !inAlphaMode && state.searchResults.isEmpty() && state.searchQuery.isBlank() ->
                     SearchEmptyState(query = state.searchQuery)
 
-                state.searchError != null && state.searchResults.isEmpty() -> ErrorState(
+                !inAlphaMode && state.searchError != null && state.searchResults.isEmpty() -> ErrorState(
                     message = state.searchError,
                     onRetry = actions::submitSearch,
                 )
 
-                state.searchResults.isEmpty() -> SearchEmptyState(query = state.searchQuery)
+                !inAlphaMode && state.searchResults.isEmpty() -> SearchEmptyState(query = state.searchQuery)
 
                 else -> LazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 132.dp),
@@ -1097,7 +1151,7 @@ private fun SearchResultsPanel(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     itemsIndexed(
-                        items = state.searchResults,
+                        items = displayMovies,
                         key = { _, movie -> "${movie.apiLineId}-${movie.id}" },
                     ) { index, movie ->
                         SearchResultCard(
@@ -1120,6 +1174,104 @@ private fun SearchResultsPanel(
                 }
             }
         }
+    }
+}
+
+/** 字母浏览空态：该字母暂无影片，或当前无影片目录可用。 */
+@Composable
+private fun AlphaEmptyState(letter: String, catalogEmpty: Boolean) {
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = if (catalogEmpty) "暂无影片目录" else "字母 $letter 暂无影片",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = if (catalogEmpty) "请先在首页切换分类浏览，再回来使用字母索引" else "换个字母试试，或点击「全部」返回普通搜索",
+            style = MaterialTheme.typography.bodyMedium,
+            color = TvColors.TextSecondary,
+        )
+    }
+}
+
+/** 字母索引栏（TV 宽屏搜索）：竖向排列 A-Z + 「全部」，点击后结果区自动加载对应首字母影片。 */
+@Composable
+private fun AlphabetIndexBar(
+    selected: String?,
+    onSelect: (String?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier = modifier) {
+        Text(
+            text = "首字母",
+            style = MaterialTheme.typography.labelMedium,
+            color = TvColors.TextSecondary,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            contentPadding = PaddingValues(bottom = 8.dp),
+        ) {
+            item(key = "alpha-all") {
+                AlphaLetterCell(
+                    letter = "全部",
+                    selected = selected == null,
+                    onClick = { onSelect(null) },
+                )
+            }
+            items(('A'..'Z').map { it.toString() }, key = { it }) { letter ->
+                AlphaLetterCell(
+                    letter = letter,
+                    selected = selected == letter,
+                    onClick = { onSelect(letter) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AlphaLetterCell(
+    letter: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val shape = RoundedCornerShape(6.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "首字母：$letter" }
+            .focusable(),
+        shape = shape,
+        color = when {
+            selected -> TvColors.Accent.copy(alpha = 0.22f)
+            focused -> TvColors.SurfaceRaised
+            else -> TvColors.Surface
+        },
+        contentColor = if (selected) TvColors.Accent else TvColors.TextSecondary,
+    ) {
+        Text(
+            text = letter,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
+        )
     }
 }
 

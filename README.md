@@ -4,7 +4,7 @@
 兼容 Android 7.0（API 24）及以上，使用 Kotlin、Jetpack Compose 与 Media3 ExoPlayer 构建。同一份 APK 通过运行时设备模式
 在电视与手机之间切换布局与交互：电视端以遥控器操作优先，手机端提供触屏手势与竖屏布局。
 
-当前版本 `1.0.42`（`versionCode=20042`）。Release 原生库只保留 `arm64-v8a`，
+当前版本 `1.0.43`（`versionCode=20043`）。Release 原生库只保留 `arm64-v8a`，
 启用 R8 full mode 与资源压缩。
 
 > 本项目只提供客户端播放能力，不内置、不托管任何影视内容。请确保所使用的接口与

@@ -110,18 +110,19 @@ fun HistoryCardRow(
                 .fillMaxHeight(),
             verticalArrangement = Arrangement.Center,
         ) {
-            // 主标题：永远 maxLines=1、16sp，超长省略。
+            // 主标题：允许换行到最多 2 行（过长内容不截断，前提是 2 行内不挤压状态行/进度条），
+            // 超过 2 行才省略，保证卡片 UI 质量不受影响。
             Text(
                 text = item.movieName,
                 fontSize = HistoryTokens.M.TitleSz,
                 fontWeight = FontWeight.Medium,
                 color = HistoryTokens.Title,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            Spacer(modifier = Modifier.height(2.dp))
+            Spacer(modifier = Modifier.height(3.dp))
 
             // 状态行：badge + 集数信息
             StatusRow(item = item)
