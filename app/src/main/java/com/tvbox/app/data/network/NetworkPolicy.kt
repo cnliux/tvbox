@@ -27,6 +27,22 @@ data class NetworkPolicy(
     val maxBodyBytes: Long = 20L * 1024 * 1024,
     /** DNS 解析结果缓存 TTL，供 Dns 实现参考。 */
     val dnsCacheTtlMs: Long = 60_000,
+    /** T1-05：DoH 模式，默认关闭：绝不把用户源域名悄悄发给第三方解析器。 */
+    val dohMode: DohMode = DohMode.OFF,
+    /** T1-05：DoH JSON API 模板，主模板失败自动切备用。 */
+    val dohTemplates: List<String> = ParallelDnsDefaults.DOH_TEMPLATES,
+    /** T1-05：静态 hosts 覆盖（小写主机名 → IP 列表），作为 L2 备用解析。 */
+    val dohHosts: Map<String, List<String>> = emptyMap(),
+    /** T1-06：简化版 Happy Eyeballs 开关，默认关闭以保持与系统 DNS 行为一致。 */
+    val dnsHappyEyeballs: Boolean = false,
+    /** IPv6/IPv4 竞速窗口；窗口内先连通者排到列表首位。 */
+    val dnsRaceDelayMs: Long = ParallelDnsDefaults.RACE_DELAY_MS,
+    /** L0 系统 DNS 的短超时。 */
+    val dnsSystemTimeoutMs: Long = ParallelDnsDefaults.SYSTEM_TIMEOUT_MS,
+    /** L1/L2 DoH 单次查询超时。 */
+    val dohTimeoutMs: Long = ParallelDnsDefaults.DOH_TIMEOUT_MS,
+    /** Happy Eyeballs 连通性探测端口。 */
+    val dnsConnectPort: Int = ParallelDnsDefaults.CONNECT_PORT,
 ) {
     init {
         require(connectTimeoutMs > 0) { "connectTimeoutMs 必须为正" }
@@ -37,6 +53,11 @@ data class NetworkPolicy(
         require(keepAliveSeconds >= 0) { "keepAliveSeconds 不能为负" }
         require(maxBodyBytes > 0) { "maxBodyBytes 必须为正" }
         require(dnsCacheTtlMs >= 0) { "dnsCacheTtlMs 不能为负" }
+        require(dnsRaceDelayMs >= 0L) { "dnsRaceDelayMs 不能为负" }
+        require(dnsSystemTimeoutMs > 0L) { "dnsSystemTimeoutMs 必须为正" }
+        require(dohTimeoutMs > 0L) { "dohTimeoutMs 必须为正" }
+        require(dnsConnectPort in 1..65535) { "dnsConnectPort 必须在 1..65535" }
+        require(dohMode == DohMode.OFF || dohTemplates.isNotEmpty()) { "启用 DoH 时必须配置至少一个模板" }
     }
 }
 
@@ -50,6 +71,12 @@ object NetworkPolicies {
         maxBodyBytes = 1L * 1024 * 1024,
     )
     val largeDownload = NetworkPolicy(readTimeoutMs = 60_000, maxBodyBytes = 200L * 1024 * 1024)
+
+    /** T1-05/06：用户显式开启后的推荐档——系统失败才问 DoH，并启用缓存与 IPv6/IPv4 竞速。 */
+    val parallelDns = NetworkPolicy(
+        dohMode = DohMode.FALLBACK,
+        dnsHappyEyeballs = true,
+    )
 }
 
 /**

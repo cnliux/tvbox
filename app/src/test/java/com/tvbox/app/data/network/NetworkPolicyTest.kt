@@ -118,6 +118,17 @@ class NetworkPolicyTest {
     }
 
     @Test
+    fun `默认DNS三档全关以保持向后兼容`() {
+        val p = NetworkPolicies.default
+        assertEquals(DohMode.OFF, p.dohMode)
+        assertEquals(false, p.dnsHappyEyeballs)
+        assertTrue(p.dohHosts.isEmpty())
+        assertEquals(250L, p.dnsRaceDelayMs)
+        // 显式开启档使用 FALLBACK：仅在系统 DNS 失败后才访问第三方解析器。
+        assertEquals(DohMode.FALLBACK, NetworkPolicies.parallelDns.dohMode)
+    }
+
+    @Test
     fun `默认口径与方案 P36 数值一致`() {
         val p = NetworkPolicies.default
         assertEquals(10_000L, p.connectTimeoutMs)

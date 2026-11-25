@@ -8,7 +8,14 @@ package com.tvbox.app.domain
  */
 object UaScope {
     /** 支持的作用域；未知作用域按最小权限回退到内置默认 UA。 */
-    val scopes: List<String> = listOf("api", "spider", "live", "epg", "playback", "webview")
+    val scopes: List<String> = listOf("api", "spider", "live", "epg", "playback", "webview", "probe")
+
+    /**
+     * T2-16：探针专用 UA。源站常按 UA 区分「真实播放」与「探测请求」，
+     * 用固定内置值才能让后台体检拿到与播放口径可比的延迟；因此它不随
+     * unified/scoped 模式变化，也不复用播放 UA。
+     */
+    const val ProbeUserAgent = "TVBox-HealthProbe/1.0 (+source-speed-check)"
 
     /** 脱敏时保留的尾部字符数。 */
     const val RedactTailChars: Int = 12
@@ -38,6 +45,15 @@ object UaScope {
     fun effectiveForHost(host: String, scope: String, settings: AppSettings): String =
         if (isImmutableHost(host)) UserAgentSetting.Default else resolve(scope, settings)
 
+    /**
+     * T1-03：跳转跨子域/跨站后按目标 host 重算请求头 UA。
+     *
+     * [globalValue] 是设置页已解析好的全局 UA（可能为内置默认）；保留域一律回退内置 UA，
+     * 防止一次跳转把自定义 UA 带到 GitHub 等 OTA 唯一更新通道。纯函数，便于 JVM 单测。
+     */
+    fun recomputeHeaderForHost(host: String, globalValue: String): String =
+        if (isImmutableHost(host)) UserAgentSetting.Default else globalValue
+
     /** 脱敏占位符：只保留尾部片段，前缀用省略号替代。 */
     private const val ELLIPSIS = "…"
 
@@ -49,6 +65,8 @@ object UaScope {
      */
     fun resolve(scope: String, settings: AppSettings): String {
         val normalized = scope.trim().lowercase()
+        // T2-16：探针先于统一/分域模式判定，保证任何设置下都与播放 UA 区分。
+        if (normalized == "probe") return ProbeUserAgent
         if (normalized !in scopes) return UserAgentSetting.Default
         if (settings.uaScopeMode.equals("unified", ignoreCase = true)) {
             return UserAgentSetting.resolve(settings.customUserAgent)

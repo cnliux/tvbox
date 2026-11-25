@@ -36,11 +36,7 @@ object GlobalUserAgent {
      * 防止自定义 UA 把唯一的更新通道弄断（即使全局值已设坏）。
      */
     fun valueForHost(host: String): String =
-        if (com.tvbox.app.domain.UaScope.isImmutableHost(host)) {
-            com.tvbox.app.domain.UserAgentSetting.Default
-        } else {
-            value
-        }
+        com.tvbox.app.domain.UaScope.recomputeHeaderForHost(host, value)
 }
 
 /**
@@ -66,7 +62,10 @@ object HttpClients {
     /** T1-03：本次会话所有 3xx 跳转统计（降级/跨站计数），供设置页展示。 */
     fun redirectStats(): RedirectStats = redirectTracker.snapshot()
 
-    /** 业务接口默认口径：连接 10s、单次读 20s、整次调用 60s。 */
+    /**
+     * 业务接口默认口径：T1-09 起统一取 [Timeouts.Scenario.DETAIL] 档位，
+     * 不再手写连接 10s / 读 20s / 调用 60s 这类魔法数字。
+     */
     val default: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .addInterceptor(cleartextGuard)
@@ -74,29 +73,59 @@ object HttpClients {
             .addInterceptor(RedirectTrackingInterceptor(onRedirect = redirectTracker::recordHop))
             .followRedirects(false)          // 禁止 OkHttp 自动跟随，交给上方拦截器手工跟进。
             .followSslRedirects(false)
+            // T1-05/06：分层 DNS。默认 NetworkPolicy 三档全关，直接委托 Dns.SYSTEM，
+            // 与接线前行为一致；用户开启 DoH/竞速后由 ParallelDns 接管。
+            .dns(ParallelDns(NetworkPolicies.default))
             // T1-01：显式限定连接池（5 空余 / 5 分钟），避免多 client 各自建池把弱盒 FD/内存吃满。
             .connectionPool(okhttp3.ConnectionPool(MAX_IDLE_CONNECTIONS, KEEP_ALIVE_SECONDS, TimeUnit.SECONDS))
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .writeTimeout(WRITE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(CALL_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            .applyBudget(Timeouts.forScenario(Timeouts.Scenario.DETAIL))
             .build()
     }
 
-    /** 直播可用性探测/测速：短超时快速失败，不重试。 */
+    /** 直播可用性探测/测速：T1-09 PROBE 档位，快速失败。 */
     val probe: OkHttpClient by lazy {
         default.newBuilder()
-            .connectTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .readTimeout(PROBE_TIMEOUT_SECONDS, TimeUnit.SECONDS)
-            .callTimeout(PROBE_TIMEOUT_SECONDS * 2L, TimeUnit.SECONDS)
+            .applyBudget(Timeouts.forScenario(Timeouts.Scenario.PROBE))
             .build()
     }
 
-    private const val CONNECT_TIMEOUT_SECONDS = 10L
-    private const val READ_TIMEOUT_SECONDS = 20L
-    private const val WRITE_TIMEOUT_SECONDS = 20L
-    private const val CALL_TIMEOUT_SECONDS = 60L
-    private const val PROBE_TIMEOUT_SECONDS = 6L
+    /** T1-09：海报请求的短预算，失败走占位图而不是让 UI 转圈。 */
+    val poster: OkHttpClient by lazy {
+        default.newBuilder()
+            .applyBudget(Timeouts.forScenario(Timeouts.Scenario.POSTER))
+            .build()
+    }
+
+    /**
+     * T1-08：播放层专用 client，取 [Timeouts.Scenario.FIRST_FRAME] 档位。
+     * 与主 agent 约定：在 PlayerDataSourceFactory 中用 [forPlayback] 注入 OkHttpDataSource。
+     */
+    val playback: OkHttpClient by lazy {
+        default.newBuilder()
+            .applyBudget(Timeouts.forScenario(Timeouts.Scenario.FIRST_FRAME))
+            .build()
+    }
+
+    /** T1-08：可被播放层取用的 OkHttp client getter。 */
+    fun forPlayback(): OkHttpClient = playback
+
+    /** T1-09：OTA / 大文件下载走 OTA 档位，避免把整包下载按详情的 5s 读超时砍掉。 */
+    val download: OkHttpClient by lazy {
+        default.newBuilder()
+            .applyBudget(Timeouts.forScenario(Timeouts.Scenario.OTA))
+            .build()
+    }
+
+    /**
+     * Timeouts 档位只定义 connect / read 两段预算；写超时没有独立语义，按同一档的读预算处理。
+     * 整次调用预算取两段之和，保证「探活超时」不会被误记成「源慢」。
+     */
+    private fun OkHttpClient.Builder.applyBudget(budget: Timeouts.Budget): OkHttpClient.Builder =
+        connectTimeout(budget.connectMs, TimeUnit.MILLISECONDS)
+            .readTimeout(budget.readMs, TimeUnit.MILLISECONDS)
+            .writeTimeout(budget.readMs, TimeUnit.MILLISECONDS)
+            .callTimeout(budget.totalMs, TimeUnit.MILLISECONDS)
+
     private const val MAX_IDLE_CONNECTIONS = 5
     private const val KEEP_ALIVE_SECONDS = 300L
 }
@@ -253,6 +282,10 @@ data class RedirectStats(
     val downgradeHops: Int = 0,
     /** 跨站跳数（eTLD+1 变化）。 */
     val crossSiteHops: Int = 0,
+    /** 命中 [RedirectPolicy.mustWarn] 的跳数（降级 + 跨站），设置页据此提示用户。 */
+    val warningCount: Int = 0,
+    /** 命中 [RedirectPolicy.mustRecomputeUa] 的跳数（跨子域/跨站/降级）。 */
+    val recomputeUaCount: Int = 0,
 )
 
 /**
@@ -262,8 +295,14 @@ class RedirectTracker {
     private val totalHops = AtomicInteger(0)
     private val downgradeHops = AtomicInteger(0)
     private val crossSiteHops = AtomicInteger(0)
+    private val warningCount = AtomicInteger(0)
+    private val recomputeUaCount = AtomicInteger(0)
 
-    /** 每发现一个 3xx 跳转调用一次，内部按 [RedirectPolicy.classify] 分类并计数。 */
+    /**
+     * 每发现一个 3xx 跳转调用一次：按 [RedirectPolicy.classify] 分类计数，
+     * 并真正调用 [RedirectPolicy.mustWarn] / [RedirectPolicy.mustRecomputeUa] 累计可观察状态，
+     * 供设置页读取（「本次会话已放行 N 次风险跳转」）。
+     */
     fun recordHop(hop: RedirectPolicy.Hop) {
         when (RedirectPolicy.classify(hop)) {
             RedirectPolicy.Risk.DOWNGRADE -> {
@@ -276,12 +315,17 @@ class RedirectTracker {
             }
             else -> totalHops.incrementAndGet()
         }
+        // T1-03：这两个策略函数此前只在单测中出现，这里才是生产调用点。
+        if (RedirectPolicy.mustWarn(hop)) warningCount.incrementAndGet()
+        if (RedirectPolicy.mustRecomputeUa(hop)) recomputeUaCount.incrementAndGet()
     }
 
     fun snapshot(): RedirectStats = RedirectStats(
         totalHops = totalHops.get(),
         downgradeHops = downgradeHops.get(),
         crossSiteHops = crossSiteHops.get(),
+        warningCount = warningCount.get(),
+        recomputeUaCount = recomputeUaCount.get(),
     )
 }
 
@@ -289,14 +333,22 @@ class RedirectTracker {
  * T1-03：手动跟进所有 3xx 跳转的应用层拦截器。
  *
  * 通过禁用 OkHttp 自动重定向（[OkHttpClient.Builder.followRedirects]/[followSslRedirects]），
- * 本拦截器在链中捕获每一次 3xx 响应，按 [RedirectPolicy.classify] 分类并调用 [onRedirect]。
- * 循环跟进直到拿到非 3xx 响应，再把最终响应交还给后续链（包括 [cleartextGuard] 等）。
+ * 本拦截器在链中捕获每一次 3xx 响应，按 [RedirectPolicy.classify] 分类并调用 [onRedirect]；
+ * 跨子域/跨站/降级时按目标 host 重算请求头 UA。循环跟进直到拿到非 3xx 响应，
+ * 再把最终响应交还给后续链（包括 [cleartextGuard] 等）。
  *
  * 注意：由于禁用了自动重定向，[executeCancellable] 收到的将始终是最终目标响应
  * （非 3xx），不会因中间 3xx 抛出异常。
  */
 class RedirectTrackingInterceptor(
     private val onRedirect: (RedirectPolicy.Hop) -> Unit = {},
+    /**
+     * T1-03：跨子域/跨站/降级时按目标 host 重算 UA，默认走 [GlobalUserAgent]（内部委托
+     * [com.tvbox.app.domain.UaScope.recomputeHeaderForHost]）。注入假实现便于 JVM 单测。
+     */
+    private val uaForHost: (String) -> String = { host ->
+        com.tvbox.app.domain.UaScope.recomputeHeaderForHost(host, GlobalUserAgent.value)
+    },
 ) : okhttp3.Interceptor {
     private val maxHops = 8
 
@@ -315,6 +367,11 @@ class RedirectTrackingInterceptor(
                     response.close()
                     // 构建下一跳请求
                     val nextBuilder = request.newBuilder().url(location)
+                    // T1-03：跨子域/跨站/降级后按目标 host 重算 UA 并写回请求头，
+                    // 否则分域 UA 在跳转后失效，或把自定义 UA 带到保留域。
+                    if (RedirectPolicy.mustRecomputeUa(hop)) {
+                        nextBuilder.header("User-Agent", uaForHost(nextBuilder.build().url.host))
+                    }
                     // 303 规定必须改为 GET
                     if (response.code == 303) {
                         request = nextBuilder.method("GET", null).build()
