@@ -3,6 +3,7 @@ package com.tvbox.app.data
 import android.content.Context
 import android.util.Log
 import com.tvbox.app.domain.DurationConfidence
+import com.tvbox.app.domain.contributesToScore
 import com.tvbox.app.domain.PlaybackEvidence
 import com.tvbox.app.domain.PlaybackHealthEntry
 import com.tvbox.app.domain.PlaybackHealthSnapshot
@@ -132,6 +133,33 @@ interface PlaybackHealthRepository {
 
     /** 读取最近证据，供播放管家面板展示。 */
     suspend fun getEvidence(limit: Int = 50): List<PlaybackEvidence> = emptyList()
+
+    /**
+     * T1-04：时长可信度加权健康分。默认基于 [getSnapshot] 派生，不要求各实现另行存储分数；
+     * 时长不可信（[DurationConfidence.NONE]）的成功样本只按 [UNTRUSTED_DURATION_WEIGHT] 计入。
+     */
+    suspend fun healthScore(): Double = getSnapshot().healthScore()
+}
+
+/** T1-04：时长不可信的成功样本权重；不置 0 是因为播放本身仍成功，只是时长不能进评分。 */
+const val UNTRUSTED_DURATION_WEIGHT = 0.5
+
+/**
+ * T1-04：把 [contributesToScore] 接入生产评分入参——由快照派生线路健康分。
+ *
+ * 成功样本按最新一条测速的时长可信度加权：HIGH/LOW 计满分，NONE（如 chunked 或无可信
+ * Content-Range）打折；失败与卡顿照常扣罚，避免"假时长 + 假成功"把一条烂线顶成推荐。
+ * 纯函数，便于 JVM 单测；UI/排序层可直接读取该分数，无需改动持久化格式。
+ */
+fun PlaybackHealthSnapshot.healthScore(): Double {
+    var score = 0.0
+    for (entry in entries.values) {
+        val successWeight = if (contributesToScore(entry.durationConfidence)) 1.0 else UNTRUSTED_DURATION_WEIGHT
+        score += entry.successCount * successWeight
+        score -= entry.failureCount * 1.5
+        score -= entry.stutterSampleCount * 0.3
+    }
+    return score
 }
 
 /**

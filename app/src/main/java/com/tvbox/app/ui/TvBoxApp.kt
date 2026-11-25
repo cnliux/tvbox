@@ -1553,8 +1553,12 @@ private fun MobileHomeFeed(
     } else {
         emptyList()
     }
-    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore) {
-        if (canLoadMore && state.canLoadMore && !state.loadingMore) {
+    // T3-21：自动预取页数受内存档位约束；CRITICAL 档为 0 时不自动加载，手动「加载更多」仍可用。
+    val prefetchPages = actions.autoPrefetchPages()
+    LaunchedEffect(canLoadMore, state.canLoadMore, state.loadingMore, state.page, prefetchPages) {
+        if (prefetchPages > 0 && state.page <= prefetchPages &&
+            canLoadMore && state.canLoadMore && !state.loadingMore
+        ) {
             actions.loadNextPage()
         }
     }

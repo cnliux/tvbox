@@ -82,7 +82,8 @@ object M3uTagLexer {
     private fun looksLikeUrl(value: String): Boolean =
         value.startsWith("http://", ignoreCase = true) ||
             value.startsWith("https://", ignoreCase = true) ||
-            value.startsWith("rtmp://", ignoreCase = true)
+            value.startsWith("rtmp://", ignoreCase = true) ||
+            value.startsWith("rtsp://", ignoreCase = true)
 
     private fun normalizeText(raw: String): String = raw.replace(FULLWIDTH_SPACE, ' ').trim()
 

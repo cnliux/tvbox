@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.util.TLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.tvbox.app.data.AppSettingsRepository
@@ -935,6 +936,20 @@ class TvBoxViewModel(
         refreshPlaybackHealth()
     }
 
+    /**
+     * T3-21：当前内存档位。健康页的 tier 计数仍由 TvBoxApplication 独立维护，
+     * 这里只读同一份值用于收紧海报/预取/EPG 消费，不改动健康页现有逻辑。
+     */
+    private fun currentMemoryTier(): com.tvbox.app.domain.MemoryGovernor.Tier =
+        (appContext as? com.tvbox.app.TvBoxApplication)?.memoryTier
+            ?: com.tvbox.app.domain.MemoryGovernor.Tier.RICH
+
+    /** T3-21：首页触底自动预取的页数预算；CRITICAL 档为 0，关闭自动预取（手动加载仍可用）。 */
+    fun autoPrefetchPages(): Int = com.tvbox.app.domain.MemoryGovernor.effectivePrefetchPages(
+        requested = 2,
+        tier = currentMemoryTier(),
+    )
+
     /** T3-24：记录一次菜单键按下，达到阈值时触发健康面板展示。 */
     fun recordMenuPress() {
         val current = _state.value
@@ -1280,7 +1295,7 @@ class TvBoxViewModel(
                 throw cancelled
             } catch (error: Exception) {
                 if (!_state.value.update.exporting) return@launch
-                android.util.Log.w("TVBoxUpdate", "Unable to export update APK", error)
+                TLog.w("TVBoxUpdate", error) { "Unable to export update APK" }
                 _state.update { it.copy(update = it.update.copy(exporting = false, exportMessage = "保存失败：${error.userMessage()}")) }
             }
         }
@@ -1292,7 +1307,7 @@ class TvBoxViewModel(
             previous?.join()
             try { write() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { android.util.Log.w("TVBoxUpdate", "Unable to persist install state", error) }
+            catch (error: Exception) { TLog.w("TVBoxUpdate", error) { "Unable to persist install state" } }
         }
     }
 
@@ -1929,7 +1944,12 @@ class TvBoxViewModel(
                             state.historyItems.isEmpty() &&
                             historyForResume.isNotEmpty()
                         ) {
-                            historyForResume.take(state.appSettings.historyMaxItems)
+                            historyForResume.take(
+                                com.tvbox.app.domain.MemoryGovernor.effectivePosterLimit(
+                                    state.appSettings.historyMaxItems,
+                                    currentMemoryTier(),
+                                ),
+                            )
                         } else {
                             state.historyItems
                         }
@@ -1957,7 +1977,7 @@ class TvBoxViewModel(
                     }
                 }
                 if (!receivedPrimary) {
-                    android.util.Log.w(DETAIL_LOG_TAG, "【详情为空】movieId=$movieId 未收到主源数据")
+                    TLog.w(DETAIL_LOG_TAG) { "【详情为空】movieId=$movieId 未收到主源数据" }
                     _state.update {
                         it.copy(detailLoading = false, detailError = "影片详情不存在")
                     }
@@ -1965,10 +1985,7 @@ class TvBoxViewModel(
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                android.util.Log.w(
-                    DETAIL_LOG_TAG,
-                    "【详情加载失败】movieId=$movieId type=${error::class.simpleName} msg=${error.userMessage()}",
-                )
+                TLog.w(DETAIL_LOG_TAG) { "【详情加载失败】movieId=$movieId type=${error::class.simpleName} msg=${error.userMessage()}" }
                 _state.update {
                     it.copy(detailLoading = false, detailError = error.userMessage())
                 }
@@ -2228,7 +2245,7 @@ class TvBoxViewModel(
             val nextIndex = (state.live.channelIndex + 1) % channels.size
             val channel = channels[nextIndex]
             val targetLineIndex = state.rememberedLineIndexOf(channel)
-            android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】next channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
+            TLog.i(VM_LIVE_LOG_TAG) { "【切换频道】next channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}" }
             state.copy(
                 live = state.live.copy(
                     channelIndex = nextIndex,
@@ -2248,7 +2265,7 @@ class TvBoxViewModel(
             val previousIndex = if (state.live.channelIndex <= 0) channels.lastIndex else state.live.channelIndex - 1
             val channel = channels[previousIndex]
             val targetLineIndex = state.rememberedLineIndexOf(channel)
-            android.util.Log.i(VM_LIVE_LOG_TAG, "【切换频道】previous channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}")
+            TLog.i(VM_LIVE_LOG_TAG) { "【切换频道】previous channel=${channel.groupName}/${channel.name}, lineIndex=$targetLineIndex, lines=${channel.lines.size}" }
             state.copy(
                 live = state.live.copy(
                     channelIndex = previousIndex,
@@ -2344,7 +2361,12 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 appSettings = settings,
-                historyItems = it.historyItems.take(settings.historyMaxItems),
+                historyItems = it.historyItems.take(
+                    com.tvbox.app.domain.MemoryGovernor.effectivePosterLimit(
+                        settings.historyMaxItems,
+                        currentMemoryTier(),
+                    ),
+                ),
             )
         }
     }
@@ -2673,7 +2695,7 @@ class TvBoxViewModel(
         autoSwitchThrottle = resetAutoSwitchThrottle()
         liveLineStartAtMs = System.currentTimeMillis()
         val newIndex = (state.live.lineIndex + 1) % lines.size
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${logSafeUrl(lines[newIndex].url)}")
+        TLog.i(VM_LIVE_LOG_TAG) { "【手动切换线路】next channel=${channel.name}, from=${state.live.lineIndex}, to=$newIndex, url=${logSafeUrl(lines[newIndex].url)}" }
         _state.update {
             it.copy(live = it.live.copy(lineIndex = newIndex))
         }
@@ -2691,7 +2713,7 @@ class TvBoxViewModel(
         autoSwitchThrottle = resetAutoSwitchThrottle()
         liveLineStartAtMs = System.currentTimeMillis()
         val previousIndex = if (state.live.lineIndex <= 0) lines.lastIndex else state.live.lineIndex - 1
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${logSafeUrl(lines[previousIndex].url)}")
+        TLog.i(VM_LIVE_LOG_TAG) { "【手动切换线路】previous channel=${channel.name}, from=${state.live.lineIndex}, to=$previousIndex, url=${logSafeUrl(lines[previousIndex].url)}" }
         _state.update {
             it.copy(live = it.live.copy(lineIndex = previousIndex))
         }
@@ -2727,7 +2749,7 @@ class TvBoxViewModel(
         val generation = ++liveLineTestGeneration
         liveLineTestIdentity = identity
         liveLineTestJob = viewModelScope.launch {
-            android.util.Log.i(VM_LIVE_LOG_TAG, "【线路测速】开始 channel=${channel.name}, lines=${lines.size}")
+            TLog.i(VM_LIVE_LOG_TAG) { "【线路测速】开始 channel=${channel.name}, lines=${lines.size}" }
             // async 并发，但写入统一加锁并发布不可变快照：避免多个协程同时写 mutableMap
             // 让 UI 读到半成品，同时保留「单条完成即写入」的浮层体验与原顺序。
             val results = LinkedHashMap<String, Long?>()
@@ -2785,11 +2807,8 @@ class TvBoxViewModel(
                     }.awaitAll()
                 }
                 val snapshot = resultsMutex.withLock { results.toMap() }
-                android.util.Log.i(
-                    VM_LIVE_LOG_TAG,
-                    "【线路测速】完成 channel=${channel.name}, " +
-                        snapshot.entries.joinToString { (url, ms) -> "${logSafeUrl(url)}=${ms?.let { "${it}ms" } ?: "超时"}" },
-                )
+                TLog.i(VM_LIVE_LOG_TAG) { "【线路测速】完成 channel=${channel.name}, " +
+                        snapshot.entries.joinToString { (url, ms) -> "${logSafeUrl(url)}=${ms?.let { "${it}ms" } ?: "超时"}" } }
                 if (liveLineTestGeneration == generation && liveLineTestIdentity == identity) {
                     _state.update { current ->
                         if (currentLiveLineTestIdentity(current) != identity) current
@@ -2825,7 +2844,7 @@ class TvBoxViewModel(
         if (lineIndex == state.live.lineIndex) return
         liveStallRetries = 0
         autoSwitchThrottle = resetAutoSwitchThrottle()
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${logSafeUrl(channel.lines[lineIndex].url)}")
+        TLog.i(VM_LIVE_LOG_TAG) { "【手动切换线路】select channel=${channel.name}, from=${state.live.lineIndex}, to=$lineIndex, url=${logSafeUrl(channel.lines[lineIndex].url)}" }
         _state.update { it.copy(live = it.live.copy(lineIndex = lineIndex)) }
         liveLinePrefs?.saveLineIndex(channel.key(), lineIndex)
     }
@@ -2846,10 +2865,7 @@ class TvBoxViewModel(
         if (reason != LiveLineFallbackReason.Error) {
             liveStallRetries += 1
             if (liveStallRetries < LIVE_STALL_RETRY_BEFORE_SWITCH) {
-                android.util.Log.w(
-                    VM_LIVE_LOG_TAG,
-                    "【自动容错】reason=$reason 第 $liveStallRetries/$LIVE_STALL_RETRY_BEFORE_SWITCH 次原地重连当前线路 ${state.live.lineIndex + 1}",
-                )
+                TLog.w(VM_LIVE_LOG_TAG) { "【自动容错】reason=$reason 第 $liveStallRetries/$LIVE_STALL_RETRY_BEFORE_SWITCH 次原地重连当前线路 ${state.live.lineIndex + 1}" }
                 _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
                 return true
             }
@@ -2859,10 +2875,7 @@ class TvBoxViewModel(
         // 仍返回 true 让播放页继续尝试，避免误触发「所有线路不可用」的阻断态。
         val autoSwitchGate = gateAutoSwitch(autoSwitchThrottle, System.currentTimeMillis())
         if (autoSwitchGate is AutoSwitchGate.Defer) {
-            android.util.Log.i(
-                VM_LIVE_LOG_TAG,
-                "【自动容错】退避窗口内暂不切线路，${autoSwitchGate.retryAfterMs}ms 后可再切，先原地重连",
-            )
+            TLog.i(VM_LIVE_LOG_TAG) { "【自动容错】退避窗口内暂不切线路，${autoSwitchGate.retryAfterMs}ms 后可再切，先原地重连" }
             _state.update { it.copy(live = it.live.copy(reconnectNonce = it.live.reconnectNonce + 1)) }
             return true
         }
@@ -2870,10 +2883,7 @@ class TvBoxViewModel(
         // 域名评分：本次失败先记到当前线路的域名上，下次进台排序时会被压低。
         recordLiveLineFailure(state)
         val nextIndex = state.live.lineIndex + 1
-        android.util.Log.w(
-            VM_LIVE_LOG_TAG,
-            "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.live.lineIndex}, nextLine=$nextIndex, totalLines=${lines.size}",
-        )
+        TLog.w(VM_LIVE_LOG_TAG) { "【自动容错】reason=$reason channel=${channel.name}, currentLine=${state.live.lineIndex}, nextLine=$nextIndex, totalLines=${lines.size}" }
         if (nextIndex !in lines.indices) {
             // 所有线路均已尝试过，停止循环并提示用户。
             val channelNumber = channel.number
@@ -2883,14 +2893,14 @@ class TvBoxViewModel(
                     it.copy(live = it.live.copy(notice = "频道 ${channelNumber} 所有线路均不可用，请换台或检查直播源"))
                 }
             }
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【自动容错】频道 ${channel.name} 所有线路已用尽，停止切换")
+            TLog.w(VM_LIVE_LOG_TAG) { "【自动容错】频道 ${channel.name} 所有线路已用尽，停止切换" }
             return false
         }
         _state.update { it.copy(live = it.live.copy(lineIndex = nextIndex)) }
         if (reason == LiveLineFallbackReason.Error) {
             liveLinePrefs?.saveLineIndex(channel.key(), nextIndex)
         }
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【自动切换成功】切换到线路 ${nextIndex + 1}/${lines.size}, url=${logSafeUrl(lines[nextIndex].url)}")
+        TLog.i(VM_LIVE_LOG_TAG) { "【自动切换成功】切换到线路 ${nextIndex + 1}/${lines.size}, url=${logSafeUrl(lines[nextIndex].url)}" }
         return true
     }
 
@@ -2941,7 +2951,7 @@ class TvBoxViewModel(
      */
     fun notifyLivePlaybackReady() {
         if (liveStallRetries != 0) {
-            android.util.Log.d(VM_LIVE_LOG_TAG, "【直播就绪】画面就绪，清零卡顿重试计数（原 $liveStallRetries）")
+            TLog.d(VM_LIVE_LOG_TAG) { "【直播就绪】画面就绪，清零卡顿重试计数（原 $liveStallRetries）" }
             liveStallRetries = 0
         }
         // 域名评分：同一 CDN 域名下所有频道的成败累计，供下次选线时优先排序。
@@ -3228,7 +3238,7 @@ class TvBoxViewModel(
     fun enterLiveGroup(index: Int) {
         val groups = liveGroupNames()
         val safeIndex = index.coerceIn(0, groups.size)
-        android.util.Log.d(VM_LIVE_LOG_TAG, "【两级交互】进入分类 index=$safeIndex, name=${groups.getOrNull(safeIndex - 1) ?: "全部"}")
+        TLog.d(VM_LIVE_LOG_TAG) { "【两级交互】进入分类 index=$safeIndex, name=${groups.getOrNull(safeIndex - 1) ?: "全部"}" }
         if (_state.value.live.groupPanelStage == LiveGroupStage.Channels &&
             _state.value.live.groupIndex == safeIndex
         ) {
@@ -3296,7 +3306,7 @@ class TvBoxViewModel(
                     .onSuccess { keys -> _state.update { it.copy(live = it.live.copy(favoriteKeys = keys)) } }
                     .onFailure { error ->
                         if (error is CancellationException) throw error
-                        android.util.Log.w(VM_LIVE_LOG_TAG, "【收藏】保存失败", error)
+                        TLog.w(VM_LIVE_LOG_TAG, error) { "【收藏】保存失败" }
                         _state.update { it.copy(live = it.live.copy(notice = "收藏保存失败，请重试")) }
                     }
             }
@@ -3408,7 +3418,7 @@ class TvBoxViewModel(
         platformLiveTriedCandidates.clear()
         platformLiveRotationKey = null
         platformLiveManualFallbackIndex = null
-        android.util.Log.w(VM_LIVE_LOG_TAG, "【平台重新解析】forceRefresh=true")
+        TLog.w(VM_LIVE_LOG_TAG) { "【平台重新解析】forceRefresh=true" }
         resolvePlatformLiveRoom(forceRefresh = true)
     }
 
@@ -3417,12 +3427,9 @@ class TvBoxViewModel(
         val candidate = stream.candidates.getOrNull(index) ?: return
         if (platformLiveRecoveryInProgress) {
             // 用户明确的手动选择优先于自动恢复，不再静默丢弃。
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台手动切换候选】自动恢复进行中，仍以用户选择为准切换 to=$index")
+            TLog.w(VM_LIVE_LOG_TAG) { "【平台手动切换候选】自动恢复进行中，仍以用户选择为准切换 to=$index" }
         }
-        android.util.Log.i(
-            VM_LIVE_LOG_TAG,
-            "【平台手动切换候选】from=${stream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}",
-        )
+        TLog.i(VM_LIVE_LOG_TAG) { "【平台手动切换候选】from=${stream.safeActiveCandidateIndex}, to=$index, cdn=${candidate.cdn}" }
         // 用户手动指定线路后，重置自动恢复计数与已失败候选，按用户选择开启新一轮轮换。
         platformLiveRecoveryInProgress = false
         platformLiveTriedCandidates.clear()
@@ -3559,10 +3566,7 @@ class TvBoxViewModel(
         if (huyaHighDropStreak < HUYA_DOWNGRADE_STREAK ||
             now - huyaLastDowngradeAtMs < HUYA_DOWNGRADE_COOLDOWN_MS
         ) {
-            android.util.Log.w(
-                VM_LIVE_LOG_TAG,
-                "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}%，streak=$huyaHighDropStreak（等待连续${HUYA_DOWNGRADE_STREAK}个样本）",
-            )
+            TLog.w(VM_LIVE_LOG_TAG) { "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}%，streak=$huyaHighDropStreak（等待连续${HUYA_DOWNGRADE_STREAK}个样本）" }
             return
         }
         huyaHighDropStreak = 0
@@ -3572,14 +3576,11 @@ class TvBoxViewModel(
         val currentIndex = ladder.indexOfFirst { it >= (if (currentCap == 0L) Long.MAX_VALUE else currentCap) }
             .let { if (it < 0) 0 else it }
         val nextCap = ladder.getOrNull(currentIndex + 1) ?: run {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【解码降档】已到最低档，不再降（当前上限=$currentCap）")
+            TLog.w(VM_LIVE_LOG_TAG) { "【解码降档】已到最低档，不再降（当前上限=$currentCap）" }
             return
         }
         huyaLastDowngradeAtMs = now
-        android.util.Log.w(
-            VM_LIVE_LOG_TAG,
-            "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}% 持续${HUYA_DOWNGRADE_STREAK}个样本，码率上限 $currentCap→$nextCap，触发重解析",
-        )
+        TLog.w(VM_LIVE_LOG_TAG) { "【解码降档】丢帧率=${"%.0f".format(dropRatio * 100)}% 持续${HUYA_DOWNGRADE_STREAK}个样本，码率上限 $currentCap→$nextCap，触发重解析" }
         com.tvbox.app.data.LiveTuningDebugPrefs.saveHuyaMaxBitRate(appContext, nextCap)
         com.tvbox.app.data.LiveTuningDebugPrefs.applyToBridge(appContext, com.tvbox.app.data.LiveTuningDebugPrefs.Site.HUYA)
         _state.update {
@@ -3607,12 +3608,12 @@ class TvBoxViewModel(
      */
     fun notifyPlatformLivePlaybackReady() {
         if (platformLiveSameLineRetries != 0) {
-            android.util.Log.d(VM_LIVE_LOG_TAG, "【平台恢复】画面就绪，清零同线路重连计数（原 $platformLiveSameLineRetries）")
+            TLog.d(VM_LIVE_LOG_TAG) { "【平台恢复】画面就绪，清零同线路重连计数（原 $platformLiveSameLineRetries）" }
             platformLiveSameLineRetries = 0
         }
         // #60：画面就绪说明手动切换的线路稳定，清除失败回退记录。
         if (platformLiveManualFallbackIndex != null) {
-            android.util.Log.d(VM_LIVE_LOG_TAG, "【平台恢复】画面就绪，清除手动切换回退记录")
+            TLog.d(VM_LIVE_LOG_TAG) { "【平台恢复】画面就绪，清除手动切换回退记录" }
             platformLiveManualFallbackIndex = null
         }
     }
@@ -3633,12 +3634,12 @@ class TvBoxViewModel(
     fun recoverPlatformLiveChannel(reason: LiveLineFallbackReason = LiveLineFallbackReason.Error) {
         val state = _state.value
         val stream = state.platformLive.stream ?: run {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】无当前流，改为重新解析")
+            TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】无当前流，改为重新解析" }
             reconnectPlatformLiveChannel()
             return
         }
         if (platformLiveRecoveryInProgress || state.platformLive.resolving) {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复跳过】恢复进行中或正在解析中")
+            TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复跳过】恢复进行中或正在解析中" }
             return
         }
         val now = System.currentTimeMillis()
@@ -3647,10 +3648,7 @@ class TvBoxViewModel(
             platformLiveRecoveryWindowAttempts = 0
         }
         if (platformLiveRecoveryWindowAttempts >= PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS) {
-            android.util.Log.e(
-                VM_LIVE_LOG_TAG,
-                "【平台恢复熔断】${PLATFORM_LIVE_RECOVERY_WINDOW_MS / 1000}s 内已尝试 $platformLiveRecoveryWindowAttempts 次仍未恢复，停止自动恢复, room=${roomTag()}",
-            )
+            TLog.e(VM_LIVE_LOG_TAG) { "【平台恢复熔断】${PLATFORM_LIVE_RECOVERY_WINDOW_MS / 1000}s 内已尝试 $platformLiveRecoveryWindowAttempts 次仍未恢复，停止自动恢复, room=${roomTag()}" }
             _state.update {
                 it.copy(platformLive = it.platformLive.copy(error = "该房间线路连续失败，已停止自动重连。可手动切换线路或稍后重试。"))
             }
@@ -3658,22 +3656,19 @@ class TvBoxViewModel(
         }
         platformLiveRecoveryWindowAttempts++
         platformLiveRecoveryInProgress = true
-        android.util.Log.w(
-            VM_LIVE_LOG_TAG,
-            "【平台恢复】reason=$reason, attempt=$platformLiveRecoveryWindowAttempts/$PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS, active=${stream.safeActiveCandidateIndex}, total=${stream.candidates.size}, cdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, protocol=${stream.activeCandidateOrNull?.protocol.orEmpty()}",
-        )
+        TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】reason=$reason, attempt=$platformLiveRecoveryWindowAttempts/$PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS, active=${stream.safeActiveCandidateIndex}, total=${stream.candidates.size}, cdn=${stream.activeCandidateOrNull?.cdn.orEmpty()}, protocol=${stream.activeCandidateOrNull?.protocol.orEmpty()}" }
         when (reason) {
             LiveLineFallbackReason.Ended, LiveLineFallbackReason.Stall -> {
                 // 服务端正常关流 / 卡死：优先沿用当前候选重新解析（换地址不换 CDN）。
                 if (platformLiveSameLineRetries < PLATFORM_LIVE_SAME_LINE_RETRY_MAX) {
                     platformLiveSameLineRetries++
-                    android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】保持候选 ${stream.activeCandidateIndex} 重新解析地址（第 $platformLiveSameLineRetries 次）")
+                    TLog.i(VM_LIVE_LOG_TAG) { "【平台恢复】保持候选 ${stream.activeCandidateIndex} 重新解析地址（第 $platformLiveSameLineRetries 次）" }
                     // 任务2/3：退避交给 RecoveryBackoff 策略（按 reason 差异化基线 + 指数 + 抖动）。
                     val delayMs = platformLiveBackoff.nextDelayMs(reason, platformLiveSameLineRetries)
                     schedulePlatformLiveReResolve(delayMs = delayMs)
                     return
                 }
-                android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】当前候选重连已用尽，改为切换下一条候选")
+                TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】当前候选重连已用尽，改为切换下一条候选" }
                 platformLiveSameLineRetries = 0
                 rotatePlatformLiveCandidate(stream)
             }
@@ -3684,7 +3679,7 @@ class TvBoxViewModel(
                     // #60：手动切换的新线路失败，回退到原线路并提示。
                     platformLiveManualFallbackIndex = null
                     platformLiveSameLineRetries = 0
-                    android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选 $active 切换失败，回退原线路 $fallback（共 ${stream.candidates.size}）")
+                    TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】候选 $active 切换失败，回退原线路 $fallback（共 ${stream.candidates.size}）" }
                     _state.update {
                         it.copy(platformLive = it.platformLive.copy(
                             error = null,
@@ -3718,7 +3713,7 @@ class TvBoxViewModel(
         val nextIdx = nextRotatedPlatformLiveCandidate(stream, platformLiveTriedCandidates)
         val nextCandidate = nextIdx?.let { stream.candidates.getOrNull(it) }
         if (nextIdx == null || nextCandidate == null) {
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】候选线路已轮完一圈或无可用候选，强制重新解析")
+            TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】候选线路已轮完一圈或无可用候选，强制重新解析" }
             platformLiveTriedCandidates.clear()
             platformLiveRotationKey = null
             platformLiveRecoveryInProgress = false
@@ -3732,7 +3727,7 @@ class TvBoxViewModel(
                 stream = stream.withActiveCandidate(nextIdx)),
             )
         }
-        android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】切换到候选线路 $nextIdx, cdn=${nextCandidate.cdn}")
+        TLog.i(VM_LIVE_LOG_TAG) { "【平台恢复】切换到候选线路 $nextIdx, cdn=${nextCandidate.cdn}" }
         platformLiveRecoveryInProgress = false
     }
 
@@ -3742,7 +3737,7 @@ class TvBoxViewModel(
         platformLiveResolveJob = relaunch(platformLiveResolveJob) {
             kotlinx.coroutines.delay(delayMs)
             platformLiveRecoveryInProgress = false
-            android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】退避 ${delayMs}ms 后重新解析（候选 $keepCandidate）")
+            TLog.w(VM_LIVE_LOG_TAG) { "【平台恢复】退避 ${delayMs}ms 后重新解析（候选 $keepCandidate）" }
             resolvePlatformLiveRoom(forceRefresh = true, candidateIndex = keepCandidate, isRecovery = true)
         }
     }
@@ -3825,7 +3820,10 @@ class TvBoxViewModel(
             // 用户不用再进详情页确认是不是更新了。
             episodeCount = source.episodes.size,
         )
-        val maxItems = _state.value.appSettings.historyMaxItems
+        val maxItems = com.tvbox.app.domain.MemoryGovernor.effectivePosterLimit(
+            _state.value.appSettings.historyMaxItems,
+            currentMemoryTier(),
+        )
         viewModelScope.launch {
             historyWriteMutex.withLock {
                 runCatching { historyRepository.saveProgress(item, maxItems = maxItems) }
@@ -4102,6 +4100,11 @@ class TvBoxViewModel(
         val probeable = lines.map { it.id }.filter { id ->
             com.tvbox.app.domain.ProbeCooldown.shouldProbe(probeCooldownStates[id], nowMs)
         }
+        // T2-16：探针走专用 UA，与播放 UA 区分；租约保证并发探针不会提前把 UA 还原。
+        val probeUa = com.tvbox.app.domain.UaScope.resolve(
+            "probe",
+            current.appSettings,
+        )
         val results = try {
             if (probeable.isEmpty()) {
                 emptyMap()
@@ -4109,7 +4112,14 @@ class TvBoxViewModel(
                 measureSourceLatencies(
                     probeable,
                     parallelism = SourceHealthSetting.Parallelism,
-                    test = { repository.testSpeed(it) },
+                    test = { id ->
+                        com.tvbox.app.domain.ProbeUaLease.acquire(probeUa)
+                        try {
+                            repository.testSpeed(id)
+                        } finally {
+                            com.tvbox.app.domain.ProbeUaLease.release()
+                        }
+                    },
                     onResult = { id, latency, _, _ ->
                         // T2-16：探测成功回 ALIVE、失败降 SLOW，绝不直接落 DEAD。
                         probeCooldownStates[id] = if (latency == null) {
@@ -4156,7 +4166,7 @@ class TvBoxViewModel(
         _state.update {
             it.copy(source = it.source.copy(lastHealthCheckSummary = summary))
         }
-        android.util.Log.i("TVBoxSourceHealth", summary)
+        TLog.i("TVBoxSourceHealth") { summary }
     }
 
     /** 对当前详情页的所有播放线路测速，结果会持久化并用于按延迟排列线路。 */
@@ -5009,11 +5019,14 @@ class TvBoxViewModel(
             historyWriteMutex.withLock {
                 runCatching { historyRepository.getHistory() }
                     .onSuccess { history ->
-                        val maxItems = _state.value.appSettings.historyMaxItems
+                        val maxItems = com.tvbox.app.domain.MemoryGovernor.effectivePosterLimit(
+                            _state.value.appSettings.historyMaxItems,
+                            currentMemoryTier(),
+                        )
                         _state.update { it.copy(historyItems = history.take(maxItems)) }
                     }
                     .onFailure { error ->
-                        android.util.Log.w("TVBoxHistory", "【历史读取失败】${error::class.simpleName}")
+                        TLog.w("TVBoxHistory") { "【历史读取失败】${error::class.simpleName}" }
                     }
             }
             // 无论成功与否都标记完成，首页据此一次性渲染「继续观看」，避免列表下移。
@@ -5070,7 +5083,10 @@ class TvBoxViewModel(
                                         // 用 repository 权威结果 patch「本条」，而非整体替换 historyItems：
                                         // 多条历史并发检查时，各自只更新自己的条目，避免旧表覆盖刚写入的其他条。
                                         _state.update { state ->
-                                            val maxItems = state.appSettings.historyMaxItems
+                                            val maxItems = com.tvbox.app.domain.MemoryGovernor.effectivePosterLimit(
+                                                state.appSettings.historyMaxItems,
+                                                currentMemoryTier(),
+                                            )
                                             val patched = state.historyItems.map { h ->
                                                 if (h.apiLineId == item.apiLineId && h.movieId == item.movieId) {
                                                     val newest = updated.firstOrNull {
@@ -5097,7 +5113,7 @@ class TvBoxViewModel(
                 throw cancelled
             } catch (t: Throwable) {
                 // 单次跨源检查失败不影响本地历史展示与后续重试；但至少留日志便于排查“历史没更新”的原因。
-                android.util.Log.w("TVBoxHistory", "checkHistoryUpdates 整批中止：${t.message}", t)
+                TLog.w("TVBoxHistory", t) { "checkHistoryUpdates 整批中止：${t.message}" }
             } finally {
                 _state.update { it.copy(historyUpdateChecking = false) }
             }
@@ -5430,10 +5446,26 @@ class TvBoxViewModel(
      * 未配置地址直接返回，失败静默并标记已加载，避免反复重试慢源。
      * [force] 为 true 时忽略 [LiveUiState.epgLoaded] 重新拉取（保存新地址时用）。
      */
+    /** T3-21：只保留预算时间窗内开始的节目，避免低内存档仍把全天 XMLTV 装进状态。 */
+    private fun trimEpgToBudget(
+        programs: Map<String, List<EpgProgram>>,
+        hours: Int,
+        nowMs: Long,
+    ): Map<String, List<EpgProgram>> {
+        val windowEnd = nowMs + hours * 3_600_000L
+        return programs.mapValues { (_, list) -> list.filter { it.startMs < windowEnd } }
+    }
+
     private fun loadLiveEpg(force: Boolean = false) {
         val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
         if (!force && _state.value.live.epgLoaded) return
+        // T3-21：CRITICAL 档预算为 0 小时，直接跳过全量节目单拉取（EPG 本就是增强项）。
+        val epgHours = com.tvbox.app.domain.MemoryGovernor.effectiveEpgHours(
+            _state.value.appSettings.epgCacheHours,
+            currentMemoryTier(),
+        )
+        if (epgHours <= 0) return
         epgJob = relaunch(epgJob) {
             // 取消必须透传：否则被取消的旧请求会以空节目单写回 epgLoaded=true。
             val programs = try {
@@ -5443,7 +5475,8 @@ class TvBoxViewModel(
             } catch (_: Throwable) {
                 emptyMap()
             }
-            _state.update { state -> state.applyEpgResult(url, programs) }
+            val bounded = trimEpgToBudget(programs, epgHours, System.currentTimeMillis())
+            _state.update { state -> state.applyEpgResult(url, bounded) }
         }
     }
 

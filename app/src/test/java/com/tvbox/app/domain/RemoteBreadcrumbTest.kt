@@ -42,6 +42,22 @@ class RemoteBreadcrumbTest {
     }
 
     @Test
+    fun `full ring drains newest first and starts fresh afterwards`() {
+        val breadcrumb = RemoteBreadcrumb(capacity = 4)
+        repeat(6) { breadcrumb.record(it.toLong(), "KEY", "n=$it") }
+        assertEquals(4, breadcrumb.size())
+        val drained = breadcrumb.drainForFailure()
+        assertEquals(4, drained.size)
+        assertEquals(listOf(5L, 4L, 3L, 2L), drained.map { it.atMs })
+        assertEquals("n=5", drained.first().detail)
+        assertEquals(0, breadcrumb.size())
+        // drain 是「取走并清空」：后续故障不应混入上一次的帧。
+        breadcrumb.record(7L, "FAIL", "E-202")
+        assertEquals(1, breadcrumb.drainForFailure().size)
+        assertEquals(0, breadcrumb.size())
+    }
+
+    @Test
     fun `tags and details are single line and bounded`() {
         val breadcrumb = RemoteBreadcrumb()
         breadcrumb.record(0L, "A\nB", "x".repeat(200) + "\nsecret")

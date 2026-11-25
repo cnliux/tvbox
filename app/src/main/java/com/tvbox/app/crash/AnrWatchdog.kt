@@ -1,8 +1,8 @@
 package com.tvbox.app.crash
 
+import com.tvbox.app.util.TLog
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import com.tvbox.app.domain.GlobalPlayState
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -60,14 +60,14 @@ object AnrWatchdog {
                         Thread.currentThread(),
                         IllegalStateException("ANR 主线程无响应 ${silentMs}ms\n$stack"),
                     )
-                    Log.w(TAG, "检测到 ANR（主线程静默 ${silentMs}ms），已写入诊断日志")
+                    TLog.w(TAG) { "检测到 ANR（主线程静默 ${silentMs}ms），已写入诊断日志" }
                     pending.set(false)
                     lastSeenAtMs = System.currentTimeMillis()
                 } catch (interrupted: InterruptedException) {
                     Thread.currentThread().interrupt()
                     return@Thread
                 } catch (t: Throwable) {
-                    Log.w(TAG, "ANR 看门狗自身异常（已忽略）：${t.message}")
+                    TLog.w(TAG) { "ANR 看门狗自身异常（已忽略）：${t.message}" }
                 }
             }
         }, "tvbox-anr-watchdog").apply {

@@ -14,6 +14,10 @@ import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.analytics.PlaybackStatsListener
+import com.tvbox.app.domain.GlobalPlayState
+import com.tvbox.app.domain.PlaybackFailureCode
+import com.tvbox.app.domain.deviceHardwareTag
+import com.tvbox.app.domain.shareText
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -84,6 +88,23 @@ internal fun decoderKindLabel(decoderName: String?): String {
 internal fun formatErrorCode(errorCode: Int): String =
     if (errorCode == 0) "无错误"
     else String.format(Locale.US, "0x%X · %s", errorCode, playbackErrorMessage(errorCode))
+
+/**
+ * T3-22：失败报告「一键复制/分享」的调用点。
+ * 从全局失败展示文本反查结构化失败码，补上线路标签与设备后缀；
+ * 只返回文本、不碰剪贴板（由 UI 自行复制），手机号/片名/完整 URL 均不进入。
+ */
+internal fun currentFailureShareText(
+    displayText: String? = GlobalPlayState.lastFailureDisplayText,
+    deviceTag: String? = deviceHardwareTag,
+): String? {
+    val text = displayText?.takeIf { it.isNotBlank() } ?: return null
+    val failure = PlaybackFailureCode.entries.firstOrNull { text.startsWith(it.code) } ?: return null
+    return failure.shareText(
+        lineLabel = text.substringAfter(" · ", "").ifBlank { null },
+        deviceTag = deviceTag,
+    )
+}
 
 /**
  * 播放信息采集：AnalyticsListener 记录解码器/首帧/错误，PlaybackStats 提供丢帧与平均码率。

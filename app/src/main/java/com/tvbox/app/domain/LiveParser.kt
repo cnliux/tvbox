@@ -108,62 +108,40 @@ fun extractM3uEpgUrl(raw: String): String? {
 }
 
 private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
+    val rawLines = raw.lines()
+    // T2-15：生产路径统一交给 M3uTagLexer —— tvg-id 作为频道身份、缺失回落归一化名字、
+    // 重名频道折叠成一条频道多条线路、畸形行只计 skipped 不抛异常。
+    // 旧的 EXTINF 属性解析仍复用 parseAttributes（见 toM3uChannelMetadata / collectM3uLineExtras），
+    // 这里只做「lexer 结果 → LiveChannel」的适配器，保留展示名/台标/请求头/#EXTGRP 语义。
+    val lexed = M3uTagLexer.parse(rawLines)
+    val extras = collectM3uLineExtras(rawLines)
     val channels = linkedMapOf<LiveChannelKey, AggregatedChannel>()
-    var pendingChannel: M3uChannelMetadata? = null
-    var pendingHeaders: Map<String, String> = emptyMap()
-    var urlCount = 0
 
-    raw.lineSequence().forEach { rawLine ->
-        val line = rawLine.trim()
-        if (line.isBlank()) return@forEach
-        when {
-            line.startsWith("#EXTINF", ignoreCase = true) -> {
-                // #EXTINF 开启一个新频道：解析失败必须清空，否则紧随的 URL 会挂到
-                // 上一个频道的元数据下（连续 EXTINF 时尤其容易串台）。
-                pendingChannel = line.toM3uChannelMetadata()
-            }
-            line.startsWith("#EXTGRP", ignoreCase = true) -> {
-                // 兼容 #EXTGRP:组名 与 #EXTGRP=组名 两种分隔写法（部分源用等号）。
-                val body = if (line.contains(':')) line.substringAfter(':') else line.substringAfter('=')
-                val grp = body.trim().trim('"')
-                val current = pendingChannel ?: return@forEach
-                pendingChannel = current.copy(groupName = grp.ifBlank { current.groupName })
-            }
-            line.startsWith("#EXTVLCOPT", ignoreCase = true) -> {
-                // 例：#EXTVLCOPT:http-user-agent=Mozilla/5.0
-                val header = line.toExtVlcOptHeaderOrNull()
-                if (header != null) pendingHeaders = pendingHeaders + header
-            }
-            line.startsWith("#") -> Unit
-            line.isPlayableUrl() -> {
-                val metadata = pendingChannel ?: M3uChannelMetadata(
-                    groupName = DEFAULT_M3U_GROUP_NAME,
-                    channelName = "频道${++urlCount}",
-                )
-                val key = LiveChannelKey(
-                    groupName = metadata.groupName.ifBlank { DEFAULT_M3U_GROUP_NAME },
-                    channelName = metadata.channelName.ifBlank { "频道" },
-                )
-                val aggregated = channels.getOrPut(key) { AggregatedChannel() }
-                val lines = aggregated.lines
-                if (lines.none { it.url == line }) {
-                    lines += LiveChannelLine(
-                        name = metadata.lineName.ifBlank { "线路${lines.size + 1}" },
-                        url = line,
-                        headers = pendingHeaders,
-                    )
-                }
-                // 同一频道多行时取第一个非空 tvg-logo / tvg-id。
-                if (aggregated.logo.isBlank()) aggregated.logo = metadata.logo
-                if (aggregated.tvgId.isBlank()) aggregated.tvgId = metadata.tvgId
-                pendingChannel = null
-                pendingHeaders = emptyMap()
-            }
-            else -> {
-                pendingChannel = null
-                pendingHeaders = emptyMap()
-            }
+    lexed.lines.forEachIndexed { index, lexedLine ->
+        val extra = extras.getOrNull(index) ?: return@forEachIndexed
+        val definition = lexed.channels.firstOrNull { it.key == lexedLine.channelKey }
+            ?: return@forEachIndexed
+        val groupName = extra.groupOverride
+            ?: definition.group.ifBlank { DEFAULT_M3U_GROUP_NAME }
+        val channelName = extra.channelName.ifBlank { definition.name }
+        // T2-15：tvg-id 存在时以它为频道身份（不同台标名也能折叠、同名不同 id 不误合并）；
+        // 缺失时回落旧口径的频道名，保持既有 tvg-name 聚合语义不破坏调用方。
+        val identity = extra.tvgId.takeIf { it.isNotBlank() }
+            ?.let { "tvg:${it.trim().lowercase()}" }
+            ?: "name:$channelName"
+        val key = LiveChannelKey(groupName = groupName, channelName = identity)
+        val aggregated = channels.getOrPut(key) { AggregatedChannel(displayName = channelName) }
+        val lines = aggregated.lines
+        if (lines.none { it.url == lexedLine.url }) {
+            lines += LiveChannelLine(
+                name = extra.lineName.ifBlank { "线路${lines.size + 1}" },
+                url = lexedLine.url,
+                headers = extra.headers,
+            )
         }
+        // 同一频道多行时取第一个非空 tvg-logo / tvg-id。
+        if (aggregated.logo.isBlank()) aggregated.logo = extra.logo
+        if (aggregated.tvgId.isBlank()) aggregated.tvgId = extra.tvgId
     }
 
     // #72：同一 URL 在多分组重复出现（如"全部"与具体分类均含该频道）时只保留首个，
@@ -177,13 +155,86 @@ private fun parseM3uLiveChannels(raw: String): List<LiveChannel> {
         deduped += LiveChannel(
             number = deduped.size + 1,
             groupName = entry.key.groupName,
-            name = entry.key.channelName,
+            name = entry.value.displayName.ifBlank { entry.key.channelName },
             lines = lines,
             logo = entry.value.logo,
             tvgId = entry.value.tvgId,
         )
     }
     return deduped
+}
+
+/** lexer 不承载的展示信息：旧口径频道名、台标、行名、请求头与 #EXTGRP 分组覆盖。 */
+private data class M3uLineExtras(
+    val channelName: String,
+    val lineName: String,
+    val logo: String,
+    val tvgId: String,
+    val headers: Map<String, String>,
+    val groupOverride: String?,
+)
+
+/**
+ * 按 M3uTagLexer.parse 收线路的顺序补齐展示信息。
+ * 属性解析仍走 [M3uTagLexer.parseAttributes] / [String.toM3uChannelMetadata]，不另起一套词法器；
+ * 与 lexer 保持同一「URL 行归属」判定（显示名为空则不产生线路，其他 # 扩展 tag 不清空频道）。
+ */
+private fun collectM3uLineExtras(rawLines: List<String>): List<M3uLineExtras> {
+    val extras = mutableListOf<M3uLineExtras>()
+    var currentMetadata: M3uChannelMetadata? = null
+    var pendingHeaders: Map<String, String> = emptyMap()
+    var pendingGroup: String? = null
+
+    rawLines.forEachIndexed { index, rawLine ->
+        val line = (if (index == 0) rawLine.removePrefix("\uFEFF") else rawLine).trim()
+        when {
+            line.startsWith("#EXTINF", ignoreCase = true) -> {
+                val body = line.substringAfter(":", "")
+                val attrs = M3uTagLexer.parseAttributes(body)
+                // 判定必须与 lexer 完全一致（同一 normalizeText，不额外 cleanHtml），
+                // 否则 extras 与 lexed.lines 的下标会错位，把元数据挂到别的线路上。
+                val displayName = attrs["name"]?.let(::normalizeText).orEmpty()
+                // 与 lexer 一致：逗号后的显示名为空则该 EXTINF 不产生线路。
+                currentMetadata = if (displayName.isBlank()) null else (
+                    line.toM3uChannelMetadata() ?: M3uChannelMetadata(
+                        groupName = DEFAULT_M3U_GROUP_NAME,
+                        channelName = displayName,
+                        lineName = displayName,
+                    )
+                    )
+                pendingGroup = null
+                pendingHeaders = emptyMap()
+            }
+            line.startsWith("#EXTGRP", ignoreCase = true) -> {
+                // 兼容 #EXTGRP:组名 与 #EXTGRP=组名 两种分隔写法（部分源用等号）。
+                val body = if (line.contains(':')) line.substringAfter(':') else line.substringAfter('=')
+                pendingGroup = body.trim().trim('"').ifBlank { null }
+            }
+            line.startsWith("#EXTVLCOPT", ignoreCase = true) -> {
+                // 例：#EXTVLCOPT:http-user-agent=Mozilla/5.0
+                val header = line.toExtVlcOptHeaderOrNull()
+                if (header != null) pendingHeaders = pendingHeaders + header
+            }
+            line.startsWith("#") -> Unit
+            // 与 lexer 的 looksLikeUrl 同口径：先折全角空格再判定，保证线路下标一一对齐。
+            line.replace('\u3000', ' ').isPlayableUrl() -> {
+                val metadata = currentMetadata
+                if (metadata != null) {
+                    extras += M3uLineExtras(
+                        channelName = metadata.channelName,
+                        lineName = metadata.lineName,
+                        logo = metadata.logo,
+                        tvgId = metadata.tvgId,
+                        headers = pendingHeaders,
+                        groupOverride = pendingGroup,
+                    )
+                }
+                pendingHeaders = emptyMap()
+            }
+            else -> Unit // lexer 同样不清空 current，只把该行计入 skipped。
+        }
+    }
+    return extras
 }
 
 private fun String.toM3uChannelMetadata(): M3uChannelMetadata? {
@@ -267,6 +318,8 @@ private class AggregatedChannel(
     val lines: MutableList<LiveChannelLine> = mutableListOf(),
     var logo: String = "",
     var tvgId: String = "",
+    /** M3U adapter 的展示名：身份键用 tvg-id/name 折叠，展示仍用源里的频道名。 */
+    var displayName: String = "",
 )
 
 private data class M3uChannelMetadata(

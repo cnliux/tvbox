@@ -1,8 +1,8 @@
 package com.tvbox.app.crash
 
+import com.tvbox.app.util.TLog
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import com.tvbox.app.BuildConfig
 import java.io.File
 import java.io.FileWriter
@@ -199,11 +199,11 @@ object CrashHandler {
 
     private fun logError(message: String, throwable: Throwable? = null) {
         val text = if (throwable == null) message else "$message\n${stackTraceOf(throwable)}"
-        synchronized(writeLock) { Log.e(TAG, redact(text)) }
+        synchronized(writeLock) { TLog.e(TAG) { redact(text) } }
     }
 
     private fun logInfo(message: String) {
-        synchronized(writeLock) { Log.i(TAG, redact(message)) }
+        synchronized(writeLock) { TLog.i(TAG) { redact(message) } }
     }
 
     private fun redact(text: String): String = redactions.fold(text) { acc, rule ->

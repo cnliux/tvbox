@@ -58,6 +58,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import com.tvbox.app.crash.CrashHandler
+import com.tvbox.app.util.TLog
 import com.tvbox.app.data.DlnaCaster
 import com.tvbox.app.data.DlnaDevice
 import com.tvbox.app.domain.PlaybackAgentDecision
@@ -524,6 +525,17 @@ fun PlayerScreen(
                     "${it.code} · ${it.title}"
                 } ?: baseMessage
                 GlobalPlayState.lastFailureDisplayText = displayText
+                // T3-23：失败出口取走 64 帧面包屑并只落本地诊断日志（不上传）。
+                // drain 会清空缓冲，保证同一次故障不会重复落盘；下一次换源/失败重新累积。
+                val frames = GlobalPlayState.breadcrumb.drainForFailure()
+                if (frames.isNotEmpty()) {
+                    val trail = frames.joinToString(" | ") { "${it.tag}:${it.detail}" }
+                    CrashHandler.recordOperation(
+                        "playback.failure",
+                        "code=${failure?.code ?: "E-?"} breadcrumbs=$trail",
+                    )
+                    TLog.w("TVBoxBreadcrumb") { "失败面包屑 ${failure?.code ?: "E-?"} · $trail" }
+                }
                 val message = appendPlaybackErrorHint(
                     displayText,
                     error.message,

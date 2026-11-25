@@ -41,6 +41,29 @@ class MemoryGovernorTest {
     }
 
     @Test
+    fun `poster prefetch and epg settings are clamped by tier budget`() {
+        val rich = MemoryGovernor.Tier.RICH
+        val tight = MemoryGovernor.Tier.TIGHT
+        val critical = MemoryGovernor.Tier.CRITICAL
+        // 海报：用户设置只能更严，不能超过档位预算。
+        assertEquals(20, MemoryGovernor.effectivePosterLimit(20, rich))
+        assertEquals(240, MemoryGovernor.effectivePosterLimit(1_000, rich))
+        assertEquals(96, MemoryGovernor.effectivePosterLimit(1_000, tight))
+        assertEquals(32, MemoryGovernor.effectivePosterLimit(1_000, critical))
+        assertEquals(0, MemoryGovernor.effectivePosterLimit(-1, critical))
+        // 自动预取页数：档位预算是硬上限，CRITICAL 关闭自动预取。
+        assertEquals(2, MemoryGovernor.effectivePrefetchPages(5, rich))
+        assertEquals(1, MemoryGovernor.effectivePrefetchPages(5, tight))
+        assertEquals(0, MemoryGovernor.effectivePrefetchPages(5, critical))
+        assertEquals(0, MemoryGovernor.effectivePrefetchPages(-3, rich))
+        // EPG 时长：按档位截断，CRITICAL 的 0 小时表示不拉取。
+        assertEquals(12, MemoryGovernor.effectiveEpgHours(12, rich))
+        assertEquals(6, MemoryGovernor.effectiveEpgHours(24, tight))
+        assertEquals(0, MemoryGovernor.effectiveEpgHours(24, critical))
+        assertEquals(0, MemoryGovernor.effectiveEpgHours(-1, rich))
+    }
+
+    @Test
     fun `tighten immediately but do not auto restore`() {
         var tier = MemoryGovernor.Tier.RICH
         tier = MemoryGovernor.nextTier(tier, MemoryGovernor.Tier.CRITICAL)

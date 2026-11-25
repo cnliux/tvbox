@@ -49,4 +49,18 @@ object MemoryGovernor {
     /** 观测到更差档位立即收紧；变好时不自动恢复，避免抖动导致缓存反复重建。 */
     fun nextTier(current: Tier, observed: Tier?): Tier =
         if (observed != null && observed.ordinal > current.ordinal) observed else current
+
+    // T3-21：以下三个纯函数把档位预算接到真实消费点。用户设置只能更严，不能超过档位上限。
+
+    /** 海报/历史列表容量：设置条数与档位预算取较小值。 */
+    fun effectivePosterLimit(settingsLimit: Int, tier: Tier): Int =
+        minOf(settingsLimit.coerceAtLeast(0), prefs(tier).posters)
+
+    /** 自动预取页数：档位预算即硬上限，CRITICAL 为 0 表示关闭自动预取。 */
+    fun effectivePrefetchPages(requested: Int, tier: Tier): Int =
+        minOf(requested.coerceAtLeast(0), prefs(tier).prefetchPages)
+
+    /** EPG 缓存时长（小时）：档位收紧时截断；0 表示本次不拉取节目单。 */
+    fun effectiveEpgHours(settingsHours: Int, tier: Tier): Int =
+        minOf(settingsHours.coerceAtLeast(0), prefs(tier).epgHours)
 }

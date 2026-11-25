@@ -7,6 +7,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import com.tvbox.app.data.network.GlobalUserAgent
 
 /**
  * 视频源批量测速的公共并发骨架。
@@ -51,4 +52,36 @@ suspend fun measureSourceLatencies(
         }
     }
     return results.toMap()
+}
+
+/**
+ * T2-16：探针期间临时覆盖全局 UA 的租约。
+ *
+ * 测速与业务接口共用 [GlobalUserAgent]，而一轮体检有 3 条并发探针：
+ * 若每条各自「读旧值 → 写探针 UA → 写完还原」，先完成的一条会把仍在进行的
+ * 探针 UA 还原成播放 UA。这里用引用计数保证只有最后一条离开时才恢复，
+ * 不改变并发上限、冷却判定与结果回调语义。
+ */
+internal object ProbeUaLease {
+    private val lock = Any()
+    private var depth = 0
+    private var baseline: String? = null
+
+    /** 进入探针：首次进入记住原 UA 并切到探针 UA。 */
+    fun acquire(probeUa: String) = synchronized(lock) {
+        if (depth == 0) {
+            baseline = GlobalUserAgent.value
+            GlobalUserAgent.value = probeUa
+        }
+        depth++
+    }
+
+    /** 离开探针：最后一次离开才恢复原 UA；取消异常也必须调用。 */
+    fun release() = synchronized(lock) {
+        depth = (depth - 1).coerceAtLeast(0)
+        if (depth == 0) {
+            baseline?.let { GlobalUserAgent.value = it }
+            baseline = null
+        }
+    }
 }

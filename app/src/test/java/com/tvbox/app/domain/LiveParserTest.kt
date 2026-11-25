@@ -96,4 +96,77 @@ class LiveParserTest {
         val raw = """<html><body><a href="a.txt">a.txt</a>CCTV-1,http://x</body></html>"""
         assertTrue(parseLiveChannels(raw).isEmpty())
     }
+
+    @Test
+    fun m3uMissingTvgIdFoldsByNameButDistinctIdsStaySeparate() {
+        val noId = """
+            #EXTM3U
+            #EXTINF:-1 tvg-name="央视综合",央视综合
+            http://a.example/1.m3u8
+            #EXTINF:-1 tvg-name="央视综合",央视综合
+            http://b.example/2.m3u8
+        """.trimIndent()
+        val folded = parseLiveChannels(noId)
+        assertEquals(1, folded.size)
+        assertEquals(2, folded.single().lines.size)
+
+        val withIds = """
+            #EXTM3U
+            #EXTINF:-1 tvg-id="CCTV1" tvg-name="央视综合",央视综合
+            http://a.example/1.m3u8
+            #EXTINF:-1 tvg-id="CCTV2" tvg-name="央视综合",央视综合
+            http://b.example/2.m3u8
+        """.trimIndent()
+        val separate = parseLiveChannels(withIds)
+        assertEquals(2, separate.size)
+        assertEquals("CCTV1", separate[0].tvgId)
+        assertEquals("CCTV2", separate[1].tvgId)
+    }
+
+    @Test
+    fun m3uGroupNameWithQuoteAndPipeIsNotTruncated() {
+        val raw = """
+            #EXTM3U
+            #EXTINF:-1 tvg-name="CCTV-1" group-title="央视|高清\"测试",CCTV-1
+            http://a.example/1.m3u8
+        """.trimIndent()
+        val channels = parseLiveChannels(raw)
+        assertEquals(1, channels.size)
+        assertEquals("央视|高清\"测试", channels.single().groupName)
+    }
+
+    @Test
+    fun m3uDuplicateChannelNameFoldsIntoOneChannelWithFiveLines() {
+        val raw = buildString {
+            append("#EXTM3U\n")
+            repeat(5) { i ->
+                append("#EXTINF:-1 tvg-id=\"CCTV1\" tvg-name=\"CCTV-1\" group-title=\"央视\",CCTV-1\n")
+                append("https://cdn$i.example.com/live.m3u8\n")
+            }
+        }
+        val channels = parseLiveChannels(raw)
+        assertEquals(1, channels.size)
+        assertEquals("CCTV-1", channels.single().name)
+        assertEquals(5, channels.single().lines.size)
+        assertEquals(
+            (0..4).map { "https://cdn$it.example.com/live.m3u8" },
+            channels.single().lines.map { it.url },
+        )
+    }
+
+    @Test
+    fun m3uExtVlcoptHeadersAndRtspLineSurviveLexerSwitch() {
+        val raw = """
+            #EXTM3U
+            #EXTINF:-1 tvg-name="测试",测试
+            #EXTVLCOPT:http-referrer=https://ref.example/
+            http://a.example/1.m3u8
+            #EXTINF:-1 tvg-name="监控",监控
+            rtsp://cam.example/live
+        """.trimIndent()
+        val channels = parseLiveChannels(raw)
+        assertEquals(2, channels.size)
+        assertEquals("https://ref.example/", channels[0].lines.single().headers["Referer"])
+        assertEquals("rtsp://cam.example/live", channels[1].lines.single().url)
+    }
 }

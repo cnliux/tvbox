@@ -64,6 +64,18 @@ class PlaybackFailureCodeTest {
     }
 
     @Test
+    fun `share text function is pure and strips sensitive context`() {
+        val text = PlaybackFailureCode.ForbiddenOrGone.shareText(
+            siteFingerprint = "abc12345",
+            lineLabel = "线路2\n第二行",
+            deviceTag = "RK3368",
+        )
+        assertEquals("E-202 · ▪abc12345 · 线路2 第二行 · RK3368", text)
+        assertEquals("E-101", PlaybackFailureCode.ParseFailed.shareText())
+        assertFalse(text.contains("\n"))
+    }
+
+    @Test
     fun `rate limit remediation is cooldown and local failures are local origin`() {
         assertEquals(FailureRemedy.CooldownSource, PlaybackFailureCode.RateLimited.remedy)
         assertEquals(FailureRemedy.RetryWithUa, PlaybackFailureCode.ForbiddenOrGone.remedy)

@@ -114,3 +114,20 @@ data class PlaybackFailureReport(
         fun safeToken(raw: String): String = raw.trim().take(24).replace(Regex("[\\r\\n·]"), " ")
     }
 }
+
+/**
+ * T3-22：失败报告「一键复制/分享」文本的纯函数出口。
+ *
+ * 复用 [PlaybackFailureReport.shareText] 的结构化拼接（E-xxx + 短指纹 + 线路 + 设备），
+ * 不依赖 Android / 剪贴板；UI 拿到字符串后自行复制，单测可直接锁定脱敏契约。
+ */
+fun PlaybackFailureCode.shareText(
+    siteFingerprint: String? = null,
+    lineLabel: String? = null,
+    deviceTag: String? = null,
+): String = PlaybackFailureReport(
+    code = this,
+    siteFingerprint = siteFingerprint,
+    lineLabel = lineLabel,
+    deviceTag = deviceTag,
+).shareText

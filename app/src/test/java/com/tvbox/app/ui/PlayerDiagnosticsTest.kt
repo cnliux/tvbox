@@ -113,6 +113,16 @@ class PlayerDiagnosticsTest {
     }
 
     @Test
+    fun failureShareTextExposesOnlyStructuredContext() {
+        assertNull(currentFailureShareText(null, deviceTag = "RK3368"))
+        assertNull(currentFailureShareText("播放失败，正在尝试其他线路", deviceTag = "RK3368"))
+        assertEquals(
+            "E-202 · 线路2 · RK3368",
+            currentFailureShareText("E-202 · 线路2", deviceTag = "RK3368"),
+        )
+    }
+
+    @Test
     fun infoRowsFormatKnownSnapshot() {
         val info = PlayerPlaybackInfo(
             videoWidth = 1920,

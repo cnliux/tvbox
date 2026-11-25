@@ -28,6 +28,12 @@ object TLog {
         Log.w(tag, if (redact) CrashLogRedactor.redact(text) else text)
     }
 
+    /** T3-20：带 Throwable 的 warn（裸 `Log.w(tag, msg, error)` 的替代）。 */
+    inline fun w(tag: String, throwable: Throwable, redact: Boolean = true, msg: () -> String) {
+        val text = msg()
+        Log.w(tag, if (redact) CrashLogRedactor.redact(text) else text, throwable)
+    }
+
     inline fun e(tag: String, redact: Boolean = true, msg: () -> String) {
         val text = msg()
         Log.e(tag, if (redact) CrashLogRedactor.redact(text) else text)
