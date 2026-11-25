@@ -5,7 +5,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.tvbox.app.ui.theme.LocalTvColors
 import com.tvbox.app.ui.theme.TvColors
 
 /**
@@ -50,47 +49,41 @@ object HistoryTokens {
     @Composable
     fun SearchFocusAccent(): Color = TvColors.Accent.copy(alpha = 0.5f)
 
-    /** 影院模式下 accent 降饱和；一处算，别散着写。 */
-    @Composable
-    fun accent(alpha: Float = 1f): Color =
-        if (LocalTvColors.current.accent == Color(0xFF29E68C)) NewFrom.copy(alpha = alpha * .82f)
-        else NewFrom.copy(alpha = alpha)
-
     object M {
-        // 严格对齐 history_card_refactor_demo.html：行高 86dp，海报 64×86dp 全出血（无内边距）。
-        // 旧版海报 box 64×86 但内部 padding(8/4) 吃掉 12dp，可视仅 52×86，与基准稿不符；
-        // 现去内边距让封面真正 64×86，实现「收紧 + 放大封面」。
-        val RowH    = 86.dp
-        val PW      = 64.dp
-        val PH      = 86.dp
+        // 手机历史行：海报封面尺寸（64×86 → 80×112 → 96×136 → 112×160 → 现版 128×184dp 全出血）。
+        // 海报严格 2:3 电影封面比例（128×184≈0.696），一屏（竖屏约 760dp）恰好完整可见 4 个封面。
+        // 行高与海报同高，保证全出血不露背景。
+        val RowH    = 184.dp
+        val PW      = 128.dp
+        val PH      = 184.dp
         val PosterPadStart = 0.dp
         val PosterPadEnd   = 0.dp
         val Radius  = 6.dp
-        val TitleSz = 16.sp
-        val MetaSz  = 12.sp
-        val BadgeSz = 10.sp
+        val TitleSz = 18.sp
+        val MetaSz  = 14.sp
+        val BadgeSz = 12.sp
         val SegH    = 0.5.dp
-        val ProgH   = 3.dp
+        val ProgH   = 4.dp
         val PadH    = 16.dp
         val PadV    = 12.dp
-        val Gap     = 12.dp
-        val ScrimH  = 34.dp
-        val DotSize = 8.dp
+        val Gap     = 14.dp
+        val ScrimH  = 44.dp
+        val DotSize = 10.dp
         /** 小圆点角标黑描边宽度（基准稿 .cover-badge.dot border 2px）。 */
         val DotBorder = 2.dp
         val DelBtn  = 48.dp
         /** 封面角标贴边距：对齐基准稿 top 4px / right 4px。 */
         val BadgeEdge = 4.dp
-        /** 角标 pill 基准高度（基准稿 .cover-badge：min-width 16 / height 16）。 */
-        val BadgeH   = 16.dp
-        val BadgeMinW = 16.dp
-        val BadgePadH = 4.dp
+        /** 角标 pill 基准高度：随海报放大到 20dp，避免 12sp 文字上下溢出被裁。 */
+        val BadgeH   = 20.dp
+        val BadgeMinW = 20.dp
+        val BadgePadH = 6.dp
         /** 角标 pill 差异化圆角（右上圆角 + 左下圆角，书签形）。 */
         val BadgeCornerTR = 4.dp
         val BadgeCornerBL = 8.dp
-        /** 底部标签高度；"今日开播"呼吸白点直径。 */
-        val TagH    = 20.dp
-        val PremiereDot = 4.dp
+        /** 底部通栏标签高度：随海报放大到 26dp，容下"更新至 NN 集"不裁切。 */
+        val TagH    = 26.dp
+        val PremiereDot = 5.dp
         /** 琥珀 "有更新" chip 描边 accent 亮度（不随 theme 变）。 */
         val AmberChipBorder = DirtyAmber.copy(alpha = 0.7f)
     }

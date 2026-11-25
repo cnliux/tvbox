@@ -44,39 +44,38 @@ fun StatusRow(item: WatchHistoryItem) {
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
         modifier = Modifier.fillMaxWidth(),
     ) {
-        // 更新提示 badge（有新增集数才显示）
+        // 更新提示 badge（有新增集数才显示）：按内容自适应宽度，绝不 truncate。
         updateHint?.let { hint ->
             val color = if (hint.confirmed) HistoryTokens.NewFrom else HistoryTokens.LiveGreen
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
+                    .clip(RoundedCornerShape(5.dp))
                     .background(color.copy(alpha = 0.15f))
-                    .padding(horizontal = 4.dp, vertical = 1.dp),
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
             ) {
                 Text(
                     text = "${if (hint.confirmed) "●" else "○"} ${hint.label}",
-                    fontSize = 11.sp,
+                    fontSize = HistoryTokens.M.BadgeSz,
                     color = color,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }
 
         Spacer(modifier = Modifier.weight(1f))
 
-        // 元数据："上次看到 第N集"
+        // 元数据："上次看到 第N集"：右对齐、按内容自适应，只与 badge 竞争剩余空间。
         Text(
             text = "上次看到 $epDisplay",
             fontSize = HistoryTokens.M.MetaSz,
             color = HistoryTokens.Meta,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f, fill = false),
         )
     }
 }

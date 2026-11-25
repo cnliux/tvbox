@@ -17,8 +17,10 @@ class PlayerControlPolicyTest {
         assertEquals(1.25f, nextPlaybackSpeed(1f), 0.001f)
         assertEquals(1.5f, nextPlaybackSpeed(1.25f), 0.001f)
         assertEquals(2f, nextPlaybackSpeed(1.5f), 0.001f)
-        // 最高档再按一次回到最低档 0.5x。
-        assertEquals(0.5f, nextPlaybackSpeed(2f), 0.001f)
+        assertEquals(2.5f, nextPlaybackSpeed(2f), 0.001f)
+        assertEquals(3f, nextPlaybackSpeed(2.5f), 0.001f)
+        // 最高档 3.0x 再按一次回到最低档 0.5x。
+        assertEquals(0.5f, nextPlaybackSpeed(3f), 0.001f)
     }
 
     @Test

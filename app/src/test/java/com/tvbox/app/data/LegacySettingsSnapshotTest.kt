@@ -4,7 +4,6 @@ import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
 import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
@@ -47,7 +46,6 @@ class LegacySettingsSnapshotTest {
                 SettingsStorageKeys.INTRO_SKIP_SECONDS to 15,
                 SettingsStorageKeys.OUTRO_SKIP_SECONDS to 30,
                 SettingsStorageKeys.HOME_CONTINUE_WATCHING to true,
-                SettingsStorageKeys.THEME to TvTheme.Cinema.storageKey,
                 SettingsStorageKeys.FONT_SCALE to TvFontScale.ExtraLarge.storageKey,
                 SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP to false,
                 SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH to false,
@@ -58,17 +56,13 @@ class LegacySettingsSnapshotTest {
                 SettingsStorageKeys.MOBILE_ONBOARDED to true,
                 SettingsStorageKeys.LIVE_SOURCE_DEFAULT_INDEX to 2,
                 SettingsStorageKeys.EPISODE_SORT_REVERSE to true,
-                SettingsStorageKeys.VIDEO_GRID_COLUMNS to 5,
                 SettingsStorageKeys.EPG_URL to "https://epg",
-                SettingsStorageKeys.PLATFORM_LIVE_GRID_COLUMNS to 4,
-                SettingsStorageKeys.CONTINUE_WATCHING_COUNT to 8,
                 SettingsStorageKeys.EPG_CARD_ROWS to 3,
                 SettingsStorageKeys.LIVE_NUMBER_MATCH_ROWS to 8,
                 SettingsStorageKeys.LIVE_NUMBER_SEARCH_LIMIT to 50,
                 SettingsStorageKeys.RELATED_CHANNEL_COUNT to 16,
                 SettingsStorageKeys.HOT_WORD_COUNT to 21,
                 SettingsStorageKeys.SEARCH_SUGGESTION_COUNT to 4,
-                SettingsStorageKeys.HOME_HOT_CONTENT_COUNT to 30,
                 SettingsStorageKeys.DOUBAN_HOT_PAGE_SIZE to 25,
                 SettingsStorageKeys.DOUBAN_HOT_FALLBACK_LINES to 8,
                 SettingsStorageKeys.HISTORY_MAX_ITEMS to 300,
@@ -85,7 +79,6 @@ class LegacySettingsSnapshotTest {
         assertEquals(15, settings.introSkipSeconds)
         assertEquals(30, settings.outroSkipSeconds)
         assertTrue(settings.homeContinueWatchingEnabled)
-        assertEquals(TvTheme.Cinema, settings.theme)
         assertEquals(TvFontScale.ExtraLarge, settings.fontScale)
         assertEquals(false, settings.checkUpdatesOnStartup)
         assertEquals(false, settings.playbackAgentAutoSwitchEnabled)
@@ -96,17 +89,13 @@ class LegacySettingsSnapshotTest {
         assertTrue(settings.mobileOnboarded)
         assertEquals(2, settings.liveSourceDefaultIndex)
         assertTrue(settings.episodeSortReverse)
-        assertEquals(5, settings.videoGridColumns)
         assertEquals("https://epg", settings.epgUrl)
-        assertEquals(4, settings.platformLiveGridColumns)
-        assertEquals(8, settings.continueWatchingCount)
         assertEquals(3, settings.epgCardRows)
         assertEquals(8, settings.liveNumberMatchRows)
         assertEquals(50, settings.liveNumberSearchLimit)
         assertEquals(16, settings.relatedChannelCount)
         assertEquals(21, settings.hotWordCount)
         assertEquals(4, settings.searchSuggestionCount)
-        assertEquals(30, settings.homeHotContentCount)
         assertEquals(25, settings.doubanHotPageSize)
         assertEquals(8, settings.doubanHotFallbackLines)
         assertEquals(300, settings.historyMaxItems)
@@ -188,7 +177,6 @@ class LegacySettingsSnapshotTest {
                 SettingsStorageKeys.DEVICE_MODE to "tablet",
             ),
         )
-        assertEquals(TvTheme.Default, settings.theme)
         assertEquals(TvFontScale.Normal, settings.fontScale)
         assertEquals(VideoScaleMode.Fit, settings.videoScaleMode)
         assertEquals(DecoderStrategy.Auto, settings.decoderStrategy)
@@ -206,12 +194,10 @@ class LegacySettingsSnapshotTest {
         val settings = readLegacySettings(
             snapshotOf(
                 SettingsStorageKeys.HISTORY_MAX_ITEMS to 9999,
-                SettingsStorageKeys.CONTINUE_WATCHING_COUNT to 0,
                 SettingsStorageKeys.MAX_PARALLEL_SOURCE_REQUESTS to -3,
             ),
         )
         assertEquals(QuantitySettings.HistoryMaxItems.max, settings.historyMaxItems)
-        assertEquals(QuantitySettings.ContinueWatchingCount.min, settings.continueWatchingCount)
         assertEquals(QuantitySettings.MaxParallelSourceRequests.min, settings.maxParallelSourceRequests)
     }
 

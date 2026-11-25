@@ -14,8 +14,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
+import com.tvbox.app.domain.ThemeAccent
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
 
 data class TvColorTokens(
     val background: Color,
@@ -75,6 +75,88 @@ private val CinemaTokens = TvColorTokens(
 )
 
 val LocalTvColors = staticCompositionLocalOf { DefaultTokens }
+
+// 任务7 多主题强调色：每档为一组完整 TvColorTokens。
+// 设计约束：
+// - 自适应：深色底 + 亮 accent，textTertiary 在 surfaceRaised 上对比度 ≥4.5:1；
+// - TV 聚焦：focusRing 取高对比亮色，遥控器导航下描边清晰可见；
+// - 每档 accent / accentStrong / accentSoft / focusRing 成套，warning/danger 与主色区分开。
+
+/** 琥珀金：深棕底 + 暖金 accent，夜间低亮度友好。 */
+private val AmberTokens = TvColorTokens(
+    background = Color(0xFF14100A),
+    surface = Color(0xFF1C170F),
+    surfaceRaised = Color(0xFF261F14),
+    surfaceOverlay = Color(0xE61C170F),
+    border = Color(0x66563A1E),
+    textPrimary = Color(0xFFFFF8EE),
+    textSecondary = Color(0xFFD8C7AE),
+    textTertiary = Color(0xFFB0A08A),
+    accent = Color(0xFFFFC24B),
+    accentStrong = Color(0xFFFFB020),
+    accentSoft = Color(0x33FFC24B),
+    focusRing = Color(0xFFFFD980),
+    success = Color(0xFF7DDC7D),
+    warning = Color(0xFFFF9E45),
+    danger = Color(0xFFFF6B6B),
+)
+
+/** 深海蓝：深蓝底 + 冷蓝 accent，科技感。 */
+private val OceanTokens = TvColorTokens(
+    background = Color(0xFF0A1220),
+    surface = Color(0xFF101A2C),
+    surfaceRaised = Color(0xFF16243C),
+    surfaceOverlay = Color(0xE6101A2C),
+    border = Color(0x66334F73),
+    textPrimary = Color(0xFFF2F7FF),
+    textSecondary = Color(0xFFAEC0D8),
+    textTertiary = Color(0xFF8CA0BC),
+    accent = Color(0xFF4DA8FF),
+    accentStrong = Color(0xFF2E90F0),
+    accentSoft = Color(0x334DA8FF),
+    focusRing = Color(0xFFA5D4FF),
+    success = Color(0xFF4FD48A),
+    warning = Color(0xFFFFB454),
+    danger = Color(0xFFFF6B7F),
+)
+
+/** 星夜紫：深紫底 + 柔紫 accent，区别度高。 */
+private val VioletTokens = TvColorTokens(
+    background = Color(0xFF120E1C),
+    surface = Color(0xFF1A1528),
+    surfaceRaised = Color(0xFF231C36),
+    surfaceOverlay = Color(0xE61A1528),
+    border = Color(0x6646356B),
+    textPrimary = Color(0xFFF8F5FF),
+    textSecondary = Color(0xFFC6BCE0),
+    textTertiary = Color(0xFFA396C4),
+    accent = Color(0xFFB57BFF),
+    accentStrong = Color(0xFF9A5CE8),
+    accentSoft = Color(0x33B57BFF),
+    focusRing = Color(0xFFD6B8FF),
+    success = Color(0xFF6FD69A),
+    warning = Color(0xFFFFB454),
+    danger = Color(0xFFFF6B8F),
+)
+
+/** 绯红：深酒红底 + 暖红 accent，活力。 */
+private val CrimsonTokens = TvColorTokens(
+    background = Color(0xFF170D10),
+    surface = Color(0xFF20131A),
+    surfaceRaised = Color(0xFF2B1A22),
+    surfaceOverlay = Color(0xE620131A),
+    border = Color(0x665E3640),
+    textPrimary = Color(0xFFFFF5F7),
+    textSecondary = Color(0xFFE0BFC8),
+    textTertiary = Color(0xFFBC98A3),
+    accent = Color(0xFFFF6B8B),
+    accentStrong = Color(0xFFF04868),
+    accentSoft = Color(0x33FF6B8B),
+    focusRing = Color(0xFFFFB3C2),
+    success = Color(0xFF7DDC7D),
+    warning = Color(0xFFFFB454),
+    danger = Color(0xFFFF5252),
+)
 
 data class TvLayoutTokens(
     val posterGridMinWidth: Dp,
@@ -223,13 +305,23 @@ private fun layoutTokens(fontScale: TvFontScale): TvLayoutTokens = when (fontSca
     TvFontScale.ExtraLarge -> ExtraLargeLayoutTokens
 }
 
+/** 按用户选择的主题强调色映射到一组颜色 token；默认回退到默认绿。 */
+private fun tokensFor(themeAccent: ThemeAccent): TvColorTokens = when (themeAccent) {
+    ThemeAccent.Default -> DefaultTokens
+    ThemeAccent.Cinema -> CinemaTokens
+    ThemeAccent.Amber -> AmberTokens
+    ThemeAccent.Ocean -> OceanTokens
+    ThemeAccent.Violet -> VioletTokens
+    ThemeAccent.Crimson -> CrimsonTokens
+}
+
 @Composable
 fun TVBoxTheme(
-    theme: TvTheme = TvTheme.Default,
     fontScale: TvFontScale = TvFontScale.Normal,
+    themeAccent: ThemeAccent = ThemeAccent.Default,
     content: @Composable () -> Unit,
 ) {
-    val tokens = if (theme == TvTheme.Cinema) CinemaTokens else DefaultTokens
+    val tokens = tokensFor(themeAccent)
     val typography = TvTypography.scaled(fontScale.typographyScale)
     val context = androidx.compose.ui.platform.LocalContext.current
     // 系统「减少动效」关闭时，焦点缩放与过渡一并关闭，但保留描边保证遥控器可见。
@@ -240,7 +332,7 @@ fun TVBoxTheme(
             1f,
         ) == 0f
     }
-    val focusTokens = focusTokensFor(theme, reduceMotion)
+    val focusTokens = focusTokensFor(reduceMotion)
     androidx.compose.runtime.CompositionLocalProvider(
         LocalTvColors provides tokens,
         LocalTvLayout provides layoutTokens(fontScale),

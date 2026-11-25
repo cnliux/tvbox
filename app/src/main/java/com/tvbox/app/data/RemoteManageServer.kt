@@ -375,47 +375,68 @@ class RemoteManageServer(
               <meta name="viewport" content="width=device-width, initial-scale=1" />
               <title>聚合视频 远程管理</title>
               <style>
-                body { margin: 0; font-family: sans-serif; background: #10141f; color: #f5f7fb; }
-                main { max-width: 720px; margin: 0 auto; padding: 22px 16px 48px; }
-                h1 { font-size: 24px; margin: 0 0 6px; }
-                h2 { font-size: 18px; margin: 0 0 10px; }
-                p { color: #b8c0cf; line-height: 1.6; }
-                .panel { background: #1a2130; border: 1px solid #2f3a4f; border-radius: 14px; padding: 16px; margin-top: 16px; }
-                .row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #2b3446; flex-wrap: wrap; }
-                .row:first-of-type { border-top: 0; }
-                .grow { flex: 1; min-width: 0; }
-                .name { font-weight: 700; word-break: break-all; }
-                .url { color: #8f9bb3; font-size: 13px; word-break: break-all; }
-                .tag { color: #6ad6a8; font-size: 12px; }
-                .tag.off { color: #ffb4ab; }
-                input, textarea { box-sizing: border-box; border: 1px solid #657084; border-radius: 8px; padding: 10px; font-size: 15px; background: #171d2a; color: #fff; font-family: inherit; }
-                input.text, textarea.text { width: 100%; }
-                textarea { margin-top: 6px; resize: vertical; }
-                button { border: 0; border-radius: 8px; padding: 10px 14px; font-size: 14px; font-weight: 700; color: #051b17; background: #28d0b0; }
-                button.ghost { background: #2a3446; color: #f5f7fb; }
-                .form-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
-                .form-row input { flex: 1; min-width: 140px; }
-                .message { background: #1c3a33; border: 1px solid #2f6b58; color: #8ff0cf; border-radius: 10px; padding: 10px 12px; margin-top: 14px; }
-                .empty { color: #8f9bb3; font-size: 14px; }
-                .sub { color: #9fb0c9; font-size: 13px; font-weight: 700; margin-top: 18px; margin-bottom: 8px; letter-spacing: .3px; }
-                .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-                .chip { background: #2a3446; color: #f5f7fb; border-radius: 999px; padding: 9px 15px; font-weight: 600; }
-                .chip.blocked { background: #5a2a2a; color: #ffb4ab; text-decoration: line-through; }
-                a { color: #6ad6a8; }
-                footer { color: #6f7b93; font-size: 12px; margin-top: 22px; text-align: center; }
+                :root { --bg:#10141f; --card:#1a2130; --line:#2b3446; --ink:#f5f7fb; --dim:#8f9bb3; --accent:#28d0b0; --danger:#ffb4ab; }
+                * { box-sizing:border-box; }
+                body { margin:0; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--ink); }
+                main { max-width:820px; margin:0 auto; padding:20px 16px 48px; }
+                header.top { margin-bottom:4px; }
+                h1 { font-size:22px; margin:0; }
+                .hint { color:var(--dim); font-size:13px; line-height:1.6; margin:6px 0 0; }
+                /* ── 标签页：视频源 / IPTV 分离，纯客户端切换，无网络依赖 ── */
+                nav.tabs { display:flex; gap:8px; margin:18px 0 14px; position:sticky; top:0; background:var(--bg); padding:8px 0; z-index:2; }
+                nav.tabs a { flex:1; text-align:center; text-decoration:none; color:var(--dim); font-weight:700; font-size:14px; padding:11px 0; border-radius:10px; background:#171d2a; border:1px solid var(--line); }
+                nav.tabs a:hover { color:var(--ink); }
+                nav.tabs a.active { color:var(--accent); border-color:var(--accent); background:#13232a; }
+                section.panel { display:none; background:var(--card); border:1px solid #2f3a4f; border-radius:14px; padding:16px; margin-top:14px; }
+                section.panel.active { display:block; }
+                .panel > h2 { font-size:16px; margin:0 0 4px; display:flex; align-items:center; gap:8px; }
+                .panel > h2 .count { font-size:12px; color:var(--dim); font-weight:400; }
+                .panel > p.lead { color:var(--dim); font-size:13px; margin:4px 0 10px; line-height:1.5; }
+                .row { display:flex; align-items:center; gap:8px; padding:10px 0; border-top:1px solid var(--line); flex-wrap:wrap; }
+                .row:first-of-type { border-top:0; }
+                .grow { flex:1; min-width:0; }
+                .name { font-weight:700; word-break:break-all; }
+                .url { color:var(--dim); font-size:12px; word-break:break-all; margin-top:2px; }
+                .tag { color:#6ad6a8; font-size:11px; background:#1c3a33; border-radius:6px; padding:2px 7px; margin-right:4px; }
+                .tag.off { color:var(--danger); background:#3a1f22; }
+                input, textarea { box-sizing:border-box; border:1px solid #4a5568; border-radius:8px; padding:10px; font-size:14px; background:#171d2a; color:#fff; font-family:inherit; }
+                input.text, textarea.text { width:100%; }
+                textarea { margin-top:6px; resize:vertical; }
+                button { border:0; border-radius:8px; padding:9px 13px; font-size:13px; font-weight:700; color:#051b17; background:var(--accent); cursor:pointer; }
+                button.ghost { background:#2a3446; color:var(--ink); }
+                button.danger { background:#4a2a2f; color:var(--danger); }
+                .form-row { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+                .form-row input { flex:1; min-width:140px; }
+                .message { background:#1c3a33; border:1px solid #2f6b58; color:#8ff0cf; border-radius:10px; padding:10px 12px; margin-top:12px; font-size:14px; }
+                .empty { color:var(--dim); font-size:13px; }
+                .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+                .chip { background:#2a3446; color:var(--ink); border-radius:999px; padding:8px 14px; font-weight:600; font-size:13px; border:0; }
+                .chip.blocked { background:#5a2a2a; color:var(--danger); text-decoration:line-through; }
+                a { color:#6ad6a8; }
+                footer { color:#6f7b93; font-size:12px; margin-top:24px; text-align:center; }
+                .divider { height:1px; background:var(--line); margin:14px 0; }
               </style>
             </head>
             <body>
               <main>
-                <h1>聚合视频 远程管理</h1>
-                <p>同一局域网内访问；管理操作需使用电视端显示地址中的会话 token。修改会立即同步到电视并保存。</p>
+                <header class="top">
+                  <h1>聚合视频 远程管理</h1>
+                </header>
+                <p class="hint">同一局域网内访问，修改会立即同步到电视并保存。视频源与 IPTV 分区管理，互不影响。地址含本次会话令牌，请勿转发。</p>
                 ${message?.takeIf { it.isNotBlank() }?.let { "<div class=\"message\">${it.htmlEscape()}</div>" }.orEmpty()}
 
-                <section class="panel">
-                  <h2>视频源管理（共 ${data.videoSources.size} 个）</h2>
-                  <p class="empty">可设首页源、屏蔽/取消屏蔽、删除、测速排序，并支持订阅地址导入。</p>
+                <nav class="tabs">
+                  <a href="#video" data-tab="video" class="active">视频源</a>
+                  <a href="#iptv" data-tab="iptv">IPTV 直播</a>
+                  <a href="#platform" data-tab="platform">平台站点</a>
+                </nav>
+
+                <!-- ═══════════ 视频源（点播 / MacCms 接口）— 独立分区 ═══════════ -->
+                <section class="panel active" id="video">
+                  <h2>视频源 <span class="count">${data.videoSources.size} 个 · 点播接口</span></h2>
+                  <p class="lead">点播影片的数据来源。可设首页、屏蔽/删除、测速排序，支持订阅地址导入。</p>
                   ${if (data.videoSources.isEmpty()) {
-                      "<p class=\"empty\">暂无视频源，请在下方添加或导入。</p>"
+                      "<p class=\"empty\">暂无视频源，请在下方添加或导入订阅。</p>"
                   } else {
                       data.videoSources.joinToString("") { source ->
                           itemRow(
@@ -429,40 +450,46 @@ class RemoteManageServer(
                   <div class="form-row">
                     ${toggleForm("source-test", "", "全部测速并排序")}
                   </div>
+                  <div class="divider"></div>
                   ${addForm("video-add", "接口名称", "MacCms 地址，例如 https://example.com/api.php/provide/vod", "添加接口")}
-                  <p class="url" style="margin-top:16px">通过订阅地址导入（支持 JSON 与 TVBox 格式）</p>
+                  <p class="url" style="margin-top:12px">通过订阅地址导入（支持 JSON 与 TVBox 格式）</p>
                   <form method="post">
                     <input type="hidden" name="action" value="source-import" />
                     <input class="text" name="url" placeholder="https://example.com/config.json" autocomplete="off" />
-                    <textarea class="text" name="content" rows="4" placeholder="也可以直接粘贴配置内容"></textarea>
+                    <textarea class="text" name="content" rows="3" placeholder="也可以直接粘贴配置内容"></textarea>
                     <div class="form-row"><button>导入订阅</button></div>
                   </form>
                   ${categoryBlock(data)}
                 </section>
 
-                <section class="panel">
-                  <h2>直播源</h2>
+                <!-- ═══════════ IPTV（直播源 / EPG 节目单）— 与视频源完全独立 ═══════════ -->
+                <section class="panel" id="iptv">
+                  <h2>IPTV 直播源 <span class="count">${data.customLiveUrls.size} 个 · M3U / TXT</span></h2>
+                  <p class="lead">电视直播频道来源，与点播视频源相互独立、互不影响。留空则使用内置频道。</p>
                   ${if (data.customLiveUrls.isEmpty()) {
-                      "<p class=\"empty\">暂无自定义直播源（M3U/TXT）。</p>"
+                      "<p class=\"empty\">暂无自定义直播源。</p>"
                   } else {
                       data.customLiveUrls.joinToString("") { url ->
                           itemRow(
-                              title = "自定义直播源",
+                              title = "直播源",
                               subtitle = url,
                               tag = "",
                               actions = "<form method=\"post\"><input type=\"hidden\" name=\"action\" value=\"live-delete\" />" +
                                   "<input type=\"hidden\" name=\"url\" value=\"${url.htmlEscape()}\" />" +
-                                  "<button class=\"ghost\">删除</button></form>",
+                                  "<button class=\"danger\">删除</button></form>",
                           )
                       }
                   }}
                   ${addForm("live-add", "", "直播源地址（M3U/TXT），每行一个", "添加直播源")}
+                  <div class="divider"></div>
                   ${liveDefaultBlock(data)}
+                  <div class="divider"></div>
                   ${epgBlock(data)}
                 </section>
 
-                <section class="panel">
-                  <h2>平台直播站点</h2>
+                <!-- ═══════════ 平台站点（虎牙/斗鱼等） ═══════════ -->
+                <section class="panel" id="platform">
+                  <h2>平台直播站点 <span class="count">${data.sites.size} 个</span></h2>
                   ${if (data.sites.isEmpty()) {
                       "<p class=\"empty\">站点列表暂不可用。</p>"
                   } else {
@@ -485,6 +512,27 @@ class RemoteManageServer(
 
                 <footer>聚合视频 局域网远程管理 · 写操作需会话 token</footer>
               </main>
+              <script>
+                // 标签页切换：点击后只显示对应分区，其余隐藏（IPTV 与视频源完全分离）。
+                (function () {
+                  var links = document.querySelectorAll('nav.tabs a[data-tab]');
+                  var panels = document.querySelectorAll('section.panel');
+                  function show(tab) {
+                    links.forEach(function (a) { a.classList.toggle('active', a.dataset.tab === tab); });
+                    panels.forEach(function (p) { p.classList.toggle('active', p.id === tab); });
+                  }
+                  links.forEach(function (a) {
+                    a.addEventListener('click', function (e) {
+                      e.preventDefault();
+                      show(a.dataset.tab);
+                      if (history.replaceState) history.replaceState(null, '', '#' + a.dataset.tab);
+                    });
+                  });
+                  // 带 hash 进入时定位到对应分区。
+                  var initial = (location.hash || '').replace('#', '');
+                  if (initial && document.getElementById(initial)) show(initial);
+                })();
+              </script>
             </body>
             </html>
         """.trimIndent()

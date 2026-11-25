@@ -85,7 +85,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.KeyEventType
@@ -118,10 +117,8 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.QuantitySettings
-import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.ui.components.AppHeader
-import com.tvbox.app.ui.components.AppNavigationRail
 import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
@@ -131,7 +128,6 @@ import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.MoviePosterCard
 import com.tvbox.app.ui.components.PageSurface
-import com.tvbox.app.ui.components.PosterImage
 import com.tvbox.app.ui.components.RetryableError
 import com.tvbox.app.ui.components.SkeletonGrid
 import com.tvbox.app.ui.components.tvFocusScale
@@ -139,7 +135,6 @@ import com.tvbox.app.ui.history.MobileHistoryScreen
 import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
 import com.tvbox.app.ui.theme.TvColors
-import com.tvbox.app.ui.theme.TvDimens
 import com.tvbox.app.ui.theme.TvLayout
 
 @Composable
@@ -159,60 +154,26 @@ fun TvBoxApp(
         actions.consumeSettingsSaveError()
     }
     Box(modifier = Modifier.fillMaxSize()) {
-        // 导航层级由设备模式决定，而非主题：手机模式下即使选了影院主题也要走底部导航，
-        // 否则会套上电视端 76dp 侧边栏并退回电视焦点/触摸语义。
+        // 导航层级由设备模式决定：手机走底部导航，电视走页面内顶部快捷入口。
         val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
-        // 平台直播播放页在电视端同样是整页画面，侧边栏会把画面压窄 76dp 并遮挡控件。
-        val platformLivePlaying = state.screen == TvScreen.PlatformLive &&
-            state.platformLiveDestination == PlatformLiveDestination.Player
-        val showNavigationRail = !isMobile &&
-            state.appSettings.theme == TvTheme.Cinema &&
-            state.screen != TvScreen.Player &&
-            state.screen != TvScreen.Live &&
-            !platformLivePlaying
-        if (showNavigationRail) {
-            Row(modifier = Modifier.fillMaxSize()) {
-                AppNavigationRail(
-                    screen = state.screen,
-                    onHome = actions::openHome,
-                    onLive = actions::openLive,
-                    onPlatformLive = actions::openPlatformLive,
-                    onSettings = actions::openSettings,
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .width(1.dp)
-                        .background(TvColors.TextTertiary.copy(alpha = 0.55f)),
-                )
-                Box(modifier = Modifier.weight(1f)) {
-                    TvBoxScreen(
-                        holder = screenStateHolder,
-                        state = state,
-                        actions = actions,
-                    )
-                }
-            }
-        } else {
-            if (isMobile) {
-                MobileNavWrapper(
-                    state = state,
-                    actions = actions,
-                ) { navScreen ->
-                    MobileNavScreenContent(
-                        holder = screenStateHolder,
-                        state = state,
-                        actions = actions,
-                        navScreen = navScreen,
-                    )
-                }
-            } else {
-                TvBoxScreen(
+        if (isMobile) {
+            MobileNavWrapper(
+                state = state,
+                actions = actions,
+            ) { navScreen ->
+                MobileNavScreenContent(
                     holder = screenStateHolder,
                     state = state,
                     actions = actions,
-                        )
+                    navScreen = navScreen,
+                )
             }
+        } else {
+            TvBoxScreen(
+                holder = screenStateHolder,
+                state = state,
+                actions = actions,
+            )
         }
         AppUpdateDialog(
             state = state,
@@ -421,6 +382,19 @@ private fun TvBoxScreen(
         TvScreen.Live -> LiveScreen(state = state, actions = actions)
         TvScreen.PlatformLive -> PlatformLiveScreen(state = state, actions = actions)
         TvScreen.Settings -> SettingsScreen(state = state, actions = actions)
+        TvScreen.AiSearch -> com.tvbox.app.ai.AiSearchScreen(
+            state = state.aiSearch,
+            onQueryChange = actions::updateAiQuery,
+            onSubmit = actions::submitAiSearch,
+            onCandidateClick = actions::openAiCandidate,
+            onGoSearch = actions::openSearch,
+            onImportSource = actions::openVideoSourceManager,
+            onVoiceResult = { text ->
+                actions.updateAiQuery(text)
+                actions.submitAiSearch(text)
+            },
+            onBack = { actions.goBack() },
+        )
         TvScreen.SourceManager -> SourceManagementScreen(state = state, actions = actions)
         TvScreen.LiveSourceManager -> LiveSourceManagementScreen(state = state, actions = actions)
         TvScreen.VideoSourceManager -> VideoSourceManagementScreen(state = state, actions = actions)
@@ -541,7 +515,6 @@ private fun HomeScreen(
     }
     PageSurface { padding ->
         val apiLineName = state.selectedApiLine?.name ?: "资源"
-        val cinemaTheme = state.appSettings.theme == TvTheme.Cinema
         val homeSubtitle = when {
             state.isShowingDoubanHot -> "豆瓣热播 / 共 ${state.total} 部"
             state.doubanHotFallbackActive -> "$apiLineName 最近更新 / 共 ${state.total} 部"
@@ -620,39 +593,21 @@ private fun HomeScreen(
             AnimatedVisibility(visible = showHomeTopContent) {
                 Column {
                     AppHeader(
-                        title = if (cinemaTheme) "首页" else "TVBox",
+                        title = "TVBox",
                         subtitle = homeSubtitle,
                         onHistory = actions::openHistory,
                         onSearch = actions::openSearch,
                         onLive = actions::openLive,
                         onPlatformLive = actions::openPlatformLive,
                         onSettings = actions::openSettings,
-                        showShortcutActions = !cinemaTheme,
                         firstActionModifier = Modifier.focusRequester(navigationFocusRequester),
                         titleContent = {
                             HomeSourceDropdownTitle(
                                 state = state,
                                 actions = actions,
-                                cinemaTheme = cinemaTheme,
                             )
                         },
                     )
-                    if (cinemaTheme && !state.isShowingDoubanHot) {
-                        state.movies.firstOrNull()?.let { featuredMovie ->
-                            // 手机首页不再展示 Hero 横幅：竖屏下 Hero 占位过高、易与信息流挤压，
-                            // 且长简介会撑变形。直接进分类标签 + 信息流，首屏更紧凑。电视端仍保留 FeaturedMovieHero。
-                            if (state.effectiveDeviceMode != DeviceMode.Mobile) {
-                                FeaturedMovieHero(
-                                    movie = featuredMovie,
-                                    onOpen = { actions.openDetail(featuredMovie.id) },
-                                    // 大字号下「今日热播 + 标题 + 信息 + 按钮」总高会超过 190dp 被裁切，
-                                    // 上限随字体缩放同比放宽（正常 190 / 大 224 / 超大 258）。
-                                    maxHeight = 190.dp * state.appSettings.fontScale.typographyScale,
-                                )
-                                Spacer(modifier = Modifier.height(TvDimens.SectionGap))
-                            }
-                        }
-                    }
                     HomeCategoryRows(
                         state = state,
                         onHot = actions::selectDoubanHot,
@@ -702,94 +657,8 @@ private fun HomeScreen(
                     },
                     onContentFocused = { if (!movingToNavigation) forceNavigationVisible = false },
                     onDismissNotice = actions::dismissHomeNotice,
-                    showSectionHeader = cinemaTheme,
                     modifier = Modifier.weight(1f),
                 )
-            }
-        }
-    }
-}
-
-@Composable
-private fun FeaturedMovieHero(
-    movie: com.tvbox.app.domain.Movie,
-    onOpen: () -> Unit,
-    maxHeight: Dp,
-) {
-    val heroShape = RoundedCornerShape(18.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 165.dp, max = maxHeight)
-            .clip(heroShape)
-            .background(
-                Brush.horizontalGradient(
-                    colors = listOf(TvColors.Surface, TvColors.SurfaceOverlay, Color.Transparent),
-                ),
-            ),
-    ) {
-        PosterImage(
-            movie = movie,
-            modifier = Modifier
-                .fillMaxSize()
-                .alpha(0.38f),
-        )
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(
-                            TvColors.Surface,
-                            TvColors.SurfaceOverlay.copy(alpha = 0.82f),
-                            Color.Transparent,
-                        ),
-                    ),
-                ),
-        )
-        Column(
-            modifier = Modifier
-                .fillMaxWidth(0.68f)
-                .padding(horizontal = 24.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(
-                text = "今日热播",
-                color = TvColors.AccentStrong,
-                style = MaterialTheme.typography.labelLarge,
-            )
-            Text(
-                text = movie.name,
-                style = MaterialTheme.typography.headlineMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = listOf(movie.year, movie.typeName, movie.remarks)
-                    .filter { it.isNotBlank() }
-                    .distinct()
-                    .joinToString("  ·  "),
-                color = TvColors.TextSecondary,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (movie.description.isNotBlank()) {
-                Text(
-                    text = movie.description,
-                    color = TvColors.TextSecondary,
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onOpen) {
-                    Text("播放")
-                }
-                TextButton(onClick = onOpen) {
-                    Text("详情")
-                }
             }
         }
     }
@@ -802,7 +671,8 @@ private const val HISTORY_HEADER_ITEM_COUNT = 1
 private fun HistoryScreen(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-) {    PageSurface { padding ->
+) {
+    PageSurface { padding ->
         var confirmClearHistory by remember { mutableStateOf(false) }
         // TV 端遥控器没有长按手势，用顶部「多选」按钮进入批量删除模式，
         // 每张卡片点击切换选中，确认键复用 onClick 语义即天然支持遥控器。
@@ -1162,7 +1032,6 @@ private fun SettingsActionButton(
 private fun HomeSourceDropdownTitle(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-    cinemaTheme: Boolean,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
@@ -1193,12 +1062,8 @@ private fun HomeSourceDropdownTitle(
             ) {
                 Text(
                     text = currentLine?.name ?: "选择视频源",
-                    style = if (cinemaTheme) {
-                        MaterialTheme.typography.titleLarge
-                    } else {
-                        MaterialTheme.typography.headlineLarge
-                    },
-                    fontWeight = if (cinemaTheme) FontWeight.Medium else FontWeight.Bold,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -1379,7 +1244,6 @@ private fun MovieGrid(
     onMovieClick: (Int) -> Unit,
     onDoubanHotClick: (com.tvbox.app.domain.DoubanHotItem) -> Unit,
     onLoadMore: () -> Unit,
-    showSectionHeader: Boolean,
     focus: ReturnFocus,
     onContinue: (com.tvbox.app.domain.WatchHistoryItem) -> Unit,
     onMoveToNavigation: () -> Unit,
@@ -1430,25 +1294,6 @@ private fun MovieGrid(
         }
     }
     Column(modifier = modifier.fillMaxSize()) {
-        if (showSectionHeader) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = if (state.isShowingDoubanHot) "豆瓣热播" else "正在热播",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = "${state.homeItemCount} / ${state.total} 部",
-                    color = TvColors.TextSecondary,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-            }
-        }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = TvLayout.PosterGridMinWidth),
             state = gridState,
@@ -2974,7 +2819,7 @@ private fun MobileNavScreenContent(
         // 另外 TvBoxScreen 内部已经用同一个 key 注册 SaveableStateProvider，这里不能再包一层，否则 key 重复会崩溃。
         TvScreen.Detail, TvScreen.Player, TvScreen.Settings,
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
-        TvScreen.PlatformLive -> TvBoxScreen(
+        TvScreen.PlatformLive, TvScreen.AiSearch -> TvBoxScreen(
             holder = holder,
             state = state,
             actions = actions,

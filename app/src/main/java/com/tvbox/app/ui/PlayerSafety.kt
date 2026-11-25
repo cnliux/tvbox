@@ -1,6 +1,10 @@
 package com.tvbox.app.ui
 
 import android.content.Context
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.os.Build
 import android.widget.Toast
 import androidx.annotation.OptIn
 import androidx.compose.runtime.Composable
@@ -14,14 +18,17 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import com.tvbox.app.util.logSafeText
 import com.tvbox.app.domain.DecoderStrategy
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 
 /**
  * 安全释放 ExoPlayer：先 pause + removeListener，再 release。
@@ -64,25 +71,49 @@ internal fun safePrepare(
  * 始终开启 [DefaultRenderersFactory.setEnableDecoderFallback]（默认「自适应」档的解码失败回落）；
  * [DecoderStrategy.HardwareOnly] 时再用 [MediaCodecSelector] 只保留硬件解码器，
  * [DecoderStrategy.SoftwareOnly] 时只保留软件解码器。两者都基于系统 MediaCodec 集合。
+ *
+ * FFmpeg 软解码（nextlib-media3ext，GPL-3.0）：
+ * - [DecoderStrategy.SoftwareOnly] 用 [NextRenderersFactory] + FFmpeg 优先模式：FFmpeg 解码器
+ *   排在系统软解之前，硬件解码异常或黑屏时切到软解更可靠（覆盖 H.264/HEVC/VP9/AV1 等）。
+ * - [DecoderStrategy.Auto] 用 FFmpeg 兜底模式（EXTENSION_RENDERER_MODE_ON）：系统硬解/软解都不支持的
+ *   编码由 FFmpeg 兜底，不影响默认「硬解优先」语义。
+ * - [DecoderStrategy.HardwareOnly] 保持纯 MediaCodec 硬件选择器，不引入 FFmpeg renderer。
  */
 @OptIn(UnstableApi::class)
 internal fun buildManagedExoPlayer(
     context: Context,
     decoderStrategy: DecoderStrategy,
+    /** 缓冲目标（毫秒）：流畅 8s / 均衡 15s / 省流 25s。 */
+    bufferTargetMs: Long = DEFAULT_BUFFER_TARGET_MS,
+    /** 音频输出：auto / stereo / passthrough。 */
+    audioOutputMode: String = "auto",
     configure: (ExoPlayer.Builder) -> ExoPlayer.Builder = { it },
 ): ExoPlayer {
-    val renderersFactory = DefaultRenderersFactory(context)
-        .setEnableDecoderFallback(true)
-        .apply {
-            when (decoderStrategy) {
-                DecoderStrategy.HardwareOnly ->
-                    setMediaCodecSelector(hardwareOnlyMediaCodecSelector())
-                DecoderStrategy.SoftwareOnly ->
-                    setMediaCodecSelector(softwareOnlyMediaCodecSelector())
-                DecoderStrategy.Auto -> Unit
-            }
-        }
-    return configure(ExoPlayer.Builder(context, renderersFactory))
+    val useFfmpeg = decoderStrategy != DecoderStrategy.HardwareOnly
+    val baseSelector = when (decoderStrategy) {
+        DecoderStrategy.HardwareOnly -> hardwareOnlyMediaCodecSelector()
+        DecoderStrategy.SoftwareOnly -> softwareOnlyMediaCodecSelector()
+        DecoderStrategy.Auto -> MediaCodecSelector.DEFAULT
+    }
+    // SoftwareOnly 时 FFmpeg 解码器优先；Auto 时 FFmpeg 仅兜底系统解码器不支持的编码。
+    val extensionMode = when (decoderStrategy) {
+        DecoderStrategy.SoftwareOnly -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+        else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+    }
+    val renderersFactory = if (useFfmpeg) {
+        NextRenderersFactory(context)
+            .setExtensionRendererMode(extensionMode)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(resolveAudioOutputSelector(context, baseSelector, audioOutputMode))
+    } else {
+        DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+            .setMediaCodecSelector(resolveAudioOutputSelector(context, baseSelector, audioOutputMode))
+    }
+    return configure(
+        ExoPlayer.Builder(context, renderersFactory)
+            .setLoadControl(buildBufferLoadControl(bufferTargetMs)),
+    )
         .build()
         .apply { playWhenReady = true }
         .also { player ->
@@ -91,6 +122,73 @@ internal fun buildManagedExoPlayer(
             player.addAnalyticsListener(probe)
             ManagedPlayerProbes.put(player, probe)
         }
+}
+
+internal const val DEFAULT_BUFFER_TARGET_MS = 15_000L
+
+/**
+ * 按缓冲目标生成 LoadControl。只调时长阈值，不引入自定义 LoadControl 子类；
+ * 起播/重缓冲阈值始终不超过最小缓冲，满足 Media3 的约束。
+ */
+@OptIn(UnstableApi::class)
+private fun buildBufferLoadControl(bufferTargetMs: Long): DefaultLoadControl {
+    val target = bufferTargetMs.coerceIn(3_000L, 60_000L).toInt()
+    val minBufferMs = (target * 0.5).toInt().coerceAtLeast(1_000)
+    val playbackStartMs = minOf(2_500, (target * 0.25).toInt()).coerceIn(500, minBufferMs)
+    val rebufferMs = minOf(5_000, (target * 0.4).toInt()).coerceIn(1_000, minBufferMs)
+    return DefaultLoadControl.Builder()
+        .setBufferDurationsMs(minBufferMs, target, playbackStartMs, rebufferMs)
+        .build()
+}
+
+/** 常见「只能直通」的编码；stereo 档过滤这些编码，强制播放器选择可解码为 PCM 的音轨。 */
+private val PASSTHROUGH_ONLY_MIMES = setOf(
+    "audio/ac3", "audio/eac3", "audio/eac3-joc", "audio/dts", "audio/dtshd", "audio/truehd",
+    "audio/vnd.dts", "audio/vnd.dts.hd",
+)
+
+/**
+ * 音频输出档位落到解码器选择上：
+ * - stereo：禁用直通编码，避免外部功放把多声道直通出去导致手机无声；
+ * - passthrough：仅在设备支持时保持默认（允许直通），否则回退 auto 的安全路径；
+ * - auto：原样保留解码策略选择器。
+ *
+ * 不增加任何新依赖；音频输出档位只影响 MediaCodec 选择器，不涉及 FFmpeg renderer 的选择。
+ */
+@OptIn(UnstableApi::class)
+private fun resolveAudioOutputSelector(
+    context: Context,
+    base: MediaCodecSelector,
+    audioOutputMode: String,
+): MediaCodecSelector {
+    val disablePassthrough = when (audioOutputMode) {
+        "stereo" -> true
+        "passthrough" -> !deviceSupportsAudioPassthrough(context)
+        else -> false
+    }
+    if (!disablePassthrough) return base
+    return MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunneling ->
+        if (MimeTypes.isAudio(mimeType) && PASSTHROUGH_ONLY_MIMES.any { mimeType.equals(it, ignoreCase = true) }) {
+            emptyList()
+        } else {
+            base.getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunneling)
+        }
+    }
+}
+
+/**
+ * 直通能力探测（启发式）：优先看 HDMI 音频是否已插入，其次蓝牙 A2DP，最后电视特征。
+ * Android 没有公开的「是否支持 AC3 直通」API，探测失败按不支持处理并回退 auto。
+ */
+private fun deviceSupportsAudioPassthrough(context: Context): Boolean {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP) return false
+    return runCatching {
+        val manager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
+        val hdmiPlugged = context.registerReceiver(null, IntentFilter(AudioManager.ACTION_HDMI_AUDIO_PLUG))
+            ?.getIntExtra(AudioManager.EXTRA_AUDIO_PLUG_STATE, 0) == 1
+        hdmiPlugged || manager.isBluetoothA2dpOn ||
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK)
+    }.getOrDefault(false)
 }
 
 /**
@@ -310,10 +408,12 @@ internal fun HardwareDecoderFallbackToast() {
 @Composable
 internal fun rememberManagedExoPlayer(
     decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+    bufferTargetMs: Long = DEFAULT_BUFFER_TARGET_MS,
+    audioOutputMode: String = "auto",
 ): ExoPlayer {
     val context = LocalContext.current.applicationContext
-    val player = remember(decoderStrategy) {
-        buildManagedExoPlayer(context, decoderStrategy)
+    val player = remember(decoderStrategy, bufferTargetMs, audioOutputMode) {
+        buildManagedExoPlayer(context, decoderStrategy, bufferTargetMs, audioOutputMode)
     }
     DisposableEffect(player) {
         onDispose { safeReleasePlayer(player) }

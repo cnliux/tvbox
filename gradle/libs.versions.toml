@@ -9,6 +9,7 @@ datastore = "1.3.0"
 kotlin = "2.4.0"
 lifecycle = "2.10.0"
 media3 = "1.10.1"
+nextlib = "1.10.1-0.13.0"
 okhttp = "5.3.2"
 serialization = "1.11.0"
 zxing = "3.5.3"
@@ -32,6 +33,10 @@ androidx-core = { group = "androidx.core", name = "core", version.ref = "core" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
 androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "media3" }
+# nextlib-media3ext：基于 FFmpeg 的软解码扩展（GPL-3.0）。版本号 <media3>-<nextlib>，
+# 1.10.1-0.13.0 精确依赖 media3-exoplayer 1.10.1，与项目 media3 版本一致。
+# 注意：GPL-3.0 传染性，整个 APK 对外分发需接受开源义务（见 P07 LICENSE 决策）。
+nextlib-media3ext = { group = "io.github.anilbeesetti", name = "nextlib-media3ext", version.ref = "nextlib" }
 androidx-media3-session = { group = "androidx.media3", name = "media3-session", version.ref = "media3" }
 androidx-media3-exoplayer-hls = { group = "androidx.media3", name = "media3-exoplayer-hls", version.ref = "media3" }
 androidx-media3-ui = { group = "androidx.media3", name = "media3-ui", version.ref = "media3" }

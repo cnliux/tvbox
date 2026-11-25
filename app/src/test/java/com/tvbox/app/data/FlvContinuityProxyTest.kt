@@ -50,4 +50,29 @@ class FlvContinuityProxyTest {
         )
         assertTrue(FlvContinuityProxy.shouldWrap("huya", "flv", ""))
     }
+
+    @Test
+    fun `third-party proxy resolve url is never wrapped`() {
+        // 形如 https://mursor.ottiptv.cc/huya/房间号：稳定流，直接放行直连。
+        assertFalse(
+            FlvContinuityProxy.shouldWrap(
+                "huya", "flv", "https://mursor.ottiptv.cc/huya/11342412",
+            ),
+        )
+        assertFalse(
+            FlvContinuityProxy.shouldWrap(
+                "douyu", "flv", "https://mursor.ottiptv.cc/douyu/36252",
+            ),
+        )
+    }
+
+    @Test
+    fun `official cdn path containing site name is still wrapped`() {
+        // 官方 CDN 地址可能带 .flv 或签名参数，不能被误判成第三方代理地址。
+        assertTrue(
+            FlvContinuityProxy.shouldWrap(
+                "huya", "flv", "https://hw-tct.huya.com/src/11342412-1.flv?wsSecret=abc&wsTime=123",
+            ),
+        )
+    }
 }

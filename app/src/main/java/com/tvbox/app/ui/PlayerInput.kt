@@ -10,7 +10,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.Window
-import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -18,8 +17,10 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.seekStepMsForHold
 import kotlin.math.abs
+import kotlin.math.hypot
 import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
@@ -78,355 +79,6 @@ internal fun Modifier.playerKeyInput(map: PlayerKeyMap, chrome: PlayerChromeStat
     }
 }
 
-/** 点播遥控：左右快进快退（长按连发）、OK 暂停、菜单切倍速、上一/下一集。 */
-internal class PlayerSeekKeyMap(
-    var callbacks: Callbacks,
-) : PlayerKeyMap {
-    data class Callbacks(
-        val onSeekBy: (Long) -> Unit,
-        val onFinishSeek: () -> Unit,
-        val onToggle: () -> Unit,
-        val onPlay: () -> Unit,
-        val onPause: () -> Unit,
-        val onChangeEpisode: (Int) -> Unit,
-        val onCycleSpeed: () -> Unit,
-        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
-        val onSettings: () -> Unit = {},
-        /** INFO 键：打开播放信息面板。 */
-        val onInfo: () -> Unit = {},
-    )
-
-    private val remote = PlayerRemoteKeyState()
-
-    override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
-        val native = event.nativeKeyEvent
-        if (chrome.visible) chrome.interaction++
-        if (chrome.visible && native.keyCode in listOf(
-                AndroidKeyEvent.KEYCODE_DPAD_LEFT, AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                AndroidKeyEvent.KEYCODE_DPAD_UP, AndroidKeyEvent.KEYCODE_DPAD_DOWN,
-            )
-        ) {
-            return false
-        }
-        return when (native.keyCode) {
-            // BACK 不在此消费：锁定提示/浮层层级统一交给 PlayerChromeBackHandler，
-            // 这里自行处理会绕过「已锁定」提示与统一 BACK 层级。
-            AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-            AndroidKeyEvent.KEYCODE_MEDIA_REWIND,
-            -> {
-                when (event.type) {
-                    KeyEventType.KeyDown -> if (remote.shouldHandleSeek(native.eventTime, native.repeatCount)) {
-                        remote.seekChanged = true
-                        callbacks.onSeekBy(-remote.currentSeekStepMs(native.eventTime))
-                    }
-                    KeyEventType.KeyUp -> {
-                        if (remote.seekChanged) callbacks.onFinishSeek()
-                        remote.resetSeek()
-                    }
-                }
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-            AndroidKeyEvent.KEYCODE_MEDIA_FAST_FORWARD,
-            -> {
-                when (event.type) {
-                    KeyEventType.KeyDown -> if (remote.shouldHandleSeek(native.eventTime, native.repeatCount)) {
-                        remote.seekChanged = true
-                        callbacks.onSeekBy(remote.currentSeekStepMs(native.eventTime))
-                    }
-                    KeyEventType.KeyUp -> {
-                        if (remote.seekChanged) callbacks.onFinishSeek()
-                        remote.resetSeek()
-                    }
-                }
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-            AndroidKeyEvent.KEYCODE_ENTER,
-            -> {
-                if (chrome.visible) {
-                    false
-                } else {
-                    if (event.type == KeyEventType.KeyUp) chrome.bump()
-                    true
-                }
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                if (event.type == KeyEventType.KeyUp) callbacks.onToggle()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY -> {
-                if (event.type == KeyEventType.KeyUp) callbacks.onPlay()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
-            AndroidKeyEvent.KEYCODE_MEDIA_STOP,
-            -> {
-                // #255：遥控器"停止"键此前无处理（部分盒子有该键）。无独立 stop 回调时
-                // 以暂停作为最接近语义，避免按键落空；后续如需真正停止可在此替换为 stop 回调。
-                if (event.type == KeyEventType.KeyUp) callbacks.onPause()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_PREVIOUS,
-            AndroidKeyEvent.KEYCODE_1,
-            AndroidKeyEvent.KEYCODE_NUMPAD_1,
-            -> {
-                if (event.type == KeyEventType.KeyUp) callbacks.onChangeEpisode(-1)
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_NEXT,
-            AndroidKeyEvent.KEYCODE_3,
-            AndroidKeyEvent.KEYCODE_NUMPAD_3,
-            -> {
-                if (event.type == KeyEventType.KeyUp) callbacks.onChangeEpisode(1)
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MENU -> {
-                if (event.type == KeyEventType.KeyUp) callbacks.onCycleSpeed()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_SETTINGS,
-            -> {
-                // 设置键统一打开播放器设置面板，承载画面/音轨/字幕/跳过/信息/地址等低频入口。
-                if (event.type == KeyEventType.KeyUp) callbacks.onSettings()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_INFO,
-            -> {
-                // INFO 键统一打开播放信息面板（与直播/平台直播页语义一致）。
-                if (event.type == KeyEventType.KeyUp) callbacks.onInfo()
-                true
-            }
-            else -> false
-        }
-    }
-}
-
-/** 电视直播遥控：频道数字直选、浮层浏览、上下换线路、左右换台。 */
-internal class PlayerChannelKeyMap(
-    var callbacks: Callbacks,
-) : PlayerKeyMap {
-    data class Callbacks(
-        val isChannelListVisible: () -> Boolean,
-        val closeChannelList: () -> Unit,
-        val isLineControlVisible: () -> Boolean,
-        val closeLineControl: () -> Unit,
-        val keepChannelListVisibleWhileBrowsing: () -> Unit,
-        val isNumberInputActive: () -> Boolean,
-        val onNumberKey: (Int) -> Unit,
-        val onNumberMove: (Int) -> Unit,
-        val onNumberCommit: () -> Unit,
-        val onNumberDelete: () -> Unit,
-        val onPreviousChannel: () -> Unit,
-        val onNextChannel: () -> Unit,
-        val onPreviousLine: () -> Unit,
-        val onNextLine: () -> Unit,
-        val onOpenChannelList: () -> Unit,
-        val onConfirm: () -> Unit,
-        /** 失败卡（重试/下一台）在场时，OK 必须交给当前聚焦的按钮，不在页面级改写为打开频道列表。 */
-        val isFailureCardVisible: () -> Boolean = { false },
-        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
-        val onSettings: () -> Unit = {},
-        /** INFO 键：打开播放信息面板（与点播/平台直播页语义一致）。 */
-        val onInfo: () -> Unit = {},
-    )
-
-    override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
-        if (event.type != KeyEventType.KeyUp) return false
-        val key = event.nativeKeyEvent.keyCode
-        // 任意按键唤出信息条并重置 3 秒淡出计时。
-        chrome.bump()
-        if (callbacks.isChannelListVisible()) {
-            val digit = liveNumberKeyOf(key)
-            if (digit != null) {
-                callbacks.closeChannelList()
-                callbacks.onNumberKey(digit)
-                return true
-            }
-            return when (key) {
-                AndroidKeyEvent.KEYCODE_MENU,
-                AndroidKeyEvent.KEYCODE_INFO,
-                AndroidKeyEvent.KEYCODE_SETTINGS,
-                -> {
-                    callbacks.closeChannelList()
-                    true
-                }
-                AndroidKeyEvent.KEYCODE_DPAD_UP,
-                AndroidKeyEvent.KEYCODE_DPAD_DOWN,
-                AndroidKeyEvent.KEYCODE_DPAD_LEFT,
-                AndroidKeyEvent.KEYCODE_DPAD_RIGHT,
-                AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                AndroidKeyEvent.KEYCODE_ENTER,
-                -> {
-                    callbacks.keepChannelListVisibleWhileBrowsing()
-                    false
-                }
-                else -> false
-            }
-        }
-        if (callbacks.isLineControlVisible()) {
-            return when (key) {
-                AndroidKeyEvent.KEYCODE_MENU,
-                AndroidKeyEvent.KEYCODE_INFO,
-                AndroidKeyEvent.KEYCODE_SETTINGS,
-                -> {
-                    callbacks.closeLineControl()
-                    true
-                }
-                else -> false
-            }
-        }
-        if (callbacks.isNumberInputActive()) {
-            return when (key) {
-                AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                    callbacks.onNumberMove(-1)
-                    true
-                }
-                AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                    callbacks.onNumberMove(1)
-                    true
-                }
-                AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-                AndroidKeyEvent.KEYCODE_ENTER,
-                -> {
-                    callbacks.onNumberCommit()
-                    true
-                }
-                AndroidKeyEvent.KEYCODE_DEL -> {
-                    callbacks.onNumberDelete()
-                    true
-                }
-                else -> false
-            }
-        }
-        return when (key) {
-            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                callbacks.onPreviousChannel()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                callbacks.onNextChannel()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-            AndroidKeyEvent.KEYCODE_ENTER,
-            -> {
-                if (callbacks.isFailureCardVisible()) {
-                    // 焦点在「重试/下一台」上：不消费，让按钮自己拿到 OK。
-                    false
-                } else {
-                    callbacks.onConfirm()
-                    true
-                }
-            }
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY,
-            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
-            -> {
-                callbacks.onConfirm()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MENU -> {
-                callbacks.onOpenChannelList()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_INFO -> {
-                callbacks.onInfo()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_SETTINGS -> {
-                callbacks.onSettings()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                callbacks.onPreviousLine()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                callbacks.onNextLine()
-                true
-            }
-            else -> {
-                val digit = liveNumberKeyOf(key)
-                if (digit != null) {
-                    callbacks.onNumberKey(digit)
-                    true
-                } else {
-                    false
-                }
-            }
-        }
-    }
-}
-
-/** 平台直播遥控：左右换房间、上下换候选、OK 打开节目列表、菜单强制重连。 */
-internal class PlayerRoomKeyMap(
-    var callbacks: Callbacks,
-) : PlayerKeyMap {
-    data class Callbacks(
-        /** 房间列表/线路浮层等页面级浮层打开时，按键交给浮层自己解释。 */
-        val isOverlayVisible: () -> Boolean,
-        val onPreviousRoom: () -> Unit,
-        val onNextRoom: () -> Unit,
-        val onPreviousCandidate: () -> Unit,
-        val onNextCandidate: () -> Unit,
-        val onOpenRoomList: () -> Unit,
-        val onReconnect: () -> Unit,
-        /** 设置键：打开播放器设置面板（集中低频功能入口）。 */
-        val onSettings: () -> Unit = {},
-        /** INFO 键：打开播放信息面板（与点播/直播页语义一致）。 */
-        val onInfo: () -> Unit = {},
-    )
-
-    override fun handle(event: KeyEvent, chrome: PlayerChromeState): Boolean {
-        if (event.type != KeyEventType.KeyUp) return false
-        if (callbacks.isOverlayVisible()) return false
-        return when (event.nativeKeyEvent.keyCode) {
-            AndroidKeyEvent.KEYCODE_DPAD_LEFT -> {
-                callbacks.onPreviousRoom()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_RIGHT -> {
-                callbacks.onNextRoom()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_UP -> {
-                callbacks.onPreviousCandidate()
-                chrome.bump()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_DOWN -> {
-                callbacks.onNextCandidate()
-                chrome.bump()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-            AndroidKeyEvent.KEYCODE_ENTER,
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-            -> {
-                callbacks.onOpenRoomList()
-                chrome.bump()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_MENU -> {
-                callbacks.onReconnect()
-                chrome.bump()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_INFO -> {
-                callbacks.onInfo()
-                chrome.bump()
-                true
-            }
-            AndroidKeyEvent.KEYCODE_SETTINGS -> {
-                callbacks.onSettings()
-                chrome.bump()
-                true
-            }
-            else -> false
-        }
-    }
-}
 
 // ── 触摸手势：点播与手机直播共用一套，能力开关决定双击/横滑/长按/上下滑 ──────────────
 
@@ -440,7 +92,37 @@ internal data class PlayerTouchCapabilities(
     val verticalSwipeEnabled: Boolean = true,
     /** 上下滑不再要求「垂直方向占优」；关闭上下滑时仍把这类拖动视为误触，不触发单击。 */
     val verticalSwipeLoose: Boolean = false,
-)
+    // ---- 以下为新增的逐项开关，全部给出与旧行为一致的默认值，旧调用点无需修改 ----
+    /** 左侧上下滑调亮度。 */
+    val leftBrightnessEnabled: Boolean = true,
+    /** 右侧上下滑调音量。 */
+    val rightVolumeEnabled: Boolean = true,
+    /** 横向拖动进度。 */
+    val horizontalSeekEnabled: Boolean = true,
+    /** 左右两侧双击快进/快退。 */
+    val doubleTapSideEnabled: Boolean = true,
+    /** 中间双击播放/暂停。 */
+    val doubleTapCenterEnabled: Boolean = true,
+    /** 长按临时倍速。 */
+    val longPressSpeedEnabled: Boolean = true,
+    /** 双指捏合缩放画面。 */
+    val pinchZoomEnabled: Boolean = true,
+    /** 顶部下滑返回。 */
+    val topSwipeBackEnabled: Boolean = false,
+    /** 手势灵敏度：0=低 / 1=中 / 2=高。 */
+    val sensitivity: Int = 1,
+    /** 横屏握持时底部边缘不响应进度手势。 */
+    val edgeGuardEnabled: Boolean = true,
+    /** 手势锁开关：关闭时控制栏不提供锁定入口。 */
+    val gestureLockEnabled: Boolean = false,
+) {
+    // 旧字段与新开关取交集，保证只设置旧字段的直播页行为完全不变。
+    val effectiveSeek: Boolean get() = seekDrag && horizontalSeekEnabled
+    val effectiveDoubleTap: Boolean get() = doubleTapSeek && (doubleTapSideEnabled || doubleTapCenterEnabled)
+    val effectiveLongPress: Boolean get() = longPressSpeed && longPressSpeedEnabled
+    val effectiveBrightness: Boolean get() = brightness && leftBrightnessEnabled
+    val effectiveVolume: Boolean get() = volume && rightVolumeEnabled
+}
 
 internal data class PlayerTouchCallbacks(
     val isLocked: () -> Boolean,
@@ -456,6 +138,10 @@ internal data class PlayerTouchCallbacks(
     val onVolumeChanged: (volume: Int, maxVolume: Int) -> Unit,
     val onLongPressStart: () -> Unit,
     val onLongPressEnd: () -> Unit,
+    /** 捏合缩放：返回相对缩放系数（>1 放大）。默认空实现，旧调用点行为不变。 */
+    val onPinchZoom: (scaleFactor: Float) -> Unit = {},
+    /** 顶部下滑返回。默认空实现，旧调用点行为不变。 */
+    val onTopSwipeBack: () -> Unit = {},
 )
 
 /**
@@ -473,11 +159,25 @@ internal class PlayerTouchGestureHandler(
     private val handler = Handler(Looper.getMainLooper())
     private var state = PlayerTouchGestureState()
 
+    /** 双击快进步长（毫秒）；由播放页按 fastSeekStepSeconds 注入。 */
+    var doubleTapSeekMs: Long = DOUBLE_TAP_SEEK_MS
+
     override fun onTouch(view: View, event: MotionEvent): Boolean {
         val width = view.width
         val height = view.height
+        val density = view.context.resources.displayMetrics.density
+        // 灵敏度：低档需要更大位移，高档更小位移；仅影响手势，不影响播放器倍速。
+        val factor = when (capabilities.sensitivity) {
+            0 -> 0.6f
+            2 -> 1.6f
+            else -> 1f
+        }
+        val gestureSlop = (touchSlop(view) / factor).toInt().coerceAtLeast(1)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                state.pinching = false
+                state.pinchDistance = 0f
+                state.topSwipeBackTriggered = false
                 state.downX = event.x
                 state.downY = event.y
                 state.downPositionMs = callbacks.currentPositionMs().coerceAtLeast(0L)
@@ -488,30 +188,64 @@ internal class PlayerTouchGestureHandler(
                 state.startBrightness = context?.let { window?.currentScreenBrightness(it) } ?: DEFAULT_SCREEN_BRIGHTNESS
                 state.startVolume = audioManager?.getStreamVolume(AudioManager.STREAM_MUSIC) ?: 0
                 state.maxVolume = audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 0
-                if (capabilities.longPressSpeed && !callbacks.isLocked()) scheduleLongPressSpeed(view)
+                if (capabilities.effectiveLongPress && !callbacks.isLocked()) scheduleLongPressSpeed(view)
             }
             MotionEvent.ACTION_MOVE -> {
+                // 捏合缩放优先于所有单指手势；只上报相对系数，是否应用由页面决定。
+                if (event.pointerCount >= 2) {
+                    if (capabilities.pinchZoomEnabled && !callbacks.isLocked()) {
+                        val distance = hypot(event.getX(0) - event.getX(1), event.getY(0) - event.getY(1))
+                        if (state.pinching && state.pinchDistance > 0f) {
+                            callbacks.onPinchZoom(distance / state.pinchDistance)
+                        }
+                        state.pinchDistance = distance
+                        state.pinching = true
+                        cancelLongPressSpeed()
+                        cancelPendingSingleTap()
+                    }
+                    return true
+                }
+                if (state.pinching) return true
                 val totalDx = event.x - state.downX
                 val totalDy = event.y - state.downY
                 val durationMs = callbacks.durationMs()
                 if (state.longPressActive) return true
                 if (!callbacks.isLocked() && state.swipeMode == PlayerSwipeMode.None) {
+                    // 顶部下滑返回：仅在顶部边缘内触发，且同一次按下只触发一次。
+                    if (
+                        capabilities.topSwipeBackEnabled && !state.topSwipeBackTriggered &&
+                        state.downY <= TOP_SWIPE_EDGE_DP * density && totalDy > gestureSlop &&
+                        abs(totalDy) > abs(totalDx)
+                    ) {
+                        state.topSwipeBackTriggered = true
+                        state.dragWithoutAction = true
+                        cancelLongPressSpeed()
+                        cancelPendingSingleTap()
+                        callbacks.onTopSwipeBack()
+                        return true
+                    }
                     when {
-                        capabilities.seekDrag && durationMs != null &&
-                            abs(totalDx) > touchSlop(view) && abs(totalDx) > abs(totalDy) -> {
+                        capabilities.effectiveSeek && durationMs != null &&
+                            abs(totalDx) > gestureSlop && abs(totalDx) > abs(totalDy) &&
+                            // 边缘保护：横屏握持时底部不响应进度手势，避免误触。
+                            !(capabilities.edgeGuardEnabled &&
+                                state.downY >= height - SEEK_EDGE_GUARD_DP * density) -> {
                             state.swipeMode = PlayerSwipeMode.Seek
                         }
-                        capabilities.verticalSwipeEnabled && abs(totalDy) > touchSlop(view) &&
+                        capabilities.verticalSwipeEnabled && abs(totalDy) > gestureSlop &&
                             (capabilities.verticalSwipeLoose || abs(totalDy) > abs(totalDx)) -> {
+                            val leftHalf = state.downX < width / 2f
                             state.swipeMode = when {
-                                !capabilities.brightness && !capabilities.volume -> PlayerSwipeMode.None
-                                !capabilities.brightness -> PlayerSwipeMode.Volume
-                                !capabilities.volume -> PlayerSwipeMode.Brightness
-                                state.downX < width / 2f -> PlayerSwipeMode.Brightness
-                                else -> PlayerSwipeMode.Volume
+                                leftHalf && capabilities.effectiveBrightness -> PlayerSwipeMode.Brightness
+                                !leftHalf && capabilities.effectiveVolume -> PlayerSwipeMode.Volume
+                                capabilities.effectiveBrightness && !capabilities.effectiveVolume ->
+                                    PlayerSwipeMode.Brightness
+                                capabilities.effectiveVolume && !capabilities.effectiveBrightness ->
+                                    PlayerSwipeMode.Volume
+                                else -> PlayerSwipeMode.None
                             }
                         }
-                        capabilities.verticalSwipeLoose && abs(totalDy) > touchSlop(view) -> {
+                        capabilities.verticalSwipeLoose && abs(totalDy) > gestureSlop -> {
                             // 关闭上下滑时（如手机直播横屏）仍视为拖动，抬手不触发单击。
                             state.dragWithoutAction = true
                         }
@@ -537,7 +271,7 @@ internal class PlayerTouchGestureHandler(
                     // height==0 且 totalDy==0 时 totalDy/height 得 NaN，经 coerceIn 后仍是 NaN，
                     // setScreenBrightness(NaN) 写入非法亮度；高度未布局则跳过。
                     if (height <= 0f) return true
-                    val brightness = (state.startBrightness - totalDy / height.toFloat())
+                    val brightness = (state.startBrightness - totalDy * factor / height.toFloat())
                         .coerceIn(MIN_SCREEN_BRIGHTNESS, 1f)
                     window?.setScreenBrightness(brightness)
                     callbacks.onBrightnessChanged(brightness, (brightness * 100).roundToInt())
@@ -546,7 +280,7 @@ internal class PlayerTouchGestureHandler(
                     cancelPendingSingleTap()
                     // height<=0 已在上面短路；此处 float division 不会得 NaN。
                     val volume = (state.startVolume -
-                        (totalDy / height.toFloat() * state.maxVolume).roundToInt())
+                        (totalDy * factor / height.toFloat() * state.maxVolume).roundToInt())
                         .coerceIn(0, state.maxVolume)
                     audioManager?.setStreamVolume(AudioManager.STREAM_MUSIC, volume, 0)
                     callbacks.onVolumeChanged(volume, state.maxVolume)
@@ -560,6 +294,9 @@ internal class PlayerTouchGestureHandler(
                 val wasLongPressActive = state.longPressActive
                 val dragWithoutAction = state.dragWithoutAction
                 state.dragWithoutAction = false
+                val wasPinching = state.pinching
+                state.pinching = false
+                state.pinchDistance = 0f
                 cancelLongPressSpeed()
                 if (event.actionMasked == MotionEvent.ACTION_CANCEL) {
                     state.seeking = false
@@ -583,28 +320,33 @@ internal class PlayerTouchGestureHandler(
                     cancelPendingSingleTap()
                     return true
                 }
-                if (wasLongPressActive || dragWithoutAction) {
+                if (wasLongPressActive || dragWithoutAction || wasPinching) {
                     cancelPendingSingleTap()
                     return true
                 }
-                val slop = touchSlop(view)
                 val distance = squaredDistance(event.x, event.y, state.lastTapX, state.lastTapY)
-                val isDoubleTap = capabilities.doubleTapSeek &&
+                val canDoubleTapSide = capabilities.doubleTapSeek && capabilities.doubleTapSideEnabled
+                val canDoubleTapCenter = capabilities.doubleTapSeek && capabilities.doubleTapCenterEnabled
+                val doubleTapPossible = canDoubleTapSide || canDoubleTapCenter
+                val isDoubleTap = doubleTapPossible &&
                     event.eventTime - state.lastTapUpTimeMs <= ViewConfiguration.getDoubleTapTimeout().toLong() &&
-                    distance <= slop * slop
+                    distance <= gestureSlop * gestureSlop
                 if (isDoubleTap) {
                     state.lastTapUpTimeMs = 0L
+                    val stepSeconds = (doubleTapSeekMs / 1_000L).coerceAtLeast(1L)
                     when {
-                        event.x < width / 3f -> callbacks.onSeekBy(-DOUBLE_TAP_SEEK_MS, "快退 10 秒")
-                        event.x > width * 2f / 3f -> callbacks.onSeekBy(DOUBLE_TAP_SEEK_MS, "快进 10 秒")
-                        else -> callbacks.onPlaybackToggle()
+                        canDoubleTapSide && event.x < width / 3f ->
+                            callbacks.onSeekBy(-doubleTapSeekMs, "快退 $stepSeconds 秒")
+                        canDoubleTapSide && event.x > width * 2f / 3f ->
+                            callbacks.onSeekBy(doubleTapSeekMs, "快进 $stepSeconds 秒")
+                        canDoubleTapCenter -> callbacks.onPlaybackToggle()
                     }
                 } else {
                     state.lastTapUpTimeMs = event.eventTime
                     state.lastTapX = event.x
                     state.lastTapY = event.y
                     cancelPendingSingleTap()
-                    if (capabilities.doubleTapSeek) {
+                    if (doubleTapPossible) {
                         val runnable = Runnable {
                             state.singleTapRunnable = null
                             callbacks.onToggleControls()
@@ -686,9 +428,12 @@ private class PlayerTouchGestureState {
     var lastTapX: Float = 0f
     var lastTapY: Float = 0f
     var originalSpeed: Float = 1f
+    var pinching: Boolean = false
+    var pinchDistance: Float = 0f
+    var topSwipeBackTriggered: Boolean = false
 }
 
-private class PlayerRemoteKeyState {
+internal class PlayerRemoteKeyState {
     var lastSeekEventTimeMs: Long = Long.MIN_VALUE
     var seekChanged: Boolean = false
 
@@ -714,19 +459,61 @@ private class PlayerRemoteKeyState {
      * 按住越久步进越大（10s → 30s → 60s）。单次按下时 held≈0，仍是原有 10 秒语义；
      * 档位判定在 domain 层的纯函数里，可被 JVM 单测覆盖。
      */
-    fun currentSeekStepMs(eventTimeMs: Long): Long {
+    fun currentSeekStepMs(eventTimeMs: Long, stepSeconds: Int = FastSeekSetting.DefaultStepSeconds): Long {
         val held = if (seekStartEventTimeMs == Long.MIN_VALUE) {
             0L
         } else {
             (eventTimeMs - seekStartEventTimeMs).coerceAtLeast(0L)
         }
-        return seekStepMsForHold(held)
+        return seekStepMsForHold(held, baseStepSeconds = stepSeconds)
     }
 
     fun resetSeek() {
         lastSeekEventTimeMs = Long.MIN_VALUE
         seekStartEventTimeMs = Long.MIN_VALUE
         seekChanged = false
+    }
+
+    // ── 无长短按遥控器（6 键：↑↓←→ OK MENU）的单击分段快进 ─────────────────
+    // 痛点：这类遥控器不产生系统连发（repeatCount 恒为 0），按住 ≠ 快进，单击一次只走一步。
+    // 方案：把「单击次数」当节拍器——超时窗口（SEEK_TAP_WINDOW_MS）内每次点击步长升一档
+    // （10s → 20s → 30s …，封顶 10 档），停点 1 秒后由 UI 侧提交跳转。
+
+    private var tapCount: Int = 0
+    private var lastTapEventTimeMs: Long = Long.MIN_VALUE
+
+    /**
+     * 单击快进：返回本次点击应走的毫秒数。超时窗口外的首击重置计数（回到 baseStepSeconds）。
+     * 与长按连发 [shouldHandleSeek] 独立，两套语义不混用。
+     */
+    fun tapSeekStepMs(eventTimeMs: Long, stepSeconds: Int): Long {
+        tapCount = if (
+            lastTapEventTimeMs == Long.MIN_VALUE ||
+            eventTimeMs - lastTapEventTimeMs >= SEEK_TAP_WINDOW_MS
+        ) {
+            1
+        } else {
+            (tapCount + 1).coerceAtMost(MAX_TAP_SEGMENTS)
+        }
+        lastTapEventTimeMs = eventTimeMs
+        seekChanged = true
+        return seekStepMsForHold((tapCount - 1) * SEGMENT_HOLD_STEP_MS, baseStepSeconds = stepSeconds)
+    }
+
+    fun resetTapSeek() {
+        tapCount = 0
+        lastTapEventTimeMs = Long.MIN_VALUE
+        seekChanged = false
+    }
+
+    companion object {
+        /** 单击与长按的分界：按住不足此时长视为单击，达到视为长按连发。 */
+        const val LONG_PRESS_MS = 450L
+        /** 单击分段快进的超时窗口：停点超过此时长视为一次新意图，UI 侧在此时长后提交跳转。 */
+        const val SEEK_TAP_WINDOW_MS = 900L
+        /** 分段步长升档的等效按住毫秒间隔（tapCount-1) * 此值喂给 seekStepMsForHold）。 */
+        private const val SEGMENT_HOLD_STEP_MS = 350L
+        private const val MAX_TAP_SEGMENTS = 10
     }
 }
 
@@ -765,6 +552,10 @@ internal fun Window.restoreScreenBrightness(brightness: Float) {
 }
 
 internal const val DOUBLE_TAP_SEEK_MS = 10_000L
+/** 边缘保护：横屏握持时底部该高度内不响应进度手势（dp）。 */
+private const val SEEK_EDGE_GUARD_DP = 24f
+/** 顶部下滑返回的触发边缘高度（dp）。 */
+private const val TOP_SWIPE_EDGE_DP = 24f
 // 遥控器首档步进 10 秒由 domain 的 DEFAULT_SEEK_TIERS 定义，
 // 长按加速度换算见 PlayerRemoteKeyState.currentSeekStepMs，避免两处常量漂移。
 private const val REMOTE_SEEK_REPEAT_INTERVAL_MS = 150L

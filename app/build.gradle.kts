@@ -25,6 +25,14 @@ fun configProperty(name: String): String {
         ?: ""
 }
 
+// AI 找片的 Key / Base URL 只从构建期环境变量或 local.properties 读取，
+// 缺失时注入空串；不写进偏好、不进仓库。转义避免 Key 中的引号/反斜杠破坏生成代码。
+fun buildConfigString(value: String): String = "\"${value
+    .replace("\\", "\\\\")
+    .replace("\"", "\\\"")
+    .replace("\n", "\\n")
+    .replace("\r", "\\r")}\""
+
 val releaseStoreFile = configProperty("TVBOX_RELEASE_STORE_FILE")
 val releaseStorePassword = configProperty("TVBOX_RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = configProperty("TVBOX_RELEASE_KEY_ALIAS")
@@ -44,8 +52,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.0.40"
-val TVBOX_VERSION_CODE = 20040
+val TVBOX_VERSION_NAME = "1.0.41"
+val TVBOX_VERSION_CODE = 20041
 
 android {
     namespace = "com.tvbox.app"
@@ -58,6 +66,9 @@ android {
         versionCode = TVBOX_VERSION_CODE
         versionName = TVBOX_VERSION_NAME
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // AI 找片：构建期注入，缺失为空串；UI 只读展示来源，Key 不写入偏好。
+        buildConfigField("String", "AI_API_KEY", buildConfigString(configProperty("TVBOX_AI_API_KEY")))
+        buildConfigField("String", "AI_BASE_URL", buildConfigString(configProperty("TVBOX_AI_BASE_URL")))
         // ABI 按构建类型分别配置：Release 只发 arm64-v8a，Debug 可选本机 x86。
     }
 
@@ -102,6 +113,25 @@ android {
             if (hasReleaseSigning && configProperty("TVBOX_SIGN_DEBUG_WITH_RELEASE") == "true") {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+        // 「压缩优化调试版」：R8 混淆 + 资源收缩拿到接近 Release 的体积优化，
+        // 但保留 isDebuggable=true 以便连 ADB 真机验证；不剥离 Log 调用（见专属 proguard 规则）。
+        create("debugOptimized") {
+            initWith(getByName("release"))
+            // 覆盖 Release 的可调试/日志语义：调试版必须能连 ADB 调试，且保留 Log 调用。
+            isDebuggable = true
+            isJniDebuggable = true
+            isMinifyEnabled = true
+            isShrinkResources = true
+            applicationIdSuffix = ".dbgopt"
+            versionNameSuffix = "-dbgopt"
+            // 用 debug 签名：调试版用 release key 不合适，也会污染 release 版本号历史。
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += listOf("debug", "release")
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-debug-optimize.pro",
+            )
         }
         release {
             // 只发布 arm64-v8a：不在应用商店/Release 中附带 armv7 与 x86 原生库。
@@ -187,6 +217,12 @@ androidComponents {
         if (variant.buildType == "release") {
             variant.outputs.forEach { output ->
                 output.outputFileName.set("juhe-video-v${TVBOX_VERSION_NAME}.apk")
+            }
+        }
+        // 压缩优化调试版：带版本号 + dbgopt 后缀，避免与 release/debug 混淆。
+        if (variant.buildType == "debugOptimized") {
+            variant.outputs.forEach { output ->
+                output.outputFileName.set("juhe-video-v${TVBOX_VERSION_NAME}-dbgopt.apk")
             }
         }
     }
@@ -416,6 +452,9 @@ dependencies {
     implementation(libs.androidx.media3.session)
     implementation(libs.androidx.media3.exoplayer.hls)
     implementation(libs.androidx.media3.ui)
+    // FFmpeg 软解码扩展（GPL-3.0）：SoftwareOnly 档在系统软解缺失时由 FFmpeg 兜底。
+    // Auto 档同样以 EXTENSION_RENDERER_MODE_ON 接入，作为硬解失败后的最后兜底。
+    implementation(libs.nextlib.media3ext)
     implementation(libs.coil.compose)
     implementation(libs.androidx.window)
     implementation(libs.androidx.profileinstaller)

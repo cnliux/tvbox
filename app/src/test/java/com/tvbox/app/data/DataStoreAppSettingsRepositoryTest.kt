@@ -15,7 +15,6 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.VideoScaleMode
 import java.io.File
 import java.io.IOException
@@ -100,7 +99,6 @@ class DataStoreAppSettingsRepositoryTest {
                     SettingsStorageKeys.INTRO_SKIP_SECONDS to 15,
                     SettingsStorageKeys.OUTRO_SKIP_SECONDS to 30,
                     SettingsStorageKeys.HOME_CONTINUE_WATCHING to true,
-                    SettingsStorageKeys.THEME to TvTheme.Cinema.storageKey,
                     SettingsStorageKeys.FONT_SCALE to TvFontScale.ExtraLarge.storageKey,
                     SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP to false,
                     SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH to false,
@@ -111,9 +109,7 @@ class DataStoreAppSettingsRepositoryTest {
                     SettingsStorageKeys.MOBILE_ONBOARDED to true,
                     SettingsStorageKeys.LIVE_SOURCE_DEFAULT_INDEX to 2,
                     SettingsStorageKeys.EPISODE_SORT_REVERSE to true,
-                    SettingsStorageKeys.VIDEO_GRID_COLUMNS to 5,
                     SettingsStorageKeys.EPG_URL to "https://epg",
-                    SettingsStorageKeys.PLATFORM_LIVE_GRID_COLUMNS to 4,
                     SettingsStorageKeys.HISTORY_MAX_ITEMS to 300,
                     SettingsStorageKeys.SOURCE_SPEED_LATENCIES to
                         legacySettingsJson.encodeToString(mapOf("a" to 120L, "b" to -1L)),
@@ -136,7 +132,6 @@ class DataStoreAppSettingsRepositoryTest {
         assertEquals(15, settings.introSkipSeconds)
         assertEquals(30, settings.outroSkipSeconds)
         assertTrue(settings.homeContinueWatchingEnabled)
-        assertEquals(TvTheme.Cinema, settings.theme)
         assertEquals(TvFontScale.ExtraLarge, settings.fontScale)
         assertEquals(false, settings.checkUpdatesOnStartup)
         assertEquals(false, settings.playbackAgentAutoSwitchEnabled)
@@ -147,9 +142,7 @@ class DataStoreAppSettingsRepositoryTest {
         assertTrue(settings.mobileOnboarded)
         assertEquals(2, settings.liveSourceDefaultIndex)
         assertTrue(settings.episodeSortReverse)
-        assertEquals(5, settings.videoGridColumns)
         assertEquals("https://epg", settings.epgUrl)
-        assertEquals(4, settings.platformLiveGridColumns)
         assertEquals(300, settings.historyMaxItems)
 
         // 迁移结果已原子落盘：schemaVersion 与屏蔽分类都能在 DataStore 里读到。
@@ -170,7 +163,7 @@ class DataStoreAppSettingsRepositoryTest {
         val repository = DataStoreAppSettingsRepository(store, source)
 
         repository.getSettings()
-        repository.saveSettings(AppSettings(theme = TvTheme.Cinema))
+        repository.saveSettings(AppSettings())
         repository.getSettings()
         repository.getSpeedLatencies()
         assertEquals(1, source.reads)
@@ -205,7 +198,7 @@ class DataStoreAppSettingsRepositoryTest {
         val repository = DataStoreAppSettingsRepository(store, source)
 
         assertThrows(IOException::class.java) {
-            runBlocking { repository.saveSettings(AppSettings(theme = TvTheme.Cinema)) }
+            runBlocking { repository.saveSettings(AppSettings()) }
         }
         assertEquals(SettingsSchema.LEGACY, store.current().schemaVersion())
         assertTrue(store.current().asMap().isEmpty())
@@ -228,7 +221,6 @@ class DataStoreAppSettingsRepositoryTest {
             introSkipSeconds = 12,
             outroSkipSeconds = 34,
             homeContinueWatchingEnabled = true,
-            theme = TvTheme.Cinema,
             fontScale = TvFontScale.Large,
             checkUpdatesOnStartup = false,
             playbackAgentAutoSwitchEnabled = false,
@@ -238,17 +230,13 @@ class DataStoreAppSettingsRepositoryTest {
             mobileOnboarded = true,
             liveSourceDefaultIndex = 3,
             episodeSortReverse = true,
-            videoGridColumns = 6,
             epgUrl = "https://epg",
-            platformLiveGridColumns = 4,
-            continueWatchingCount = 10,
             epgCardRows = 5,
             liveNumberMatchRows = 10,
             liveNumberSearchLimit = 100,
             relatedChannelCount = 20,
             hotWordCount = 24,
             searchSuggestionCount = 6,
-            homeHotContentCount = 40,
             doubanHotPageSize = 30,
             doubanHotFallbackLines = 10,
             historyMaxItems = 200,
@@ -304,7 +292,6 @@ class DataStoreAppSettingsRepositoryTest {
         val settings = repository.getSettings()
         assertEquals(emptyList<String>(), settings.sourceOrder)
         assertEquals(emptyList<String>(), settings.blockedVideoCategories)
-        assertEquals(TvTheme.Default, settings.theme)
         assertEquals(QuantitySettings.HistoryMaxItems.max, settings.historyMaxItems)
         assertTrue(settings.mobileOnboarded)
     }
@@ -319,7 +306,7 @@ class DataStoreAppSettingsRepositoryTest {
         )
         val store = InMemoryPreferencesDataStore()
         val repository = DataStoreAppSettingsRepository(store, source)
-        val saved = AppSettings(historyMaxItems = 200, theme = TvTheme.Cinema)
+        val saved = AppSettings(historyMaxItems = 200)
 
         val migrationRead = async(Dispatchers.IO) { repository.getSettings() }
         val saveWrite = async(Dispatchers.IO) { repository.saveSettings(saved) }
@@ -378,7 +365,6 @@ class DataStoreAppSettingsRepositoryTest {
             LegacySettingsSnapshot(
                 values = mapOf(
                     SettingsStorageKeys.HISTORY_MAX_ITEMS to 200,
-                    SettingsStorageKeys.THEME to TvTheme.Cinema.storageKey,
                 ),
             ),
         )
@@ -393,7 +379,6 @@ class DataStoreAppSettingsRepositoryTest {
 
         val recovered = repository.getSettings()
         assertEquals(AppSettings().historyMaxItems, recovered.historyMaxItems)
-        assertEquals(AppSettings().theme, recovered.theme)
         assertEquals(SettingsSchema.CURRENT, store.current().schemaVersion())
         assertEquals(1, source.reads)
     }

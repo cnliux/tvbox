@@ -42,7 +42,10 @@ import androidx.compose.foundation.lazy.itemsIndexed as lazyItemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -108,6 +111,7 @@ import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
+import com.tvbox.app.domain.ThirdPartyLiveProxy
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
 import com.tvbox.app.ui.components.EmptyState
@@ -144,10 +148,25 @@ private fun PlatformLiveSitesScreen(
 ) {
     val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
+    var showProxyDialog by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
         // runCatching：目标节点尚未进入组合时 requestFocus 会抛 IllegalStateException。
         if (!touchMode) runCatching { firstCardFocusRequester.requestFocus() }
+    }
+    if (showProxyDialog) {
+        PlatformThirdPartyProxyDialog(
+            enabled = state.appSettings.platformThirdPartyProxyEnabled,
+            templates = state.appSettings.platformThirdPartyProxyTemplates,
+            onDismiss = { showProxyDialog = false },
+            onSave = { enabled, templates ->
+                actions.updateAppSettings { it.copy(
+                    platformThirdPartyProxyEnabled = enabled,
+                    platformThirdPartyProxyTemplates = templates,
+                ) }
+                showProxyDialog = false
+            },
+        )
     }
     PlatformLiveBrowseSurface(
         title = "直播",
@@ -164,6 +183,22 @@ private fun PlatformLiveSitesScreen(
         onRetry = actions::refreshPlatformLive,
         columnsOverride = 0,
     ) {
+        item(key = "third-party-proxy", span = { GridItemSpan(maxLineSpan) }) {
+            val proxyEnabled = state.appSettings.platformThirdPartyProxyEnabled
+            val proxyRaw = state.appSettings.platformThirdPartyProxyTemplates
+            val isDefault = proxyRaw.isBlank()
+            val subtitle = when {
+                !proxyEnabled -> "已关闭：用 Go 官方解析加载虎牙/斗鱼"
+                isDefault -> "已开启：内置默认代理（cfss.cc 主 + mursor 备用）"
+                else -> "已开启：自定义 ${proxyRaw.lines().count { it.isNotBlank() }} 条代理地址"
+            }
+            PlatformLiveTextCard(
+                title = "第三方代理",
+                subtitle = subtitle,
+                label = if (proxyEnabled) "已开启" else "已关闭",
+                onClick = { showProxyDialog = true },
+            )
+        }
         item(key = "favorites") {
             PlatformLiveTextCard(
                 title = "收藏",
@@ -201,6 +236,84 @@ private fun PlatformLiveSitesScreen(
             }
         }
     }
+}
+
+/**
+ * 第三方代理配置对话框（「管理」页「第三方代理」卡片入口）。
+ *
+ * - 开关控制是否启用第三方代理优先（关闭时虎牙/斗鱼走 Go 官方解析）。
+ * - 地址模板每行一条；留空即回落到内置默认模板（[ThirdPartyLiveProxy.defaultTemplates]）。
+ * - 「恢复内置默认」把模板清空，UI 明确标出「使用内置默认」，避免用户不知道有默认值。
+ */
+@Composable
+private fun PlatformThirdPartyProxyDialog(
+    enabled: Boolean,
+    templates: String,
+    onDismiss: () -> Unit,
+    onSave: (Boolean, String) -> Unit,
+) {
+    var draftEnabled by remember { mutableStateOf(enabled) }
+    var draftTemplates by remember { mutableStateOf(templates) }
+    val isDefaultTemplates = draftTemplates.isBlank()
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("第三方代理") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("启用第三方代理", style = MaterialTheme.typography.bodyLarge)
+                        Text(
+                            "开启后虎牙/斗鱼优先用第三方地址加载，官方解析作兜底",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(checked = draftEnabled, onCheckedChange = { draftEnabled = it })
+                }
+                OutlinedTextField(
+                    value = draftTemplates,
+                    onValueChange = { draftTemplates = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("代理地址模板（每行一条）") },
+                    placeholder = { Text("https://cfss.cc/cdn/{site}/{room}.flv\nhttps://mursor.ottiptv.cc/{site}/{room}") },
+                    supportingText = {
+                        Text(
+                            if (isDefaultTemplates) "留空＝内置默认代理（cfss.cc 主 + mursor 备用）"
+                            else "占位符：{site} 站点全名、{room} 房间号、{siteAlias} 站点短码",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    },
+                    minLines = 3,
+                    maxLines = 6,
+                )
+                if (isDefaultTemplates) {
+                    Text(
+                        "当前：使用内置默认配置",
+                        color = MaterialTheme.colorScheme.primary,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = {
+                        draftTemplates = ""
+                    }) { Text("恢复内置默认") }
+                    TextButton(onClick = {
+                        draftTemplates = ThirdPartyLiveProxy.defaultTemplates.joinToString("\n")
+                    }) { Text("填入内置默认地址") }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSave(draftEnabled, draftTemplates.trim()) }) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消") }
+        },
+    )
 }
 
 @Composable
@@ -1108,6 +1221,12 @@ private fun PlatformLivePlayerScreen(
     // 反而把代理内部的无缝续流变成一次可见重连。上游真卡死由 Go 侧 15s
     // 空闲读超时 + 播放器 60s 读超时兜底。
     val proxyWrapped = continuityProxy != null
+    // 任务2/3 音视频重同步：软卡顿（位置静止但缓冲充足）时先不重建整条线，而是连续达到阈值后
+    // 做一次 seekTo(currentPosition) 走 CLOSEST_SYNC 重新对齐解码时钟。该重同步只动播放时钟，
+    // 不清缓存、不重新解析，避免把代理内部的无缝续流升级成可见重连。候选/地址变化时随看门狗重建计数。
+    var softStallResyncCount by remember(stream?.url, stream?.safeActiveCandidateIndex, proxyWrapped) {
+        mutableStateOf(0)
+    }
     var playbackWatchdog by remember(stream?.url, stream?.safeActiveCandidateIndex, proxyWrapped) {
         mutableStateOf(
             if (proxyWrapped) {
@@ -1315,12 +1434,30 @@ private fun PlatformLivePlayerScreen(
                 )
                 if (failure != null) {
                     if (failure.kind == PlaybackFailureKind.StallSoft) {
-                        // 软卡顿：曾推进过的流短暂静止。只提示"正在重连"，不重建播放器、
-                        // 不触发 recover——代理内部的短段/预建交接会在数秒内自行续上。
-                        android.util.Log.i(
-                            PLATFORM_LIVE_LOG_TAG,
-                            "【软卡顿】room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, elapsedMs=${failure.elapsedMs}, 仅提示不恢复",
-                        )
+                        // 软卡顿：曾推进过的流短暂静止。不重建播放器、不触发 recover——代理内部的
+                        // 短段/预建交接通常会在数秒内自行续上。但若连续多个采样窗口仍未恢复（累计
+                        // 到阈值），先做一次 seekTo(currentPosition) 强制重对齐解码时钟（Media3 seek
+                        // 走 CLOSEST_SYNC），给流一次"原地续上"的机会；只有重同步后仍卡才升级为硬恢复。
+                        softStallResyncCount++
+                        if (softStallResyncCount >= PLATFORM_LIVE_SOFT_STALL_RESYNC_THRESHOLD) {
+                            softStallResyncCount = 0
+                            val p = player
+                            runCatching {
+                                val resumePos = p.currentPosition
+                                android.util.Log.i(
+                                    PLATFORM_LIVE_LOG_TAG,
+                                    "【音视频重同步】room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, seekTo=$resumePos (CLOSEST_SYNC 强制重对齐)",
+                                )
+                                p.seekTo(resumePos)
+                            }.onFailure { t ->
+                                android.util.Log.w(PLATFORM_LIVE_LOG_TAG, "【音视频重同步失败】${t.message}")
+                            }
+                        } else {
+                            android.util.Log.i(
+                                PLATFORM_LIVE_LOG_TAG,
+                                "【软卡顿】room=${room.id}, activeCdn=${stream?.activeCandidate?.cdn}, elapsedMs=${failure.elapsedMs}, 软卡顿计数 $softStallResyncCount/$PLATFORM_LIVE_SOFT_STALL_RESYNC_THRESHOLD，仅提示不恢复",
+                            )
+                        }
                         playbackError = "直播连接中断，正在重连…"
                         chrome.bump()
                         continue
@@ -1338,6 +1475,14 @@ private fun PlatformLivePlayerScreen(
                     chrome.bump()
                     actions.recoverPlatformLiveChannel(LiveLineFallbackReason.Stall)
                 }
+                // 任务2/3 音视频重同步（实现说明）：AvResyncController 设计为按 |audio-video| 漂移触发，
+                // 但 Media3 1.10.1 的 Player 只暴露单一 currentPlaybackPosition，未公开 per-stream
+                // 音频/视频分离位置（player.audioPosition 不存在），FLV 平台直播也无 live window，
+                // Kotlin 侧取不到可靠的音/视频分离漂移信号，故不臆造 audioPositionMs/videoPositionMs。
+                // 实际落地的重同步路径见上方软卡顿分支：连续软卡顿达到阈值后 seekTo(currentPosition)
+                // 走 CLOSEST_SYNC 强制重对齐解码时钟（不重建播放器、不清缓存），对应 Controller 文档
+                // 里"触发一次强制重同步"的动作语义；真正的音/视频分离漂移自愈仍交由 Go 代理侧音频回拉，
+                // 或升级 media3 后用 audioPosition/currentLiveOffset 实现。
             }
         }
     }
@@ -1524,43 +1669,77 @@ private fun PlatformLivePlayerScreen(
         }
     }
 
-    // 遥控键位收敛到共享 PlayerRoomKeyMap：页面只提供房间/候选/线路浮层语义。
+    // 遥控键位统一到 UnifiedRemoteKeyRouter（替代旧 PlayerRoomKeyMap）：键码→动作由绑定表决定。
     val roomKeyMap = remember {
-        PlayerRoomKeyMap(
-            PlayerRoomKeyMap.Callbacks(
-                isOverlayVisible = { false },
-                onPreviousRoom = {},
-                onNextRoom = {},
-                onPreviousCandidate = {},
-                onNextCandidate = {},
-                onOpenRoomList = {},
-                onReconnect = {},
+        UnifiedRemoteKeyRouter(
+            mode = UnifiedRemoteKeyRouter.PlayerMode.Room,
+            callbacks = UnifiedRemoteKeyRouter.Callbacks(
+                onAction = { false },
+                chrome = chrome,
+                isOverlayVisible = { showLineControl || showRoomList },
             ),
         )
     }
-    roomKeyMap.callbacks = PlayerRoomKeyMap.Callbacks(
+    roomKeyMap.callbacks = UnifiedRemoteKeyRouter.Callbacks(
+        onAction = { action ->
+            when (action) {
+                is UnifiedRemoteKeyRouter.Action.PreviousRoom -> {
+                    actions.playPreviousPlatformLiveRoom()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.NextRoom -> {
+                    actions.playNextPlatformLiveRoom()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.PreviousCandidate -> {
+                    actions.playPreviousPlatformLiveCandidate()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.NextCandidate -> {
+                    actions.playNextPlatformLiveCandidate()
+                    true
+                }
+
+                // 确认键改为打开「节目列表」（当前分类房间，带封面图）；线路改由按钮触发。
+                is UnifiedRemoteKeyRouter.Action.OpenRoomList -> {
+                    if (session.interrupted && player != null) {
+                        session.play(player)
+                        actions.reconnectPlatformLiveChannel()
+                    } else {
+                        showRoomList = true
+                    }
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.Reconnect -> {
+                    actions.reconnectPlatformLiveChannel()
+                    true
+                }
+
+                // 设置键：打开线路浮层（切候选线路/清晰度的高频入口），与 MENU 的重连区分。
+                is UnifiedRemoteKeyRouter.Action.OpenLineOverlay -> {
+                    if (stream?.hasCandidates == true) {
+                        showLineControl = true
+                        chrome.bump()
+                        true
+                    } else {
+                        false
+                    }
+                }
+
+                is UnifiedRemoteKeyRouter.Action.OpenInfo -> {
+                    actions.reconnectPlatformLiveChannel()
+                    true
+                }
+
+                else -> false
+            }
+        },
+        chrome = chrome,
         isOverlayVisible = { showLineControl || showRoomList },
-        onPreviousRoom = { actions.playPreviousPlatformLiveRoom() },
-        onNextRoom = { actions.playNextPlatformLiveRoom() },
-        onPreviousCandidate = { actions.playPreviousPlatformLiveCandidate() },
-        onNextCandidate = { actions.playNextPlatformLiveCandidate() },
-        // 确认键改为打开「节目列表」（当前分类房间，带封面图）；线路改由按钮触发。
-        onOpenRoomList = {
-            if (session.interrupted && player != null) {
-                session.play(player)
-                actions.reconnectPlatformLiveChannel()
-            } else {
-                showRoomList = true
-            }
-        },
-        onReconnect = { actions.reconnectPlatformLiveChannel() },
-        onSettings = {
-            if (stream?.hasCandidates == true) {
-                showLineControl = true
-                chrome.bump()
-            }
-        },
-        onInfo = { actions.reconnectPlatformLiveChannel() },
     )
 
     Box(
@@ -1704,6 +1883,7 @@ private fun PlatformLivePlayerScreen(
                         else -> null
                     },
                 ),
+                hiddenControls = state.appSettings.playerHiddenControls,
                 actions = PlayerChromeActions(
                     onToggle = {
                         val currentPlayer = player ?: return@PlayerChromeActions
@@ -2242,4 +2422,6 @@ private fun formatOnline(value: Int): String {
 
 private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 4_000L
 private const val PLATFORM_LIVE_LOG_TAG = "TVBoxPlatformLive"
+/** 任务2/3 音视频重同步：连续软卡顿采样达到该次数后，先 seekTo 强制重对齐解码时钟，再考虑硬恢复。 */
+private const val PLATFORM_LIVE_SOFT_STALL_RESYNC_THRESHOLD = 3
 

@@ -15,7 +15,8 @@ class CoverDecorMappingTest {
     private fun item(
         movieId: Int = 1,
         episodeIndex: Int = 0,
-        latestEp: Int = 0,
+        // null = 由 hasNew 推导总集数；显式传值（含 0）用于锁定"已知/未知集数"的降级行为。
+        latestEp: Int? = null,
         hasNew: Boolean = false,
         updatedAt: Long = 1000L,
     ) = WatchHistoryItem(
@@ -24,13 +25,14 @@ class CoverDecorMappingTest {
         sourceIndex = 0, sourceName = "默认", episodeIndex = episodeIndex,
         episodeTitle = "第${episodeIndex + 1}集", episodeUrl = "u$movieId",
         positionMs = 0, durationMs = 0, updatedAtEpochMs = updatedAt,
-        latestEpisodeCount = latestEp,
-    ).let { if (hasNew) it.copy(latestEpisodeCount = it.episodeIndex + 2) else it }
+        // 实现从 newEpisodeHint 派生"有新集"：总集数 > 已看集数才有提示。
+        latestEpisodeCount = latestEp ?: (episodeIndex + if (hasNew) 2 else 1),
+    )
 
-    /** hasNew=false → badge=None, tag=CaughtUp。 */
+    /** 已看到总集数最后一集 → badge=None, tag=CaughtUp。 */
     @Test
     fun noUpdateYieldsNoneBadgeAndCaughtUp() {
-        val item = item(hasNew = false, latestEp = 3)
+        val item = item(hasNew = false)
         val decor = item.toCoverDecor(pulseEnabled = true)
         assertEquals(CoverBadgeState.None, decor.badge)
         assertEquals(0, decor.unread)

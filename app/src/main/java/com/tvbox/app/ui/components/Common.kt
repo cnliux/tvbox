@@ -3,6 +3,7 @@ package com.tvbox.app.ui.components
 import android.net.Uri
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -60,8 +61,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.traversalIndex
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,10 +68,8 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
-import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.tvbox.app.R
 import com.tvbox.app.data.DOUBAN_REFERER
 import com.tvbox.app.data.DOUBAN_USER_AGENT
 import com.tvbox.app.domain.DoubanHotItem
@@ -80,7 +77,6 @@ import com.tvbox.app.domain.Movie
 import com.tvbox.app.ui.LocalTouchMode
 import com.tvbox.app.domain.NewEpisodeHint
 import com.tvbox.app.domain.WatchHistoryItem
-import com.tvbox.app.ui.TvScreen
 import com.tvbox.app.ui.formatPlayerTime
 import com.tvbox.app.ui.rememberTvFocusRequest
 import com.tvbox.app.ui.theme.TvColors
@@ -95,7 +91,6 @@ fun AppHeader(
     onLive: () -> Unit = {},
     onPlatformLive: () -> Unit = {},
     onSettings: () -> Unit = {},
-    showShortcutActions: Boolean = false,
     firstActionModifier: Modifier = Modifier,
     titleContent: (@Composable () -> Unit)? = null,
     modifier: Modifier = Modifier,
@@ -115,12 +110,8 @@ fun AppHeader(
             } else {
                 Text(
                     text = title,
-                    style = if (showShortcutActions) {
-                        MaterialTheme.typography.headlineLarge
-                    } else {
-                        MaterialTheme.typography.titleLarge
-                    },
-                    fontWeight = if (showShortcutActions) FontWeight.Bold else FontWeight.Medium,
+                    style = MaterialTheme.typography.headlineLarge,
+                    fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -128,161 +119,19 @@ fun AppHeader(
             Text(
                 text = subtitle,
                 color = TvColors.TextSecondary,
-                style = if (showShortcutActions) {
-                    MaterialTheme.typography.bodyMedium
-                } else {
-                    MaterialTheme.typography.labelMedium
-                },
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (showShortcutActions) {
-                HeaderActionButton(text = "历史(1)", onClick = onHistory, legacyStyle = true, modifier = firstActionModifier)
-                HeaderActionButton(text = "搜索(2)", onClick = onSearch, legacyStyle = true)
-                HeaderActionButton(text = "电视(4)", onClick = onLive, legacyStyle = true)
-                HeaderActionButton(text = "直播(5)", onClick = onPlatformLive, legacyStyle = true)
-                HeaderActionButton(text = "设置(6)", onClick = onSettings, legacyStyle = true)
-            } else {
-                HeaderActionButton(text = "搜索", onClick = onSearch, modifier = firstActionModifier)
-                HeaderActionButton(text = "历史", onClick = onHistory)
-            }
+            HeaderActionButton(text = "历史(1)", onClick = onHistory, legacyStyle = true, modifier = firstActionModifier)
+            HeaderActionButton(text = "搜索(2)", onClick = onSearch, legacyStyle = true)
+            HeaderActionButton(text = "电视(4)", onClick = onLive, legacyStyle = true)
+            HeaderActionButton(text = "直播(5)", onClick = onPlatformLive, legacyStyle = true)
+            HeaderActionButton(text = "设置(6)", onClick = onSettings, legacyStyle = true)
         }
     }
-}
-
-@Composable
-fun AppNavigationRail(
-    screen: TvScreen,
-    onHome: () -> Unit,
-    onLive: () -> Unit,
-    onPlatformLive: () -> Unit,
-    onSettings: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Surface(
-        modifier = modifier
-            .fillMaxHeight()
-            .width(TvDimens.RailWidth),
-        color = TvColors.Background,
-        contentColor = TvColors.TextPrimary,
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(horizontal = 10.dp, vertical = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Surface(
-                modifier = Modifier.size(42.dp),
-                shape = RoundedCornerShape(13.dp),
-                color = TvColors.Accent,
-                contentColor = TvColors.Background,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("TV", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            TvNavigationItem("首页", NavigationIcon.Home, screen.isHomeDestination(), onHome)
-            TvNavigationItem("电视", NavigationIcon.Live, screen == TvScreen.Live, onLive)
-            TvNavigationItem("直播", NavigationIcon.PlatformLive, screen == TvScreen.PlatformLive, onPlatformLive)
-            Spacer(modifier = Modifier.weight(1f))
-            TvNavigationItem("设置", NavigationIcon.Settings, screen == TvScreen.Settings, onSettings)
-        }
-    }
-}
-
-@Composable
-private fun TvNavigationItem(
-    label: String,
-    icon: NavigationIcon,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(12.dp)
-    var focused by remember { mutableStateOf(false) }
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 图标 24dp + 上下 10dp 内边距只有 44dp，触摸模式补足 48dp 最小热区。
-            .heightIn(min = 48.dp)
-            .tvFocusScale(
-                shape = shape,
-                focusedBorder = TvColors.FocusRing,
-                idleBorder = if (selected) TvColors.Accent.copy(alpha = 0.5f) else TvColors.Border,
-            )
-            .clip(shape)
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(role = Role.Button, onClick = onClick)
-            .semantics {
-                contentDescription = label
-                stateDescription = if (selected) "已选中" else "未选中"
-            }
-            .focusable(),
-        shape = shape,
-        color = when {
-            focused -> TvColors.SurfaceRaised
-            selected -> TvColors.AccentSoft
-            else -> Color.Transparent
-        },
-        contentColor = when {
-            focused -> TvColors.TextPrimary
-            selected -> TvColors.AccentStrong
-            else -> TvColors.TextSecondary
-        },
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            NavigationGlyph(
-                icon = icon,
-                tint = when {
-                    focused -> TvColors.TextPrimary
-                    selected -> TvColors.AccentStrong
-                    else -> TvColors.TextSecondary
-                },
-                label = label,
-            )
-        }
-    }
-}
-
-private enum class NavigationIcon(val glyph: String) {
-    Home("\uE608"),
-    Live("\uEB34"),
-    PlatformLive("\uE6E6"),
-    Settings("\uE6F0"),
-}
-
-private val TvBoxIconFont = FontFamily(Font(R.font.tvbox_iconfont))
-
-@Composable
-private fun NavigationGlyph(
-    icon: NavigationIcon,
-    tint: Color,
-    label: String,
-) {
-    val glyphSize = if (icon == NavigationIcon.Live) 22.sp else 26.sp
-    Text(
-        text = icon.glyph,
-        modifier = Modifier
-            .size(24.dp)
-            .semantics { contentDescription = label },
-        color = tint,
-        fontFamily = TvBoxIconFont,
-        fontSize = glyphSize,
-        lineHeight = glyphSize,
-    )
-}
-
-private fun TvScreen.isHomeDestination(): Boolean {
-    return this == TvScreen.Home || this == TvScreen.Detail
 }
 
 @Composable
@@ -765,9 +614,14 @@ fun NewEpisodeBadge(
     onNavigate: (() -> Unit)? = null,
 ) {
     val color = if (hint.confirmed) NewEpisodeConfirmedColor else NewEpisodePendingColor
+    // TV 端（large）更新提示必须 3 米可读：用实心高对比背景 + 深色文字 + 描边，
+    // 而不是此前的 0.18 alpha 弱背景（远看几乎融进封面）。手机端保持轻量弱背景。
+    val background = if (large) color else color.copy(alpha = 0.18f)
+    val contentColor = if (large) Color(0xFF101010) else color
     Surface(
-        shape = RoundedCornerShape(4.dp),
-        color = color.copy(alpha = 0.18f),
+        shape = RoundedCornerShape(if (large) 6.dp else 4.dp),
+        color = background,
+        border = if (large) BorderStroke(1.dp, Color.White.copy(alpha = 0.7f)) else null,
         modifier = if (onNavigate != null) {
             modifier
                 .then(Modifier.clickable(role = Role.Button) { onNavigate() })
@@ -779,12 +633,12 @@ fun NewEpisodeBadge(
             // #145/#361：已确认/仅本机未看此前只靠橙/绿颜色区分，补形状标识（★/○），色盲用户也可辨认。
             text = "${if (hint.confirmed) "★" else "○"} ${hint.label}",
             modifier = Modifier.padding(
-                horizontal = if (large) 8.dp else 6.dp,
-                vertical = if (large) 3.dp else 2.dp,
+                horizontal = if (large) 10.dp else 6.dp,
+                vertical = if (large) 4.dp else 2.dp,
             ),
-            color = color,
+            color = contentColor,
             style = if (large) MaterialTheme.typography.titleSmall else MaterialTheme.typography.labelMedium,
-            fontWeight = if (large) FontWeight.SemiBold else FontWeight.Medium,
+            fontWeight = if (large) FontWeight.Bold else FontWeight.Medium,
             maxLines = 1,
         )
     }

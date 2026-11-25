@@ -69,7 +69,7 @@ class PlayerDiagnosticsTest {
     fun infoRowsUsePlaceholderWhenSnapshotMissing() {
         val rows = playerInfoRows(null)
         assertEquals(10, rows.size)
-        assertEquals("自动", rows.first().value)
+        assertEquals("自适应", rows.first().value)
         assertTrue(rows.drop(1).all { it.value == "—" })
     }
 
@@ -81,7 +81,7 @@ class PlayerDiagnosticsTest {
             DecoderStrategy.HardwareOnly,
             setOf(DecoderTrackKind.Video),
         ).associate { it.label to it.value }
-        assertEquals("强制硬解", videoRows["解码策略"])
+        assertEquals("硬解", videoRows["解码策略"])
         assertEquals("c2.android.avc.decoder · 软解", videoRows["解码器"])
         assertEquals("强制硬解 · 实际软解（已回落）", videoRows["视频回落"])
         assertNull(videoRows["音频回落"])

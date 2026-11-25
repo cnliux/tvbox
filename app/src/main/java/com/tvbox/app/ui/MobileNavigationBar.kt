@@ -82,7 +82,7 @@ fun MobileNavWrapper(
         TvScreen.Search -> MobileNavScreen.Search
         TvScreen.Live -> MobileNavScreen.Live
         TvScreen.PlatformLive -> MobileNavScreen.PlatformLive
-        TvScreen.Player, TvScreen.Settings,
+        TvScreen.Player, TvScreen.Settings, TvScreen.AiSearch,
         TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager,
         -> MobileNavScreen.Home
     }

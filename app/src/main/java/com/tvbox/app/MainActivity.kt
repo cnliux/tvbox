@@ -47,6 +47,7 @@ import com.tvbox.app.data.SharedPlatformLiveFavoritesRepository
 import com.tvbox.app.data.SharedLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.LanResolverGuard
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.ui.TvBoxApp
@@ -57,6 +58,14 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     private val viewModel: TvBoxViewModel by viewModels {
         TvBoxViewModelFactory(this)
+    }
+    // 安装前设置导出 / OTA 门禁用同一份持久化设置源，和 ViewModel 的 DataStore 实例共享底层文件。
+    private val appSettingsRepository by lazy { DataStoreAppSettingsRepository.create(applicationContext) }
+    private val appUpdateRepository by lazy {
+        DefaultAppUpdateRepository(
+            context = applicationContext,
+            settingsProvider = { appSettingsRepository.getSettings() },
+        )
     }
     private var pendingInstallPermissionAction: InstallPermissionAction? = null
     private var permissionSettingsOpen = false
@@ -139,6 +148,19 @@ class MainActivity : ComponentActivity() {
                     .collect(::applyBaseOrientation)
             }
         }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                // 局域网解析服务启用守卫：只在安全提示已确认后放行；未确认时给出明确状态并不启动。
+                var lastBlockReason: String? = null
+                viewModel.state.map { it.appSettings }.distinctUntilChanged().collect { settings ->
+                    val reason = LanResolverGuard.blockReason(settings)
+                    if (reason != null && reason != lastBlockReason) {
+                        Toast.makeText(this@MainActivity, "$reason，局域网解析服务未启用", Toast.LENGTH_LONG).show()
+                    }
+                    lastBlockReason = reason
+                }
+            }
+        }
         pendingExportApkPath = savedInstanceState?.getString("pendingExportApk")
         pendingInstallPermissionAction = savedInstanceState?.getString("pendingUpdateApk")
             ?.let { InstallPermissionAction.InstallDownloadedApk(it) }
@@ -159,8 +181,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state = viewModel.state.collectAsStateWithLifecycle().value
             TVBoxTheme(
-                theme = state.appSettings.theme,
                 fontScale = state.appSettings.fontScale,
+                themeAccent = state.appSettings.themeAccent,
             ) {
                 // 首页没有可返回的上层页面：连续按两次返回才退出应用，避免误触直接关闭。
                 BackHandler {
@@ -308,7 +330,12 @@ class MainActivity : ComponentActivity() {
         }
         pendingInstallPermissionAction = null
         permissionSettingsOpen = false
-        openSystemInstaller(apkFile)
+        // 安装前导出设置（updateExportBeforeInstall=true）：导出失败也继续安装，仅记录明确状态。
+        lifecycleScope.launch {
+            val exportStatus = appUpdateRepository.exportSettingsBeforeInstall()
+            CrashHandler.recordOperation("ota.preinstall_export", exportStatus.take(120))
+            openSystemInstaller(apkFile)
+        }
     }
 
     @Suppress("DEPRECATION")

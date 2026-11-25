@@ -14,6 +14,9 @@ import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.tvbox.app.domain.LiveRemoteDirectionMapping
+import com.tvbox.app.domain.RemoteKeyAction
+import com.tvbox.app.domain.RemoteKeyBindings
 import kotlinx.coroutines.delay
 
 /**
@@ -35,8 +38,7 @@ import kotlinx.coroutines.delay
 
 enum class UIState { FULLSCREEN, CONTROLLER, CHANNEL_LIST }
 
-/** 方向键语义：默认按需求用「上下换台 / 左右切源」，也可切回项目原有的「左右切台 / 上下换线」。 */
-enum class LiveRemoteDirectionMapping { UP_DOWN_CHANNEL, LEFT_RIGHT_CHANNEL }
+// 注：LiveRemoteDirectionMapping 已迁移到 com.tvbox.app.domain，见 domain/LiveRemoteDirectionMapping.kt。
 
 /** numberInputNonce 每次输入变化都自增，用于取消上一次「2 秒自动提交」定时器。 */
 data class LiveRemoteState(
@@ -52,6 +54,7 @@ sealed interface LiveRemoteEffect {
     data object NextSource : LiveRemoteEffect
     data object OpenController : LiveRemoteEffect
     data object OpenChannelList : LiveRemoteEffect
+    data object OpenLineControl : LiveRemoteEffect
     data object ClosePanel : LiveRemoteEffect
     data object ExitLive : LiveRemoteEffect
     data object CommitNumber : LiveRemoteEffect
@@ -77,6 +80,12 @@ class LiveRemoteKeyRouter(
     private val directionMapping: LiveRemoteDirectionMapping = LiveRemoteDirectionMapping.UP_DOWN_CHANNEL,
     /** 失败卡（重试/下一台）在场时确认键必须让给当前聚焦按钮。 */
     private val hasBlockingFailureCard: () -> Boolean = { false },
+    /**
+     * 统一遥控键位绑定（设置页可自定义）：用于「播放/暂停 / 设置 / 信息 / 菜单 / 上一台 / 下一台」等
+     * 跨页通用动作的键码判定。方向键（换台/切源）与数字选台是直播特化语义，仍走 directionMapping
+     * 与数字处理，不进绑定表；其余通用键码先经 [bindings.actionsFor] 翻译成 [LiveRemoteEffect]。
+     */
+    private val bindings: RemoteKeyBindings = RemoteKeyBindings.Default,
 ) {
     /**
      * 纯函数：输入物理键码 + Compose 事件类型，输出新状态 + 副作用。
@@ -114,10 +123,36 @@ class LiveRemoteKeyRouter(
         val sourcePrevKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_LEFT else AndroidKeyEvent.KEYCODE_DPAD_UP
         val sourceNextKey = if (upDownChannel) AndroidKeyEvent.KEYCODE_DPAD_RIGHT else AndroidKeyEvent.KEYCODE_DPAD_DOWN
 
-        return when (action) {
-            // ── 全屏：按映射解释为换台 / 切源 ──────────────────────────
+        // 数字键（含小键盘）：直播特化的选台语义，不走绑定表。
+        if (action in AndroidKeyEvent.KEYCODE_0..AndroidKeyEvent.KEYCODE_9 ||
+            action in AndroidKeyEvent.KEYCODE_NUMPAD_0..AndroidKeyEvent.KEYCODE_NUMPAD_9
+        ) {
+            return if (!down) {
+                LiveRemoteResult(state)
+            } else {
+                digitOf(action)?.let { appendDigit(state, it) } ?: LiveRemoteResult(state)
+            }
+        }
+
+        // 确认键（OK / ENTER）：两段式 + 失败卡让位，直播特化，不走绑定表。
+        // 确认键 = 打开频道列表（节目浏览高频入口），与平台直播确认键的「节目列表」语义一致。
+        // 换源/线路浮层改由设置键提供，不因确认键改开列表而丢失入口。
+        if (action == AndroidKeyEvent.KEYCODE_DPAD_CENTER || action == AndroidKeyEvent.KEYCODE_ENTER) {
+            if (hasBlockingFailureCard()) return null
+            return if (up) {
+                LiveRemoteResult(
+                    state.copy(uiState = UIState.CHANNEL_LIST),
+                    listOf(LiveRemoteEffect.OpenChannelList),
+                )
+            } else {
+                LiveRemoteResult(state)
+            }
+        }
+
+        // 方向键：按 directionMapping 解释为换台 / 切源，直播特化，不走绑定表。
+        when (action) {
             sourcePrevKey -> {
-                if (down) {
+                return if (down) {
                     LiveRemoteResult(
                         state,
                         listOf(
@@ -129,8 +164,9 @@ class LiveRemoteKeyRouter(
                     LiveRemoteResult(state)
                 }
             }
+
             sourceNextKey -> {
-                if (down) {
+                return if (down) {
                     LiveRemoteResult(
                         state,
                         listOf(
@@ -142,80 +178,40 @@ class LiveRemoteKeyRouter(
                     LiveRemoteResult(state)
                 }
             }
+
             channelUpKey -> {
-                if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.PreviousChannel))
-                else LiveRemoteResult(state)
+                return if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.PreviousChannel)) else LiveRemoteResult(state)
             }
+
             channelDownKey -> {
-                if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.NextChannel))
-                else LiveRemoteResult(state)
+                return if (down) LiveRemoteResult(state, listOf(LiveRemoteEffect.NextChannel)) else LiveRemoteResult(state)
             }
-
-            // ── 确认键：DOWN 只吞不执行，UP 才打开控制栏（Bug 1 修复） ──
-            AndroidKeyEvent.KEYCODE_DPAD_CENTER,
-            AndroidKeyEvent.KEYCODE_ENTER,
-            -> {
-                // 失败卡上的「重试 / 下一台」按钮需要拿到 OK，页面级不能抢。
-                if (hasBlockingFailureCard()) return null
-                if (up) LiveRemoteResult(state.copy(uiState = UIState.CONTROLLER), listOf(LiveRemoteEffect.OpenController))
-                else LiveRemoteResult(state)
-            }
-
-            // 菜单键同样两段式，避免面板刚出现就被 UP 误点。
-            AndroidKeyEvent.KEYCODE_MENU -> {
-                if (up) LiveRemoteResult(state.copy(uiState = UIState.CHANNEL_LIST), listOf(LiveRemoteEffect.OpenChannelList))
-                else LiveRemoteResult(state)
-            }
-
-            // 媒体播放/暂停与设置/信息键：保留原页面能力，避免接入后按键失效。
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-            AndroidKeyEvent.KEYCODE_MEDIA_PLAY,
-            AndroidKeyEvent.KEYCODE_MEDIA_PAUSE,
-            AndroidKeyEvent.KEYCODE_MEDIA_STOP,
-            -> {
-                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.TogglePlayback))
-                else LiveRemoteResult(state)
-            }
-            AndroidKeyEvent.KEYCODE_SETTINGS -> {
-                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.OpenSettings))
-                else LiveRemoteResult(state)
-            }
-            AndroidKeyEvent.KEYCODE_INFO -> {
-                if (up) LiveRemoteResult(state, listOf(LiveRemoteEffect.OpenInfo))
-                else LiveRemoteResult(state)
-            }
-
-            // ── 数字选台 ────────────────────────────────────────────
-            AndroidKeyEvent.KEYCODE_0,
-            AndroidKeyEvent.KEYCODE_1,
-            AndroidKeyEvent.KEYCODE_2,
-            AndroidKeyEvent.KEYCODE_3,
-            AndroidKeyEvent.KEYCODE_4,
-            AndroidKeyEvent.KEYCODE_5,
-            AndroidKeyEvent.KEYCODE_6,
-            AndroidKeyEvent.KEYCODE_7,
-            AndroidKeyEvent.KEYCODE_8,
-            AndroidKeyEvent.KEYCODE_9,
-            AndroidKeyEvent.KEYCODE_NUMPAD_0,
-            AndroidKeyEvent.KEYCODE_NUMPAD_1,
-            AndroidKeyEvent.KEYCODE_NUMPAD_2,
-            AndroidKeyEvent.KEYCODE_NUMPAD_3,
-            AndroidKeyEvent.KEYCODE_NUMPAD_4,
-            AndroidKeyEvent.KEYCODE_NUMPAD_5,
-            AndroidKeyEvent.KEYCODE_NUMPAD_6,
-            AndroidKeyEvent.KEYCODE_NUMPAD_7,
-            AndroidKeyEvent.KEYCODE_NUMPAD_8,
-            AndroidKeyEvent.KEYCODE_NUMPAD_9,
-            -> {
-                if (!down) {
-                    LiveRemoteResult(state)
-                } else {
-                    digitOf(action)?.let { appendDigit(state, it) } ?: LiveRemoteResult(state)
-                }
-            }
-
-            else -> null
         }
+
+        // ── 通用动作：经统一绑定表翻译（用户自定义键位对直播页同样生效） ──
+        val boundActions = bindings.actionsFor(action)
+        if (boundActions.isEmpty()) return null
+        if (!up) return LiveRemoteResult(state)
+        val effects = mutableListOf<LiveRemoteEffect>()
+        var nextState = state
+        for (bound in boundActions) {
+            when (bound) {
+                RemoteKeyAction.PlayPause -> effects += LiveRemoteEffect.TogglePlayback
+                RemoteKeyAction.Previous -> effects += LiveRemoteEffect.PreviousChannel
+                RemoteKeyAction.Next -> effects += LiveRemoteEffect.NextChannel
+                // 菜单键 = 打开频道列表（高频节目浏览入口）；同步 uiState 供面板焦点陷阱使用。
+                RemoteKeyAction.Menu -> {
+                    effects += LiveRemoteEffect.OpenChannelList
+                    nextState = nextState.copy(uiState = UIState.CHANNEL_LIST)
+                }
+                // 设置键 = 打开线路浮层（切源/线路的高频入口），与菜单键的列表语义区分。
+                RemoteKeyAction.Settings -> effects += LiveRemoteEffect.OpenLineControl
+                // 信息键 = 打开节目信息面板（低频）。
+                RemoteKeyAction.Info -> effects += LiveRemoteEffect.OpenInfo
+                else -> Unit // 方向/快进快退/BACK 在直播页无对应语义
+            }
+        }
+        return if (effects.isEmpty()) null else LiveRemoteResult(nextState, effects)
     }
 
     private fun onBack(state: LiveRemoteState): LiveRemoteResult? = when {
@@ -431,6 +427,7 @@ fun LivePlayerRemoteShell(
                     LiveRemoteEffect.PreviousSource -> onPreviousSource()
                     LiveRemoteEffect.NextSource -> onNextSource()
                     LiveRemoteEffect.OpenController,
+                    LiveRemoteEffect.OpenLineControl,
                     LiveRemoteEffect.OpenChannelList,
                     LiveRemoteEffect.ClosePanel,
                     is LiveRemoteEffect.NumberChanged,

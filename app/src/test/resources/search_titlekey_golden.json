@@ -1,0 +1,34 @@
+{
+  "scenarios": [
+    {
+      "id": "scenario_1_same_name_same_year",
+      "description": "同名同年来自不同源，应合并，主源胜出",
+      "mainSourceId": "main",
+      "groups": [
+        { "sourceId": "main", "movies": [ { "id": 1, "apiLineId": "main", "name": "流浪地球", "typeId": 1, "typeName": "科幻", "year": "2019" } ] },
+        { "sourceId": "backup", "movies": [ { "id": 2, "apiLineId": "backup", "name": "流浪地球", "typeId": 1, "typeName": "科幻", "year": "2019" } ] }
+      ],
+      "expected": { "mergedSize": 1, "conflictCount": 1, "winnerApiLineId": "main", "reasonContains": "主源=main 胜出" }
+    },
+    {
+      "id": "scenario_2_same_name_diff_year",
+      "description": "同名不同年（流浪地球 2019 vs 流浪地球2 2023），不应合并",
+      "mainSourceId": "main",
+      "groups": [
+        { "sourceId": "main", "movies": [ { "id": 1, "apiLineId": "main", "name": "流浪地球", "typeId": 1, "typeName": "科幻", "year": "2019" } ] },
+        { "sourceId": "backup", "movies": [ { "id": 2, "apiLineId": "backup", "name": "流浪地球2", "typeId": 1, "typeName": "科幻", "year": "2023" } ] }
+      ],
+      "expected": { "mergedSize": 2, "conflictCount": 0, "winnerApiLineId": "main", "reasonContains": "" }
+    },
+    {
+      "id": "scenario_3_similar_title_year_diff_1",
+      "description": "标题相似度 > 0.9 且年份差 1，应合并（容错入库年份差异）",
+      "mainSourceId": "main",
+      "groups": [
+        { "sourceId": "main", "movies": [ { "id": 1, "apiLineId": "main", "name": "你的名字", "typeId": 2, "typeName": "动画", "year": "2016" } ] },
+        { "sourceId": "backup", "movies": [ { "id": 2, "apiLineId": "backup", "name": "你的名字。", "typeId": 2, "typeName": "动画", "year": "2017" } ] }
+      ],
+      "expected": { "mergedSize": 1, "conflictCount": 1, "winnerApiLineId": "main", "reasonContains": "主源=main 胜出" }
+    }
+  ]
+}

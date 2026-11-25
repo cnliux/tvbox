@@ -7,13 +7,15 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.HistoryLayout
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.LiveRemoteDirectionMapping
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.PlayerBrightnessSetting
 import com.tvbox.app.domain.PlayerSpeedSetting
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
+import com.tvbox.app.domain.RemoteKeyBindings
+import com.tvbox.app.domain.ThemeAccent
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.UserAgentSetting
 import com.tvbox.app.domain.VideoScaleMode
@@ -48,11 +50,14 @@ internal object SettingsStorageKeys {
     const val SOURCE_SPEED_LATENCIES = "source_speed_latencies"
     const val THEME = "theme"
     const val FONT_SCALE = "font_scale"
+    const val THEME_ACCENT = "theme_accent"
     const val CHECK_UPDATES_ON_STARTUP = "check_updates_on_startup"
     const val PLAYBACK_AGENT_AUTO_SWITCH = "playback_agent_auto_switch"
     const val VIDEO_SCALE_MODE = "video_scale_mode"
     const val PLAYER_SPEED = "player_speed"
     const val DECODER_STRATEGY = "decoder_strategy"
+    const val LIVE_REMOTE_DIRECTION_MAPPING = "live_remote_direction_mapping"
+    const val REMOTE_KEY_BINDINGS = "remote_key_bindings"
     const val CONTENT_VIDEO_SCALE_MODES = "content_video_scale_modes"
     const val CONTENT_SUBTITLE_TRACKS = "content_subtitle_tracks"
     const val DEVICE_MODE = "device_mode"
@@ -95,6 +100,59 @@ internal object SettingsStorageKeys {
     const val CRASH_LOG_LOCAL_ONLY = "crash_log_local_only"
     // 源失败熔断（连续超时自动休眠，对照设置页方案）。
     const val SOURCE_CIRCUIT_BREAKER = "source_circuit_breaker"
+    // 手机端设置中心 v2 新增键。
+    const val AUTO_NEXT_COUNTDOWN = "auto_next_countdown"
+    const val FIRST_PACKET_TIMEOUT_MS = "first_packet_timeout_ms"
+    const val RECONNECT_ATTEMPTS = "reconnect_attempts"
+    const val BUFFER_TARGET_MS = "buffer_target_ms"
+    const val BACKGROUND_PLAYBACK_MODE = "background_playback_mode"
+    const val GESTURE_LEFT_BRIGHTNESS = "gesture_left_brightness"
+    const val GESTURE_RIGHT_VOLUME = "gesture_right_volume"
+    const val GESTURE_HORIZONTAL_SEEK = "gesture_horizontal_seek"
+    const val GESTURE_DOUBLE_TAP_SIDE = "gesture_double_tap_side"
+    const val GESTURE_DOUBLE_TAP_CENTER = "gesture_double_tap_center"
+    const val GESTURE_LONG_PRESS_SPEED = "gesture_long_press_speed"
+    const val GESTURE_PINCH_ZOOM = "gesture_pinch_zoom"
+    const val GESTURE_TOP_SWIPE_BACK = "gesture_top_swipe_back"
+    const val GESTURE_SENSITIVITY = "gesture_sensitivity"
+    const val GESTURE_EDGE_GUARD = "gesture_edge_guard"
+    const val GESTURE_LOCK = "gesture_lock"
+    const val AUDIO_OUTPUT_MODE = "audio_output_mode"
+    const val PLAYER_HIDDEN_CONTROLS = "player_hidden_controls"
+    const val UA_SCOPE_MODE = "ua_scope_mode"
+    const val UA_FOR_API = "ua_for_api"
+    const val UA_FOR_SPIDER = "ua_for_spider"
+    const val UA_FOR_LIVE = "ua_for_live"
+    const val UA_FOR_EPG = "ua_for_epg"
+    const val UA_FOR_PLAYBACK = "ua_for_playback"
+    const val UA_FOR_WEBVIEW = "ua_for_webview"
+    const val UA_EXPORT_REDACTED = "ua_export_redacted"
+    const val PLAYBACK_MANAGER_PREFER_HEALTHY = "playback_manager_prefer_healthy"
+    const val PLAYBACK_MANAGER_MANUAL_BUTTON = "playback_manager_manual_button"
+    const val SEEK_COOLING_MS = "seek_cooling_ms"
+    const val MANUAL_SOURCE_LOCK_MINUTES = "manual_source_lock_minutes"
+    const val EPG_CACHE_HOURS = "epg_cache_hours"
+    const val EPG_TIMEZONE = "epg_timezone"
+    const val EPG_OUT_OF_RANGE_POLICY = "epg_out_of_range_policy"
+    const val PLATFORM_DEFAULT_QUALITY = "platform_default_quality"
+    const val FLV_PROXY_MODE = "flv_proxy_mode"
+    const val PLATFORM_THIRD_PARTY_PROXY_ENABLED = "platform_third_party_proxy_enabled"
+    const val PLATFORM_THIRD_PARTY_PROXY_TEMPLATES = "platform_third_party_proxy_templates"
+    const val LAN_RESOLVER_ENABLED = "lan_resolver_enabled"
+    const val LAN_RESOLVER_CONFIRMED = "lan_resolver_confirmed"
+    const val AI_SEARCH_ENABLED = "ai_search_enabled"
+    const val VOICE_SEARCH_ENABLED = "voice_search_enabled"
+    const val AI_TEXT_REDACTION = "ai_text_redaction"
+    const val AI_ONLY_TITLE_YEAR = "ai_only_title_year"
+    const val AI_MISS_BEHAVIOR = "ai_miss_behavior"
+    const val AI_RESULT_CACHE_MINUTES = "ai_result_cache_minutes"
+    const val UPDATE_WIFI_ONLY = "update_wifi_only"
+    const val UPDATE_EXPORT_BEFORE_INSTALL = "update_export_before_install"
+    const val UPDATE_ROLLBACK_HOURS = "update_rollback_hours"
+    const val UPDATE_STRONG_REMINDER_ONLY = "update_strong_reminder_only"
+    const val CONTINUE_WATCHING_MAX_ITEMS = "continue_watching_max_items"
+    const val HISTORY_AUTO_CLEANUP = "history_auto_cleanup"
+    const val RESUME_CONFLICT_POLICY = "resume_conflict_policy"
 }
 
 /** 设置文档的 schema 版本。旧 SharedPreferences 无版本，视为 [LEGACY]；迁移后统一写入 [CURRENT]。 */
@@ -148,8 +206,8 @@ internal fun readLegacySettings(
         introSkipSeconds = int(SettingsStorageKeys.INTRO_SKIP_SECONDS, 0),
         outroSkipSeconds = int(SettingsStorageKeys.OUTRO_SKIP_SECONDS, 0),
         homeContinueWatchingEnabled = boolean(SettingsStorageKeys.HOME_CONTINUE_WATCHING, false),
-        theme = TvTheme.fromStorageKey(string(SettingsStorageKeys.THEME, TvTheme.Default.storageKey)),
         fontScale = TvFontScale.fromStorageKey(string(SettingsStorageKeys.FONT_SCALE, TvFontScale.Normal.storageKey)),
+        themeAccent = ThemeAccent.fromStorageKey(string(SettingsStorageKeys.THEME_ACCENT, ThemeAccent.Default.storageKey)),
         checkUpdatesOnStartup = boolean(SettingsStorageKeys.CHECK_UPDATES_ON_STARTUP, true),
         playbackAgentAutoSwitchEnabled = boolean(SettingsStorageKeys.PLAYBACK_AGENT_AUTO_SWITCH, true),
         videoScaleMode = VideoScaleMode.fromStorageKey(string(SettingsStorageKeys.VIDEO_SCALE_MODE, "")),
@@ -209,6 +267,64 @@ internal fun readLegacySettings(
             string(SettingsStorageKeys.HISTORY_LAYOUT, HistoryLayout.Card.storageKey),
         ),
         historyCoverBadgeEnabled = boolean(SettingsStorageKeys.HISTORY_COVER_BADGE, true),
+        autoNextCountdownSeconds = int(SettingsStorageKeys.AUTO_NEXT_COUNTDOWN, 5),
+        firstPacketTimeoutMs = long(SettingsStorageKeys.FIRST_PACKET_TIMEOUT_MS, 8_000L),
+        reconnectAttempts = int(SettingsStorageKeys.RECONNECT_ATTEMPTS, 3),
+        bufferTargetMs = long(SettingsStorageKeys.BUFFER_TARGET_MS, 15_000L),
+        backgroundPlaybackMode = string(SettingsStorageKeys.BACKGROUND_PLAYBACK_MODE, "pause"),
+        liveRemoteDirectionMapping = LiveRemoteDirectionMapping.fromStorageKey(
+            string(SettingsStorageKeys.LIVE_REMOTE_DIRECTION_MAPPING, LiveRemoteDirectionMapping.Default.name),
+        ),
+        remoteKeyBindings = RemoteKeyBindings.decode(
+            string(SettingsStorageKeys.REMOTE_KEY_BINDINGS, ""),
+        ),
+        gestureLeftBrightnessEnabled = boolean(SettingsStorageKeys.GESTURE_LEFT_BRIGHTNESS, true),
+        gestureRightVolumeEnabled = boolean(SettingsStorageKeys.GESTURE_RIGHT_VOLUME, true),
+        gestureHorizontalSeekEnabled = boolean(SettingsStorageKeys.GESTURE_HORIZONTAL_SEEK, true),
+        gestureDoubleTapSideEnabled = boolean(SettingsStorageKeys.GESTURE_DOUBLE_TAP_SIDE, true),
+        gestureDoubleTapCenterEnabled = boolean(SettingsStorageKeys.GESTURE_DOUBLE_TAP_CENTER, true),
+        gestureLongPressSpeedEnabled = boolean(SettingsStorageKeys.GESTURE_LONG_PRESS_SPEED, true),
+        gesturePinchZoomEnabled = boolean(SettingsStorageKeys.GESTURE_PINCH_ZOOM, true),
+        gestureTopSwipeBackEnabled = boolean(SettingsStorageKeys.GESTURE_TOP_SWIPE_BACK, false),
+        gestureSensitivity = int(SettingsStorageKeys.GESTURE_SENSITIVITY, 1).coerceIn(0, 2),
+        gestureEdgeGuardEnabled = boolean(SettingsStorageKeys.GESTURE_EDGE_GUARD, true),
+        gestureLockEnabled = boolean(SettingsStorageKeys.GESTURE_LOCK, false),
+        audioOutputMode = string(SettingsStorageKeys.AUDIO_OUTPUT_MODE, "auto"),
+        playerHiddenControls = stringList(SettingsStorageKeys.PLAYER_HIDDEN_CONTROLS).toSet(),
+        uaScopeMode = string(SettingsStorageKeys.UA_SCOPE_MODE, "unified"),
+        uaForApi = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_API, "")),
+        uaForSpider = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_SPIDER, "")),
+        uaForLive = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_LIVE, "")),
+        uaForEpg = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_EPG, "")),
+        uaForPlayback = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_PLAYBACK, "")),
+        uaForWebView = UserAgentSetting.sanitize(string(SettingsStorageKeys.UA_FOR_WEBVIEW, "")),
+        uaExportRedacted = boolean(SettingsStorageKeys.UA_EXPORT_REDACTED, true),
+        playbackManagerPreferHealthy = boolean(SettingsStorageKeys.PLAYBACK_MANAGER_PREFER_HEALTHY, true),
+        playbackManagerManualButton = boolean(SettingsStorageKeys.PLAYBACK_MANAGER_MANUAL_BUTTON, true),
+        seekCoolingMs = long(SettingsStorageKeys.SEEK_COOLING_MS, 2_500L),
+        manualSourceLockMinutes = int(SettingsStorageKeys.MANUAL_SOURCE_LOCK_MINUTES, 20),
+        epgCacheHours = int(SettingsStorageKeys.EPG_CACHE_HOURS, 12).coerceIn(1, 168),
+        epgTimezone = string(SettingsStorageKeys.EPG_TIMEZONE, "Asia/Shanghai"),
+        epgOutOfRangePolicy = string(SettingsStorageKeys.EPG_OUT_OF_RANGE_POLICY, "clip"),
+        platformDefaultQuality = string(SettingsStorageKeys.PLATFORM_DEFAULT_QUALITY, "original"),
+        flvProxyMode = string(SettingsStorageKeys.FLV_PROXY_MODE, "auto"),
+        platformThirdPartyProxyEnabled = boolean(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_ENABLED, false),
+        platformThirdPartyProxyTemplates = string(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_TEMPLATES, ""),
+        lanResolverEnabled = boolean(SettingsStorageKeys.LAN_RESOLVER_ENABLED, false),
+        lanResolverConfirmed = boolean(SettingsStorageKeys.LAN_RESOLVER_CONFIRMED, false),
+        aiSearchEnabled = boolean(SettingsStorageKeys.AI_SEARCH_ENABLED, false),
+        voiceSearchEnabled = boolean(SettingsStorageKeys.VOICE_SEARCH_ENABLED, false),
+        aiTextRedactionEnabled = boolean(SettingsStorageKeys.AI_TEXT_REDACTION, true),
+        aiOnlyTitleYearEnabled = boolean(SettingsStorageKeys.AI_ONLY_TITLE_YEAR, true),
+        aiMissBehavior = string(SettingsStorageKeys.AI_MISS_BEHAVIOR, "stay"),
+        aiResultCacheMinutes = int(SettingsStorageKeys.AI_RESULT_CACHE_MINUTES, 30).coerceIn(0, 24 * 60),
+        updateWifiOnly = boolean(SettingsStorageKeys.UPDATE_WIFI_ONLY, true),
+        updateExportBeforeInstall = boolean(SettingsStorageKeys.UPDATE_EXPORT_BEFORE_INSTALL, true),
+        updateRollbackHours = int(SettingsStorageKeys.UPDATE_ROLLBACK_HOURS, 24).coerceIn(0, 168),
+        updateStrongReminderOnly = boolean(SettingsStorageKeys.UPDATE_STRONG_REMINDER_ONLY, true),
+        continueWatchingMaxItems = int(SettingsStorageKeys.CONTINUE_WATCHING_MAX_ITEMS, 8).coerceIn(1, 30),
+        historyAutoCleanupEnabled = boolean(SettingsStorageKeys.HISTORY_AUTO_CLEANUP, true),
+        resumeConflictPolicy = string(SettingsStorageKeys.RESUME_CONFLICT_POLICY, "ask"),
         crashLogLocalOnly = boolean(SettingsStorageKeys.CRASH_LOG_LOCAL_ONLY, true),
     )
 }

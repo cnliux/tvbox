@@ -9,7 +9,17 @@ package com.tvbox.app.domain
  */
 
 /** 倍速档位：从慢到快排列，方便长按快进/循环切换时自然递增。含最低档 0.5x。 */
-val PLAYER_SPEED_STEPS: List<Float> = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+val PLAYER_SPEED_STEPS: List<Float> = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 2.5f, 3f)
+
+/** 音频输出档位（任务1 电视直播无声修复）。顺序与设置页 chips 一致。 */
+val AUDIO_OUTPUT_MODE_OPTIONS: List<String> = listOf("auto", "stereo", "passthrough")
+
+/** 音频输出档位的展示名。 */
+fun audioOutputModeLabel(mode: String): String = when (mode) {
+    "stereo" -> "立体声"
+    "passthrough" -> "直通"
+    else -> "自动"
+}
 
 /**
  * 取下一档倍速。

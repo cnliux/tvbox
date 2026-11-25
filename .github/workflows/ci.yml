@@ -40,6 +40,14 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # P41：AAR 由 Go 源码编译，CI 必须跑 Go 测试与静态检查，
+      # 否则 Go 侧改动（包括 cmd 服务）可以绕过所有门禁。
+      - name: Go quality (test + vet)
+        working-directory: platform_live_go
+        run: |
+          go vet ./...
+          go test -shuffle=on -count=1 ./...
+
       - name: Restore platformlive AAR cache
         uses: actions/cache@v4
         with:

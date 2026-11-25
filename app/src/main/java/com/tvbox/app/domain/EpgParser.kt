@@ -16,6 +16,24 @@ import java.util.Locale
  */
 private const val EPG_MAX_TEXT_CHARS = 40 * 1024 * 1024
 
+/**
+ * 单条 `<programme>` 片段长度上限：正常节目条目仅数 KB；远超阈值说明源里塞入了
+ * 巨型实体文本或被污染的片段，整段丢弃以免正则累积与后续 title 抽取退化成 CPU 密集任务。
+ */
+private const val EPG_MAX_PROGRAMME_CHARS = 1 * 1024 * 1024
+
+/** XMLTV 不允许 `<channel>` / `<programme>` 自嵌套，深度超过即视为畸形/攻击源，截断后续解析。 */
+private const val EPG_MAX_DEPTH = 2
+
+/** XMLTV 不使用 DTD：DOCTYPE 与 ENTITY 声明一律拒绝（实体攻击 / XXE 防护）。 */
+private const val EPG_MAX_ENTITY_DECLARATIONS = 0
+
+/** DOCTYPE 声明（大小写不敏感）命中即拒绝整份 EPG：DTD 可声明外部实体，存在 XXE 风险。 */
+private val EPG_DOCTYPE_REGEX = Regex("<!\\s*DOCTYPE", RegexOption.IGNORE_CASE)
+
+/** ENTITY 声明（大小写不敏感）：billion laughs 类嵌套实体在正则前后都可能造成回溯爆炸。 */
+private val EPG_ENTITY_REGEX = Regex("<!\\s*ENTITY", RegexOption.IGNORE_CASE)
+
 /** stop 缺失/无法解析时的兜底节目时长（30 分钟），保证"正在播出"仍能命中。 */
 private const val EPG_FALLBACK_PROGRAM_MS = 30L * 60L * 1000L
 
@@ -58,12 +76,19 @@ private val EPG_UTC_LITERAL_ZONE_REGEX = Regex("Z$")
 private val EPG_SPACES_REGEX = Regex("\\s+")
 
 fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
+    // 入口即拒绝 DTD：DOCTYPE / ENTITY 命中任一即返回空表（与本项目「解析失败返回部分结果」风格一致），
+    // 绝不展开实体，避免 XXE 与 billion laughs 在后续正则匹配中造成回溯爆炸。
+    if (EPG_DOCTYPE_REGEX.containsMatchIn(raw)) return emptyMap()
+    if (EPG_ENTITY_REGEX.containsMatchIn(raw)) return emptyMap()
     val channelsById = linkedMapOf<String, MutableList<String>>()
     val programmes = linkedMapOf<String, MutableList<EpgProgram>>()
     val text = if (raw.length > EPG_MAX_TEXT_CHARS) raw.substring(0, EPG_MAX_TEXT_CHARS) else raw
+    // 嵌套深度防护：`<channel>`/`<programme>` 在 XMLTV 里不允许自嵌套，超过 2 层即视为畸形源，
+    // 截断到首个异常嵌套位置，保留前面已合法的部分（与「超大文本截断」同风格）。
+    val safeText = truncateEpgByDepth(text)
     // 两段分别容错：畸形源导致后段抛异常时，前段已解析的 id 与 display-name 别名不再一起丢失。
-    runCatching { parseXmltvChannels(text, channelsById) }
-    runCatching { parseXmltvProgrammes(text, programmes) }
+    runCatching { parseXmltvChannels(safeText, channelsById) }
+    runCatching { parseXmltvProgrammes(safeText, programmes) }
     // 按 id 键 + display-name 键双写；display-name 撞车时合并去重。
     val result = linkedMapOf<String, MutableList<EpgProgram>>()
     programmes.forEach { (id, list) ->
@@ -75,6 +100,27 @@ fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
         displayNames.forEach { name -> result.mergeEpg(name, list) }
     }
     return result.mapValues { (_, list) -> list.sortedBy { it.startMs } }
+}
+
+/**
+ * 嵌套深度截断：扫描开始/结束标签，`<channel>` / `<programme>` 任意一个一旦超过 [EPG_MAX_DEPTH]
+ * 层，立即截断并返回前缀；未超限则原样返回（`<tv>` 根 + 一层 channel/programme = 深度 2）。
+ */
+private fun truncateEpgByDepth(text: String): String {
+    // 分组：group1 = 闭合斜杠 `/`（`</channel>` 时非空）；group2 = 标签名；group3 = 自闭合斜杠（`/>` 时非空）。
+    val tagRegex = Regex("<(/?)\\s*(channel|programme)\\b[^>]*?(/?)>", RegexOption.IGNORE_CASE)
+    var depth = 0
+    for (match in tagRegex.findAll(text)) {
+        val (closeSlash, _, selfClosingSlash) = match.destructured
+        if (selfClosingSlash == "/") continue
+        if (closeSlash == "/") {
+            if (depth > 0) depth--
+            continue
+        }
+        depth++
+        if (depth > EPG_MAX_DEPTH) return text.substring(0, match.range.first)
+    }
+    return text
 }
 
 /**
@@ -126,6 +172,8 @@ private fun parseXmltvChannels(text: String, into: MutableMap<String, MutableLis
 private fun parseXmltvProgrammes(text: String, into: MutableMap<String, MutableList<EpgProgram>>) {
     // 兼容自闭合 `<programme .../>`（无 title 的占位条目直接跳过）。
     for (match in EPG_PROGRAMME_REGEX.findAll(text)) {
+        // P28：单条 programme 长度上限——超阈值说明被塞入巨型实体或污染片段，直接跳过该条。
+        if (match.value.length > EPG_MAX_PROGRAMME_CHARS) continue
         val attrs = xmltvAttributes(match.groupValues[1])
         val channel = attrs["channel"] ?: continue
         if (channel.isBlank()) continue

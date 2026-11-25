@@ -34,8 +34,10 @@ jobs:
           fetch-tags: true
           fetch-depth: 0
 
-      # 版本号以 app/build.gradle.kts 为唯一来源；这里只校验 tag。
-      # update.json 在 APK 构建后才能写入新版本的 SHA256 和大小，发版前保持上一版本属正常情况。
+      # 版本号以 app/build.gradle.kts 为唯一来源；这里先校验 tag、README、CHANGELOG 三方一致。
+      # README 第 7 行"当前版本 \`x.y.z\`"、CHANGELOG 顶部第一个 "## vX.Y.Z" 均需与 tag 对齐，
+      # 发版前忘记改 README / CHANGELOG 是常见遗漏，此处提前拦截。
+      # update.json 在 APK 构建并生成新 SHA256 / size 之后才校验 versionName，见下方 Update update.json 步骤。
       - name: Verify version consistency
         run: |
           VERSION_NAME=$(grep -oP 'TVBOX_VERSION_NAME\s*=\s*"\K[^"]+' app/build.gradle.kts)
@@ -44,7 +46,28 @@ jobs:
             echo "::error::Tag ${RELEASE_TAG} 与 app 版本 v${VERSION_NAME} 不一致"
             exit 1
           fi
+          # README：第 7 行形如"当前版本 `1.0.40`"，提取反引号内的版本号。
+          README_VERSION=$(grep -oP '当前版本 `\K[^`]+(?=`)' README.md || true)
+          if [ -z "$README_VERSION" ]; then
+            echo "::error::README.md 未找到形如 '当前版本 \`x.y.z\`' 的版本行，无法校验版本一致性"
+            exit 1
+          fi
+          if [ "$README_VERSION" != "$VERSION_NAME" ]; then
+            echo "::error::README.md 版本 ${README_VERSION} 与 app 版本 ${VERSION_NAME} 不一致，请同步更新 README.md"
+            exit 1
+          fi
+          # CHANGELOG：取顶部第一个 "## vX.Y.Z" 或 "## X.Y.Z" 的版本号。
+          CHANGELOG_VERSION=$(grep -oPm1 '^## v?\K[0-9]+\.[0-9]+\.[0-9]+' CHANGELOG.md || true)
+          if [ -z "$CHANGELOG_VERSION" ]; then
+            echo "::error::CHANGELOG.md 顶部未找到形如 '## vX.Y.Z' 的版本标题，无法校验版本一致性"
+            exit 1
+          fi
+          if [ "$CHANGELOG_VERSION" != "$VERSION_NAME" ]; then
+            echo "::error::CHANGELOG.md 顶部版本 v${CHANGELOG_VERSION} 与 app 版本 v${VERSION_NAME} 不一致，请补充本次发版条目"
+            exit 1
+          fi
           echo "Verified release version: v${VERSION_NAME} (${VERSION_CODE})"
+          echo "README=${README_VERSION}, CHANGELOG=${CHANGELOG_VERSION} 与 tag 一致"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -157,6 +180,14 @@ jobs:
             ]
           }
           ENDJSON
+          # P08 补充：update.json 已写入新版本，回读 versionName 做四方对齐的最后一步。
+          # 若 update.json 仍是上一版本，说明本次发版流程有遗漏，此处直接报错。
+          UPDATE_JSON_VERSION=$(python3 -c "import json;print(json.load(open('update.json'))['versionName'])")
+          if [ "$UPDATE_JSON_VERSION" != "$VERSION_NAME" ]; then
+            echo "::error::update.json versionName (${UPDATE_JSON_VERSION}) 与 app 版本 (${VERSION_NAME}) 不一致"
+            exit 1
+          fi
+          echo "update.json versionName=${UPDATE_JSON_VERSION} 与 tag 一致"
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           # tag 触发时是 detached HEAD：先落到最新 main 再提交，push 显式指向 main。
@@ -167,6 +198,56 @@ jobs:
           git add update.json
           git diff --cached --quiet || git commit -m "chore: auto-update update.json for v${VERSION_NAME}"
           git push origin HEAD:main
+
+      # P09：在发布前扫描 dist/ 下所有 APK，生成 manifest.json（含 sha256 / 字节数），
+      # 供 CDN、爬虫和用户校验本次 Release 的资产完整性。
+      - name: Generate release manifest
+        run: |
+          set -e
+          mkdir -p dist
+          # 收集本次要上传的 APK 文件（不含 manifest.json 自身），文件名排序保证输出稳定。
+          mapfile -t APK_FILES < <(find dist -maxdepth 1 -type f -name '*.apk' -printf '%f\n' | sort)
+          if [ "${#APK_FILES[@]}" -eq 0 ]; then
+            echo "::error::dist/ 下未找到任何 .apk 文件，无法生成 manifest"
+            exit 1
+          fi
+          GENERATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          # 用 Python 生成 JSON，避免手写拼接出错；sha256 与 size 通过环境变量传入。
+          python3 - "${RELEASE_TAG}" "${GENERATED_AT}" "${APK_FILES[@]}" <<'PYEOF'
+          import hashlib
+          import json
+          import os
+          import sys
+
+          release_tag = sys.argv[1]
+          generated_at = sys.argv[2]
+          apk_names = sys.argv[3:]
+
+          assets = []
+          for name in apk_names:
+              path = os.path.join("dist", name)
+              h = hashlib.sha256()
+              with open(path, "rb") as fh:
+                  for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                      h.update(chunk)
+              assets.append({
+                  "name": name,
+                  "sha256": h.hexdigest(),
+                  "size": os.path.getsize(path),
+              })
+
+          manifest = {
+              "releaseTag": release_tag,
+              "generatedAt": generated_at,
+              "assets": assets,
+          }
+          out = os.path.join("dist", "manifest.json")
+          with open(out, "w", encoding="utf-8") as fh:
+              json.dump(manifest, fh, ensure_ascii=False, indent=2)
+              fh.write("\n")
+          print(f"manifest written: {out} ({len(assets)} asset(s))")
+          PYEOF
+          cat dist/manifest.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

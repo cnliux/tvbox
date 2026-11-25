@@ -28,7 +28,7 @@ fun Modifier.tvFocusScale(
     // 手机触摸模式不再"隐藏"焦点：触摸点击不会主动获取焦点，而外接蓝牙遥控/键盘
     // 仍然需要可见的焦点反馈。触摸模式只用 2dp 描边、不做放大，避免误以为卡片被选中。
     val touchMode = LocalTouchMode.current
-    // #363：消费主题层 focusTokensFor(theme, reduceMotion) 的产出。系统开启"减少动画"时
+    // #363：消费主题层 focusTokensFor(reduceMotion) 的产出。系统开启"减少动画"时
     // focusScale=1f、animationMs=0，此处不再缩放且动效时长归零，尊重系统无障碍偏好。
     val focusTokens = LocalTvFocus.current
     val resolvedFocusedBorder = focusedBorder ?: TvColors.Accent

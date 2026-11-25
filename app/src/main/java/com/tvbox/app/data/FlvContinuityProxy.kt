@@ -40,7 +40,27 @@ object FlvContinuityProxy {
     fun shouldWrap(site: String, protocol: String, url: String = ""): Boolean {
         if (!protocol.equals("flv", ignoreCase = true) || site.lowercase() !in supportedSites) return false
         if (url.contains("m3u8", ignoreCase = true)) return false
+        // 第三方代理解析地址（路径形如 /huya/房间号、/douyu/房间号，无 .flv 后缀、无官方签名参数）
+        // 本身就是稳定流，不经过虎牙/斗鱼官方 CDN 的签名租约与会话上限；再套本机 FLV 续流代理
+        // 会把它当成普通 CDN 地址去做签名解析/续拉，反而打断第三方流。直接放行直连。
+        if (looksLikeThirdPartyProxy(url)) return false
         return url.isBlank() || url.contains("flv", ignoreCase = true)
+    }
+
+    /**
+     * 判断地址是否为第三方代理解析地址：路径以 `/huya/` 或 `/douyu/` 开头，
+     * 且不含 `.flv` 后缀与官方签名参数（wsSecret/wsTime）。
+     */
+    private fun looksLikeThirdPartyProxy(url: String): Boolean {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return false
+        val path = runCatching { java.net.URI(trimmed).path.orEmpty() }.getOrDefault("")
+        val isSitePath = path.startsWith("/huya/", ignoreCase = true) ||
+            path.startsWith("/douyu/", ignoreCase = true)
+        if (!isSitePath) return false
+        return !path.endsWith(".flv", ignoreCase = true) &&
+            !trimmed.contains("wsSecret", ignoreCase = true) &&
+            !trimmed.contains("wsTime", ignoreCase = true)
     }
 
     /**

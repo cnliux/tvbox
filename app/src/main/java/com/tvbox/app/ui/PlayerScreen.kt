@@ -1,8 +1,11 @@
 package com.tvbox.app.ui
 
+import android.app.PictureInPictureParams
 import android.content.Context
 import android.content.pm.ActivityInfo
+import android.content.pm.PackageManager
 import android.media.AudioManager
+import android.os.Build
 import android.view.WindowManager
 import androidx.annotation.OptIn
 // #262/#50：切集淡入淡出用 alpha 动画驱动黑色遮罩，不重建 ExoPlayer。
@@ -30,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -69,6 +73,9 @@ import com.tvbox.app.domain.PlaybackIssueNotice
 import com.tvbox.app.domain.PlaybackResumeAnchor
 import com.tvbox.app.domain.PlaybackFailureKind
 import com.tvbox.app.domain.PlaybackWatchdog
+import com.tvbox.app.domain.PlayerBrightnessSetting
+import com.tvbox.app.domain.PlayerSpeedSetting
+import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.vodVideoScaleKey
 import com.tvbox.app.domain.SlowBufferReason
@@ -118,6 +125,14 @@ fun PlayerScreen(
     FullscreenWhilePlayingPageVisible(activity)
     val isTelevision = state.effectiveDeviceMode == DeviceMode.Television
     val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+    // 播放器相关偏好：统一在本页取值，避免每个回调各读一份 state 造成口径漂移。
+    val playbackSettings = state.appSettings
+    val gesturesEnabled = playbackSettings.playerGesturesEnabled
+    val autoNextEnabled = playbackSettings.autoNextEpisodeEnabled
+    val reconnectAttempts = playbackSettings.reconnectAttempts
+    val firstPacketTimeoutMs = playbackSettings.firstPacketTimeoutMs.coerceAtLeast(1_000L)
+    val seekCoolingMs = playbackSettings.seekCoolingMs.coerceAtLeast(0L)
+    val backgroundPlaybackMode = playbackSettings.backgroundPlaybackMode
     val audioManager = remember(context) {
         context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
     }
@@ -132,9 +147,25 @@ fun PlayerScreen(
     val initialRequestedOrientation = remember(activity) {
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
     }
+    // playerBrightness：0=跟随系统，1..100=按百分比设置窗口亮度；手势改过的值在下次进入时由初值快照恢复。
+    val configuredBrightness = playbackSettings.playerBrightness
+    LaunchedEffect(activity, configuredBrightness, initialScreenBrightness) {
+        if (activity == null) return@LaunchedEffect
+        val value = PlayerBrightnessSetting.clamp(configuredBrightness)
+        if (value > 0) {
+            activity.window?.setScreenBrightness(value / 100f)
+        } else {
+            activity.window?.restoreScreenBrightness(initialScreenBrightness)
+        }
+    }
     // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
-    val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
-    val player = playbackHost.player
+    // 缓冲目标与音频输出在构建期生效，设置变化时重建播放器（页面会按重建种子续播）。
+    val player = rememberManagedExoPlayer(
+        decoderStrategy = playbackSettings.effectiveDecoderStrategy(),
+        bufferTargetMs = playbackSettings.bufferTargetMs,
+        audioOutputMode = playbackSettings.audioOutputMode,
+    )
+    val playbackHost = rememberPlaybackHostOrNull(player)!!
     // 系统媒体键（含电视遥控器多媒体键/耳机线控）在应用未获焦时也能控制播放/暂停与快进快退。
     rememberPlayerMediaSession(player = player)
     // 音轨/字幕随播放器实例读取；重建后由新的 player 重新挂监听。
@@ -240,9 +271,19 @@ fun PlayerScreen(
     var playbackNotice by remember { mutableStateOf<String?>(null) }
     val bufferMonitor = remember { PlaybackBufferMonitor() }
     val attemptTracker = remember { PlaybackAttemptTracker() }
-    // 共享看门狗：从建源起算首帧，出帧后才开始判卡死。
-    val playbackWatchdog = remember { PlaybackWatchdog() }
+    // 共享看门狗：从建源起算首帧，出帧后才开始判卡死；首包超时取用户设置。
+    val playbackWatchdog = remember(firstPacketTimeoutMs) {
+        PlaybackWatchdog(firstFrameTimeoutMs = firstPacketTimeoutMs)
+    }
     var firstFrameRendered by remember(movie.apiLineId, movie.id) { mutableStateOf(false) }
+    // 自动重连已尝试次数：首帧成功即清零；reconnectAttempts 控制上限（-1 表示不设上限）。
+    var autoReconnectTried by remember(movie.apiLineId, movie.id) { mutableIntStateOf(0) }
+    // 最近一次 seek 时刻：冷却窗口内不判定卡死，避免拖动后的短暂缓冲被误报。
+    var lastSeekAtMs by remember(movie.apiLineId, movie.id) { mutableLongStateOf(0L) }
+    // 片尾自动切集倒计时：0 表示没有待执行的切集。
+    var autoNextCountdownUntilMs by remember(movie.apiLineId, movie.id) { mutableLongStateOf(0L) }
+    var autoNextCountdownRemaining by remember(movie.apiLineId, movie.id) { mutableIntStateOf(0) }
+    var lastPinchSwitchAtMs by remember { mutableLongStateOf(0L) }
     // #262/#50：切集过渡遮罩。只叠一层短暂淡入淡出，不重建播放器、不打断续播队列。
     var episodeFadeActive by remember { mutableStateOf(false) }
     val episodeFadeAlpha by animateFloatAsState(
@@ -259,6 +300,8 @@ fun PlayerScreen(
     var firstFrameFailure by remember(movie.apiLineId, movie.id) {
         mutableStateOf<PlaybackFailureKind?>(null)
     }
+    // 同类失败可能连续发生（换线后仍首帧超时），用序号让自动重连每次都能重新触发。
+    var firstFrameFailureNonce by remember(movie.apiLineId, movie.id) { mutableIntStateOf(0) }
     // 点播无下一集且播放自然结束：显示"已播完"，可返回详情。
     var playbackFinished by remember(movie.apiLineId, movie.id) {
         mutableStateOf(false)
@@ -287,12 +330,17 @@ fun PlayerScreen(
             while (true) {
                 delay(250L)
                 if (!isCurrentPlayback()) continue
-                val settings = actions.state.value.appSettings
+                val settingsNow = actions.state.value.appSettings
+                // 片头跳过与片尾切集共用配置，是否自动切集单独由 autoNextEpisodeEnabled 控制。
                 val config = SkipCreditsConfig(
                     enabled = true,
-                    introSeconds = settings.introSkipSeconds,
-                    outroSeconds = settings.outroSkipSeconds,
+                    introSeconds = settingsNow.introSkipSeconds,
+                    outroSeconds = settingsNow.outroSkipSeconds,
                 )
+                if (!settingsNow.autoNextEpisodeEnabled && autoNextCountdownUntilMs != 0L) {
+                    autoNextCountdownUntilMs = 0L
+                    autoNextCountdownRemaining = 0
+                }
                 val duration = player.duration
                 if (duration <= 0 || player.playbackState != Player.STATE_READY) continue
                 // 不在片尾区间：若之前已触发过，重置状态以便下次进入片尾时可再次触发。
@@ -300,6 +348,10 @@ fun PlayerScreen(
                     ?.action == SkipCreditsAction.PlayNextEpisode
                 if (!inOutro) {
                     if (skipCreditsState.outroTriggered) skipCreditsState = resetSkipCreditsRuntime()
+                    if (autoNextCountdownUntilMs != 0L) {
+                        autoNextCountdownUntilMs = 0L
+                        autoNextCountdownRemaining = 0
+                    }
                     continue
                 }
                 val playbackKey = actions.state.value
@@ -310,14 +362,43 @@ fun PlayerScreen(
                 )
                 skipCreditsState = newState
                 if (decision?.action != SkipCreditsAction.PlayNextEpisode) continue
+                if (!settingsNow.autoNextEpisodeEnabled) continue
                 val nextIndex = player.currentMediaItemIndex + 1
                 if (player.isPlaying && playbackKey != null && nextIndex < player.mediaItemCount) {
-                    saveCurrentProgress(player.currentPosition, duration)
-                    player.seekTo(nextIndex, 0L)
-                    session.play(player)
+                    val countdownSeconds = settingsNow.autoNextCountdownSeconds.coerceAtLeast(0)
+                    if (countdownSeconds > 0 && autoNextCountdownUntilMs == 0L) {
+                        // 数字倒计时：到点后由独立协程执行切集，期间仍在片尾区间内。
+                        autoNextCountdownUntilMs = System.currentTimeMillis() + countdownSeconds * 1_000L
+                        continue
+                    }
+                    if (autoNextCountdownUntilMs == 0L) {
+                        saveCurrentProgress(player.currentPosition, duration)
+                        player.seekTo(nextIndex, 0L)
+                        session.play(player)
+                    }
                 }
             }
         }
+    }
+    // 片尾倒计时：可见时每秒刷新剩余秒数，到点后复用播放器队列切集，不重建实例。
+    LaunchedEffect(autoNextCountdownUntilMs) {
+        val deadline = autoNextCountdownUntilMs
+        if (deadline <= 0L) return@LaunchedEffect
+        while (autoNextCountdownUntilMs == deadline && System.currentTimeMillis() < deadline) {
+            val remaining = ((deadline - System.currentTimeMillis()) / 1_000L).coerceAtLeast(0L).toInt()
+            if (autoNextCountdownRemaining != remaining) autoNextCountdownRemaining = remaining
+            delay(200L)
+        }
+        if (autoNextCountdownUntilMs != deadline) return@LaunchedEffect
+        autoNextCountdownUntilMs = 0L
+        autoNextCountdownRemaining = 0
+        if (!autoNextEnabled || !isCurrentPlayback() || !player.playWhenReady) return@LaunchedEffect
+        val nextIndex = player.currentMediaItemIndex + 1
+        if (nextIndex >= player.mediaItemCount) return@LaunchedEffect
+        saveCurrentProgress(player.currentPosition, player.duration.takeIf { it > 0 } ?: 0L)
+        episodeFadeActive = true
+        player.seekTo(nextIndex, 0L)
+        session.play(player)
     }
 
     val canCast = !isTelevision
@@ -460,6 +541,8 @@ fun PlayerScreen(
                 playbackWatchdog.onFirstFrameRendered(System.currentTimeMillis())
                 firstFrameRendered = true
                 firstFrameFailure = null
+                // 真正出过画面说明线路可用，自动重连次数重新计数。
+                autoReconnectTried = 0
             }
 
             override fun onPositionDiscontinuity(
@@ -472,7 +555,9 @@ fun PlayerScreen(
                         loadedState.copy(playerEpisodeIndex = player.currentMediaItemIndex).currentPlaybackKey() !=
                         player.currentMediaItem?.mediaId) return
                     resumeAnchor.update(newPosition.positionMs)
-                    bufferMonitor.onSeekStarted(System.currentTimeMillis())
+                    val nowMs = System.currentTimeMillis()
+                    bufferMonitor.onSeekStarted(nowMs)
+                    lastSeekAtMs = nowMs
                     bufferingPlaybackKey = null
                 }
             }
@@ -494,6 +579,8 @@ fun PlayerScreen(
                     resumeAnchor.update(player.currentPosition)
                     failedSourceIndexes = emptySet()
                     skipCreditsState = resetSkipCreditsRuntime()
+                    autoNextCountdownUntilMs = 0L
+                    autoNextCountdownRemaining = 0
                     playbackIssue = null
                     playbackNotice = null
                     playbackNoticeNonce = 0
@@ -574,9 +661,9 @@ fun PlayerScreen(
                             positionMs = player.currentPosition,
                             durationMs = player.duration.takeIf { it > 0L } ?: 0L,
                         )
-                        // 连续播放：有下一集时自动续播；无下一集则提示"已播完"。
+                        // 连续播放：有下一集时自动续播；关闭片尾自动切集时停在片尾。
                         if (player.playWhenReady) {
-                            if (player.hasNextMediaItem()) {
+                            if (autoNextEnabled && player.hasNextMediaItem()) {
                                 playbackFinished = false
                                 // #262/#50：切集时触发短暂黑场淡入淡出，复用播放器队列不重建实例。
                                 episodeFadeActive = true
@@ -646,6 +733,10 @@ fun PlayerScreen(
         playbackWatchdog.onSourceRequested(System.currentTimeMillis())
         firstFrameRendered = false
         firstFrameFailure = null
+        autoReconnectTried = 0
+        lastSeekAtMs = System.currentTimeMillis()
+        autoNextCountdownUntilMs = 0L
+        autoNextCountdownRemaining = 0
         attemptTracker.onPlaybackChanged(state.currentPlaybackKey())
         // 从头播放时应用“开始跳过”；恢复进度时保持原位置。
         introSkipPending = startPositionMs <= 0L
@@ -659,7 +750,7 @@ fun PlayerScreen(
             startPositionMs,
         )
         player.prepare()
-        player.setPlaybackSpeed(state.playerSpeed)
+        player.setPlaybackSpeed(PlayerSpeedSetting.clamp(state.playerSpeed))
         if (!state.playerPlayWhenReady) session.pause(player) else session.preparePlayback(player)
         saveCurrentProgress(
             positionMs = startPositionMs,
@@ -676,14 +767,18 @@ fun PlayerScreen(
                 val now = System.currentTimeMillis()
                 val playIntent = player.playWhenReady && !session.interrupted
                 val failure = playbackWatchdog.checkFirstFrame(nowMs = now, playWhenReady = playIntent)
-                    // READY 但进度长时间不推进才是真正卡死；缓冲态交给 PlaybackBufferMonitor 处理，
-                    // 避免拖动进度条后的短暂缓冲被误判成卡死。
-                    ?: playbackWatchdog.onProgressSample(
+                    // READY 但进度长时间不推进才是真正卡死；缓冲态交给 PlaybackBufferMonitor 处理。
+                    // seekCoolingMs 冷却窗口内不采样，避免手动拖动后的短暂缓冲被误判成卡死。
+                    ?: if (now - lastSeekAtMs < seekCoolingMs) null
+                    else playbackWatchdog.onProgressSample(
                         isPlaying = playIntent && player.playbackState == Player.STATE_READY,
                         positionMs = player.currentPosition,
                         nowMs = now,
                     )
-                if (failure != null) firstFrameFailure = failure.kind
+                if (failure != null) {
+                    firstFrameFailure = failure.kind
+                    firstFrameFailureNonce++
+                }
             }
         }
     }
@@ -691,6 +786,21 @@ fun PlayerScreen(
         if (isTelevision && firstFrameFailure != null) {
             runCatching { overlayRetryFocus.requestFocus() }
         }
+    }
+    // 首包超时自动换线：reconnectAttempts=0 关闭；正数按次数上限；-1 持续（受可用线路数约束）。
+    LaunchedEffect(firstFrameFailure, firstFrameFailureNonce) {
+        val failure = firstFrameFailure ?: return@LaunchedEffect
+        if (failure != PlaybackFailureKind.FirstFrameTimeout) return@LaunchedEffect
+        val attempts = actions.state.value.appSettings.reconnectAttempts
+        if (attempts == 0) return@LaunchedEffect
+        if (attempts > 0 && autoReconnectTried >= attempts) return@LaunchedEffect
+        autoReconnectTried += 1
+        handlePlaybackIssue(
+            PlaybackIssueType.Error,
+            "播放管家：首帧超时，正在自动换线",
+            "首帧超时，播放管家已尝试所有可用线路",
+            "首帧超时，正在自动换线",
+        )
     }
 
     PromptTimer(nonce = playbackNoticeNonce, hideDelayMs = 2_000L) { playbackNotice = null; playbackNoticeNonce = 0 }
@@ -726,7 +836,8 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(state.playerSpeed) {
-        player.setPlaybackSpeed(state.playerSpeed)
+        // 设置值统一收敛到 0.5..3.0，避免异常持久化值让播放器加速到不可用档。
+        player.setPlaybackSpeed(PlayerSpeedSetting.clamp(state.playerSpeed))
     }
 
     LaunchedEffect(Unit) {
@@ -759,7 +870,9 @@ fun PlayerScreen(
             seekGesturePrompt = "已锁定，先解锁"
             seekGesturePromptNonce++
         } else {
-            bufferMonitor.onSeekStarted(System.currentTimeMillis())
+            val nowMs = System.currentTimeMillis()
+            bufferMonitor.onSeekStarted(nowMs)
+            lastSeekAtMs = nowMs
             val targetPosition = player.seekByOffset(deltaMs)
             seekGesturePrompt = "$label  ${formatPlayerTime(targetPosition)}"
             seekGesturePromptNonce++
@@ -770,9 +883,12 @@ fun PlayerScreen(
         }
     }
     val seekByRemote = { deltaMs: Long ->
-        bufferMonitor.onSeekStarted(System.currentTimeMillis())
+        val nowMs = System.currentTimeMillis()
+        bufferMonitor.onSeekStarted(nowMs)
+        lastSeekAtMs = nowMs
         val targetPosition = player.seekByOffset(deltaMs)
-        val action = if (deltaMs < 0L) "快退 10 秒" else "快进 10 秒"
+        val stepSeconds = (kotlin.math.abs(deltaMs) / 1_000L).coerceAtLeast(1L)
+        val action = if (deltaMs < 0L) "快退 $stepSeconds 秒" else "快进 $stepSeconds 秒"
         val durationMs = player.duration.takeIf { it > 0L }
         seekGesturePrompt = if (durationMs == null) {
             "$action  ${formatPlayerTime(targetPosition)}"
@@ -801,57 +917,113 @@ fun PlayerScreen(
         seekGesturePromptNonce++
     }
     val cyclePlaybackSpeedByRemote = {
-        val nextSpeed = nextPlaybackSpeed(latestState.playerSpeed, PLAYER_SPEED_STEPS)
+        val currentSpeed = PlayerSpeedSetting.clamp(latestState.playerSpeed)
+        val nextSpeed = nextPlaybackSpeed(currentSpeed, PLAYER_SPEED_STEPS)
         player.setPlaybackSpeed(nextSpeed)
         actions.updatePlaybackSpeed(nextSpeed)
         seekGesturePrompt = "当前倍速 ${formatPlaybackSpeed(nextSpeed)}"
         seekGesturePromptNonce++
     }
 
-    // 遥控键位收敛到共享 PlayerSeekKeyMap：页面只提供语义回调，不含键码判断。
+    // 遥控键位统一到 UnifiedRemoteKeyRouter（替代旧 PlayerSeekKeyMap）：键码→动作由绑定表决定。
     val seekKeyMap = remember {
-        PlayerSeekKeyMap(
-            PlayerSeekKeyMap.Callbacks(
-                onSeekBy = {},
-                onFinishSeek = {},
-                onToggle = {},
-                onPlay = {},
-                onPause = {},
-                onChangeEpisode = {},
-                onCycleSpeed = {},
+        UnifiedRemoteKeyRouter(
+            mode = UnifiedRemoteKeyRouter.PlayerMode.Seek,
+            callbacks = UnifiedRemoteKeyRouter.Callbacks(
+                onAction = { false },
+                chrome = chrome,
             ),
         )
     }
-    seekKeyMap.callbacks = PlayerSeekKeyMap.Callbacks(
-        onSeekBy = { seekByRemote(it) },
-        onFinishSeek = { finishRemoteSeek() },
-        onToggle = { togglePlaybackByGesture() },
-        onPlay = {
-            session.play(player)
-            seekGesturePrompt = "播放"
-            seekGesturePromptNonce++
+    seekKeyMap.callbacks = UnifiedRemoteKeyRouter.Callbacks(
+        onAction = { action ->
+            when (action) {
+                is UnifiedRemoteKeyRouter.Action.SeekBy -> {
+                    seekByRemote(action.deltaMs)
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.FinishSeek -> {
+                    finishRemoteSeek()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.TogglePlayback -> {
+                    togglePlaybackByGesture()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.Play -> {
+                    session.play(player)
+                    seekGesturePrompt = "播放"
+                    seekGesturePromptNonce++
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.Pause -> {
+                    bufferMonitor.onPaused()
+                    session.pause(player)
+                    seekGesturePrompt = "暂停"
+                    seekGesturePromptNonce++
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.ChangeEpisode -> {
+                    changeEpisodeByRemote(action.delta)
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.CycleSpeed -> {
+                    cyclePlaybackSpeedByRemote()
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.OpenSettings -> {
+                    chrome.openPanel(PlayerPanel.Settings)
+                    true
+                }
+
+                is UnifiedRemoteKeyRouter.Action.OpenInfo -> {
+                    chrome.openPanel(PlayerPanel.Info)
+                    true
+                }
+
+                else -> false
+            }
         },
-        onPause = {
-            bufferMonitor.onPaused()
-            session.pause(player)
-            seekGesturePrompt = "暂停"
-            seekGesturePromptNonce++
-        },
-        onChangeEpisode = { changeEpisodeByRemote(it) },
-        onCycleSpeed = { cyclePlaybackSpeedByRemote() },
-        onSettings = {
-            chrome.openPanel(PlayerPanel.Settings)
-        },
-        onInfo = {
-            chrome.openPanel(PlayerPanel.Info)
-        },
+        chrome = chrome,
+    )
+
+    // 8 个分项开关 + 灵敏度 + 边缘保护 + 手势锁：总开关关闭时全部手势失效。
+    fun touchCapabilities(): PlayerTouchCapabilities = PlayerTouchCapabilities(
+        seekDrag = gesturesEnabled && playbackSettings.gestureHorizontalSeekEnabled,
+        doubleTapSeek = gesturesEnabled &&
+            (playbackSettings.gestureDoubleTapSideEnabled || playbackSettings.gestureDoubleTapCenterEnabled),
+        longPressSpeed = gesturesEnabled && playbackSettings.gestureLongPressSpeedEnabled,
+        brightness = gesturesEnabled && playbackSettings.gestureLeftBrightnessEnabled,
+        volume = gesturesEnabled && playbackSettings.gestureRightVolumeEnabled,
+        lock = playbackSettings.gestureLockEnabled,
+        verticalSwipeEnabled = gesturesEnabled &&
+            (playbackSettings.gestureLeftBrightnessEnabled || playbackSettings.gestureRightVolumeEnabled),
+        verticalSwipeLoose = false,
+        leftBrightnessEnabled = playbackSettings.gestureLeftBrightnessEnabled,
+        rightVolumeEnabled = playbackSettings.gestureRightVolumeEnabled,
+        horizontalSeekEnabled = playbackSettings.gestureHorizontalSeekEnabled,
+        doubleTapSideEnabled = playbackSettings.gestureDoubleTapSideEnabled,
+        doubleTapCenterEnabled = playbackSettings.gestureDoubleTapCenterEnabled,
+        longPressSpeedEnabled = playbackSettings.gestureLongPressSpeedEnabled,
+        pinchZoomEnabled = gesturesEnabled && playbackSettings.gesturePinchZoomEnabled,
+        topSwipeBackEnabled = gesturesEnabled && playbackSettings.gestureTopSwipeBackEnabled,
+        sensitivity = playbackSettings.gestureSensitivity,
+        edgeGuardEnabled = playbackSettings.gestureEdgeGuardEnabled,
+        gestureLockEnabled = playbackSettings.gestureLockEnabled,
     )
 
     val touchController = remember {
         PlayerTouchGestureHandler(
             activity = activity,
             audioManager = audioManager,
-            capabilities = PlayerTouchCapabilities(),
+            capabilities = touchCapabilities(),
             callbacks = PlayerTouchCallbacks(
                 isLocked = { false },
                 currentPositionMs = { 0L },
@@ -886,7 +1058,9 @@ fun PlayerScreen(
             seekGesturePromptNonce++
         },
         onSeekDragCommit = { positionMs ->
-            bufferMonitor.onSeekStarted(System.currentTimeMillis())
+            val nowMs = System.currentTimeMillis()
+            bufferMonitor.onSeekStarted(nowMs)
+            lastSeekAtMs = nowMs
             player.seekTo(positionMs)
             seekGesturePromptNonce++
             saveCurrentProgress(
@@ -910,10 +1084,31 @@ fun PlayerScreen(
         },
         onLongPressEnd = {
             longPressSpeedActive = false
-            player.setPlaybackSpeed(longPressOriginalSpeed)
+            player.setPlaybackSpeed(PlayerSpeedSetting.clamp(longPressOriginalSpeed))
             seekGesturePrompt = null
         },
+        onPinchZoom = { factor ->
+            // 以画面比例档位承接捏合缩放：放大切“裁剪铺满”，缩小回“原始比例”；之间设冷却避免抖动。
+            val nowMs = System.currentTimeMillis()
+            if (nowMs - lastPinchSwitchAtMs >= 600L) {
+                when {
+                    factor > 1.12f && videoScaleMode != VideoScaleMode.Zoom -> {
+                        actions.updateContentVideoScaleMode(videoScaleContentKey, VideoScaleMode.Zoom)
+                        lastPinchSwitchAtMs = nowMs
+                    }
+                    factor < 0.89f && videoScaleMode != VideoScaleMode.Fit -> {
+                        actions.updateContentVideoScaleMode(videoScaleContentKey, VideoScaleMode.Fit)
+                        lastPinchSwitchAtMs = nowMs
+                    }
+                }
+            }
+        },
+        onTopSwipeBack = { exitPlayer() },
     )
+    touchController.capabilities = touchCapabilities()
+    touchController.doubleTapSeekMs = playbackSettings.fastSeekStepSeconds.toLong() * 1_000L
+    seekKeyMap.seekStepSeconds = playbackSettings.fastSeekStepSeconds
+    seekKeyMap.bindings = state.appSettings.remoteKeyBindings
     DisposableEffect(player, activity, initialScreenBrightness) {
         onDispose {
             touchController.release()
@@ -921,11 +1116,16 @@ fun PlayerScreen(
         }
     }
 
-    // 手机端退后台暂停：避免后台继续出声；回前台保留进度，用户手动恢复。
-    DisposableEffect(lifecycleOwner, player, isTelevision) {
+    // 手机端退后台行为：pause 暂停；audio 继续出声；pip 尝试画中画，失败回退 audio。
+    // 三种模式都不在此处 release：播放器只在离开播放页（组合销毁）时释放。
+    DisposableEffect(lifecycleOwner, player, activity, isTelevision, backgroundPlaybackMode) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (!isTelevision && event == Lifecycle.Event.ON_STOP && player.isPlaying) {
-                session.pause(player)
+                when (backgroundPlaybackMode) {
+                    "audio" -> Unit
+                    "pip" -> enterPictureInPictureSafely(activity)
+                    else -> session.pause(player)
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -946,9 +1146,11 @@ fun PlayerScreen(
             showBuffering = false,
             posterUrl = movie.posterUrl,
             configure = { view ->
-                // 电视模式不挂触摸手势：电视上没有触摸源，误触/触摸板会意外改亮度、音量或进度。
-                if (!isTelevision) {
+                // 电视模式或关闭播放器手势时不挂触摸监听：误触/触摸板不会意外改亮度、音量或进度。
+                if (!isTelevision && gesturesEnabled) {
                     view.setOnTouchListener(touchController)
+                } else {
+                    view.setOnTouchListener(null)
                 }
             },
         )
@@ -958,6 +1160,15 @@ fun PlayerScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = episodeFadeAlpha * 0.92f)),
+            )
+        }
+        // 片尾倒计时：明确告知用户将在几秒后切到下一集。
+        if (autoNextCountdownRemaining > 0 && firstFrameFailure == null && !playbackFinished) {
+            GesturePrompt(
+                text = "即将播放下一集 · ${autoNextCountdownRemaining}s",
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = 24.dp),
             )
         }
         val failureKind = firstFrameFailure
@@ -981,6 +1192,7 @@ fun PlayerScreen(
             onRetry = {
                 firstFrameFailure = null
                 firstFrameRendered = false
+                autoReconnectTried = 0
                 playbackWatchdog.onSourceRequested(System.currentTimeMillis())
                 player.prepare()
                 session.play(player)
@@ -1075,12 +1287,15 @@ fun PlayerScreen(
                     null
                 },
                 castActive = castingDevice != null,
-                lock = true,
+                lock = playbackSettings.gestureLockEnabled,
             ),
+            hiddenControls = state.appSettings.playerHiddenControls,
             actions = PlayerChromeActions(
                 onToggle = { togglePlaybackByGesture() },
                 onSeek = { position ->
-                    bufferMonitor.onSeekStarted(System.currentTimeMillis())
+                    val nowMs = System.currentTimeMillis()
+                    bufferMonitor.onSeekStarted(nowMs)
+                    lastSeekAtMs = nowMs
                     player.seekTo(position)
                     saveCurrentProgress(position, uiDuration)
                 },
@@ -1095,8 +1310,9 @@ fun PlayerScreen(
                     actions.switchPlayerSource(index, resumeAnchor.positionForFailure(player.currentPosition), player.playWhenReady)
                 },
                 onSelectSpeed = { speed ->
-                    player.setPlaybackSpeed(speed)
-                    actions.updatePlaybackSpeed(speed)
+                    val clamped = PlayerSpeedSetting.clamp(speed)
+                    player.setPlaybackSpeed(clamped)
+                    actions.updatePlaybackSpeed(clamped)
                 },
                 onSelectResize = { mode -> actions.updateContentVideoScaleMode(videoScaleContentKey, mode) },
                 onSelectAudioTrack = { player.selectAudioTrack(it) },
@@ -1109,12 +1325,14 @@ fun PlayerScreen(
                     if (castingDevice != null) stopCasting() else castDialogVisible = true
                 },
                 onLockChange = { locked ->
-                    chrome.interaction++
-                    if (locked) {
-                        touchController.cancelPendingGestures()
+                    if (playbackSettings.gestureLockEnabled) {
+                        chrome.interaction++
+                        if (locked) {
+                            touchController.cancelPendingGestures()
+                        }
+                        seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
+                        seekGesturePromptNonce++
                     }
-                    seekGesturePrompt = if (locked) "播放已锁定" else "已解锁"
-                    seekGesturePromptNonce++
                 },
                 onInteraction = { chrome.interaction++ },
             ),
@@ -1206,6 +1424,19 @@ private fun GesturePrompt(
             color = textColor,
         )
     }
+}
+
+/**
+ * 尽力进入画中画：API 26+、系统声明支持 PiP 时才尝试。
+ * 失败（例如 Manifest 未声明 supportsPictureInPicture）不抛异常，退后台继续音频播放。
+ */
+private fun enterPictureInPictureSafely(activity: android.app.Activity?): Boolean {
+    if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+    if (!activity.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return false
+    return runCatching {
+        activity.enterPictureInPictureMode(PictureInPictureParams.Builder().build())
+        true
+    }.getOrDefault(false)
 }
 
 /**

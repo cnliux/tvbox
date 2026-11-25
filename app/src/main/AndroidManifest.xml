@@ -11,9 +11,14 @@
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- 语音找片：通过系统语音识别页（ACTION_RECOGNIZE_SPEECH）工作，
+         麦克风权限由系统语音应用持有，本应用不申请 RECORD_AUDIO。 -->
     <queries>
         <intent>
             <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
         </intent>
     </queries>
 
@@ -57,10 +62,15 @@
 
         <!-- configChanges 覆盖旋转/键盘/语言等常见变化：Activity 不重建，播放中的 ExoPlayer
              与弹幕长连接不会被无谓销毁重建；Compose 会随资源更新，无需依赖重建刷新文案。 -->
+        <!-- supportsPictureInPicture：允许播放页退后台时进入画中画（Android 8.0+）。
+             是否进入 PiP 由用户设置 backgroundPlaybackMode（pause/audio/pip）控制，
+             默认 pause，故声明能力不会改变默认行为；PlayerScreen.enterPictureInPictureSafely
+             还会二次校验 API 版本与系统 FEATURE_PICTURE_IN_PICTURE。 -->
         <activity
             android:name=".MainActivity"
             android:configChanges="keyboard|keyboardHidden|navigation|locale|layoutDirection|fontScale|uiMode|orientation|screenLayout|screenSize|smallestScreenSize"
             android:exported="true"
+            android:supportsPictureInPicture="true"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

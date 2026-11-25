@@ -136,8 +136,11 @@ internal class PlaybackHost(
 @Composable
 internal fun rememberPlaybackHost(
     decoderStrategy: DecoderStrategy = DecoderStrategy.Auto,
+    audioOutputMode: String = "auto",
 ): PlaybackHost =
-    rememberPlaybackHostOrNull(rememberManagedExoPlayer(decoderStrategy))!!
+    rememberPlaybackHostOrNull(
+        rememberManagedExoPlayer(decoderStrategy, audioOutputMode = audioOutputMode),
+    )!!
 
 /**
  * 平台直播在解析出可播地址前没有播放器实例；此重载让其余页面共用同一份快照逻辑。

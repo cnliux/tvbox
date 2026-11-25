@@ -194,6 +194,43 @@ data class ResolvedPlatformLiveStream(
     }
 }
 
+/**
+ * 把第三方代理解析候选插到官方解析候选之前：第三方在前按配置顺序互为备用，
+ * 官方候选整体后移退为兜底。第三方代理候选标记 cdn=「第三方」，protocol=flv。
+ *
+ * 多平台：按 A 方案分组配置（`# 站点名` 分组）取该平台的模板，以房间号为主键展开。
+ * 未启用、站点不受支持或该平台未配置有效模板时原样返回，绝不改动官方候选。
+ *
+ * 默认兜底（cfss.cc 主 + mursor 备用）仅对 huya/douyu 生效——内置默认模板 `{site}` 占位
+ * 只在这两家有已知可用的第三方写法；其它平台必须由用户显式配置，避免凭空生成无效候选。
+ */
+fun ResolvedPlatformLiveStream.withThirdPartyProxyPrepended(
+    site: String,
+    roomId: String,
+    enabled: Boolean,
+    templatesRaw: String,
+): ResolvedPlatformLiveStream {
+    if (!enabled) return this
+    val templates = ThirdPartyLiveProxy.templatesForSite(templatesRaw, site)
+        .ifEmpty {
+            // 该平台无分组配置时的兜底：仅 huya/douyu 用内置默认模板（向后兼容旧全局配置）。
+            if (site.trim().lowercase() in setOf("huya", "douyu")) {
+                ThirdPartyLiveProxy.defaultTemplates
+            } else {
+                emptyList()
+            }
+        }
+    val thirdPartyUrls = ThirdPartyLiveProxy.candidateUrls(templates, site, roomId)
+    if (thirdPartyUrls.isEmpty()) return this
+    val officialUrls = candidates.map { it.url }.toSet()
+    // 防御：若某个第三方地址与官方候选重复，不重复插入。
+    val thirdPartyCandidates = thirdPartyUrls
+        .filterNot { it in officialUrls }
+        .map { url -> PlatformLiveStreamCandidate(cdn = "第三方", protocol = "flv", url = url) }
+    if (thirdPartyCandidates.isEmpty()) return this
+    return copy(candidates = thirdPartyCandidates + candidates)
+}
+
 data class AppUpdate(
     val versionCode: Long,
     val versionName: String,
@@ -208,4 +245,11 @@ data class AppUpdate(
      * 既有 8 个字段的语义与结构保持不变。
      */
     val apkMirrors: List<String> = emptyList(),
+    /**
+     * 安装前要求的最低当前版本号（P39）；0 表示不限制。
+     * 老版本 update.json 缺省为 0，新字段对老客户端透明（ignoreUnknownKeys）。
+     */
+    val minVersionCode: Long = 0L,
+    /** 清单发布通道（P39）：`stable`（正式）或 `canary`（预览），缺省按正式通道处理。 */
+    val channel: String = "stable",
 )

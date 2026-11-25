@@ -462,7 +462,7 @@ internal fun MobileHistoryScreen(
                                     )
                                     // 扁平列表：细分隔线只贯穿右侧文字区域（与文字列左缘对齐）
                                     HorizontalDivider(
-                                        modifier = Modifier.padding(start = 78.dp),
+                                        modifier = Modifier.padding(start = 110.dp),
                                         thickness = HistoryTokens.M.SegH,
                                         color = HistoryTokens.Divider,
                                     )
@@ -479,7 +479,7 @@ internal fun MobileHistoryScreen(
                                 .padding(end = 16.dp, bottom = 16.dp)
                                 .size(48.dp)
                                 .background(
-                                    Brush.linearGradient(listOf(Color(0xFFFFB020), Color(0xFFFF8C00))),
+                                    Brush.linearGradient(listOf(TvColors.Accent, TvColors.AccentStrong)),
                                     shape = CircleShape,
                                 )
                                 .semantics {
@@ -542,12 +542,13 @@ private fun HistoryChip(
     accent: Boolean = false,
     enabled: Boolean = true,
 ) {
+    // 按钮配色统一走主题令牌（TvColors）：选中/强调 = accent 绿；危险 = danger；
+    // 普通态 = surface + 次级文字。不再使用游离于主题外的琥珀/玫红硬编码色。
     val (bg, fg) = when {
-        !enabled -> HistoryTokens.CaughtUpBg to HistoryTokens.MetaDim
-        danger   -> HistoryTokens.NewTextBg to HistoryTokens.NewText
-        accent   -> HistoryTokens.NewTextBg to HistoryTokens.NewText
-        selected -> HistoryTokens.NewTextBg to HistoryTokens.NewText
-        else     -> Color(0xFF222222) to HistoryTokens.Meta
+        !enabled -> TvColors.Surface to TvColors.TextTertiary
+        danger   -> TvColors.Danger.copy(alpha = 0.18f) to TvColors.Danger
+        accent || selected -> TvColors.Accent.copy(alpha = 0.18f) to TvColors.Accent
+        else     -> TvColors.Surface to TvColors.TextSecondary
     }
     Surface(
         modifier = Modifier.height(32.dp),

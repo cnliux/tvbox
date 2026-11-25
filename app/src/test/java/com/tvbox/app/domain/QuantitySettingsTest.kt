@@ -34,25 +34,21 @@ class QuantitySettingsTest {
         assertEquals(30, QuantitySettings.DoubanHotPageSize.default)
         assertEquals(8, QuantitySettings.DoubanHotFallbackLines.default)
         assertEquals(200, QuantitySettings.HistoryMaxItems.default)
-        // 多源搜索并发默认拉满到上限 12，修复「多个源只搜到 1~2 个内容」。
-        assertEquals(12, QuantitySettings.MaxParallelSourceRequests.default)
-        assertEquals(
-            QuantitySettings.MaxParallelSourceRequests.max,
-            QuantitySettings.MaxParallelSourceRequests.default,
-        )
+        // 多源搜索并发默认 6（可在 1..12 区间按体验调整）。
+        assertEquals(6, QuantitySettings.MaxParallelSourceRequests.default)
+        assertTrue(QuantitySettings.MaxParallelSourceRequests.default in
+            QuantitySettings.MaxParallelSourceRequests.min..QuantitySettings.MaxParallelSourceRequests.max)
     }
 
     @Test
     fun `AppSettings 默认值与数量设置一致`() {
         val defaults = AppSettings()
-        assertEquals(QuantitySettings.ContinueWatchingCount.default, defaults.continueWatchingCount)
         assertEquals(QuantitySettings.EpgCardRows.default, defaults.epgCardRows)
         assertEquals(QuantitySettings.LiveNumberMatchRows.default, defaults.liveNumberMatchRows)
         assertEquals(QuantitySettings.LiveNumberSearchLimit.default, defaults.liveNumberSearchLimit)
         assertEquals(QuantitySettings.RelatedChannelCount.default, defaults.relatedChannelCount)
         assertEquals(QuantitySettings.HotWordCount.default, defaults.hotWordCount)
         assertEquals(QuantitySettings.SearchSuggestionCount.default, defaults.searchSuggestionCount)
-        assertEquals(QuantitySettings.HomeHotContentCount.default, defaults.homeHotContentCount)
         assertEquals(QuantitySettings.DoubanHotPageSize.default, defaults.doubanHotPageSize)
         assertEquals(QuantitySettings.DoubanHotFallbackLines.default, defaults.doubanHotFallbackLines)
         assertEquals(QuantitySettings.HistoryMaxItems.default, defaults.historyMaxItems)

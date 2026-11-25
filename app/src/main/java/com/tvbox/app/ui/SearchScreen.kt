@@ -233,6 +233,10 @@ fun SearchScreen(
                         onDelete = ::deleteKey,
                         onMoveToResults = moveToResults,
                         tvMode = state.effectiveDeviceMode != com.tvbox.app.domain.DeviceMode.Mobile,
+                        hotWords = hotWords,
+                        onSelectCandidate = ::searchHotWord,
+                        onClearHistory = actions::clearSearchHistory,
+                        onRemoveHistory = actions::removeSearchHistory,
                         modifier = Modifier
                             .width(356.dp)
                             .fillMaxHeight(),
@@ -246,13 +250,28 @@ fun SearchScreen(
                             .background(TvColors.Border),
                     )
                     Spacer(modifier = Modifier.width(18.dp))
-                    HotSearchPanel(
-                        hotWords = hotWords,
-                        onSelect = ::searchHotWord,
+                    Column(
                         modifier = Modifier
                             .width(164.dp)
                             .fillMaxHeight(),
-                    )
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        HotSearchPanel(
+                            hotWords = hotWords,
+                            onSelect = ::searchHotWord,
+                            modifier = Modifier.weight(1f),
+                        )
+                        // 搜索记录：放在热词下方同一栏，都是「输入前的候选词」。
+                        if (state.searchHistory.isNotEmpty()) {
+                            SearchHistoryPanel(
+                                history = state.searchHistory,
+                                onSelect = ::searchHotWord,
+                                onRemove = actions::removeSearchHistory,
+                                onClear = actions::clearSearchHistory,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                     Spacer(modifier = Modifier.width(22.dp))
                     SearchResultsPanel(
                         state = state,
@@ -276,80 +295,130 @@ fun SearchScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.fillMaxSize(),
                 ) {
-                    item(key = "search-header", span = { GridItemSpan(maxLineSpan) }) {
-                        SearchCompactBar(
-                            state = state,
-                            fieldValue = fieldValue,
-                            fieldFocus = searchFieldFocus.requester,
-                            onMoveToResults = moveToResults,
-                            onValueChange = {
-                                fieldValue = it
-                                actions.updateSearchQuery(it.text)
-                            },
-                            onSearch = actions::submitSearch,
-                            onClear = ::clearQuery,
-                            onBack = actions::goBack,
-                        )
-                    }
-                    if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
-                        item(key = "search-hot", span = { GridItemSpan(maxLineSpan) }) {
-                            HotSearchStrip(hotWords = hotWords, onSelect = ::searchHotWord)
-                        }
-                    }
-                    item(key = "search-status", span = { GridItemSpan(maxLineSpan) }) {
-                        SearchResultsHeader(state = state)
-                    }
-                    when {
-                        state.searchLoading && state.searchResults.isEmpty() -> {
-                            item(key = "search-loading", span = { GridItemSpan(maxLineSpan) }) {
-                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    LoadingState(text = "正在搜索多个影视来源")
-                                }
-                            }
-                        }
-
-                        state.searchError != null && state.searchResults.isEmpty() -> {
-                            item(key = "search-error", span = { GridItemSpan(maxLineSpan) }) {
-                                ErrorState(
-                                    message = state.searchError,
-                                    onRetry = actions::submitSearch,
-                                )
-                            }
-                        }
-
-                        state.searchResults.isEmpty() -> {
-                            item(key = "search-empty", span = { GridItemSpan(maxLineSpan) }) {
-                                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    SearchEmptyState(query = state.searchQuery)
-                                }
-                            }
-                        }
-
-                        else -> {
-                            itemsIndexed(
-                                items = state.searchResults,
-                                key = { _, movie -> "result-${movie.apiLineId}-${movie.id}" },
-                            ) { index, movie ->
-                                SearchResultCard(
-                                    movie = movie,
-                                    onClick = {
-                                        returnFocus.mark("${movie.apiLineId}:${movie.id}", index)
-                                        actions.openDetail(movie.id, movie.apiLineId)
-                                    },
-                                    modifier = returnFocus
-                                        .modifier("${movie.apiLineId}:${movie.id}", index)
-                                        .then(
-                                            if (index == 0 && returnFocus.lastKey == null) {
-                                                resultsFocus.anchor
-                                            } else {
-                                                Modifier
-                                            },
-                                        ),
-                                )
-                            }
-                        }
-                    }
+                    NarrowSearchGridContent(
+                        state = state,
+                        actions = actions,
+                        fieldValue = fieldValue,
+                        fieldFocus = searchFieldFocus.requester,
+                        onMoveToResults = moveToResults,
+                        onValueChange = { value ->
+                            fieldValue = value
+                            actions.updateSearchQuery(value.text)
+                        },
+                        onSearch = actions::submitSearch,
+                        onClear = ::clearQuery,
+                        onBack = actions::goBack,
+                        hotWords = hotWords,
+                        onSelectHotWord = ::searchHotWord,
+                        grid = grid,
+                        returnFocus = returnFocus,
+                        resultsFocus = resultsFocus,
+                    )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * 窄屏一体化搜索网格的内容：搜索框、热词、搜索记录、状态区与结果卡片。
+ * 独立成函数，避免宽窄两个分支重复同一份网格 item 定义。
+ * 作为 LazyGridScope 的扩展：item/itemsIndexed 只在 LazyVerticalGrid 作用域内可用。
+ */
+private fun androidx.compose.foundation.lazy.grid.LazyGridScope.NarrowSearchGridContent(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    fieldValue: TextFieldValue,
+    fieldFocus: FocusRequester,
+    onMoveToResults: () -> Unit,
+    onValueChange: (TextFieldValue) -> Unit,
+    onSearch: () -> Unit,
+    onClear: () -> Unit,
+    onBack: () -> Unit,
+    hotWords: List<String>,
+    onSelectHotWord: (String) -> Unit,
+    grid: androidx.compose.foundation.lazy.grid.LazyGridState,
+    returnFocus: ReturnFocus,
+    resultsFocus: TvFocusRequest,
+) {
+    item(key = "search-header", span = { GridItemSpan(maxLineSpan) }) {
+        SearchCompactBar(
+            state = state,
+            fieldValue = fieldValue,
+            fieldFocus = fieldFocus,
+            onMoveToResults = onMoveToResults,
+            onValueChange = onValueChange,
+            onSearch = onSearch,
+            onClear = onClear,
+            onBack = onBack,
+        )
+    }
+    if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
+        item(key = "search-hot", span = { GridItemSpan(maxLineSpan) }) {
+            HotSearchStrip(hotWords = hotWords, onSelect = onSelectHotWord)
+        }
+    }
+    // 搜索记录：热词条下方，点选即重新搜索；可单条删除或一键清空。
+    if (state.searchHistory.isNotEmpty()) {
+        item(key = "search-history", span = { GridItemSpan(maxLineSpan) }) {
+            SearchHistoryStrip(
+                history = state.searchHistory,
+                onSelect = onSelectHotWord,
+                onRemove = actions::removeSearchHistory,
+                onClear = actions::clearSearchHistory,
+            )
+        }
+    }
+    item(key = "search-status", span = { GridItemSpan(maxLineSpan) }) {
+        SearchResultsHeader(state = state)
+    }
+    when {
+        state.searchLoading && state.searchResults.isEmpty() -> {
+            item(key = "search-loading", span = { GridItemSpan(maxLineSpan) }) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    LoadingState(text = "正在搜索多个影视来源")
+                }
+            }
+        }
+
+        state.searchError != null && state.searchResults.isEmpty() -> {
+            item(key = "search-error", span = { GridItemSpan(maxLineSpan) }) {
+                ErrorState(
+                    message = state.searchError,
+                    onRetry = onSearch,
+                )
+            }
+        }
+
+        state.searchResults.isEmpty() -> {
+            item(key = "search-empty", span = { GridItemSpan(maxLineSpan) }) {
+                Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    SearchEmptyState(query = state.searchQuery)
+                }
+            }
+        }
+
+        else -> {
+            itemsIndexed(
+                items = state.searchResults,
+                key = { _, movie -> "result-${movie.apiLineId}-${movie.id}" },
+            ) { index, movie ->
+                SearchResultCard(
+                    movie = movie,
+                    onClick = {
+                        returnFocus.mark("${movie.apiLineId}:${movie.id}", index)
+                        actions.openDetail(movie.id, movie.apiLineId)
+                    },
+                    modifier = returnFocus
+                        .modifier("${movie.apiLineId}:${movie.id}", index)
+                        .then(
+                            if (index == 0 && returnFocus.lastKey == null) {
+                                resultsFocus.anchor
+                            } else {
+                                Modifier
+                            },
+                        ),
+                )
             }
         }
     }
@@ -368,6 +437,10 @@ private fun SearchControlPanel(
     onDelete: () -> Unit,
     onMoveToResults: () -> Unit,
     tvMode: Boolean,
+    hotWords: List<String>,
+    onSelectCandidate: (String) -> Unit,
+    onClearHistory: () -> Unit,
+    onRemoveHistory: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val softwareKeyboardController = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
@@ -381,7 +454,10 @@ private fun SearchControlPanel(
         )
         OutlinedTextField(
             value = fieldValue,
+            // TV 模式只读：只读输入框聚焦/点击都不唤起系统 IME，彻底杜绝软键盘弹出；
+            // 遥控器一律走下方 SearchKeyboard。手机端保持可编辑、用系统软键盘。
             onValueChange = onValueChange,
+            readOnly = tvMode,
             // #22/#7 TV 模式屏蔽软键盘：遥控器走下方 SearchKeyboard 输入，聚焦输入框不弹 IME，
             // 避免软键盘抢焦点与遥控器冲突；手机端保留系统软键盘。
             modifier = Modifier
@@ -393,11 +469,18 @@ private fun SearchControlPanel(
                     }
                 }
                 .onPreviewKeyEvent { event ->
-                    // 单行搜索框里的"下键"没有光标移动意义：直接进入结果卡片列表，
-                    // 避免遥控器焦点被 TextField 吞掉后在输入框里"卡死"。
-                    if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                        onMoveToResults()
-                        true
+                    if (event.type == KeyEventType.KeyDown) {
+                        when (event.key) {
+                            // 单行搜索框里的"下键"没有光标移动意义：直接进入结果卡片列表，
+                            // 避免遥控器焦点被 TextField 吞掉后在输入框里"卡死"。
+                            Key.DirectionDown -> {
+                                onMoveToResults()
+                                true
+                            }
+                            // 左右键在只读框里没有移动光标的对象，吃掉避免焦点逃到左侧"选择源"等相邻控件。
+                            Key.DirectionLeft, Key.DirectionRight -> tvMode
+                            else -> false
+                        }
                     } else {
                         false
                     }
@@ -429,6 +512,60 @@ private fun SearchControlPanel(
             )
         }
         Spacer(modifier = Modifier.height(2.dp))
+        // 候选词：搜索记录（Accent 绿）与热门（琥珀）合并在同一区，用颜色区分；
+        // 放在键盘上方，遥控器从输入框下键可先经过候选词直达结果，不再卡在键盘。
+        if (state.searchQuery.isBlank() && state.searchResults.isEmpty() && !state.searchLoading) {
+            if (state.searchHistory.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "搜索记录",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = TvColors.Accent,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Text(
+                        text = "清空",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TvColors.TextTertiary,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable(role = Role.Button, onClick = onClearHistory)
+                            .padding(horizontal = 6.dp, vertical = 4.dp),
+                    )
+                }
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(end = 8.dp),
+                ) {
+                    items(state.searchHistory, key = { "history-$it" }) { word ->
+                        SearchHistoryChip(
+                            word = word,
+                            onSelect = { onSelectCandidate(word) },
+                            onRemove = { onRemoveHistory(word) },
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "热门搜索",
+                style = MaterialTheme.typography.titleSmall,
+                color = TvColors.Warning,
+            )
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(end = 8.dp),
+            ) {
+                items(hotWords, key = { "hot-$it" }) { word ->
+                    HotSearchWord(
+                        word = word,
+                        onClick = { onSelectCandidate(word) },
+                    )
+                }
+            }
+        }
         Text(
             text = "遥控器键盘",
             style = MaterialTheme.typography.labelMedium,
@@ -560,7 +697,7 @@ private fun HotSearchStrip(
         Text(
             text = "热门搜索",
             style = MaterialTheme.typography.titleSmall,
-            color = TvColors.TextSecondary,
+            color = TvColors.Warning,
         )
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -572,6 +709,193 @@ private fun HotSearchStrip(
                     onClick = { onSelect(word) },
                 )
             }
+        }
+    }
+}
+
+/** TV 宽屏左侧栏的搜索记录面板：竖向列表，单条右侧删除 + 顶部一键清空。 */
+@Composable
+private fun SearchHistoryPanel(
+    history: List<String>,
+    onSelect: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "搜索记录",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "清空",
+                style = MaterialTheme.typography.labelMedium,
+                color = TvColors.TextTertiary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(role = Role.Button, onClick = onClear)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(history, key = { it }) { word ->
+                SearchHistoryRow(
+                    word = word,
+                    onSelect = { onSelect(word) },
+                    onRemove = { onRemove(word) },
+                )
+            }
+        }
+    }
+}
+
+/** TV 宽屏搜索记录单行：整行点击重搜，右侧 ✕ 删除单条。 */
+@Composable
+private fun SearchHistoryRow(
+    word: String,
+    onSelect: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(role = Role.Button, onClick = onSelect)
+            .semantics { contentDescription = "搜索记录：$word" }
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
+        contentColor = if (focused) TvColors.TextPrimary else TvColors.TextSecondary,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = word,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.labelMedium,
+                color = TvColors.TextTertiary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(role = Role.Button, onClick = onRemove)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
+        }
+    }
+}
+
+/** 窄屏 / 手机端搜索记录条：横向 chips，每条带 ✕ 删除，末尾「清空」。 */
+@Composable
+private fun SearchHistoryStrip(
+    history: List<String>,
+    onSelect: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "搜索记录",
+                style = MaterialTheme.typography.titleSmall,
+                color = TvColors.Accent,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "清空",
+                style = MaterialTheme.typography.labelMedium,
+                color = TvColors.TextTertiary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(role = Role.Button, onClick = onClear)
+                    .padding(horizontal = 6.dp, vertical = 4.dp),
+            )
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(end = 8.dp),
+        ) {
+            items(history, key = { it }) { word ->
+                SearchHistoryChip(
+                    word = word,
+                    onSelect = { onSelect(word) },
+                    onRemove = { onRemove(word) },
+                )
+            }
+        }
+    }
+}
+
+/** 搜索记录 chip：点击重搜，右侧 ✕ 删除单条。 */
+@Composable
+private fun SearchHistoryChip(
+    word: String,
+    onSelect: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        modifier = Modifier
+            .tvFocusScale(
+                shape = shape,
+                focusedBorder = TvColors.FocusRing,
+            )
+            .clip(shape)
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(role = Role.Button, onClick = onSelect)
+            .semantics { contentDescription = "搜索记录：$word" }
+            .focusable(),
+        shape = shape,
+        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
+        contentColor = if (focused) TvColors.TextPrimary else TvColors.TextSecondary,
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = word,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "✕",
+                style = MaterialTheme.typography.labelMedium,
+                color = TvColors.TextTertiary,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable(role = Role.Button, onClick = onRemove)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
     }
 }
@@ -596,7 +920,8 @@ private fun HotSearchWord(
             .semantics { contentDescription = "热门搜索：$word" }
             .focusable(),
         shape = shape,
-        color = if (focused) TvColors.SurfaceRaised else TvColors.Surface,
+        // 热门候选用琥珀色调背景，与「搜索记录」的 Accent 绿色调区分开。
+        color = if (focused) TvColors.SurfaceRaised else TvColors.AccentSoft.copy(alpha = 0.22f),
         contentColor = if (focused) TvColors.TextPrimary else TvColors.TextSecondary,
     ) {
         Text(

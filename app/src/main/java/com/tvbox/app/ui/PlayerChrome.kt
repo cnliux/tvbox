@@ -97,6 +97,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.LineLatencyTier
+import com.tvbox.app.domain.PlayerControlButton
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.displayEpisodeTitle
 import com.tvbox.app.domain.lineLatencyTier
@@ -367,6 +368,38 @@ internal data class PlayerChromeCapabilities(
 )
 
 /**
+ * 任务6 播放器按钮可配置：按用户隐藏集合裁剪底栏按钮能力。
+ *
+ * [PlayerControlButton] 的 [PlayerControlButton.storageKey] 与 [PlayerChromeCapabilities]
+ * 字段一一对应；用户隐藏某按钮时关闭对应能力，底栏即不再渲染该按钮。
+ *
+ * 注意粒度：`episodes` 同时控制「上一集/下一集/选集」三键，`sources`/`lines` 各控制
+ * 「线路」键——隐藏这些会连带隐藏同能力控件，属于当前共享层能力的自然粒度。
+ * 播放/暂停、上/下一集(台)、返回等核心控件不受影响，始终显示。
+ */
+internal fun PlayerChromeCapabilities.forHiddenControls(
+    hidden: Set<String>,
+): PlayerChromeCapabilities {
+    if (hidden.isEmpty()) return this
+    fun hiddenOf(button: PlayerControlButton) = button.storageKey in hidden
+    return copy(
+        cast = cast && !hiddenOf(PlayerControlButton.Cast),
+        episodes = episodes && !hiddenOf(PlayerControlButton.Episodes),
+        sources = sources && !hiddenOf(PlayerControlButton.Sources),
+        lines = lines && !hiddenOf(PlayerControlButton.Lines),
+        favorite = favorite && !hiddenOf(PlayerControlButton.Favorite),
+        speed = speed && !hiddenOf(PlayerControlButton.Speed),
+        audioTracks = audioTracks && !hiddenOf(PlayerControlButton.AudioTracks),
+        subtitleTracks = subtitleTracks && !hiddenOf(PlayerControlButton.SubtitleTracks),
+        resize = resize && !hiddenOf(PlayerControlButton.Resize),
+        skip = skip && !hiddenOf(PlayerControlButton.Skip),
+        info = info && !hiddenOf(PlayerControlButton.Info),
+        url = url && !hiddenOf(PlayerControlButton.Url),
+        settings = settings && !hiddenOf(PlayerControlButton.Settings),
+    )
+}
+
+/**
  * 按屏幕方向裁剪控件能力：
  * - 竖版且本页提供全屏入口时，只保留全屏（返回由触摸布局固定提供），其余按钮关闭；
  * - 横屏与电视端保持页面注入的完整能力，避免键位/手势/按钮集合被竖版规则带偏。
@@ -459,13 +492,18 @@ internal fun PlayerChrome(
     outroSkipSeconds: Int = 0,
     onIntroSkip: (Int) -> Unit = {},
     onOutroSkip: (Int) -> Unit = {},
+    /** 任务6 播放器按钮可配置：用户隐藏的底栏功能按钮 storageKey 集合。空集=全部显示。 */
+    hiddenControls: Set<String> = emptySet(),
     statusContent: (@Composable RowScope.() -> Unit)? = null,
     fade: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val portrait = LocalConfiguration.current.orientation == Configuration.ORIENTATION_PORTRAIT
-    val effectiveCapabilities = remember(capabilities, portrait) {
-        capabilities.forOrientation(portrait)
+    val effectiveCapabilities = remember(capabilities, portrait, hiddenControls) {
+        capabilities
+            // 任务6：先按用户隐藏集合裁剪底栏按钮能力，再做竖版裁剪。
+            .forHiddenControls(hiddenControls)
+            .forOrientation(portrait)
     }
     AnimatedVisibility(
         visible = state.visible,

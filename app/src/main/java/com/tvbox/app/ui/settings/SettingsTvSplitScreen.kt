@@ -32,8 +32,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -63,6 +65,10 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
@@ -73,12 +79,16 @@ import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.ThemeAccent
+import com.tvbox.app.domain.AUDIO_OUTPUT_MODE_OPTIONS
+import com.tvbox.app.domain.audioOutputModeLabel
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.RemoteKeyAction
+import com.tvbox.app.domain.RemoteKeyBindings
 import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.ui.TvBoxUiState
@@ -188,17 +198,28 @@ private fun TvSettingsLanding(
         ) {
             item { TvSettingsHeroCard(state = state) }
             item {
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(2),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(420.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    userScrollEnabled = false,
-                ) {
-                    items(TvSettingCategory.entries, key = { it.name }) { category ->
-                        TvCategoryCard(category = category, onClick = { onCategoryClick(category) })
+                // 分类卡片：固定小集合（5 个，两列 3 行）。此前两版都有「显示不正常」：
+                //   ① 嵌套 LazyVerticalGrid + 写死 .height(420dp) → 末行「关于」被挤出可视区；
+                //   ② FlowRow + fillMaxWidth(0.5f) → 每卡填满 50% 宽，两张 = 100% + 12dp
+                //      spacedBy 间距 > 可用宽度，第二张被迫换行，永远一行一张、右侧大片空白
+                //      （真机 192.168.1.45 横屏实测确认）。
+                // 改为确定性两列 Row + weight(1f)：weight 会把 spacedBy 间距计入分配，两卡
+                // 必然等宽同行，奇数行补 Spacer 占位保持左列宽度一致，高度仍固定不裁剪。
+                val rows = TvSettingCategory.entries.chunked(2)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rows.forEach { rowCategories ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            rowCategories.forEach { category ->
+                                TvCategoryCard(
+                                    category = category,
+                                    onClick = { onCategoryClick(category) },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            if (rowCategories.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
                     }
                 }
             }
@@ -256,11 +277,15 @@ private fun TvSettingsHeroCard(state: TvBoxUiState) {
 }
 
 @Composable
-private fun TvCategoryCard(category: TvSettingCategory, onClick: () -> Unit) {
+private fun TvCategoryCard(
+    category: TvSettingCategory,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val shape = RoundedCornerShape(18.dp)
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
+            .height(132.dp)
             .clip(shape)
             .background(
                 Brush.linearGradient(
@@ -358,9 +383,12 @@ private fun TvSettingsDetail(
             item {
                 when (category) {
                     TvSettingCategory.General -> TvGeneralDetail(state, actions)
-                    TvSettingCategory.Playback -> TvPlaybackDetail(state, actions, onClearPlaybackStats)
+                    TvSettingCategory.Playback -> TvPlaybackDetail(state, actions)
+                    TvSettingCategory.Controls -> TvControlsDetail(state, actions)
+                    TvSettingCategory.Search -> TvSearchDetail(state)
                     TvSettingCategory.Sources -> TvSourcesDetail(state, actions)
-                    TvSettingCategory.Data -> TvDataDetail(state, actions, onClearHistory)
+                    TvSettingCategory.Live -> TvLiveDetail(state, actions)
+                    TvSettingCategory.Data -> TvDataDetail(state, actions, onClearHistory, onClearPlaybackStats)
                     TvSettingCategory.About -> TvAboutDetail(state, actions)
                 }
             }
@@ -371,6 +399,7 @@ private fun TvSettingsDetail(
 @Composable
 private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     val detectedMode = DeviceMode.detectFromSystem(androidx.compose.ui.platform.LocalContext.current)
+    // 卡 1：设备与外观（设备模式 / 主题颜色 / 字体缩放）
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Settings,
@@ -386,16 +415,49 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         SettingsGroupDivider()
+        // 主题强调色（任务7）：多主题可选，自适应 + TV 聚焦描边随主题变化。
         TvSettingsRow(
             icon = Icons.Default.Settings,
-            title = "界面主题",
-            subtitle = state.appSettings.theme.displayName,
+            title = "主题颜色",
+            subtitle = state.appSettings.themeAccent.displayName,
             trailing = {
                 TvChoiceChips(
-                    options = TvTheme.entries,
-                    selected = state.appSettings.theme,
+                    options = ThemeAccent.entries,
+                    selected = state.appSettings.themeAccent,
                     label = { it.displayName },
-                    onSelect = actions::updateTheme,
+                    onSelect = actions::updateThemeAccent,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        // TV 字体缩放：仅 TV 端生效，整体缩放设置页文字。
+        TvSettingsRow(
+            icon = Icons.Default.Settings,
+            title = "字体缩放",
+            subtitle = state.appSettings.fontScale.displayName,
+            trailing = {
+                TvChoiceChips(
+                    options = TvFontScale.entries,
+                    selected = state.appSettings.fontScale,
+                    label = { it.displayName },
+                    onSelect = actions::updateFontScale,
+                )
+            },
+        )
+    }
+    TvSettingsGroupGap()
+    // 卡 2：更新（更新渠道 / 崩溃只本地）
+    TvSettingsGroup {
+        TvSettingsRow(
+            icon = Icons.Default.Info,
+            title = "更新渠道",
+            subtitle = "后台下载 → SHA-256 → 系统安装器 · 当前 ${state.appSettings.updateChannel.displayName}",
+            trailing = {
+                TvChoiceChips(
+                    options = UpdateChannel.entries,
+                    selected = state.appSettings.updateChannel,
+                    label = { it.displayName },
+                    onSelect = actions::updateUpdateChannel,
                 )
             },
         )
@@ -412,20 +474,6 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
-        SettingsGroupDivider()
-        TvSettingsRow(
-            icon = Icons.Default.Info,
-            title = "更新渠道",
-            subtitle = "后台下载 → SHA-256 → 系统安装器 · 当前 ${state.appSettings.updateChannel.displayName}",
-            trailing = {
-                TvChoiceChips(
-                    options = UpdateChannel.entries,
-                    selected = state.appSettings.updateChannel,
-                    label = { it.displayName },
-                    onSelect = actions::updateUpdateChannel,
-                )
-            },
-        )
     }
 }
 
@@ -433,8 +481,8 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 private fun TvPlaybackDetail(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
-    onClearPlaybackStats: () -> Unit,
 ) {
+    // 卡 1：播放基础（倍速 / 快进 / 自动下一集）
     TvSettingsGroup {
         // 默认倍速（持久化偏好，与播放器内倍速联动）
         TvSettingsRow(
@@ -447,19 +495,6 @@ private fun TvPlaybackDetail(
                     selected = state.appSettings.playerSpeed,
                     label = { String.format(java.util.Locale.US, "%.2f×", it) },
                     onSelect = actions::updatePlaybackSpeed,
-                )
-            },
-        )
-        SettingsGroupDivider()
-        // 自动下一集：片尾倒计时自动续播
-        TvSettingsRow(
-            icon = Icons.Default.PlayArrow,
-            title = "自动下一集",
-            subtitle = if (state.appSettings.autoNextEpisodeEnabled) "片尾倒计时自动进入下一集" else "已关闭",
-            trailing = {
-                Switch(
-                    checked = state.appSettings.autoNextEpisodeEnabled,
-                    onCheckedChange = actions::updateAutoNextEpisodeEnabled,
                 )
             },
         )
@@ -479,6 +514,22 @@ private fun TvPlaybackDetail(
             },
         )
         SettingsGroupDivider()
+        // 自动下一集：片尾倒计时自动续播
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "自动下一集",
+            subtitle = if (state.appSettings.autoNextEpisodeEnabled) "片尾倒计时自动进入下一集" else "已关闭",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.autoNextEpisodeEnabled,
+                    onCheckedChange = actions::updateAutoNextEpisodeEnabled,
+                )
+            },
+        )
+    }
+    TvSettingsGroupGap()
+    // 卡 2：解码与音频（解码策略 / 音频输出）
+    TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "解码策略",
@@ -493,6 +544,107 @@ private fun TvPlaybackDetail(
             },
         )
         SettingsGroupDivider()
+        // 任务1 电视直播无声修复：音频输出档位。默认 auto 时 AC3/DTS 走直通，
+        // 部分电视/功放不支持表现为「有画面没声音」；切到「立体声(禁直通)」强制解码为 PCM。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "音频输出",
+            subtitle = "直播没声音时切到「立体声」可恢复",
+            trailing = {
+                TvChoiceChips(
+                    options = AUDIO_OUTPUT_MODE_OPTIONS,
+                    selected = state.appSettings.audioOutputMode,
+                    label = { audioOutputModeLabel(it) },
+                    onSelect = { v -> actions.updateAppSettings { it.copy(audioOutputMode = v) } },
+                )
+            },
+        )
+    }
+}
+
+/** 播放分类的「找片与AI」空态卡：TV 端 AI/语音找片能力由构建期配置决定，本版本不提供开关。 */
+@Composable
+private fun TvSearchDetail(state: TvBoxUiState) {
+    TvSettingsGroup {
+        TvSettingsRow(
+            icon = Icons.Default.Search,
+            title = "AI 找片 / 语音找片",
+            subtitle = "TV 端 AI/语音能力由构建期配置决定；可在手机端开启后共享账号偏好",
+            trailing = {},
+        )
+    }
+}
+
+@Composable
+private fun TvControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var showShortcutHelp by remember { mutableStateOf(false) }
+    var showKeyBindingEditor by remember { mutableStateOf(false) }
+    TvSettingsGroup {
+        // #224：遥控器快捷键说明入口（纯 UI，键位参考 PlayerInput.kt / TvBoxApp.kt）。
+        TvSettingsRow(
+            icon = Icons.Default.Settings,
+            title = "遥控器快捷键",
+            subtitle = "方向键导航 / 确认 / 返回 / 菜单倍速 / 数字键选台 · 跳页",
+            trailing = {
+                TvFocusButton(text = "查看", onClick = { showShortcutHelp = true })
+            },
+        )
+        SettingsGroupDivider()
+        // TV 端自定义键位绑定：与手机端「自定义键位绑定」编辑器同语义，把物理键码映射到统一动作。
+        TvSettingsRow(
+            icon = Icons.Default.Settings,
+            title = "自定义键位绑定",
+            subtitle = "把物理键码映射到统一动作，跨页面一致",
+            trailing = {
+                TvFocusButton(text = "编辑", onClick = { showKeyBindingEditor = true })
+            },
+        )
+    }
+    if (showShortcutHelp) {
+        val shortcutHelpText = """
+            方向键（上/下/左/右）：移动焦点、浏览列表；播放时左右=快进/快退，上下=换台/换线路。
+            确认键（OK）：确认选择；电视直播/平台直播播放时打开频道（节目）列表。
+            返回键：返回上一级 / 关闭当前浮层。
+            菜单键：点播时切换倍速；电视直播时打开频道列表；平台直播时强制重连。
+            数字键：首页 1=历史 2=搜索 4=电视 5=直播 6=设置 7=豆瓣热播 8=源管理 9=刷新 0=远程管理；电视直播中直接输入频道号选台。
+            播放/暂停键：播放或暂停。
+            上一集/下一集键（或数字 1/3）：点播时切换剧集。
+            信息键（INFO）：查看线路信息 / 节目单。
+        """.trimIndent()
+        AlertDialog(
+            onDismissRequest = { showShortcutHelp = false },
+            confirmButton = {
+                TextButton(onClick = { showShortcutHelp = false }) { Text("知道了") }
+            },
+            title = { Text("遥控器快捷键") },
+            text = { Text(shortcutHelpText) },
+        )
+    }
+    // TV 端自定义键位绑定编辑器：与手机端同语义，遥控器可全程操作（捕获按键 + 逐动作绑定）。
+    if (showKeyBindingEditor) {
+        TvRemoteKeyBindingEditorDialog(
+            current = state.appSettings.remoteKeyBindings,
+            onAssign = { action, keyCode ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withBinding(action, keyCode))
+                }
+            },
+            onClear = { action ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withoutBinding(action))
+                }
+            },
+            onReset = {
+                actions.updateAppSettings { s -> s.copy(remoteKeyBindings = RemoteKeyBindings.Default) }
+            },
+            onDismiss = { showKeyBindingEditor = false },
+        )
+    }
+}
+
+@Composable
+private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "EPG 节目条数",
@@ -565,6 +717,7 @@ private fun TvPlaybackDetail(
 
 @Composable
 private fun TvSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // 卡 1：源入口（视频源 / IPTV 直播源）
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
@@ -579,16 +732,10 @@ private fun TvSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             subtitle = "${state.appSettings.liveSourceUrls.count { it.isNotEmpty() }} 条已配置",
             trailing = { TvFocusButton(text = "管理", onClick = actions::openLiveSourceManager) },
         )
-        SettingsGroupDivider()
-        TvSettingsRow(
-            icon = Icons.AutoMirrored.Filled.List,
-            title = "平台直播",
-            subtitle = if (state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() } > 0) {
-                "已屏蔽 ${state.appSettings.blockedPlatformSiteIds.count { it.isNotEmpty() }} 个站点"
-            } else "管理虎牙/斗鱼/哔哩",
-            trailing = { TvFocusButton(text = "管理", onClick = actions::openPlatformLive) },
-        )
-        SettingsGroupDivider()
+    }
+    TvSettingsGroupGap()
+    // 卡 2：请求与探测（UA / 探测超时 / 并发数 / 失败熔断）
+    TvSettingsGroup {
         // 自定义 User-Agent：视频接口、订阅拉取与直播播放共用；订阅地址也可追加 |User-Agent= 参数按源覆盖。
         TvSettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
@@ -663,7 +810,8 @@ private fun TvSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 }
 
 @Composable
-private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHistory: () -> Unit) {
+private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHistory: () -> Unit, onClearPlaybackStats: () -> Unit) {
+    // 卡 1：观看历史（管理 / 隐私模式 / 保留条数）
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Delete,
@@ -706,13 +854,23 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
             },
         )
     }
+    TvSettingsGroupGap()
+    // 卡 2：备份与清除数据：线路统计清空（危险操作，走二次确认）。
+    TvSettingsGroup {
+        TvSettingsRow(
+            icon = Icons.Default.Delete,
+            title = "清空线路统计",
+            subtitle = "清除自动换线健康度统计，不影响观看历史",
+            trailing = {
+                TvFocusButton(text = "清空", onClick = onClearPlaybackStats)
+            },
+        )
+    }
 }
 
 @Composable
 private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showPrivacyPolicy by remember { mutableStateOf(false) }
-    // #224：遥控器快捷键说明弹窗开关。
-    var showShortcutHelp by remember { mutableStateOf(false) }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.Info,
@@ -745,16 +903,6 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         SettingsGroupDivider()
-        // #224：TV 设置-关于 增加遥控器快捷键说明入口（纯 UI，键位参考 PlayerInput.kt / TvBoxApp.kt）。
-        TvSettingsRow(
-            icon = Icons.Default.Settings,
-            title = "遥控器快捷键",
-            subtitle = "方向键导航 / 确认 / 返回 / 菜单倍速 / 数字键选台 · 跳页",
-            trailing = {
-                TvFocusButton(text = "查看", onClick = { showShortcutHelp = true })
-            },
-        )
-        SettingsGroupDivider()
         TvSettingsRow(
             icon = Icons.Default.Info,
             title = "检查更新",
@@ -778,28 +926,133 @@ private fun TvAboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 text = { Text(PRIVACY_POLICY_TEXT) },
             )
         }
-        // #224：列出遥控器主要按键，内容覆盖首页/点播/电视直播/平台直播的通用键位。
-        if (showShortcutHelp) {
-            val shortcutHelpText = """
-                方向键（上/下/左/右）：移动焦点、浏览列表；播放时左右=快进/快退，上下=换台/换线路。
-                确认键（OK）：确认选择；播放时暂停/继续。
-                返回键：返回上一级 / 关闭当前浮层。
-                菜单键：点播时切换倍速；电视直播时打开线路浮层；平台直播时强制重连。
-                数字键：首页 1=历史 2=搜索 4=电视 5=直播 6=设置 7=豆瓣热播 8=源管理 9=刷新 0=远程管理；电视直播中直接输入频道号选台。
-                播放/暂停键：播放或暂停。
-                上一集/下一集键（或数字 1/3）：点播时切换剧集。
-                信息键（INFO）：查看线路信息 / 节目单。
-            """.trimIndent()
-            AlertDialog(
-                onDismissRequest = { showShortcutHelp = false },
-                confirmButton = {
-                    TextButton(onClick = { showShortcutHelp = false }) { Text("知道了") }
-                },
-                title = { Text("遥控器快捷键") },
-                text = { Text(shortcutHelpText) },
-            )
-        }
     }
+}
+
+// ─────────────────────────── TV 自定义键位绑定编辑器 ───────────────────────────
+
+/**
+ * TV 端自定义键位绑定编辑器：与手机端「自定义键位绑定」同语义，但全部用遥控器操作。
+ * - 先聚焦「监听按键」按确认开始捕获，再按实体遥控键得到键码；
+ * - 上下移动焦点到目标动作行，按确认把已捕获的键码追加到该动作；
+ * - 用户自定义过的动作显示 ✕，聚焦后按确认清除该动作的自定义键。
+ * 默认绑定始终生效，自定义键是「追加」而非替换，避免改绑后丢常用键。
+ */
+@Composable
+private fun TvRemoteKeyBindingEditorDialog(
+    current: RemoteKeyBindings,
+    onAssign: (RemoteKeyAction, Int) -> Unit,
+    onClear: (RemoteKeyAction) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pendingKey by remember { mutableStateOf<Int?>(null) }
+    var listening by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onReset(); onDismiss() }) { Text("恢复默认", color = TvColors.Danger) }
+        },
+        title = { Text("自定义键位绑定") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(
+                        if (listening) {
+                            // 捕获态：吃掉硬件键码，其余键不拦截（交给焦点系统）。
+                            Modifier.onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown) {
+                                    pendingKey = event.nativeKeyEvent.keyCode
+                                    listening = false
+                                    true
+                                } else {
+                                    false
+                                }
+                            }
+                        } else {
+                            Modifier
+                        }
+                    ),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "先聚焦「监听按键」按确认，再按实体遥控键捕获键码；上下移动到动作行按确认绑定；✕ 清除该动作的自定义键。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextSecondary,
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "按键码：${pendingKey?.let { "0x%03X".format(it) } ?: "未选择"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TvFocusButton(
+                        text = if (listening) "监听中…按任意键" else "监听按键",
+                        selected = listening,
+                        onClick = { listening = true },
+                    )
+                }
+                HorizontalDivider()
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RemoteKeyAction.entries.forEach { action ->
+                        val keys = current.keysFor(action)
+                        val customKeys = current.custom[action.id].orEmpty()
+                        val summary = if (keys.isEmpty()) {
+                            "未绑定"
+                        } else {
+                            keys.sorted().joinToString(" / ") { "0x%03X".format(it) }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = action.displayName,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                Text(
+                                    text = summary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (keys.isEmpty()) TvColors.TextSecondary else TvColors.Accent,
+                                )
+                            }
+                            if (customKeys.isNotEmpty()) {
+                                TvFocusButton(
+                                    text = "✕ 清除",
+                                    onClick = { onClear(action) },
+                                )
+                            } else {
+                                TvFocusButton(
+                                    text = "绑定当前键",
+                                    enabled = pendingKey != null,
+                                    onClick = {
+                                        val code = pendingKey ?: return@TvFocusButton
+                                        onAssign(action, code)
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
+                Text(
+                    text = "默认绑定始终生效，自定义键是「追加」而非替换，避免改绑后丢常用键。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextSecondary,
+                )
+            }
+        },
+    )
 }
 
 // ─────────────────────────── 通用组件 ───────────────────────────
@@ -813,6 +1066,12 @@ private fun TvSettingsGroup(content: @Composable () -> Unit) {
     ) {
         Column { content() }
     }
+}
+
+/** 同一分类下拆出的多张卡片之间的间隔（详情页内联使用，与手机端 SettingsGroupGap 对应）。 */
+@Composable
+private fun TvSettingsGroupGap() {
+    Spacer(Modifier.height(14.dp))
 }
 
 @Composable
@@ -966,7 +1225,7 @@ private fun TvFocusButton(
     }
 }
 
-// ─────────────────────────── 分类定义（与手机端一致） ───────────────────────────
+// ─────────────────────────── 分类定义（与手机端一致：8 分类同名同序） ───────────────────────────
 
 private enum class TvSettingCategory(
     val title: String,
@@ -975,9 +1234,12 @@ private enum class TvSettingCategory(
     val gradientStart: Color,
     val gradientEnd: Color,
 ) {
-    General("通用", "设备·外观·启动", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
-    Playback("播放", "播放管家·缩放·跳过", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
-    Sources("数据源", "视频源·直播源", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
-    Data("数据管理", "历史·搜索·分页", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
-    About("关于", "版本·协议", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
+    General("通用与外观", "设备·主题·更新", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
+    Playback("播放", "倍速·解码·音频", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
+    Controls("手势与控制", "快捷键·键位绑定", Icons.Default.Build, Color(0xFF9C9CFF), Color(0xFF2E2E5C)),
+    Search("找片与AI", "AI·语音·脱敏", Icons.Default.Search, Color(0xFFFF7EB6), Color(0xFF5C1E3A)),
+    Sources("数据源与网络", "视频源·直播源·UA", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
+    Live("直播", "EPG·选台·频道", Icons.AutoMirrored.Filled.List, Color(0xFFFF7043), Color(0xFF5C2410)),
+    Data("历史与数据", "历史·备份·清理", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
+    About("关于", "版本·协议·更新", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
 }

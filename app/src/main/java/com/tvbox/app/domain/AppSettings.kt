@@ -17,8 +17,9 @@ data class AppSettings(
     /** 临近片尾提前多少秒自动进入下一集；0 表示关闭。 */
     val outroSkipSeconds: Int = 0,
     val homeContinueWatchingEnabled: Boolean = false,
-    val theme: TvTheme = TvTheme.Default,
     val fontScale: TvFontScale = TvFontScale.Normal,
+    /** 主题强调色方案：影响全局 TvColors token 与 TV 焦点描边，默认跟随系统外观的「默认」。 */
+    val themeAccent: ThemeAccent = ThemeAccent.Default,
     val checkUpdatesOnStartup: Boolean = true,
     val playbackAgentAutoSwitchEnabled: Boolean = true,
     val videoScaleMode: VideoScaleMode = VideoScaleMode.Fit,
@@ -102,8 +103,91 @@ data class AppSettings(
     val historyLayout: HistoryLayout = HistoryLayout.Card,
     /** 历史封面「更新角标」：有更新剧集的条目在封面右上角显示角标。 */
     val historyCoverBadgeEnabled: Boolean = true,
+    // ---- 手机端设置中心 v2 / 三刀路线图新增（全部为可持久化偏好，消费端分批接入） ----
+    /** 片尾自动切集的数字倒计时；0 表示沿用既有「进入片尾区间即切集」。 */
+    val autoNextCountdownSeconds: Int = 5,
+    /** 首包超时（毫秒）：4 / 8 / 15 秒，供播放器首帧看门狗使用。 */
+    val firstPacketTimeoutMs: Long = 8_000L,
+    /** 断线重连尝试次数：0=关闭，1/3=有限重试，-1=持续重试。 */
+    val reconnectAttempts: Int = 3,
+    /** 缓冲目标（毫秒）：流畅 8s / 均衡 15s / 省流 25s。 */
+    val bufferTargetMs: Long = 15_000L,
+    /** 退后台行为：pause / audio / pip。画中画需要设备与系统版本支持。 */
+    val backgroundPlaybackMode: String = "pause",
+    val gestureLeftBrightnessEnabled: Boolean = true,
+    val gestureRightVolumeEnabled: Boolean = true,
+    val gestureHorizontalSeekEnabled: Boolean = true,
+    val gestureDoubleTapSideEnabled: Boolean = true,
+    val gestureDoubleTapCenterEnabled: Boolean = true,
+    val gestureLongPressSpeedEnabled: Boolean = true,
+    val gesturePinchZoomEnabled: Boolean = true,
+    val gestureTopSwipeBackEnabled: Boolean = false,
+    /** 0=低 / 1=中 / 2=高。 */
+    val gestureSensitivity: Int = 1,
+    /** 横屏握持时底部 24dp 不响应进度手势。 */
+    val gestureEdgeGuardEnabled: Boolean = true,
+    /** 手势锁：锁后只保留单击唤出控制栏。 */
+    val gestureLockEnabled: Boolean = false,
+    /** 音频输出：auto / stereo / passthrough（设备不支持时 UI 禁用）。 */
+    val audioOutputMode: String = "auto",
+    /**
+     * 任务6 播放器按钮可配置：用户隐藏的底栏功能按钮 storageKey 集合。
+     * 默认空集 = 全部显示（与既有行为一致）。播放/暂停、上下一集、返回等核心控件始终显示，不在此列。
+     */
+    val playerHiddenControls: Set<String> = emptySet(),
+    /** UA 作用域：unified / scoped。 */
+    val uaScopeMode: String = "unified",
+    val uaForApi: String = "",
+    val uaForSpider: String = "",
+    val uaForLive: String = "",
+    val uaForEpg: String = "",
+    val uaForPlayback: String = "",
+    val uaForWebView: String = "",
+    /** 导出设置时 UA 默认脱敏。 */
+    val uaExportRedacted: Boolean = true,
+    val playbackManagerPreferHealthy: Boolean = true,
+    val playbackManagerManualButton: Boolean = true,
+    /** 手动拖动后的卡顿统计冷却窗口。 */
+    val seekCoolingMs: Long = 2_500L,
+    /** 用户手动选线后不自动抢线的时长（分钟）。 */
+    val manualSourceLockMinutes: Int = 20,
+    val epgCacheHours: Int = 12,
+    val epgTimezone: String = "Asia/Shanghai",
+    val epgOutOfRangePolicy: String = "clip",
+    val platformDefaultQuality: String = "original",
+    /** 平台直播 FLV 连续播放代理：auto / force / off。 */
+    val flvProxyMode: String = "auto",
+    /**
+     * 虎牙/斗鱼第三方代理解析：存在候选时优先用第三方地址加载直播数据，
+     * 支持多条模板作为彼此备用，官方 Go 解析候选退为兜底。默认关闭。
+     */
+    val platformThirdPartyProxyEnabled: Boolean = false,
+    /** 第三方代理地址模板，每行一条，{room} 占位房间号、{site} 占位站点。 */
+    val platformThirdPartyProxyTemplates: String = "",
+    /** 局域网解析服务默认关闭；首次开启必须先确认安全提示。 */
+    val lanResolverEnabled: Boolean = false,
+    val lanResolverConfirmed: Boolean = false,
+    val aiSearchEnabled: Boolean = false,
+    val voiceSearchEnabled: Boolean = false,
+    val aiTextRedactionEnabled: Boolean = true,
+    val aiOnlyTitleYearEnabled: Boolean = true,
+    /** AI 未命中行为：stay（留在推荐页）/ search（切普通搜索）。 */
+    val aiMissBehavior: String = "stay",
+    val aiResultCacheMinutes: Int = 30,
+    val updateWifiOnly: Boolean = true,
+    val updateExportBeforeInstall: Boolean = true,
+    val updateRollbackHours: Int = 24,
+    val updateStrongReminderOnly: Boolean = true,
+    val continueWatchingMaxItems: Int = 8,
+    val historyAutoCleanupEnabled: Boolean = true,
+    /** 断点冲突：ask / resume / restart。 */
+    val resumeConflictPolicy: String = "ask",
     /** 崩溃日志只落本地，不上报远端。 */
     val crashLogLocalOnly: Boolean = true,
+    /** 直播遥控方向键语义：上下换台（默认）或左右换台。见 [LiveRemoteDirectionMapping]。 */
+    val liveRemoteDirectionMapping: LiveRemoteDirectionMapping = LiveRemoteDirectionMapping.Default,
+    /** 统一遥控键位的用户自定义绑定（语义动作 → 附加物理键）。空表示全部用默认键。 */
+    val remoteKeyBindings: RemoteKeyBindings = RemoteKeyBindings.Default,
 )
 
 /**
@@ -157,16 +241,17 @@ fun Map<String, String>.withFallbackUserAgent(ua: String): Map<String, String> {
 
 /**
  * 解码器策略。三档（对照设置页方案）：
- * - [Auto]：自适应（默认「硬解优先」）：硬解优先，解码失败时由 [setEnableDecoderFallback] 自动回落到软解；
+ * - [Auto]：自适应（默认「硬解优先」）：硬解优先，解码失败时由 [setEnableDecoderFallback] 自动回落到软解，
+ *   FFmpeg（nextlib-media3ext）以 EXTENSION_RENDERER_MODE_ON 兜底系统解码器不支持的编码；
  * - [HardwareOnly]：强制硬解：选择器只保留硬件解码器；设备确实没有硬解时仍回退可用解码器，避免直接黑屏；
- * - [SoftwareOnly]：强制软解：选择器只保留非硬件加速的解码器；无可用软解时回退，避免黑屏。
- *
- * 工程未集成 FFmpeg 扩展解码器，软解/硬解均基于系统 MediaCodec 的解码器集合。
+ *   此档不引入 FFmpeg renderer。
+ * - [SoftwareOnly]：强制软解：用 NextRenderersFactory + FFmpeg PREFER 模式，FFmpeg 解码器排在系统软解之前，
+ *   覆盖 H.264/HEVC/VP9/AV1 等，无可用软解时回退，避免黑屏。
  */
 enum class DecoderStrategy(val storageKey: String, val displayName: String, val description: String) {
-    Auto("auto", "自适应", "硬解优先，解码失败自动回落到软解。"),
+    Auto("auto", "自适应", "硬解优先，解码失败自动回落到软解；FFmpeg 兜底系统不支持的编码。"),
     HardwareOnly("hardware_only", "硬解", "只选择硬件解码器；设备无可用硬解时回退，避免黑屏。"),
-    SoftwareOnly("software_only", "软解", "只选择软件解码器；硬件解码异常或黑屏时可切换，避免黑屏。"),
+    SoftwareOnly("software_only", "软解（FFmpeg）", "FFmpeg 软解码优先，覆盖更多编码；硬件解码异常或黑屏时切换。"),
     ;
 
     companion object {
@@ -179,7 +264,9 @@ enum class DecoderStrategy(val storageKey: String, val displayName: String, val 
 object PlayerSpeedSetting {
     const val Default = 1.0f
     const val Min = 0.5f
-    const val Max = 2.0f
+    const val Max = 3.0f
+    /** 0.05 档滑块步长；2.0x 以上在旧版本为实验档，现已放开。 */
+    const val Step = 0.05f
 
     fun clamp(value: Float): Float = value.coerceIn(Min, Max)
 }
@@ -214,6 +301,34 @@ enum class HistoryLayout(val storageKey: String, val displayName: String) {
     companion object {
         fun fromStorageKey(value: String?): HistoryLayout =
             entries.firstOrNull { it.storageKey == value } ?: Card
+    }
+}
+
+/**
+ * 主题强调色方案（任务7）。每档映射到一组 [com.tvbox.app.ui.theme.TvColorTokens]，
+ * 影响全局强调色、焦点描边与表面色。要求：
+ * - 自适应：所有 token 语义化命名，深色底配亮 accent，文字对比度 ≥4.5:1（与既有两套主题一致）；
+ * - TV 聚焦：焦点描边取每档的 [com.tvbox.app.ui.theme.TvColorTokens.focusRing]，
+ *   在遥控器导航下高对比可见。
+ */
+enum class ThemeAccent(val storageKey: String, val displayName: String) {
+    /** 默认绿（Spotify 风），深色底高对比。 */
+    Default("default", "默认绿"),
+    /** 影院绿松石，更冷的暗色底。 */
+    Cinema("cinema", "影院青"),
+    /** 暖琥珀金，深棕底，适合夜间低亮度。 */
+    Amber("amber", "琥珀金"),
+    /** 冷蓝，深蓝底，科技感。 */
+    Ocean("ocean", "深海蓝"),
+    /** 柔紫，深紫底，区别度高。 */
+    Violet("violet", "星夜紫"),
+    /** 暖红，深酒红底，活力。 */
+    Crimson("crimson", "绯红"),
+    ;
+
+    companion object {
+        fun fromStorageKey(value: String?): ThemeAccent =
+            entries.firstOrNull { it.storageKey == value } ?: Default
     }
 }
 
@@ -419,20 +534,6 @@ enum class VideoScaleMode(
     companion object {
         fun fromStorageKey(value: String?): VideoScaleMode =
             entries.firstOrNull { it.storageKey == value } ?: Fit
-    }
-}
-
-enum class TvTheme(
-    val storageKey: String,
-    val displayName: String,
-) {
-    Default("default", "默认主题"),
-    Cinema("cinema", "影院主题"),
-    ;
-
-    companion object {
-        fun fromStorageKey(value: String?): TvTheme =
-            entries.firstOrNull { it.storageKey == value } ?: Default
     }
 }
 

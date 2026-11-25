@@ -2,6 +2,8 @@ package com.tvbox.app.data
 
 import android.content.Context
 import android.app.DownloadManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Environment
 import com.tvbox.app.BuildConfig
@@ -20,8 +22,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.encodeToString
+import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.AppUpdate
 import com.tvbox.app.domain.CdnStatusRow
+import com.tvbox.app.domain.UaScope
 import com.tvbox.app.domain.OtaCdnAttempt
 import com.tvbox.app.domain.buildCdnStatusRows
 import com.tvbox.app.domain.OtaCdnCandidate
@@ -71,14 +75,33 @@ interface AppUpdateRepository {
     suspend fun clearManualInstall(apkPath: String) {}
     suspend fun exportUpdateApk(apkPath: String, destination: Uri?): String = throw IOException("暂不支持保存安装包")
 
+    /**
+     * 安装前设置导出：读取 updateExportBeforeInstall，开启时用现有文本导出器写出 UA/设置敏感项。
+     * 返回明确状态文案（成功路径 / 按设置跳过 / 失败原因），不抛异常给安装流程。
+     */
+    suspend fun exportSettingsBeforeInstall(): String = "未接入设置导出入口"
+
+    /**
+     * 按 updateRollbackHours 清理过期的临时回滚安装包，返回实际删除的文件数。
+     * 仅扫描 OTA 自建更新目录里的明确临时/过期文件，不影响用户保存的安装包。
+     */
+    suspend fun purgeExpiredRollbackApks(): Int = 0
+
+    /** 强提醒只读开关：返回值仅供 UI 决定是否采用强提醒样式，不参与任何校验。 */
+    suspend fun updateStrongReminderOnly(): Boolean = true
+
     /** 设置页 OTA 线路状态行；默认实现返回空，不影响未接入 OTA 的占位仓库。 */
     fun cdnStatusRows(nowMs: Long = System.currentTimeMillis()): List<CdnStatusRow> = emptyList()
 }
 
 class DefaultAppUpdateRepository(
     context: Context,
+    /** 读取当前设置的入口；默认用出厂值，保证无 UI 环境下 OTA 门禁也按最保守的「仅 Wi-Fi」生效。 */
+    private val settingsProvider: suspend () -> AppSettings = { AppSettings() },
 ) : AppUpdateRepository {
     private val appContext = context.applicationContext
+    private val connectivityManager =
+        appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
     // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
     private val downloadPrefs by lazy { appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE) }
     // OTA 多 CDN 健康度：只记录线路标识与计数/耗时，不存 URL、不写日志。
@@ -102,10 +125,38 @@ class DefaultAppUpdateRepository(
         .callTimeout(CDN_PROBE_OVERALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
 
+    // ------------------------------------------------------------ 更新前策略门禁（纯逻辑 + 系统状态）
+
+    /**
+     * 当前是否为「未计量 Wi-Fi」：无权限 / 无活动网络 / 蜂窝 / 计量 Wi-Fi 一律视为不满足。
+     * 与 [NetworkCapabilities.NET_CAPABILITY_NOT_METERED] 的语义一致：该能力存在才表示不限流量。
+     */
+    private fun isUnmeteredWifi(): Boolean {
+        val manager = connectivityManager ?: return false
+        val network = manager.activeNetwork ?: return false
+        val caps = manager.getNetworkCapabilities(network) ?: return false
+        if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+    }
+
+    /**
+     * 门禁判定（与系统状态分开，便于单测）：updateWifiOnly=false 直接放行；
+     * 否则必须在未计量 Wi-Fi 下才允许检查/下载更新。
+     */
+    internal fun otaNetworkBlockReason(settings: AppSettings, unmeteredWifi: Boolean): String? =
+        otaWifiBlockReason(settings, unmeteredWifi)
+
+    private suspend fun requireUnmeteredWifi() {
+        val reason = otaNetworkBlockReason(settingsProvider(), isUnmeteredWifi())
+        if (reason != null) throw OtaWifiRequiredException(reason)
+    }
+
     override suspend fun checkForUpdate(
         currentVersionCode: Long,
         updateChannel: com.tvbox.app.domain.UpdateChannel,
     ): AppUpdate? = withContext(Dispatchers.IO) {
+        // 仅 Wi-Fi 更新开启时，非未计量 Wi-Fi 直接阻断检查（SHA-256 校验不受影响）。
+        requireUnmeteredWifi()
         val manifestPath = updateChannel.manifestPath ?: return@withContext null
         val candidates = orderedCandidates(buildOtaManifestCandidates(path = manifestPath))
         var lastError: Throwable? = null
@@ -201,6 +252,10 @@ class DefaultAppUpdateRepository(
      * 空间不足 / 目录不可写 / 用户取消等不可通过换线路解决的错误立即上抛。
      */
     override suspend fun downloadUpdate(update: AppUpdate, onProgress: (Int) -> Unit): File = withContext(Dispatchers.IO) {
+        // 下载前重复校验网络（检查与下载之间用户可能切到蜂窝/计量网络）。
+        requireUnmeteredWifi()
+        // 回滚包保留期到期后顺手清理过期临时文件；失败不影响本次下载主流程。
+        runCatching { purgeExpiredRollbackApks() }
         // 跨 CDN 切换时新线路从 0% 重新计数，闸门保证 UI 进度单调且 100% 只发一次。
         val progressGate = OtaDownloadProgressGate(onProgress)
         val resumed = downloadMutex.withLock {
@@ -290,8 +345,7 @@ class DefaultAppUpdateRepository(
         candidate: OtaCdnCandidate,
         attemptIndex: Int,
     ): PendingSystemDownload = downloadMutex.withLock {
-        val directory = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?.let { File(it, "updates") } ?: File(appContext.cacheDir, "updates")
+        val directory = updatesDir() ?: throw IOException("无法创建更新下载目录")
         if (!directory.isDirectory && !directory.mkdirs()) throw IOException("无法创建更新下载目录")
         val suffix = if (attemptIndex == 0) "" else "-cdn$attemptIndex"
         val target = File(directory, "JuheVideo-${update.versionCode}-${System.currentTimeMillis()}$suffix.apk")
@@ -485,6 +539,40 @@ class DefaultAppUpdateRepository(
         val version = task.manifest.versionName.replace(APK_NAME_SAFE_REGEX, "_")
         UpdateApkExporter(appContext).save(source, destination, "JuheVideo-v$version.apk")
     }
+
+    /**
+     * 安装前设置导出：复用已有的 [TextFileExporter] 写文件，内容由 [UaScope.exportSensitive] 生成，
+     * 默认按 uaExportRedacted 脱敏。任何失败都返回明确状态文案，不阻断安装主流程。
+     */
+    override suspend fun exportSettingsBeforeInstall(): String = withContext(Dispatchers.IO) {
+        val settings = settingsProvider()
+        if (!settings.updateExportBeforeInstall) return@withContext "按设置跳过安装前设置导出"
+        val content = UaScope.exportSensitive(settings, includeSensitive = !settings.uaExportRedacted)
+        val fileName = "TVBox-设置备份-${System.currentTimeMillis()}.txt"
+        runCatching { TextFileExporter(appContext).save(fileName, content) }
+            .fold(
+                onSuccess = { "安装前设置导出成功：$it" },
+                onFailure = { "安装前设置导出失败：${it.message ?: it::class.simpleName}" },
+            )
+    }
+
+    /** 强提醒只读：仅暴露开关，UI 自行决定是否采用强提醒样式，不参与任何下载/安装校验。 */
+    override suspend fun updateStrongReminderOnly(): Boolean = settingsProvider().updateStrongReminderOnly
+
+    /**
+     * 回滚包保留：只清理 OTA 自建更新目录里带时间戳的过期临时包（含 .part / .fallback.apk），
+     * 跳过当前进行中的任务文件；用户主动保存的安装包不在这个目录，不受影响。
+     */
+    override suspend fun purgeExpiredRollbackApks(): Int = withContext(Dispatchers.IO) {
+        val settings = settingsProvider()
+        val keepPath = readTask()?.filePath
+        val directory = updatesDir()
+        val files = directory?.listFiles()?.toList().orEmpty()
+        purgeExpiredRollbackFiles(files, settings.updateRollbackHours, keepPath)
+    }
+
+    private fun updatesDir(): File? = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        ?.let { File(it, "updates") } ?: File(appContext.cacheDir, "updates")
 
     private fun readTask(): PendingSystemDownload? {
         val raw = downloadPrefs.getString("task", null) ?: return null
@@ -705,9 +793,85 @@ private data class UpdateManifestDto(
     @SerialName("changelog") val changelog: List<String> = emptyList(),
     /** 可选多 CDN 镜像；既有 8 个字段结构不变，老客户端 ignoreUnknownKeys 会忽略它。 */
     @SerialName("apkMirrors") val apkMirrors: List<String> = emptyList(),
+    /**
+     * 安装前要求的最低当前版本号；0 表示不限制。老 update.json 缺省为 0，
+     * 新字段对老客户端透明（ignoreUnknownKeys）。
+     */
+    @SerialName("minVersionCode") val minVersionCode: Long = 0L,
+    /** 清单发布通道：`stable`（正式）或 `canary`（预览），缺省按正式通道处理。 */
+    @SerialName("channel") val channel: String = "stable",
 )
 
 private const val USER_AGENT = "TVBox-Android"
+
+/** Wi-Fi only 门禁的明确状态文案：检查与下载共用，UI 可直接展示。 */
+internal const val WIFI_ONLY_BLOCK_MESSAGE =
+    "当前非未计量 Wi-Fi，已开启「仅 Wi-Fi 更新」，已阻止检查/下载更新；如需使用移动数据请先关闭该开关"
+
+/** 门禁阻断异常：message 已是可直接展示的中文文案。 */
+class OtaWifiRequiredException(message: String) : IOException(message)
+
+/** 纯门禁判定：默认设置下非未计量 Wi-Fi 必须阻断；关闭开关后放行。 */
+internal fun otaWifiBlockReason(settings: AppSettings, unmeteredWifi: Boolean): String? =
+    if (settings.updateWifiOnly && !unmeteredWifi) WIFI_ONLY_BLOCK_MESSAGE else null
+
+/**
+ * 版本阶梯门禁（P39）：清单里的 `minVersionCode` 高于当前 versionCode 时，
+ * 禁止在应用内直接跨版本升级（否则既无法覆盖旧签名，也可能丢配置）。
+ * 返回可直接展示的中文阻断文案；满足条件或清单未声明门槛（minVersionCode=0）时返回 null。
+ */
+internal fun checkMinVersionBlocked(
+    currentVersionCode: Long,
+    minVersionCode: Long,
+): String? {
+    if (minVersionCode <= 0L || currentVersionCode >= minVersionCode) return null
+    // versionCode 采用 x*10000 + y*100 + z 的编码，反解为 "vX.Y.Z" 展示给用户。
+    val major = minVersionCode / 10_000
+    val minor = (minVersionCode % 10_000) / 100
+    val patch = minVersionCode % 100
+    return "当前版本过低，请先升级到 v$major.$minor.$patch 以上，再检查更新"
+}
+
+/** 发布通道常量：`stable`（正式）与 `canary`（预览）。旧 update.json 缺省按正式通道处理。 */
+internal const val OTA_CHANNEL_STABLE = "stable"
+internal const val OTA_CHANNEL_CANARY = "canary"
+
+/** 清单通道解析：仅接受 stable / canary，其他或缺失值一律回退到正式通道，避免未知值误覆盖本地偏好。 */
+internal fun normalizeOtaChannel(raw: String?): String =
+    when (raw?.trim()?.lowercase()) {
+        OTA_CHANNEL_CANARY -> OTA_CHANNEL_CANARY
+        else -> OTA_CHANNEL_STABLE
+    }
+
+/** OTA 自建更新包命名：`JuheVideo-<versionCode>-<timestamp>[-cdnN].apk[.part|.fallback.apk]`。 */
+private val ROLLBACK_NAME_REGEX =
+    Regex("^JuheVideo-\\d+-(\\d+)(?:-cdn\\d+)?\\.apk(?:\\.part|\\.fallback)?$")
+
+/** 从文件名解析写入时间（毫秒）；非 OTA 生成的文件返回 null。 */
+internal fun rollbackFileTimestampMillis(name: String): Long? =
+    ROLLBACK_NAME_REGEX.matchEntire(name)?.groupValues?.get(1)?.toLongOrNull()
+
+/**
+ * 回滚包过期清理（纯逻辑，便于单测）：仅删除命名匹配 OTA 规则且达到保留期的文件。
+ * [keepPath] 对应当前进行中的任务，必须跳过；不递归、不删目录、不碰其他文件。
+ */
+internal fun purgeExpiredRollbackFiles(
+    files: List<File>,
+    retentionHours: Int,
+    keepPath: String? = null,
+    nowMs: Long = System.currentTimeMillis(),
+): Int {
+    val retention = retentionHours.coerceAtLeast(0)
+    var removed = 0
+    for (file in files) {
+        if (!file.isFile) continue
+        if (keepPath != null && file.absolutePath == keepPath) continue
+        val timestamp = rollbackFileTimestampMillis(file.name) ?: continue
+        val ageHours = ((nowMs - timestamp).coerceAtLeast(0L)) / 3_600_000L
+        if (ageHours >= retention && runCatching { file.delete() }.getOrDefault(false)) removed++
+    }
+    return removed
+}
 
 /** 导出 APK 文件名中需要替换掉的非法字符。 */
 private val APK_NAME_SAFE_REGEX = Regex("[^A-Za-z0-9._-]")
@@ -758,6 +922,8 @@ private val PendingSystemDownload.downloadUrl: String
 
 private fun UpdateManifestDto.toDomain() = AppUpdate(
     versionCode, versionName, apkUrl, apkSha256, apkSize, force, changelog, apkMirrors,
+    minVersionCode = minVersionCode,
+    channel = channel,
 )
 
 private fun AppUpdate.toManifestDto() = UpdateManifestDto(
@@ -769,4 +935,6 @@ private fun AppUpdate.toManifestDto() = UpdateManifestDto(
     force = force,
     changelog = changelog,
     apkMirrors = apkMirrors,
+    minVersionCode = minVersionCode,
+    channel = channel,
 )

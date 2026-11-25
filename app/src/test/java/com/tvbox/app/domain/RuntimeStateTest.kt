@@ -17,7 +17,7 @@ class RuntimeStateTest {
         val entries = listOf(
             SettingEntry("speed", SettingGroup.Playback, "默认倍速", "1.0x"),
             SettingEntry("scale", SettingGroup.Playback, "画面比例"),
-            SettingEntry("theme", SettingGroup.Appearance, "主题", "影院主题"),
+            SettingEntry("font_scale", SettingGroup.Appearance, "字号", "正常"),
         )
         val summary = buildSettingsPageSummary(entries)
         assertEquals(3, summary.totalEntries)

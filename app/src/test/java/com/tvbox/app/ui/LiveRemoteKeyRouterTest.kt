@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.input.key.KeyEventType
+import com.tvbox.app.domain.LiveRemoteDirectionMapping
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -24,8 +25,8 @@ class LiveRemoteKeyRouterTest {
         assertTrue(down?.effects.isNullOrEmpty())
 
         val up = router.handle(AndroidKeyEvent.KEYCODE_DPAD_CENTER, KeyEventType.KeyUp, start)
-        assertEquals(UIState.CONTROLLER, up?.state?.uiState)
-        assertEquals(listOf(LiveRemoteEffect.OpenController), up?.effects)
+        assertEquals(UIState.CHANNEL_LIST, up?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.OpenChannelList), up?.effects)
     }
 
     @Test
@@ -178,8 +179,8 @@ class LiveRemoteKeyRouterTest {
     @Test
     fun enterKeySharesConfirmBranchWithDpadCenter() {
         val result = router.handle(AndroidKeyEvent.KEYCODE_ENTER, KeyEventType.KeyUp, LiveRemoteState())
-        assertEquals(UIState.CONTROLLER, result?.state?.uiState)
-        assertEquals(listOf(LiveRemoteEffect.OpenController), result?.effects)
+        assertEquals(UIState.CHANNEL_LIST, result?.state?.uiState)
+        assertEquals(listOf(LiveRemoteEffect.OpenChannelList), result?.effects)
     }
 
     @Test

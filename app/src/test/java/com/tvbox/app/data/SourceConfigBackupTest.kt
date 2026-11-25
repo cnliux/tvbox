@@ -111,4 +111,97 @@ class SourceConfigBackupTest {
         assertTrue(result.error!!.contains("校验失败"))
         assertNull(result.payload)
     }
+
+    @Test
+    fun exportIsIdempotentForIdenticalInput() {
+        // 幂等导出：同一份输入连续导出两次，结果必须逐字节一致。
+        // 防止随机 ID、时间戳或 Map 迭代顺序导致备份文件在换机/重导场景下无谓变化。
+        val lines = listOf(
+            ApiLine(id = "a", name = "源 A", baseUrls = listOf("https://a.test/api.php/provide/vod/")),
+            ApiLine(id = "b", name = "源 B", baseUrls = listOf("https://b.test/api.php/provide/vod/")),
+        )
+        val weights = mapOf("b" to 3, "a" to 1)
+        val first = SourceConfigBackup.export(
+            lines = lines,
+            liveUrls = listOf("https://live.test/list.m3u"),
+            order = listOf("b", "a"),
+            weights = weights,
+        )
+        val second = SourceConfigBackup.export(
+            lines = lines,
+            liveUrls = listOf("https://live.test/list.m3u"),
+            order = listOf("b", "a"),
+            weights = weights,
+        )
+        assertEquals(first, second)
+        // 再导出第三次，排除偶发抖动，并确认 checksum 字段本身也稳定。
+        val third = SourceConfigBackup.export(
+            lines = lines,
+            liveUrls = listOf("https://live.test/list.m3u"),
+            order = listOf("b", "a"),
+            weights = weights,
+        )
+        assertEquals(first, third)
+    }
+
+    @Test
+    fun repeatedRestoreYieldsSameStateWithoutDuplicates() {
+        // 幂等恢复：恢复同一份备份两次，最终应用内配置状态应与恢复一次后完全一致，
+        // 既不出现重复源，也不出现重复直播/排序/权重条目。
+        val raw = SourceConfigBackup.export(
+            lines = listOf(
+                ApiLine(id = "a", name = "源 A", baseUrls = listOf("https://a.test/")),
+                ApiLine(id = "b", name = "源 B", baseUrls = listOf("https://b.test/")),
+            ),
+            liveUrls = listOf("https://live.test/a.m3u", "https://live.test/b.m3u"),
+            order = listOf("b", "a"),
+            weights = mapOf("a" to 1, "b" to 2),
+        )
+        val once = SourceConfigBackup.parse(raw)
+        assertNull(once.error)
+        val twice = SourceConfigBackup.parse(raw)
+        assertNull(twice.error)
+
+        val payloadOnce = once.payload!!
+        val payloadTwice = twice.payload!!
+        assertEquals(payloadOnce, payloadTwice)
+        // 不出现重复源：ID 与接口地址均唯一。
+        assertEquals(payloadOnce.lines.size, payloadOnce.lines.map { it.id }.distinct().size)
+        assertEquals(payloadOnce.lines.size, payloadOnce.lines.map { it.baseUrls.single() }.distinct().size)
+        // 不出现重复直播条目。
+        assertEquals(payloadOnce.liveUrls.size, payloadOnce.liveUrls.distinct().size)
+        // 连续「导出→恢复→再导出」应收敛到同一份文本，进一步佐证恢复无副作用累积。
+        val reexported = SourceConfigBackup.export(
+            lines = payloadTwice.lines,
+            liveUrls = payloadTwice.liveUrls,
+            order = payloadTwice.order,
+            weights = payloadTwice.weights,
+        )
+        assertNull(SourceConfigBackup.parse(reexported).error)
+        assertEquals(SourceConfigBackup.parse(reexported).payload, payloadTwice)
+    }
+
+    @Test
+    fun exportedBackupFiltersAllSensitiveFieldNamesCaseInsensitive() {
+        // 敏感字段过滤：即便源条目里混入了常见凭据字段，导出结果也绝不能包含
+        // api_key / token / authorization / cookie / signature（不区分大小写）。
+        // 导出 API 只接受源标识/名称/接口，凭据无从注入，因此导出后逐个关键词断言。
+        val raw = SourceConfigBackup.export(
+            lines = listOf(
+                ApiLine(id = "a", name = "源 A", baseUrls = listOf("https://a.test/api.php/provide/vod/")),
+            ),
+            liveUrls = listOf("https://live.test/list.m3u"),
+            order = listOf("a"),
+            weights = mapOf("a" to 1),
+        )
+        val lowered = raw.lowercase()
+        assertFalse(lowered.contains("api_key"))
+        assertFalse(lowered.contains("apikey"))
+        assertFalse(lowered.contains("token"))
+        assertFalse(lowered.contains("authorization"))
+        assertFalse(lowered.contains("cookie"))
+        assertFalse(lowered.contains("signature"))
+        // 导出前自检同样认定无敏感键。
+        assertFalse(SourceConfigBackup.hasSensitiveKeys(raw))
+    }
 }

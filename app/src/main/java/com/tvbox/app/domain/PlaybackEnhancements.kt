@@ -49,7 +49,22 @@ fun resolveSeekStep(
 fun seekStepMsForHold(
     holdDurationMs: Long,
     tiers: List<SeekTier> = DEFAULT_SEEK_TIERS,
-): Long = resolveSeekStep(holdDurationMs, tiers).stepSeconds * 1_000L
+    /**
+     * 用户设置的「快进/快退步长（秒）」，默认沿用首档 10 秒语义。
+     * 只缩放各档的秒数、不改变跳档时间点；传入非 10 时所有档位按比例缩放。
+     */
+    baseStepSeconds: Int = DEFAULT_SEEK_TIERS.first().stepSeconds,
+): Long {
+    val effectiveTiers = if (baseStepSeconds == DEFAULT_SEEK_TIERS.first().stepSeconds) {
+        tiers
+    } else {
+        val base = DEFAULT_SEEK_TIERS.first().stepSeconds
+        tiers.map { tier ->
+            tier.copy(stepSeconds = (tier.stepSeconds.toLong() * baseStepSeconds / base).toInt().coerceAtLeast(1))
+        }
+    }
+    return resolveSeekStep(holdDurationMs, effectiveTiers).stepSeconds * 1_000L
+}
 
 // ---------------------------------------------------------------- 跳过片头/片尾
 

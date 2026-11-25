@@ -4,7 +4,6 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.tvbox.app.domain.TvTheme
 
 /**
  * TV 焦点视觉与动效的统一令牌：海报卡、按钮、列表项、导航图标与进度条共用一套数值，
@@ -37,7 +36,7 @@ val CinemaFocusTokens = TvFocusTokens(
 val LocalTvFocus = staticCompositionLocalOf { DefaultFocusTokens }
 
 /** 系统开启「减少动效」时关闭缩放与过渡，但保留焦点描边以保证遥控器可见。 */
-fun focusTokensFor(theme: TvTheme, reduceMotion: Boolean): TvFocusTokens {
-    val base = if (theme == TvTheme.Cinema) CinemaFocusTokens else DefaultFocusTokens
+fun focusTokensFor(reduceMotion: Boolean): TvFocusTokens {
+    val base = DefaultFocusTokens
     return if (reduceMotion) base.copy(focusScale = 1f, animationMs = 0) else base
 }

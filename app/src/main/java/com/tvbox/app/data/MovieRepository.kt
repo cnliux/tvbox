@@ -615,9 +615,20 @@ class DefaultMovieRepository(
     ): List<Movie> {
         val priorityById = lines.mapIndexed { index, line -> line.id to index }.toMap()
         val query = normalizeTitle(keyword)
+        // 拼音首字母查询（如 "bz"）在 MacCMS 服务端只能模糊匹配 wd=bz，会返回一堆无关标题。
+        // 这里在合并前做本地过滤：只保留片名拼音首字母真能拼出该查询的结果（如 "宝珠" → bz）。
+        // 非纯字母查询不受影响（matches 对非字母查询返回 false，predicate 全通过）。
+        val isInitialQuery = isPinyinInitialQuery(keyword)
+        val filteredByLine: Map<String, List<Movie>> = if (!isInitialQuery) {
+            moviesByLine
+        } else {
+            moviesByLine.mapValues { (_, list) ->
+                list.filter { movie -> PinyinInitialsMatcher.matches(movie.name, keyword) }
+            }
+        }
         val bestByKey = HashMap<String, Movie>()
         val bestScore = HashMap<String, Int>()
-        moviesByLine.values.forEach { list ->
+        filteredByLine.values.forEach { list ->
             list.forEach { movie ->
                 val key = "${normalizeTitle(movie.name)}:${movie.year.trim()}"
                 val relevance = scoreNameRelevance(movie.name, query)

@@ -64,6 +64,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.LiveRemoteDirectionMapping
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.domain.effectiveDecoderStrategy
 import com.tvbox.app.domain.partitionUserAgent
@@ -169,7 +170,13 @@ private fun LivePlayerScreen(
         activity?.requestedOrientation ?: ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     }
     // #54/#266 设备型号命中硬解白名单时强制硬解，否则沿用用户选择的解码策略。
-    val playbackHost = rememberPlaybackHost(state.appSettings.effectiveDecoderStrategy())
+    // 任务1 电视直播无声修复：把用户设置的音频输出档位传给播放器。默认 auto 时
+    // AC3/EAC3/DTS 会走 HDMI 直通，遇到不支持这些编码的电视/功放就表现为「有画面没声音」；
+    // 用户切到 stereo 档可禁用直通、强制解码为 PCM 恢复声音。
+    val playbackHost = rememberPlaybackHost(
+        decoderStrategy = state.appSettings.effectiveDecoderStrategy(),
+        audioOutputMode = state.appSettings.audioOutputMode,
+    )
     val player = playbackHost.player
     // 系统媒体键/耳机线控在应用未获焦时也能控制直播播放。
     rememberPlayerMediaSession(player = player)
@@ -660,16 +667,20 @@ private fun LivePlayerScreen(
         numberInput = channelNumberInput,
         numberInputNonce = channelNumberNonce,
     )
-    val remoteRouter = remember {
+    val remoteDirectionMapping = state.appSettings.liveRemoteDirectionMapping
+    val remoteKeyBindings = state.appSettings.remoteKeyBindings
+    val remoteRouter = remember(remoteDirectionMapping, remoteKeyBindings) {
         LiveRemoteKeyRouter(
             // 电视直播源没有虎牙/斗鱼站点语义，续流提示在这里不会触发。
             isContinuitySource = { false },
             // 全屏且无浮层时放行给 PlayerChromeBackHandler，复用它已有的面板/退出层级。
             exitLiveOnBackInFullscreen = false,
-            // 按需求使用「上下换台 / 左右切源（线路）」。
-            directionMapping = LiveRemoteDirectionMapping.UP_DOWN_CHANNEL,
+            // 方向键语义由用户在设置里选（上下换台 / 左右换台），默认上下换台。
+            directionMapping = remoteDirectionMapping,
             // 失败卡在场时确认键交给「重试 / 下一台」按钮。
             hasBlockingFailureCard = { streamBlocked },
+            // 通用动作（播放/暂停 / 设置 / 信息 / 菜单 / 上一台 / 下一台）经统一绑定表翻译。
+            bindings = remoteKeyBindings,
         )
     }
 
@@ -692,6 +703,13 @@ private fun LivePlayerScreen(
                 bumpBars()
             }
             LiveRemoteEffect.OpenController -> {
+                channelListVisible = false
+                previewChannel = null
+                showLineControl = true
+                bumpBars()
+            }
+            LiveRemoteEffect.OpenLineControl -> {
+                // 设置键的高频语义：直接打开线路浮层（切源/线路），与 OK 唤控制栏行为一致。
                 channelListVisible = false
                 previewChannel = null
                 showLineControl = true
@@ -892,6 +910,7 @@ private fun LivePlayerScreen(
                 favoriteLabel = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
                 favoriteSelected = actions.isLiveFavorite(currentChannel),
             ),
+            hiddenControls = state.appSettings.playerHiddenControls,
             actions = PlayerChromeActions(
                 onToggle = {
                     if (session.interrupted) {

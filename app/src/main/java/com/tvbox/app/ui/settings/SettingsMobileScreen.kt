@@ -6,6 +6,7 @@ import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -69,12 +72,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.tvbox.app.BuildConfig
@@ -88,14 +96,17 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.FastSeekSetting
 import com.tvbox.app.domain.HistoryLayout
 import com.tvbox.app.domain.LiveInfoBannerDuration
+import com.tvbox.app.domain.metrics
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
 import com.tvbox.app.domain.PerSourceTimeout
+import com.tvbox.app.domain.PlayerControlButton
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.TvFontScale
-import com.tvbox.app.domain.TvTheme
 import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
+import com.tvbox.app.domain.RemoteKeyAction
+import com.tvbox.app.domain.RemoteKeyBindings
 import com.tvbox.app.ui.RemoteManageDialog
 import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
@@ -122,7 +133,7 @@ fun SettingsMobileScreen(
     var confirmClearHistory by remember { mutableStateOf(false) }
     var confirmClearPlaybackStats by remember { mutableStateOf(false) }
     var confirmResetCategory by remember { mutableStateOf<MobileSettingCategory?>(null) }
-    var filterCategory by remember { mutableStateOf<MobileSettingCategory?>(null) }
+    var selectedCategory by remember { mutableStateOf<MobileSettingCategory?>(null) }
 
     if (state.remoteManageDialogVisible) {
         RemoteManageDialog(state = state, actions = actions)
@@ -160,39 +171,65 @@ fun SettingsMobileScreen(
             .fillMaxSize()
             .background(TvColors.Background)
     ) {
-        // 顶部栏：大标题 + 偏离默认计数
-        TopAppBar(
-            title = {
-                Text(
-                    "设置",
-                    color = TvColors.TextPrimary,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            },
-            actions = {
-                val deviation = settingsDeviationCount(state.appSettings)
-                Text(
-                    text = if (deviation > 0) "$deviation 项已偏离默认" else "已全部默认",
-                    color = if (deviation > 0) TvColors.Accent else TvColors.TextSecondary,
-                    style = MaterialTheme.typography.labelMedium,
-                    modifier = Modifier.padding(end = 16.dp),
-                )
-            },
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = Color.Transparent,
-                titleContentColor = TvColors.TextPrimary,
-            ),
-            windowInsets = WindowInsets.statusBars,
-        )
+        // 分类详情是二级页面：手机返回手势/返回键优先回到分类入口。
+        BackHandler(enabled = selectedCategory != null) {
+            selectedCategory = null
+        }
 
-        // 分类筛选 chips：全部 + 各分组
-        SettingsFilterChips(
-            selected = filterCategory,
-            onSelect = { filterCategory = it },
-        )
+        Crossfade(targetState = selectedCategory, label = "mobile-settings-crossfade") { category ->
+            if (category == null) {
+                MobileSettingsLanding(
+                    state = state,
+                    onCategoryClick = { selectedCategory = it },
+                )
+            } else {
+                MobileSettingsDetail(
+                    category = category,
+                    state = state,
+                    actions = actions,
+                    onBack = { selectedCategory = null },
+                    onClearPlaybackStats = { confirmClearPlaybackStats = true },
+                    onClearHistory = { confirmClearHistory = true },
+                    onResetCategory = { confirmResetCategory = it },
+                )
+            }
+        }
+    }
+}
+
+// ─────────────────────────── 入口页：分类卡片网格（对齐 TV 版） ───────────────────────────
+
+@Composable
+private fun MobileSettingsLanding(
+    state: TvBoxUiState,
+    onCategoryClick: (MobileSettingCategory) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars),
+    ) {
+        // 顶部栏：大标题 + 偏离默认计数
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "设置",
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(Modifier.weight(1f))
+            val deviation = settingsDeviationCount(state.appSettings)
+            Text(
+                text = if (deviation > 0) "$deviation 项已偏离默认" else "已全部默认",
+                color = if (deviation > 0) TvColors.Accent else TvColors.TextSecondary,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -202,26 +239,34 @@ fun SettingsMobileScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            val visibleCategories = MobileSettingCategory.entries.filter {
-                filterCategory == null || it == filterCategory
+            item {
+                // 手机端「当前配置」卡：与 TV 端一致，顶部直接给出当前视频源/直播源/设备，免去逐层点进。
+                MobileSettingsHeroCard(state = state)
             }
-            visibleCategories.forEach { category ->
-                item(key = category.name) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        SettingsSectionHeader(
-                            category = category,
-                            deviation = categoryDeviationCount(category, state.appSettings),
-                            onReset = { confirmResetCategory = category },
-                        )
-                        when (category) {
-                            MobileSettingCategory.Playback -> PlaybackDetail(state, actions) {
-                                confirmClearPlaybackStats = true
+            item {
+                // 分类卡片：固定小集合（5 个），两列 3 行。此前两版都有「显示不正常」：
+                //   ① 写死 .height(360dp) → 第 5 张卡被挤出可视区；
+                //   ② LazyColumn.item{} 内嵌 LazyVerticalGrid → 外层滚动容器给不出确定
+                //      宽度约束，inner grid 的 Fixed(2) 塌成 wrap-content，双列退化成
+                //      单列靠左、右列空白，高度只按一列算导致内容纵向溢出。
+                // 5 张卡是固定小集合，无需 Lazy；改为确定性两列 Row 排布，宽度约束由
+                // fillMaxWidth + weight(1f) 明确给出，每张卡等宽、高度按内容自然撑开。
+                val rows = MobileSettingCategory.entries.chunked(2)
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    rows.forEach { rowCategories ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            rowCategories.forEach { category ->
+                                Box(modifier = Modifier.weight(1f)) {
+                                    MobileCategoryCard(
+                                        category = category,
+                                        deviation = categoryDeviationCount(category, state.appSettings),
+                                        onClick = { onCategoryClick(category) },
+                                    )
+                                }
                             }
-                            MobileSettingCategory.NetworkSources -> NetworkSourcesDetail(state, actions)
-                            MobileSettingCategory.Interface -> InterfaceDetail(state, actions)
-                            MobileSettingCategory.TvRemote -> TvRemoteDetail(state, actions)
-                            MobileSettingCategory.SystemData -> SystemDataDetail(state, actions) {
-                                confirmClearHistory = true
+                            // 奇数行（最后只剩 1 张）补占位，保持左列卡片宽度与其它行一致
+                            if (rowCategories.size == 1) {
+                                Spacer(modifier = Modifier.weight(1f))
                             }
                         }
                     }
@@ -241,92 +286,201 @@ fun SettingsMobileScreen(
     }
 }
 
-// ─────────────────────────── 扁平分组列表组件 ───────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsFilterChips(
-    selected: MobileSettingCategory?,
-    onSelect: (MobileSettingCategory?) -> Unit,
+private fun MobileCategoryCard(
+    category: MobileSettingCategory,
+    deviation: Int,
+    onClick: () -> Unit,
 ) {
-    LazyRow(
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    val shape = RoundedCornerShape(18.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(shape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        category.gradientStart.copy(alpha = 0.22f),
+                        category.gradientEnd.copy(alpha = 0.06f),
+                    )
+                )
+            )
+            .border(1.dp, category.gradientStart.copy(alpha = 0.25f), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "${category.title}，${category.subtitle}"
+            }
+            .padding(16.dp),
     ) {
-        item {
-            FilterChip(
-                selected = selected == null,
-                onClick = { onSelect(null) },
-                label = { Text("全部") },
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = TvColors.Surface,
-                    labelColor = TvColors.TextSecondary,
-                    selectedContainerColor = TvColors.Accent.copy(alpha = 0.18f),
-                    selectedLabelColor = TvColors.Accent,
-                ),
-            )
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(category.gradientStart.copy(alpha = 0.3f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = category.icon,
+                        contentDescription = null,
+                        tint = category.gradientStart,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
+                if (deviation > 0) {
+                    Text(
+                        text = "$deviation 项偏离",
+                        color = TvColors.TextSecondary,
+                        style = MaterialTheme.typography.labelMedium,
+                    )
+                }
+            }
+            Column {
+                Text(
+                    text = category.title,
+                    color = TvColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = category.subtitle,
+                    color = TvColors.TextTertiary,
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
-        items(MobileSettingCategory.entries, key = { it.name }) { category ->
-            FilterChip(
-                selected = selected == category,
-                onClick = { onSelect(category) },
-                label = { Text(category.title) },
-                colors = FilterChipDefaults.filterChipColors(
-                    containerColor = TvColors.Surface,
-                    labelColor = TvColors.TextSecondary,
-                    selectedContainerColor = TvColors.Accent.copy(alpha = 0.18f),
-                    selectedLabelColor = TvColors.Accent,
-                ),
+    }
+}
+
+// ─────────────────────────── 详情页 ───────────────────────────
+
+@Composable
+private fun MobileSettingsHeroCard(state: TvBoxUiState) {
+    val detectedMode = DeviceMode.detectFromSystem(LocalContext.current)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        TvColors.Accent.copy(alpha = 0.28f),
+                        TvColors.AccentStrong.copy(alpha = 0.12f),
+                    )
+                )
             )
+            .border(1.dp, TvColors.Accent.copy(alpha = 0.25f), RoundedCornerShape(20.dp))
+            .padding(18.dp)
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(10.dp).clip(CircleShape).background(TvColors.Accent))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "当前配置",
+                    color = TvColors.TextPrimary,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                HeroStat("视频源", state.selectedApiLine?.name ?: "未配置", Modifier.weight(1f),
+                    labelColor = TvColors.TextTertiary, labelStyle = MaterialTheme.typography.labelSmall, valueSingleLine = true)
+                HeroStat("直播源", "${state.appSettings.liveSourceUrls.count { it.isNotEmpty() }} 条", Modifier.weight(1f),
+                    labelColor = TvColors.TextTertiary, labelStyle = MaterialTheme.typography.labelSmall, valueSingleLine = true)
+            }
+            HeroStat("设备", state.appSettings.deviceMode.summaryLabel(detectedMode), Modifier.fillMaxWidth(),
+                labelColor = TvColors.TextTertiary, labelStyle = MaterialTheme.typography.labelSmall, valueSingleLine = true)
         }
     }
 }
 
 @Composable
-private fun SettingsSectionHeader(
+private fun MobileSettingsDetail(
     category: MobileSettingCategory,
-    deviation: Int,
-    onReset: () -> Unit,
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+    onBack: () -> Unit,
+    onClearPlaybackStats: () -> Unit,
+    onClearHistory: () -> Unit,
+    onResetCategory: (MobileSettingCategory) -> Unit,
 ) {
-    Row(
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp, vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .fillMaxSize()
+            .windowInsetsPadding(WindowInsets.statusBars),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(28.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(category.gradientStart.copy(alpha = 0.28f)),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = category.icon,
-                contentDescription = null,
-                tint = category.gradientStart,
-                modifier = Modifier.size(16.dp),
-            )
-        }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = category.title,
-            color = TvColors.TextPrimary,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
-        Spacer(Modifier.weight(1f))
-        if (deviation > 0) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = TvColors.TextPrimary,
+                )
+            }
             Text(
-                text = "$deviation 项偏离",
-                color = TvColors.TextSecondary,
-                style = MaterialTheme.typography.labelMedium,
+                text = category.title,
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
             )
+            Spacer(Modifier.weight(1f))
+            if (category != MobileSettingCategory.About) {
+                val deviation = categoryDeviationCount(category, state.appSettings)
+                if (deviation > 0) {
+                    TextButton(onClick = { onResetCategory(category) }) {
+                        Text("重置本组", color = TvColors.Accent, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
         }
-        if (category != MobileSettingCategory.TvRemote) {
-            Spacer(Modifier.width(6.dp))
-            TextButton(onClick = onReset) {
-                Text("重置本组", color = TvColors.Accent, style = MaterialTheme.typography.labelMedium)
+        Text(
+            text = category.subtitle,
+            color = TvColors.TextTertiary,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(start = 20.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 16.dp, end = 16.dp, top = 8.dp,
+                bottom = 24.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding(),
+            ),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                when (category) {
+                    MobileSettingCategory.General -> GeneralDetail(state, actions)
+                    MobileSettingCategory.Playback -> PlaybackDetail(state, actions) {
+                        onClearPlaybackStats()
+                    }
+                    MobileSettingCategory.Controls -> ControlsDetail(state, actions)
+                    MobileSettingCategory.Search -> SearchDetail(state, actions)
+                    MobileSettingCategory.Sources -> SourcesDetail(state, actions)
+                    MobileSettingCategory.Live -> LiveDetail(state, actions)
+                    MobileSettingCategory.Data -> DataDetail(state, actions) {
+                        onClearHistory()
+                    }
+                    MobileSettingCategory.About -> AboutDetail(state, actions)
+                }
             }
         }
     }
@@ -340,33 +494,59 @@ private fun settingsDeviationCount(settings: AppSettings): Int =
 private fun categoryDeviationCount(category: MobileSettingCategory, settings: AppSettings): Int {
     val d = AppSettings()
     return when (category) {
+        MobileSettingCategory.General -> listOf(
+            settings.deviceMode != d.deviceMode,
+            settings.themeAccent != d.themeAccent,
+            settings.updateChannel != d.updateChannel,
+            settings.crashLogLocalOnly != d.crashLogLocalOnly,
+        ).count { it }
         MobileSettingCategory.Playback -> listOf(
             settings.playerSpeed != d.playerSpeed,
             settings.playerBrightness != d.playerBrightness,
             settings.autoNextEpisodeEnabled != d.autoNextEpisodeEnabled,
-            settings.playerGesturesEnabled != d.playerGesturesEnabled,
+            settings.autoNextCountdownSeconds != d.autoNextCountdownSeconds,
             settings.decoderStrategy != d.decoderStrategy,
             settings.fastSeekStepSeconds != d.fastSeekStepSeconds,
+            settings.videoScaleMode != d.videoScaleMode,
+            settings.firstPacketTimeoutMs != d.firstPacketTimeoutMs,
+            settings.reconnectAttempts != d.reconnectAttempts,
+            settings.bufferTargetMs != d.bufferTargetMs,
+            settings.backgroundPlaybackMode != d.backgroundPlaybackMode,
+            settings.audioOutputMode != d.audioOutputMode,
         ).count { it }
-        MobileSettingCategory.NetworkSources -> listOf(
+        MobileSettingCategory.Controls -> listOf(
+            settings.playerGesturesEnabled != d.playerGesturesEnabled,
+            settings.gestureSensitivity != d.gestureSensitivity,
+            settings.playerHiddenControls != d.playerHiddenControls,
+        ).count { it }
+        MobileSettingCategory.Search -> listOf(
+            settings.aiSearchEnabled != d.aiSearchEnabled,
+            settings.voiceSearchEnabled != d.voiceSearchEnabled,
+            settings.aiTextRedactionEnabled != d.aiTextRedactionEnabled,
+            settings.aiOnlyTitleYearEnabled != d.aiOnlyTitleYearEnabled,
+            settings.aiMissBehavior != d.aiMissBehavior,
+            settings.aiResultCacheMinutes != d.aiResultCacheMinutes,
+        ).count { it }
+        MobileSettingCategory.Sources -> listOf(
             settings.sourceCircuitBreakerEnabled != d.sourceCircuitBreakerEnabled,
             settings.customUserAgent != d.customUserAgent,
             settings.perSourceTimeoutMs != d.perSourceTimeoutMs,
             settings.maxParallelSourceRequests != d.maxParallelSourceRequests,
         ).count { it }
-        MobileSettingCategory.Interface -> listOf(
-            settings.deviceMode != d.deviceMode,
-            settings.theme != d.theme,
-            settings.historyLayout != d.historyLayout,
-            settings.historyCoverBadgeEnabled != d.historyCoverBadgeEnabled,
+        MobileSettingCategory.Live -> listOf(
+            settings.platformThirdPartyProxyEnabled != d.platformThirdPartyProxyEnabled,
+            settings.platformThirdPartyProxyTemplates != d.platformThirdPartyProxyTemplates,
         ).count { it }
-        MobileSettingCategory.TvRemote -> 0
-        MobileSettingCategory.SystemData -> listOf(
-            settings.updateChannel != d.updateChannel,
+        MobileSettingCategory.Data -> listOf(
             settings.historyMaxItems != d.historyMaxItems,
             settings.historyPrivacyMode != d.historyPrivacyMode,
-            settings.crashLogLocalOnly != d.crashLogLocalOnly,
+            settings.historyLayout != d.historyLayout,
+            settings.historyCoverBadgeEnabled != d.historyCoverBadgeEnabled,
+            settings.continueWatchingMaxItems != d.continueWatchingMaxItems,
+            settings.historyAutoCleanupEnabled != d.historyAutoCleanupEnabled,
+            settings.resumeConflictPolicy != d.resumeConflictPolicy,
         ).count { it }
+        MobileSettingCategory.About -> 0
     }
 }
 
@@ -378,8 +558,9 @@ private fun categoryDeviationCount(category: MobileSettingCategory, settings: Ap
 
 
 @Composable
-private fun InterfaceDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+private fun GeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     val detectedMode = DeviceMode.detectFromSystem(LocalContext.current)
+    // 通用与外观：设备模式（历史页布局/封面角标归入「历史与数据」，避免与播放分类重复）。
     SettingsGroup {
         SettingsRow(
             icon = Icons.Default.Settings,
@@ -395,49 +576,49 @@ private fun InterfaceDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
+    }
+}
+
+@Composable
+private fun SearchDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    SettingsGroup {
+        InfoRow(icon = Icons.Default.Info, title = "找片与隐私", subtitle = "AI/语音能力由构建期配置决定；Key 不写入本地偏好")
         SettingsGroupDivider()
-        SettingsRow(
-            icon = Icons.Default.Build,
-            title = "界面主题",
-            subtitle = state.appSettings.theme.displayName,
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = TvTheme.entries,
-                    selected = state.appSettings.theme,
-                    label = { it.displayName },
-                    onSelect = actions::updateTheme,
-                )
-            },
+        BoolSettingRow("AI 找片", "只返回候选，点击卡片才查当前源", state.appSettings.aiSearchEnabled) { actions.updateAppSettings { s -> s.copy(aiSearchEnabled = it) } }
+        if (state.appSettings.aiSearchEnabled) {
+            SettingsGroupDivider()
+            SettingsRow(
+                icon = Icons.Default.Info,
+                title = "打开 AI 找片",
+                subtitle = "输入描述 → 候选片名 → 点击后才查当前源",
+                trailing = { TextButton(onClick = actions::openAiSearch) { Text("进入", color = TvColors.Accent) } },
+            )
+        }
+        SettingsGroupDivider()
+        BoolSettingRow("语音找片", "调用系统语音识别，由系统应用持有麦克风权限", state.appSettings.voiceSearchEnabled) { actions.updateAppSettings { s -> s.copy(voiceSearchEnabled = it) } }
+        SettingsGroupDivider()
+        BoolSettingRow("文本脱敏上传", "默认开；移除历史/身份信息", state.appSettings.aiTextRedactionEnabled) { actions.updateAppSettings { s -> s.copy(aiTextRedactionEnabled = it) } }
+        SettingsGroupDivider()
+        BoolSettingRow("只传片名/年份", "不传观看历史", state.appSettings.aiOnlyTitleYearEnabled) { actions.updateAppSettings { s -> s.copy(aiOnlyTitleYearEnabled = it) } }
+        SettingsGroupDivider()
+        ChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "未命中行为",
+            subtitle = "留在推荐页，不跳空白播放器",
+            options = listOf("stay", "search"),
+            selected = state.appSettings.aiMissBehavior,
+            label = { if (it == "search") "切普通搜索" else "留在推荐页" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(aiMissBehavior = v) } },
         )
         SettingsGroupDivider()
-        // 历史页布局：卡片 / 紧凑 / 网格（仅手机端历史页生效）。
-        SettingsRow(
-            icon = Icons.Default.Settings,
-            title = "历史页布局",
-            subtitle = "历史记录封面的展示密度",
-            stackedTrailing = true,
-            trailing = {
-                ChoiceChips(
-                    options = HistoryLayout.entries,
-                    selected = state.appSettings.historyLayout,
-                    label = { it.displayName },
-                    onSelect = actions::updateHistoryLayout,
-                )
-            },
-        )
-        SettingsGroupDivider()
-        // 封面更新角标：有更新剧集的条目在封面右上角显示角标。
-        SettingsRow(
-            icon = Icons.Default.Settings,
-            title = "封面更新角标",
-            subtitle = if (state.appSettings.historyCoverBadgeEnabled) "已开启，封面显示更新标记" else "已关闭",
-            trailing = {
-                Switch(
-                    checked = state.appSettings.historyCoverBadgeEnabled,
-                    onCheckedChange = actions::updateHistoryCoverBadgeEnabled,
-                )
-            },
+        IntChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "结果缓存",
+            subtitle = "同一查询的本地缓存时长",
+            options = listOf(0, 15, 30, 60),
+            selected = state.appSettings.aiResultCacheMinutes,
+            label = { if (it == 0) "不缓存" else "${it} 分钟" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(aiResultCacheMinutes = v) } },
         )
     }
 }
@@ -523,11 +704,240 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
                 )
             },
         )
+        SettingsGroupDivider()
+        // 画面比例：全局默认，播放器内按内容记忆优先。
+        SettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "画面比例",
+            subtitle = "全局默认；播放时可按片源单独记忆",
+            stackedTrailing = true,
+            trailing = {
+                ChoiceChips(
+                    options = VideoScaleMode.entries,
+                    selected = state.appSettings.videoScaleMode,
+                    label = { it.displayName },
+                    onSelect = actions::updateVideoScaleMode,
+                )
+            },
+        )
+    }
+    SettingsGroupGap()
+    SettingsGroup {
+        IntChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "续播倒计时",
+            subtitle = "片尾切集前的可见倒计时",
+            options = listOf(3, 5, 8),
+            selected = state.appSettings.autoNextCountdownSeconds,
+            label = { "${it}s" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(autoNextCountdownSeconds = v) } },
+        )
+        SettingsGroupDivider()
+        IntChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "首包超时",
+            subtitle = "超过该时间未收到首帧即触发换线/重试",
+            options = listOf(4_000, 8_000, 15_000),
+            selected = state.appSettings.firstPacketTimeoutMs.toInt(),
+            label = { "${it / 1000}s" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(firstPacketTimeoutMs = v.toLong()) } },
+        )
+        SettingsGroupDivider()
+        IntChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "断线重连",
+            subtitle = "0=关闭；-1=持续重试",
+            options = listOf(0, 1, 3, -1),
+            selected = state.appSettings.reconnectAttempts,
+            label = { if (it < 0) "持续" else "$it 次" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(reconnectAttempts = v) } },
+        )
+        SettingsGroupDivider()
+        IntChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "缓冲目标",
+            subtitle = "越大越稳，首帧越慢；按网络环境选择",
+            options = listOf(8_000, 15_000, 25_000),
+            selected = state.appSettings.bufferTargetMs.toInt(),
+            label = { "${it / 1000}s" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(bufferTargetMs = v.toLong()) } },
+        )
+        SettingsGroupDivider()
+        ChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "后台行为",
+            subtitle = "退到后台时暂停 / 音频续播 / 画中画（需设备支持）",
+            options = listOf("pause", "audio", "pip"),
+            selected = state.appSettings.backgroundPlaybackMode,
+            label = {
+                when (it) { "audio" -> "音频续播"; "pip" -> "画中画"; else -> "暂停" }
+            },
+            onSelect = { v -> actions.updateAppSettings { it.copy(backgroundPlaybackMode = v) } },
+        )
+        SettingsGroupDivider()
+        ChoiceSettingRow(
+            icon = Icons.Default.PlayArrow,
+            title = "音频输出",
+            subtitle = "直通需设备支持，不支持时自动回退立体声",
+            options = listOf("auto", "stereo", "passthrough"),
+            selected = state.appSettings.audioOutputMode,
+            label = {
+                when (it) { "stereo" -> "立体声"; "passthrough" -> "直通"; else -> "自动" }
+            },
+            onSelect = { v -> actions.updateAppSettings { it.copy(audioOutputMode = v) } },
+        )
     }
 }
 
 @Composable
-private fun NetworkSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+private fun ControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    var showShortcutHelp by remember { mutableStateOf(false) }
+    var showBindingEditor by remember { mutableStateOf(false) }
+    // 卡 1：手机播放手势（总开关 + 8 分项 + 灵敏度 + 误触保护 + 手势锁）。
+    SettingsGroup {
+        SettingsRow(
+            icon = Icons.Default.Build,
+            title = "手机播放手势",
+            subtitle = if (state.appSettings.playerGesturesEnabled) "左亮度 / 右音量 / 横滑进度" else "已关闭",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.playerGesturesEnabled,
+                    onCheckedChange = actions::updatePlayerGesturesEnabled,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        InfoRow(
+            icon = Icons.Default.Build,
+            title = "手机播放手势 · 分项",
+            subtitle = "总开关关闭时分项全部失效",
+        )
+        SettingsGroupDivider()
+        BoolSettingRow("左侧竖滑：亮度", state.appSettings.gestureLeftBrightnessEnabled) { actions.updateAppSettings { s -> s.copy(gestureLeftBrightnessEnabled = it) } }
+        BoolSettingRow("右侧竖滑：音量", state.appSettings.gestureRightVolumeEnabled) { actions.updateAppSettings { s -> s.copy(gestureRightVolumeEnabled = it) } }
+        BoolSettingRow("横向拖动：进度", state.appSettings.gestureHorizontalSeekEnabled) { actions.updateAppSettings { s -> s.copy(gestureHorizontalSeekEnabled = it) } }
+        BoolSettingRow("双击侧边：±10s", state.appSettings.gestureDoubleTapSideEnabled) { actions.updateAppSettings { s -> s.copy(gestureDoubleTapSideEnabled = it) } }
+        BoolSettingRow("双击中心：播放/暂停", state.appSettings.gestureDoubleTapCenterEnabled) { actions.updateAppSettings { s -> s.copy(gestureDoubleTapCenterEnabled = it) } }
+        BoolSettingRow("长按 2×：临时加速", state.appSettings.gestureLongPressSpeedEnabled) { actions.updateAppSettings { s -> s.copy(gestureLongPressSpeedEnabled = it) } }
+        BoolSettingRow("双指缩放：画面填充", state.appSettings.gesturePinchZoomEnabled) { actions.updateAppSettings { s -> s.copy(gesturePinchZoomEnabled = it) } }
+        BoolSettingRow("顶部横滑：返回（防误触默认关）", state.appSettings.gestureTopSwipeBackEnabled) { actions.updateAppSettings { s -> s.copy(gestureTopSwipeBackEnabled = it) } }
+        SettingsGroupDivider()
+        IntChoiceSettingRow(
+            icon = Icons.Default.Build,
+            title = "手势灵敏度",
+            subtitle = "低 / 中 / 高",
+            options = listOf(0, 1, 2),
+            selected = state.appSettings.gestureSensitivity,
+            label = { listOf("低", "中", "高")[it] },
+            onSelect = { v -> actions.updateAppSettings { it.copy(gestureSensitivity = v) } },
+        )
+        SettingsGroupDivider()
+        BoolSettingRow("误触保护：底部 24dp 不响应进度", state.appSettings.gestureEdgeGuardEnabled) { actions.updateAppSettings { s -> s.copy(gestureEdgeGuardEnabled = it) } }
+        BoolSettingRow("手势锁：只保留单击唤出控制栏", state.appSettings.gestureLockEnabled) { actions.updateAppSettings { s -> s.copy(gestureLockEnabled = it) } }
+    }
+    SettingsGroupGap()
+    // 卡 2：播放器底栏按钮显隐（播放/暂停、上下集、返回等核心控件始终显示）。
+    SettingsGroup {
+        InfoRow(
+            icon = Icons.Default.Build,
+            title = "播放器按钮位置",
+            subtitle = "关闭=隐藏该底栏按钮；核心控件（播放/上下集/返回）始终显示",
+        )
+        SettingsGroupDivider()
+        PlayerControlButton.entries.forEach { button ->
+            BoolSettingRow(
+                title = button.displayName,
+                subtitle = "显示「${button.displayName}」底栏按钮",
+                checked = button.storageKey !in state.appSettings.playerHiddenControls,
+                onCheckedChange = { visible ->
+                    actions.updateAppSettings { s ->
+                        val hidden = s.playerHiddenControls.toMutableSet()
+                        if (visible) hidden.remove(button.storageKey) else hidden.add(button.storageKey)
+                        s.copy(playerHiddenControls = hidden)
+                    }
+                },
+            )
+        }
+    }
+    SettingsGroupGap()
+    // 卡 3：遥控器 / 远程管理（快捷键说明 + 自定义键位绑定）。
+    SettingsGroup {
+        SettingsRow(
+            icon = Icons.Default.Build,
+            title = "远程管理",
+            subtitle = "通过浏览器或手机遥控本机，需与电视在同一网络",
+            trailing = {
+                TextButton(onClick = actions::openRemoteManageDialog) {
+                    Text("打开", color = TvColors.Accent)
+                }
+            },
+        )
+        SettingsGroupDivider()
+        SettingsRow(
+            icon = Icons.Default.Build,
+            title = "遥控器快捷键",
+            subtitle = "方向键 / 确认 / 返回 / 菜单 / 数字键 说明",
+            trailing = {
+                TextButton(onClick = { showShortcutHelp = true }) {
+                    Text("查看", color = TvColors.Accent)
+                }
+            },
+        )
+        SettingsGroupDivider()
+        SettingsRow(
+            icon = Icons.Default.Settings,
+            title = "自定义键位绑定",
+            subtitle = "把物理键码映射到统一动作，跨页面一致",
+            trailing = {
+                TextButton(onClick = { showBindingEditor = true }) {
+                    Text("编辑", color = TvColors.Accent)
+                }
+            },
+        )
+    }
+    if (showBindingEditor) {
+        RemoteKeyBindingEditorDialog(
+            current = state.appSettings.remoteKeyBindings,
+            onAssign = { action, keyCode ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withBinding(action, keyCode))
+                }
+            },
+            onClear = { action ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withoutBinding(action))
+                }
+            },
+            onReset = {
+                actions.updateAppSettings { s -> s.copy(remoteKeyBindings = RemoteKeyBindings.Default) }
+            },
+            onDismiss = { showBindingEditor = false },
+        )
+    }
+    if (showShortcutHelp) {
+        val shortcutHelpText = """
+            方向键（上/下/左/右）：移动焦点、浏览列表；播放时左右=快进/快退，上下=换台/换线路。
+            确认键（OK）：确认选择；电视直播/平台直播播放时打开频道（节目）列表。
+            返回键：返回上一级 / 关闭当前浮层。
+            菜单键：点播时切换倍速；电视直播时打开频道列表；平台直播时强制重连。
+            数字键：首页 1=历史 2=搜索 4=电视 5=直播 6=设置 7=豆瓣热播 8=源管理 9=刷新 0=远程管理；电视直播中直接输入频道号选台。
+            播放/暂停键：播放或暂停。
+            上一集/下一集键（或数字 1/3）：点播时切换剧集。
+            信息键（INFO）：查看线路信息 / 节目单。
+        """.trimIndent()
+        AlertDialog(
+            onDismissRequest = { showShortcutHelp = false },
+            confirmButton = {
+                TextButton(onClick = { showShortcutHelp = false }) { Text("知道了") }
+            },
+            title = { Text("遥控器快捷键") },
+            text = { Text(shortcutHelpText) },
+        )
+    }
+}
+
+@Composable
+private fun SourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     SettingsGroup {
         SettingsRow(
             icon = Icons.AutoMirrored.Filled.List,
@@ -635,12 +1045,124 @@ private fun NetworkSourcesDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
+        SettingsGroupDivider()
+        ChoiceSettingRow(
+            icon = Icons.AutoMirrored.Filled.List,
+            title = "UA 作用域",
+            subtitle = "统一自定义 / 按用途分工；所有输入都会拦截换行与控制字符",
+            options = listOf("unified", "scoped"),
+            selected = state.appSettings.uaScopeMode,
+            label = { if (it == "scoped") "按用途分工" else "统一自定义" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(uaScopeMode = v) } },
+        )
+        if (state.appSettings.uaScopeMode == "scoped") {
+            TextSettingRow("点播 API UA", "跟随全局时留空", state.appSettings.uaForApi) { actions.updateScopedUserAgent("api", it) }
+            SettingsGroupDivider()
+            TextSettingRow("Spider / JAR UA", "跟随全局时留空", state.appSettings.uaForSpider) { actions.updateScopedUserAgent("spider", it) }
+            // P20：明确当前版本不执行 Spider/JAR 脚本，避免该 UA 输入行被误解为支持脚本执行。
+            InfoRow(
+                icon = Icons.Default.Info,
+                title = "Spider / JAR 说明",
+                subtitle = "当前版本不执行 Spider/JAR 脚本；此 UA 仅用于用户自定义请求头场景",
+            )
+            SettingsGroupDivider()
+            TextSettingRow("直播 M3U UA", "跟随全局时留空", state.appSettings.uaForLive) { actions.updateScopedUserAgent("live", it) }
+            SettingsGroupDivider()
+            TextSettingRow("EPG UA", "跟随全局时留空", state.appSettings.uaForEpg) { actions.updateScopedUserAgent("epg", it) }
+            SettingsGroupDivider()
+            TextSettingRow("播放请求 UA", "跟随全局时留空", state.appSettings.uaForPlayback) { actions.updateScopedUserAgent("playback", it) }
+            SettingsGroupDivider()
+            TextSettingRow("WebView UA", "跟随全局时留空", state.appSettings.uaForWebView) { actions.updateScopedUserAgent("webview", it) }
+        }
+        SettingsGroupDivider()
+        BoolSettingRow("导出 UA 脱敏", state.appSettings.uaExportRedacted) { actions.updateAppSettings { s -> s.copy(uaExportRedacted = it) } }
+    }
+}
+
+@Composable
+private fun LiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    SettingsGroup {
+        IntChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "EPG 缓存时长",
+            subtitle = "节目单本地缓存，过期后回退到下一路 EPG",
+            options = listOf(1, 6, 12, 24, 72),
+            selected = state.appSettings.epgCacheHours,
+            label = { "${it}h" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(epgCacheHours = v) } },
+        )
+        TextSettingRow("EPG 时区", "留空使用系统时区", state.appSettings.epgTimezone) { actions.updateAppSettings { s -> s.copy(epgTimezone = it) } }
+        ChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "节目单越界处理",
+            subtitle = "当前时间不在任何节目区间时",
+            options = listOf("clip", "next", "blank"),
+            selected = state.appSettings.epgOutOfRangePolicy,
+            label = { when (it) { "next" -> "显示下一档"; "blank" -> "留空"; else -> "裁剪到最近档" } },
+            onSelect = { v -> actions.updateAppSettings { it.copy(epgOutOfRangePolicy = v) } },
+        )
+        ChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "平台直播默认清晰度",
+            subtitle = "各平台不支持时自动回退到可用档",
+            options = listOf("original", "high", "low", "auto"),
+            selected = state.appSettings.platformDefaultQuality,
+            label = { when (it) { "high" -> "高清"; "low" -> "标清"; "auto" -> "弱网自动"; else -> "原画" } },
+            onSelect = { v -> actions.updateAppSettings { it.copy(platformDefaultQuality = v) } },
+        )
+        ChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "FLV 连续播放代理",
+            subtitle = "Go 代理为唯一路径；启动失败会回退直连",
+            options = listOf("auto", "force", "off"),
+            selected = state.appSettings.flvProxyMode,
+            label = { when (it) { "force" -> "强制"; "off" -> "关闭"; else -> "自动" } },
+            onSelect = { v -> actions.updateAppSettings { it.copy(flvProxyMode = v) } },
+        )
+        BoolSettingRow("第三方代理解析", "各平台优先用第三方地址加载，多个第三方互为备用", state.appSettings.platformThirdPartyProxyEnabled) {
+            actions.updateAppSettings { s -> s.copy(platformThirdPartyProxyEnabled = it) }
+        }
+        if (state.appSettings.platformThirdPartyProxyEnabled) {
+            SettingsGroupDivider()
+            SettingsRow(
+                icon = Icons.Default.Settings,
+                title = "第三方代理地址",
+                subtitle = "用 # 站点名 分组（如 # douyu / # 虎牙），组内每行一条模板；未分组的行对所有平台兜底。占位符 {site} 站点、{siteAlias} 短码、{room} 房间号",
+                stackedTrailing = true,
+                trailing = {
+                    val current = state.appSettings.platformThirdPartyProxyTemplates
+                    val draft = remember(current) { mutableStateOf(current) }
+                    TextField(
+                        value = draft.value,
+                        onValueChange = { draft.value = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        maxLines = 8,
+                        placeholder = { Text("# douyu\nhttps://host/{siteAlias}/{room}.flv\n\nhttps://fallback/{site}/{room}") },
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                    ) {
+                        TextButton(onClick = { draft.value = current }) { Text("还原") }
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = {
+                            actions.updateAppSettings { it.copy(platformThirdPartyProxyTemplates = draft.value) }
+                        }) { Text("保存") }
+                    }
+                },
+            )
+        }
+        BoolSettingRow("局域网解析服务", "默认关闭；首次开启需确认安全提示", state.appSettings.lanResolverEnabled) {
+            actions.updateAppSettings { s -> s.copy(lanResolverEnabled = it, lanResolverConfirmed = it || s.lanResolverConfirmed) }
+        }
     }
 }
 
 @Composable
 private fun TvRemoteDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     var showShortcutHelp by remember { mutableStateOf(false) }
+    var showBindingEditor by remember { mutableStateOf(false) }
     SettingsGroup {
         // 远程管理：通过浏览器 / 手机控制本机
         SettingsRow(
@@ -665,13 +1187,44 @@ private fun TvRemoteDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 }
             },
         )
+        SettingsGroupDivider()
+        // 自定义键位绑定：单条 (键码, 模式) → Action
+        SettingsRow(
+            icon = Icons.Default.Settings,
+            title = "自定义键位绑定",
+            subtitle = "把物理键码映射到统一动作，跨页面一致",
+            trailing = {
+                TextButton(onClick = { showBindingEditor = true }) {
+                    Text("编辑", color = TvColors.Accent)
+                }
+            },
+        )
+    }
+    if (showBindingEditor) {
+        RemoteKeyBindingEditorDialog(
+            current = state.appSettings.remoteKeyBindings,
+            onAssign = { action, keyCode ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withBinding(action, keyCode))
+                }
+            },
+            onClear = { action ->
+                actions.updateAppSettings { s ->
+                    s.copy(remoteKeyBindings = s.remoteKeyBindings.withoutBinding(action))
+                }
+            },
+            onReset = {
+                actions.updateAppSettings { s -> s.copy(remoteKeyBindings = RemoteKeyBindings.Default) }
+            },
+            onDismiss = { showBindingEditor = false },
+        )
     }
     if (showShortcutHelp) {
         val shortcutHelpText = """
             方向键（上/下/左/右）：移动焦点、浏览列表；播放时左右=快进/快退，上下=换台/换线路。
-            确认键（OK）：确认选择；播放时暂停/继续。
+            确认键（OK）：确认选择；电视直播/平台直播播放时打开频道（节目）列表。
             返回键：返回上一级 / 关闭当前浮层。
-            菜单键：点播时切换倍速；电视直播时打开线路浮层；平台直播时强制重连。
+            菜单键：点播时切换倍速；电视直播时打开频道列表；平台直播时强制重连。
             数字键：首页 1=历史 2=搜索 4=电视 5=直播 6=设置 7=豆瓣热播 8=源管理 9=刷新 0=远程管理；电视直播中直接输入频道号选台。
             播放/暂停键：播放或暂停。
             上一集/下一集键（或数字 1/3）：点播时切换剧集。
@@ -689,7 +1242,13 @@ private fun TvRemoteDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 }
 
 @Composable
-private fun SystemDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHistory: () -> Unit) {
+private fun DataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHistory: () -> Unit) {
+    val context = LocalContext.current
+    // P0-S4：恢复出厂入口（占位）。FactoryReset 已提供三档骨架与 DELETE 令牌，
+    // 但 TvBoxViewModel 尚未注入 FactoryResetDeps，无法安全落库，故本版本仅弹确认词 + Toast 占位。
+    // TODO(P0-S4)：接入 FactoryReset.reset(tier, deps, confirmationToken) 后替换 Toast 为真实重置。
+    var showFactoryResetDialog by remember { mutableStateOf(false) }
+    var factoryResetConfirmText by remember { mutableStateOf("") }
     SettingsGroup {
         // OTA 通道：正式版 / 预览版
         SettingsRow(
@@ -758,6 +1317,86 @@ private fun SystemDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onCle
                     selected = state.appSettings.historyMaxItems,
                     onSelect = actions::updateHistoryMaxItems,
                 )
+            },
+        )
+        SettingsGroupDivider()
+        InfoRow(icon = Icons.Default.Info, title = "更新策略", subtitle = "SHA-256 校验为强制项，不提供关闭开关")
+        SettingsGroupDivider()
+        BoolSettingRow("仅 Wi-Fi 下载更新", "避免移动网络下载 APK", state.appSettings.updateWifiOnly) { actions.updateAppSettings { s -> s.copy(updateWifiOnly = it) } }
+        BoolSettingRow("更新前自动导出设置", "保留最近 2 份", state.appSettings.updateExportBeforeInstall) { actions.updateAppSettings { s -> s.copy(updateExportBeforeInstall = it) } }
+        IntChoiceSettingRow(
+            icon = Icons.Default.Info,
+            title = "回滚包保留",
+            subtitle = "过期后自动清理上一版 APK",
+            options = listOf(0, 12, 24, 72),
+            selected = state.appSettings.updateRollbackHours,
+            label = { if (it == 0) "不保留" else "${it}h" },
+            onSelect = { v -> actions.updateAppSettings { it.copy(updateRollbackHours = v) } },
+        )
+        BoolSettingRow("强提醒仅安全/播放阻断级", "减少非必要更新打扰", state.appSettings.updateStrongReminderOnly) { actions.updateAppSettings { s -> s.copy(updateStrongReminderOnly = it) } }
+        SettingsGroupDivider()
+        // P0-S4：危险操作显式可达——重置全部偏好（占位按钮，双因子确认）。
+        SettingsRow(
+            icon = Icons.Default.Delete,
+            title = "重置全部偏好",
+            subtitle = "长按触发 · 需输入「RESET」确认",
+            trailing = {
+                Text(
+                    text = "长按",
+                    color = TvColors.Danger,
+                    style = MaterialTheme.typography.labelLarge,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .border(1.dp, TvColors.Danger, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .semantics { contentDescription = "长按重置全部偏好" }
+                        .pointerInput(Unit) {
+                            detectTapGestures(onLongPress = { showFactoryResetDialog = true })
+                        },
+                )
+            },
+        )
+    }
+    // P0-S4：双因子确认弹窗（长按 + 输入「RESET」）；当前版本仅占位提示。
+    if (showFactoryResetDialog) {
+        AlertDialog(
+            onDismissRequest = { showFactoryResetDialog = false; factoryResetConfirmText = "" },
+            title = { Text("重置全部偏好") },
+            text = {
+                Column {
+                    Text(
+                        "将清除偏好设置并恢复默认值；视频源、网络缓存与观看历史保留。此操作不可撤销。",
+                        color = TvColors.TextPrimary,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    TextField(
+                        value = factoryResetConfirmText,
+                        onValueChange = { factoryResetConfirmText = it },
+                        placeholder = { Text("输入 RESET 确认") },
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = factoryResetConfirmText == "RESET",
+                    onClick = {
+                        showFactoryResetDialog = false
+                        factoryResetConfirmText = ""
+                        // TODO(P0-S4)：替换为 FactoryReset.reset(ResetTier.PreferencesOnly, deps) 真实执行
+                        android.widget.Toast.makeText(
+                            context,
+                            "该功能需在下一版本开放",
+                            android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    },
+                ) { Text("确认重置", color = if (factoryResetConfirmText == "RESET") TvColors.Danger else TvColors.TextSecondary) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFactoryResetDialog = false; factoryResetConfirmText = "" }) {
+                    Text("取消", color = TvColors.TextSecondary)
+                }
             },
         )
     }
@@ -917,6 +1556,111 @@ private fun startupPhaseLabel(phase: StartupPhase): String = when (phase) {
     StartupPhase.Idle -> "空闲"
 }
 
+
+// ─────────────────────────── 通用设置行（v2 新增项） ───────────────────────────
+
+@Composable
+private fun ChoiceSettingRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    options: List<String>,
+    selected: String,
+    label: (String) -> String = { it },
+    onSelect: (String) -> Unit,
+) {
+    SettingsRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        stackedTrailing = true,
+        trailing = {
+            ChoiceChips(options = options, selected = selected, label = label, onSelect = onSelect)
+        },
+    )
+}
+
+@Composable
+private fun IntChoiceSettingRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    options: List<Int>,
+    selected: Int,
+    label: (Int) -> String,
+    onSelect: (Int) -> Unit,
+) {
+    SettingsRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        stackedTrailing = true,
+        trailing = {
+            ChoiceChips(options = options, selected = selected, label = label, onSelect = onSelect)
+        },
+    )
+}
+
+@Composable
+private fun BoolSettingRow(title: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    BoolSettingRow(title = title, subtitle = "", checked = checked, onCheckedChange = onCheckedChange)
+}
+
+@Composable
+private fun BoolSettingRow(title: String, subtitle: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    BoolSettingRow(
+        icon = Icons.Default.Settings,
+        title = title,
+        subtitle = subtitle,
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+    )
+}
+
+@Composable
+private fun BoolSettingRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    SettingsRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        trailing = { Switch(checked = checked, onCheckedChange = onCheckedChange) },
+    )
+}
+
+@Composable
+private fun TextSettingRow(title: String, subtitle: String, value: String, onSave: (String) -> Unit) {
+    TextSettingRow(
+        icon = Icons.Default.Settings,
+        title = title,
+        subtitle = subtitle,
+        value = value,
+        onSave = onSave,
+    )
+}
+
+@Composable
+private fun TextSettingRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    value: String,
+    onSave: (String) -> Unit,
+) {
+    SettingsRow(
+        icon = icon,
+        title = title,
+        subtitle = subtitle,
+        stackedTrailing = true,
+        trailing = { TextValueEditor(value = value, onSave = onSave) },
+    )
+}
+
 // ─────────────────────────── 通用组件 ───────────────────────────
 
 @Composable
@@ -928,6 +1672,12 @@ private fun SettingsGroup(content: @Composable () -> Unit) {
     ) {
         Column { content() }
     }
+}
+
+/** 同一分类下拆出的多张卡片之间的间隔（详情页内联使用）。 */
+@Composable
+private fun SettingsGroupGap() {
+    Spacer(Modifier.height(12.dp))
 }
 
 @Composable
@@ -1111,17 +1861,132 @@ private fun BrightnessRow(value: Int, onValueChange: (Int) -> Unit) {
     }
 }
 
+// ─────────────────────────── 自定义键位绑定编辑器 ───────────────────────────
+
+/**
+ * 自定义键位绑定对话框：
+ * - 顶部「监听按键」捕获硬件 KeyEvent.keyCode。
+ * - 列表逐动作显示当前绑定的全部键码（默认 + 用户自定义），点击行把当前监听到的键码追加到该动作。
+ * - 「恢复默认」一键回到 RemoteKeyBindings.Default（清除全部用户自定义）。
+ */
+@Composable
+private fun RemoteKeyBindingEditorDialog(
+    current: RemoteKeyBindings,
+    onAssign: (RemoteKeyAction, Int) -> Unit,
+    onClear: (RemoteKeyAction) -> Unit,
+    onReset: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var pendingKey by remember { mutableStateOf<Int?>(null) }
+    var listening by remember { mutableStateOf(false) }
+    val keyListener = if (listening) {
+        Modifier.onKeyEvent { event ->
+            if (event.type == KeyEventType.KeyDown) {
+                pendingKey = event.nativeKeyEvent.keyCode
+                listening = false
+                true
+            } else {
+                false
+            }
+        }
+    } else {
+        Modifier
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("完成") }
+        },
+        dismissButton = {
+            TextButton(onClick = { onReset(); onDismiss() }) { Text("恢复默认", color = TvColors.Danger) }
+        },
+        title = { Text("自定义键位绑定") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .then(keyListener),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    text = "先点「监听按键」并按下实体遥控键，再点对应动作行把该键追加到动作；点 ✕ 清除该动作的用户自定义键。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextSecondary,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "按键码：${pendingKey?.let { "0x%03X".format(it) } ?: "未选择"}",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    TextButton(onClick = { listening = true }) {
+                        Text(if (listening) "监听中…按任意键" else "监听按键", color = TvColors.Accent)
+                    }
+                }
+                HorizontalDivider()
+                Column(
+                    modifier = Modifier.heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    RemoteKeyAction.entries.forEach { action ->
+                        val keys = current.keysFor(action)
+                        val customKeys = current.custom[action.id].orEmpty()
+                        val summary = if (keys.isEmpty()) {
+                            "未绑定"
+                        } else {
+                            keys.sorted().joinToString(" / ") { "0x%03X".format(it) }
+                        }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val code = pendingKey ?: return@clickable
+                                    onAssign(action, code)
+                                }
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(text = action.displayName, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    text = summary,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (keys.isEmpty()) TvColors.TextSecondary else TvColors.Accent,
+                                )
+                            }
+                            if (customKeys.isNotEmpty()) {
+                                TextButton(onClick = { onClear(action) }) {
+                                    Text("✕", color = TvColors.TextSecondary)
+                                }
+                            }
+                        }
+                    }
+                }
+                Text(
+                    text = "默认绑定始终生效，自定义键是「追加」而非替换，避免改绑后丢常用键。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TvColors.TextSecondary,
+                )
+            }
+        },
+    )
+}
+
 // ─────────────────────────── 分类定义 ───────────────────────────
 
 private enum class MobileSettingCategory(
     val title: String,
+    val subtitle: String,
     val icon: ImageVector,
     val gradientStart: Color,
     val gradientEnd: Color,
 ) {
-    Playback("播放", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
-    NetworkSources("网络与源", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
-    Interface("界面与设备", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
-    TvRemote("电视与遥控", Icons.Default.Build, Color(0xFF9C9CFF), Color(0xFF2E2E5C)),
-    SystemData("系统与数据", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
+    General("通用与外观", "设备·主题·更新", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
+    Playback("播放", "倍速·解码·音频", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
+    Controls("手势与控制", "手势·按钮·键位", Icons.Default.Build, Color(0xFF9C9CFF), Color(0xFF2E2E5C)),
+    Search("找片与AI", "AI·语音·脱敏", Icons.Default.Search, Color(0xFFFF7EB6), Color(0xFF5C1E3A)),
+    Sources("数据源与网络", "视频源·直播源·UA", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
+    Live("直播", "平台直播·代理·EPG", Icons.Default.PlayArrow, Color(0xFFFF7043), Color(0xFF5C2410)),
+    Data("历史与数据", "历史·备份·清理", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
+    About("关于", "版本·协议·更新", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
 }

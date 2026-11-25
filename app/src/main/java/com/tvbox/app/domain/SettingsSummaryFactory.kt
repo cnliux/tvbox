@@ -65,12 +65,6 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         valueSummary = if (settings.sourceHealthCheckEnabled) "开启（每 30 分钟后台体检）" else "关闭",
     ),
     SettingEntry(
-        id = "theme",
-        group = SettingGroup.Appearance,
-        label = "主题",
-        valueSummary = settings.theme.name,
-    ),
-    SettingEntry(
         id = "font_scale",
         group = SettingGroup.Appearance,
         label = "字号",
@@ -137,5 +131,63 @@ fun settingsEntriesFrom(settings: AppSettings): List<SettingEntry> = listOf(
         group = SettingGroup.Advanced,
         label = "历史隐私模式",
         valueSummary = if (settings.historyPrivacyMode) "开启（不记录新历史）" else "关闭",
+    ),
+    SettingEntry(
+        id = "auto_next_countdown",
+        group = SettingGroup.Playback,
+        label = "续播倒计时",
+        valueSummary = "${settings.autoNextCountdownSeconds}s",
+    ),
+    SettingEntry(
+        id = "first_packet_timeout",
+        group = SettingGroup.Playback,
+        label = "首包超时",
+        valueSummary = "${settings.firstPacketTimeoutMs / 1000}s",
+    ),
+    SettingEntry(
+        id = "buffer_target",
+        group = SettingGroup.Playback,
+        label = "缓冲目标",
+        valueSummary = "${settings.bufferTargetMs / 1000}s",
+    ),
+    SettingEntry(
+        id = "background_playback",
+        group = SettingGroup.Playback,
+        label = "后台行为",
+        valueSummary = when (settings.backgroundPlaybackMode) {
+            "audio" -> "音频续播"
+            "pip" -> "画中画"
+            else -> "暂停"
+        },
+    ),
+    SettingEntry(
+        id = "gesture_lock",
+        group = SettingGroup.Playback,
+        label = "手势锁",
+        valueSummary = if (settings.gestureLockEnabled) "开启" else "关闭",
+    ),
+    SettingEntry(
+        id = "ua_scope",
+        group = SettingGroup.ContentSources,
+        label = "UA 作用域",
+        valueSummary = if (settings.uaScopeMode == "scoped") "按用途分工" else "统一自定义",
+    ),
+    SettingEntry(
+        id = "playback_manager",
+        group = SettingGroup.Advanced,
+        label = "播放前择优",
+        valueSummary = if (settings.playbackManagerPreferHealthy) "开启" else "关闭",
+    ),
+    SettingEntry(
+        id = "update_wifi_only",
+        group = SettingGroup.DeviceUpdate,
+        label = "仅 Wi-Fi 下载更新",
+        valueSummary = if (settings.updateWifiOnly) "开启" else "关闭",
+    ),
+    SettingEntry(
+        id = "ai_search",
+        group = SettingGroup.Advanced,
+        label = "AI 找片",
+        valueSummary = if (settings.aiSearchEnabled) "开启" else "关闭",
     ),
 )

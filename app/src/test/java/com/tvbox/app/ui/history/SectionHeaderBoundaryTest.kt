@@ -72,12 +72,14 @@ class SectionHeaderBoundaryTest {
         val now = localTime(2026, 11, 19, 12, 0, 0)
 
         val sections = buildHistorySections(
-            listOf(item(1, before), item(2, after)),
+            // 实现契约：调用方按 updatedAtEpochMs 倒序传入（最近在前），分组保持该顺序。
+            listOf(item(2, after), item(1, before)),
             now,
         )
-        // 按输入顺序（LinkedHashMap）+ 仓库倒序，最近在前：after 应该排在前面
         assertEquals(listOf("今天", "昨天"), sections.map { it.label })
-        assertEquals(2, sections[0].items.size) // 今天：1 条（after）
+        assertEquals(1, sections[0].items.size) // 今天：1 条（after）
+        assertEquals(2, sections[0].items[0].movieId) // 今天那条是 after
         assertEquals(1, sections[1].items.size) // 昨天：1 条（before）
+        assertEquals(1, sections[1].items[0].movieId) // 昨天那条是 before
     }
 }

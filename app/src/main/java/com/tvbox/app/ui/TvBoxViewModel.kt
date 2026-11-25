@@ -44,6 +44,7 @@ import com.tvbox.app.domain.SourceHealthSetting
 import com.tvbox.app.domain.UserAgentSetting
 import com.tvbox.app.domain.measureSourceLatencies
 import com.tvbox.app.domain.withFallbackUserAgent
+import com.tvbox.app.domain.withThirdPartyProxyPrepended
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.StartupTimeline
 import com.tvbox.app.domain.lastWatchedLabel
@@ -70,6 +71,7 @@ import com.tvbox.app.domain.lineQualityKey
 import com.tvbox.app.domain.LiveSourceDryRun
 import com.tvbox.app.domain.measureLiveLineLatencyMs
 import com.tvbox.app.domain.LiveLineFallbackReason
+import com.tvbox.app.domain.RecoveryBackoff
 import com.tvbox.app.domain.AutoSwitchGate
 import com.tvbox.app.domain.AutoSwitchThrottleState
 import com.tvbox.app.domain.StartupTask
@@ -105,7 +107,7 @@ import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
 import com.tvbox.app.domain.WatchHistoryItem
 import com.tvbox.app.domain.continueWatching
-import com.tvbox.app.domain.TvTheme
+import com.tvbox.app.domain.ThemeAccent
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.findBestTitleMatchIndex
 import com.tvbox.app.domain.findResumePoint
@@ -148,6 +150,8 @@ enum class TvScreen {
     Live,
     PlatformLive,
     Settings,
+    /** AI 找片：只返回候选片名，点击候选后才进入当前源搜索。 */
+    AiSearch,
     SourceManager,
     LiveSourceManager,
     VideoSourceManager,
@@ -235,6 +239,8 @@ data class TvBoxUiState(
     val searchTotalSources: Int = 0,
     val searchHotWords: List<String> = emptyList(),
     val searchHotWordsLoading: Boolean = false,
+    /** 搜索记录（已提交的关键词，最新在前，去重，上限 SEARCH_HISTORY_MAX_ITEMS）。 */
+    val searchHistory: List<String> = emptyList(),
     val detailMovie: Movie? = null,
     val detailLoading: Boolean = false,
     val detailError: String? = null,
@@ -251,8 +257,12 @@ data class TvBoxUiState(
     val live: LiveUiState = LiveUiState(),
     val platformLive: PlatformLiveUiState = PlatformLiveUiState(),
     val update: UpdateUiState = UpdateUiState(),
+    /** AI 找片页面状态：仅由 ViewModel 驱动，页面不自行发请求。 */
+    val aiSearch: com.tvbox.app.ai.AiSearchUiState = com.tvbox.app.ai.AiSearchUiState(),
     val appSettings: AppSettings = AppSettings(),
     val playbackHealth: PlaybackHealthSnapshot = PlaybackHealthSnapshot(),
+    /** 播放管家的可解释证据时间轴（最新在前，上限 50 条）。 */
+    val playbackEvidence: List<com.tvbox.app.domain.PlaybackEvidence> = emptyList(),
     val remoteManageDialogVisible: Boolean = false,
     val remoteManageServerUrl: String? = null,
     val remoteManageServerError: String? = null,
@@ -369,8 +379,9 @@ class TvBoxViewModel(
     private val playbackHealthRepository: PlaybackHealthRepository = DefaultPlaybackHealthRepositoryPlaceholder(),
     private val historyRepository: HistoryRepository,
     private val platformLiveFavoritesRepository: PlatformLiveFavoritesRepository,
+    /** 搜索记录存储：懒创建，JVM 单测不依赖 Android Context。 */
+    private val searchHistoryStore: com.tvbox.app.data.SearchHistoryStore? = null,
     private val liveLinePrefs: LiveLinePreference? = null,
-    /** 电视直播节目单（XMLTV）仓库；无网络配置时 fetch 返回空 Map。 */
     private val epgRepository: EpgRepository = RemoteEpgRepository(),
     /** 电视直播频道收藏仓库；null 时收藏退化为仅内存 Set（如未注入的单测环境）。 */
     private val liveFavoritesRepository: LiveFavoritesRepository? = null,
@@ -383,6 +394,15 @@ class TvBoxViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(TvBoxUiState())
     val state: StateFlow<TvBoxUiState> = _state.asStateFlow()
+
+    /** AI 找片仓库懒创建：JVM 单测不触发网络栈初始化。 */
+    private val aiSearchRepository by lazy { com.tvbox.app.ai.AiSearchRepository() }
+    private var aiSearchJob: kotlinx.coroutines.Job? = null
+
+    /** 搜索记录存储懒创建：JVM 单测无 Android Context 时不触发。 */
+    private val searchHistory by lazy {
+        searchHistoryStore ?: com.tvbox.app.data.SearchHistoryStore(appContext)
+    }
 
     /** 设置页当前值摘要（第 261–270 轮）：UI 可直接渲染，无需进入子页。 */
     val settingsSummary: SettingsPageSummary
@@ -445,6 +465,8 @@ class TvBoxViewModel(
     private var platformLiveRecoveryWindowAttempts = 0
     // 同一条候选线路的原地重连次数（缓冲卡死/被服务端正常关流时先用完再换线路）。
     private var platformLiveSameLineRetries = 0
+    // 任务2/3 自适应退避：按失败原因差异化基线 + 指数递增 + 抖动，跨房间共用一个策略实例。
+    private val platformLiveBackoff = RecoveryBackoff()
     // 当前这轮自动恢复中已失败的候选下标。键取「房间 + 候选列表」而非对象身份，
     // 这样 withActiveCandidate() 产生的副本不会把已试过的线路清空。
     private var platformLiveRotationKey: String? = null
@@ -732,6 +754,39 @@ class TvBoxViewModel(
     fun openSearch() {
         _state.update { it.copy(screen = TvScreen.Search, searchError = null) }
         loadSearchHotWords()
+        loadSearchHistory()
+    }
+
+    /** 进入搜索页时读取持久化的搜索记录。 */
+    private fun loadSearchHistory() {
+        viewModelScope.launch {
+            val items = runCatching { searchHistory.load() }.getOrDefault(emptyList())
+            _state.update { it.copy(searchHistory = items) }
+        }
+    }
+
+    /** 提交搜索后记录关键词（去重、最新在前）。 */
+    private fun recordSearchHistory(keyword: String) {
+        viewModelScope.launch {
+            runCatching { searchHistory.add(keyword) }
+            loadSearchHistory()
+        }
+    }
+
+    /** 删除单条搜索记录。 */
+    fun removeSearchHistory(keyword: String) {
+        viewModelScope.launch {
+            runCatching { searchHistory.remove(keyword) }
+            loadSearchHistory()
+        }
+    }
+
+    /** 清空全部搜索记录。 */
+    fun clearSearchHistory() {
+        viewModelScope.launch {
+            runCatching { searchHistory.clear() }
+            _state.update { it.copy(searchHistory = emptyList()) }
+        }
     }
 
     fun refreshSearchHotWords() {
@@ -763,9 +818,11 @@ class TvBoxViewModel(
 
     fun openLive() {
         _state.update { it.copy(screen = TvScreen.Live, live = it.live.copy(error = null)) }
-        if (_state.value.live.channels.isEmpty()) {
-            loadLiveChannels()
-        }
+        // 任务5 订阅每次从远程拉取最新内容：不再以「已有频道」为条件跳过刷新。
+        // 仓库 getChannels() 每次都是全新 HTTP 拉取；这里无论是否有缓存都触发一次刷新，
+        // 保证订阅地址每次进入都拿到最新内容。已加载的频道在刷新期间保持展示（不闪空），
+        // 拉取成功后由 loadLiveChannels 内部按原频道/分类恢复位置。
+        loadLiveChannels()
     }
 
     fun openPlatformLive() {
@@ -786,6 +843,70 @@ class TvBoxViewModel(
     fun openSettings() {
         _state.update { it.copy(screen = TvScreen.Settings, update = it.update.copy(error = null)) }
         refreshPlaybackHealth()
+    }
+
+    /** 打开 AI 找片：入口只在设置项开启时可见；Key 状态只读展示。 */
+    fun openAiSearch() {
+        if (!_state.value.appSettings.aiSearchEnabled) return
+        _state.update {
+            it.copy(
+                screen = TvScreen.AiSearch,
+                aiSearch = com.tvbox.app.ai.AiSearchUiState(
+                    voiceEnabled = it.appSettings.voiceSearchEnabled,
+                    keySourceLabel = aiSearchRepository.apiKeySourceLabel(),
+                    missBehavior = com.tvbox.app.ai.AiMissBehavior.fromStorageKey(it.appSettings.aiMissBehavior),
+                ),
+            )
+        }
+    }
+
+    fun updateAiQuery(query: String) {
+        _state.update { it.copy(aiSearch = it.aiSearch.copy(query = query, errorMessage = null)) }
+    }
+
+    /** 提交 AI 检索：只更新候选列表，失败给出可读原因，不跳播放器。 */
+    fun submitAiSearch(query: String = _state.value.aiSearch.query) {
+        aiSearchJob?.cancel()
+        _state.update {
+            it.copy(aiSearch = it.aiSearch.copy(query = query, loading = true, errorMessage = null))
+        }
+        aiSearchJob = viewModelScope.launch {
+            val config = com.tvbox.app.ai.AiSearchConfig.from(_state.value.appSettings)
+            runCatching { aiSearchRepository.search(query, config) }
+                .onSuccess { result ->
+                    _state.update { state ->
+                        state.copy(
+                            aiSearch = state.aiSearch.copy(
+                                candidates = result.candidates,
+                                loading = false,
+                                errorMessage = if (result.candidates.isEmpty()) {
+                                    "未找到候选，${if (result.missBehavior == com.tvbox.app.ai.AiMissBehavior.Search) "已切换到普通搜索" else "可换个描述再试"}"
+                                } else null,
+                            ),
+                        )
+                    }
+                    if (result.candidates.isEmpty() && result.missBehavior == com.tvbox.app.ai.AiMissBehavior.Search) {
+                        openSearch()
+                    }
+                }
+                .onFailure { error ->
+                    _state.update { state ->
+                        state.copy(
+                            aiSearch = state.aiSearch.copy(
+                                loading = false,
+                                errorMessage = error.message ?: "AI 找片失败，请稍后重试",
+                            ),
+                        )
+                    }
+                }
+        }
+    }
+
+    /** 点候选卡片：把片名填入普通搜索并触发查询，不直接播放。 */
+    fun openAiCandidate(title: String) {
+        updateSearchQuery(title)
+        openSearch()
+        submitSearch()
     }
 
     fun openSourceManager() {
@@ -1556,6 +1677,7 @@ class TvBoxViewModel(
             return
         }
         searchJob?.cancel()
+        recordSearchHistory(query)
         searchJob = viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -2015,9 +2137,20 @@ class TvBoxViewModel(
         val current = _state.value
         val key = current.playbackHealthKeyOrNull() ?: return
         viewModelScope.launch {
-            runCatching { playbackHealthRepository.recordSuccess(key, System.currentTimeMillis()) }
+            val now = System.currentTimeMillis()
+            runCatching { playbackHealthRepository.recordSuccess(key, now) }
                 .onSuccess { snapshot ->
                     _state.update { it.copy(playbackHealth = snapshot) }
+                }
+            val evidence = com.tvbox.app.domain.PlaybackEvidence(
+                atMs = now,
+                source = key,
+                event = com.tvbox.app.domain.PlaybackEvidenceEvent.PlaybackStarted,
+                detail = "本次播放成功",
+            )
+            runCatching { playbackHealthRepository.recordEvidence(evidence) }
+                .onSuccess { list ->
+                    _state.update { it.copy(playbackEvidence = list) }
                 }
         }
     }
@@ -2198,6 +2331,18 @@ class TvBoxViewModel(
         commitSettings(settings)
     }
 
+    /** 虎牙/斗鱼第三方代理解析开关：开启后存在候选时优先用第三方地址加载直播。 */
+    fun updatePlatformThirdPartyProxyEnabled(enabled: Boolean) {
+        val settings = _state.value.appSettings.copy(platformThirdPartyProxyEnabled = enabled)
+        commitSettings(settings)
+    }
+
+    /** 第三方代理地址模板（每行一条，{room} 占位房间号、{site} 占位站点）。 */
+    fun updatePlatformThirdPartyProxyTemplates(value: String) {
+        val settings = _state.value.appSettings.copy(platformThirdPartyProxyTemplates = value)
+        commitSettings(settings)
+    }
+
     /** 更新视频源健康管理开关；打开后立即触发一次后台体检，不必等下一个周期。 */
     fun updateSourceHealthCheckEnabled(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(sourceHealthCheckEnabled = enabled)
@@ -2258,6 +2403,32 @@ class TvBoxViewModel(
         commitSettings(_state.value.appSettings.copy(crashLogLocalOnly = enabled))
     }
 
+    /**
+     * 手机端设置中心 v2 的通用偏好更新入口：立即持久化，不引入草稿态。
+     * 具体字段的收敛（区间/枚举）由设置 UI 在 lambda 内完成，ViewModel 只负责比较与落盘。
+     */
+    fun updateAppSettings(transform: (AppSettings) -> AppSettings) {
+        val current = _state.value.appSettings
+        val next = transform(current)
+        if (next != current) commitSettings(next)
+    }
+
+    /** 更新 UA 的单个作用域字段；输入统一经过 Header 注入清洗。 */
+    fun updateScopedUserAgent(scope: String, value: String) {
+        val sanitized = UserAgentSetting.sanitize(value)
+        updateAppSettings { settings ->
+            when (scope) {
+                "api" -> settings.copy(uaForApi = sanitized)
+                "spider" -> settings.copy(uaForSpider = sanitized)
+                "live" -> settings.copy(uaForLive = sanitized)
+                "epg" -> settings.copy(uaForEpg = sanitized)
+                "playback" -> settings.copy(uaForPlayback = sanitized)
+                "webview" -> settings.copy(uaForWebView = sanitized)
+                else -> settings
+            }
+        }
+    }
+
     fun updateDeviceMode(mode: DeviceMode) {
         if (_state.value.appSettings.deviceMode == mode) return
         val settings = _state.value.appSettings.copy(deviceMode = mode)
@@ -2284,15 +2455,16 @@ class TvBoxViewModel(
         }
     }
 
-    fun updateTheme(theme: TvTheme) {
-        if (_state.value.appSettings.theme == theme) return
-        val settings = _state.value.appSettings.copy(theme = theme)
-        commitSettings(settings)
-    }
-
     fun updateFontScale(fontScale: TvFontScale) {
         if (_state.value.appSettings.fontScale == fontScale) return
         val settings = _state.value.appSettings.copy(fontScale = fontScale)
+        commitSettings(settings)
+    }
+
+    /** 更新主题强调色方案（任务7）：切换全局 TvColors token 与 TV 焦点描边。 */
+    fun updateThemeAccent(themeAccent: ThemeAccent) {
+        if (_state.value.appSettings.themeAccent == themeAccent) return
+        val settings = _state.value.appSettings.copy(themeAccent = themeAccent)
         commitSettings(settings)
     }
 
@@ -2319,22 +2491,68 @@ class TvBoxViewModel(
                 episodeSortReverse = d.episodeSortReverse,
                 introSkipSeconds = d.introSkipSeconds,
                 outroSkipSeconds = d.outroSkipSeconds,
+                autoNextCountdownSeconds = d.autoNextCountdownSeconds,
+                firstPacketTimeoutMs = d.firstPacketTimeoutMs,
+                reconnectAttempts = d.reconnectAttempts,
+                bufferTargetMs = d.bufferTargetMs,
+                backgroundPlaybackMode = d.backgroundPlaybackMode,
+                audioOutputMode = d.audioOutputMode,
+                gestureLeftBrightnessEnabled = d.gestureLeftBrightnessEnabled,
+                gestureRightVolumeEnabled = d.gestureRightVolumeEnabled,
+                gestureHorizontalSeekEnabled = d.gestureHorizontalSeekEnabled,
+                gestureDoubleTapSideEnabled = d.gestureDoubleTapSideEnabled,
+                gestureDoubleTapCenterEnabled = d.gestureDoubleTapCenterEnabled,
+                gestureLongPressSpeedEnabled = d.gestureLongPressSpeedEnabled,
+                gesturePinchZoomEnabled = d.gesturePinchZoomEnabled,
+                gestureTopSwipeBackEnabled = d.gestureTopSwipeBackEnabled,
+                gestureSensitivity = d.gestureSensitivity,
+                gestureEdgeGuardEnabled = d.gestureEdgeGuardEnabled,
+                gestureLockEnabled = d.gestureLockEnabled,
+                playbackManagerPreferHealthy = d.playbackManagerPreferHealthy,
+                playbackManagerManualButton = d.playbackManagerManualButton,
+                seekCoolingMs = d.seekCoolingMs,
+                manualSourceLockMinutes = d.manualSourceLockMinutes,
             )
             "NetworkSources" -> current.copy(
                 sourceHealthCheckEnabled = d.sourceHealthCheckEnabled,
                 customUserAgent = d.customUserAgent,
                 perSourceTimeoutMs = d.perSourceTimeoutMs,
                 maxParallelSourceRequests = d.maxParallelSourceRequests,
+                uaScopeMode = d.uaScopeMode,
+                uaForApi = d.uaForApi,
+                uaForSpider = d.uaForSpider,
+                uaForLive = d.uaForLive,
+                uaForEpg = d.uaForEpg,
+                uaForPlayback = d.uaForPlayback,
+                uaForWebView = d.uaForWebView,
+                uaExportRedacted = d.uaExportRedacted,
+                epgCacheHours = d.epgCacheHours,
+                epgTimezone = d.epgTimezone,
+                epgOutOfRangePolicy = d.epgOutOfRangePolicy,
+                platformDefaultQuality = d.platformDefaultQuality,
+                flvProxyMode = d.flvProxyMode,
+                platformThirdPartyProxyEnabled = d.platformThirdPartyProxyEnabled,
+                platformThirdPartyProxyTemplates = d.platformThirdPartyProxyTemplates,
+                lanResolverEnabled = d.lanResolverEnabled,
+                lanResolverConfirmed = d.lanResolverConfirmed,
             )
             "Interface" -> current.copy(
                 deviceMode = d.deviceMode,
-                theme = d.theme,
                 fontScale = d.fontScale,
                 homeContinueWatchingEnabled = d.homeContinueWatchingEnabled,
                 checkUpdatesOnStartup = d.checkUpdatesOnStartup,
                 playerLogEnabled = d.playerLogEnabled,
                 historyLayout = d.historyLayout,
                 historyCoverBadgeEnabled = d.historyCoverBadgeEnabled,
+                continueWatchingMaxItems = d.continueWatchingMaxItems,
+                historyAutoCleanupEnabled = d.historyAutoCleanupEnabled,
+                resumeConflictPolicy = d.resumeConflictPolicy,
+                aiSearchEnabled = d.aiSearchEnabled,
+                voiceSearchEnabled = d.voiceSearchEnabled,
+                aiTextRedactionEnabled = d.aiTextRedactionEnabled,
+                aiOnlyTitleYearEnabled = d.aiOnlyTitleYearEnabled,
+                aiMissBehavior = d.aiMissBehavior,
+                aiResultCacheMinutes = d.aiResultCacheMinutes,
             )
             "SystemData" -> current.copy(
                 updateChannel = d.updateChannel,
@@ -2345,6 +2563,10 @@ class TvBoxViewModel(
                 searchSuggestionCount = d.searchSuggestionCount,
                 doubanHotPageSize = d.doubanHotPageSize,
                 doubanHotFallbackLines = d.doubanHotFallbackLines,
+                updateWifiOnly = d.updateWifiOnly,
+                updateExportBeforeInstall = d.updateExportBeforeInstall,
+                updateRollbackHours = d.updateRollbackHours,
+                updateStrongReminderOnly = d.updateStrongReminderOnly,
             )
             else -> return
         }
@@ -3292,8 +3514,9 @@ class TvBoxViewModel(
                 if (platformLiveSameLineRetries < PLATFORM_LIVE_SAME_LINE_RETRY_MAX) {
                     platformLiveSameLineRetries++
                     android.util.Log.i(VM_LIVE_LOG_TAG, "【平台恢复】保持候选 ${stream.activeCandidateIndex} 重新解析地址（第 $platformLiveSameLineRetries 次）")
-                    schedulePlatformLiveReResolve(delayMs = (PLATFORM_LIVE_RECOVERY_BACKOFF_MS shl (platformLiveSameLineRetries - 1))
-                        .coerceAtMost(PLATFORM_LIVE_RECOVERY_MAX_BACKOFF_MS))
+                    // 任务2/3：退避交给 RecoveryBackoff 策略（按 reason 差异化基线 + 指数 + 抖动）。
+                    val delayMs = platformLiveBackoff.nextDelayMs(reason, platformLiveSameLineRetries)
+                    schedulePlatformLiveReResolve(delayMs = delayMs)
                     return
                 }
                 android.util.Log.w(VM_LIVE_LOG_TAG, "【平台恢复】当前候选重连已用尽，改为切换下一条候选")
@@ -3468,6 +3691,7 @@ class TvBoxViewModel(
             TvScreen.Live -> refreshLive()
             TvScreen.PlatformLive -> retryPlatformLiveChannel()
             TvScreen.Settings -> checkForAppUpdate(showError = true)
+            TvScreen.AiSearch -> Unit
             TvScreen.SourceManager, TvScreen.LiveSourceManager, TvScreen.VideoSourceManager -> Unit
         }
     }
@@ -3498,7 +3722,7 @@ class TvBoxViewModel(
                 _state.update { it.copy(screen = TvScreen.Home) }
                 true
             }
-            TvScreen.History, TvScreen.Settings -> {
+            TvScreen.History, TvScreen.Settings, TvScreen.AiSearch -> {
                 _state.update { it.copy(screen = TvScreen.Home) }
                 true
             }
@@ -4711,6 +4935,10 @@ class TvBoxViewModel(
                 .onSuccess { snapshot ->
                     _state.update { it.copy(playbackHealth = snapshot) }
                 }
+            runCatching { playbackHealthRepository.getEvidence(50) }
+                .onSuccess { evidence ->
+                    _state.update { it.copy(playbackEvidence = evidence) }
+                }
         }
     }
 
@@ -4734,15 +4962,30 @@ class TvBoxViewModel(
     private fun recordPlaybackIssue(state: TvBoxUiState, issueType: PlaybackIssueType) {
         val key = state.playbackHealthKeyOrNull() ?: return
         viewModelScope.launch {
+            val now = System.currentTimeMillis()
             runCatching {
                 playbackHealthRepository.recordIssue(
                     key = key,
                     issueType = issueType,
-                    nowMs = System.currentTimeMillis(),
+                    nowMs = now,
                 )
             }.onSuccess { snapshot ->
                 _state.update { it.copy(playbackHealth = snapshot) }
             }
+            val evidence = com.tvbox.app.domain.PlaybackEvidence(
+                atMs = now,
+                source = key,
+                event = when (issueType) {
+                    com.tvbox.app.domain.PlaybackIssueType.SlowBuffer ->
+                        com.tvbox.app.domain.PlaybackEvidenceEvent.BufferStall
+                    else -> com.tvbox.app.domain.PlaybackEvidenceEvent.PlaybackError
+                },
+                detail = issueType.name,
+            )
+            runCatching { playbackHealthRepository.recordEvidence(evidence) }
+                .onSuccess { list ->
+                    _state.update { it.copy(playbackEvidence = list) }
+                }
         }
     }
 
@@ -5159,7 +5402,15 @@ class TvBoxViewModel(
                 }
             }
             runCatching { platformLiveRepository.resolve(room, forceRefresh) }
-                .onSuccess { stream ->
+                .onSuccess { resolved ->
+                    // 虎牙/斗鱼：若启用并配置了第三方代理，把第三方候选排在官方解析候选之前，
+                    // 播放时优先用第三方地址加载；多个第三方按配置顺序互为备用，官方候选退为兜底。
+                    val stream = resolved.withThirdPartyProxyPrepended(
+                        site = room.site,
+                        roomId = room.roomId,
+                        enabled = state.appSettings.platformThirdPartyProxyEnabled,
+                        templatesRaw = state.appSettings.platformThirdPartyProxyTemplates,
+                    )
                     _state.update {
                         if (it.platformLive.destination != PlatformLiveDestination.Player ||
                             it.platformLive.selectedSite?.id != siteId ||
@@ -5266,10 +5517,6 @@ private const val PLATFORM_LIVE_RECOVERY_WINDOW_MS = 120_000L
 private const val PLATFORM_LIVE_RECOVERY_MAX_ATTEMPTS = 6
 // 平台直播：同一条候选线路原地重连（重新解析地址）的最大次数，超过后换 CDN。
 private const val PLATFORM_LIVE_SAME_LINE_RETRY_MAX = 2
-// 平台直播重连退避基数，按重连次数线性递增，避免瞬时高频请求。
-private const val PLATFORM_LIVE_RECOVERY_BACKOFF_MS = 1_500L
-// #64：网络错误重连采用指数退避，上限 8s 防止重连间隔无界拉长。
-private const val PLATFORM_LIVE_RECOVERY_MAX_BACKOFF_MS = 8_000L
 private const val VM_LIVE_LOG_TAG = "TVBoxLiveVM"
 
 /** 详情加载诊断日志：只输出影片 id 与异常类型，不输出任何源地址。 */

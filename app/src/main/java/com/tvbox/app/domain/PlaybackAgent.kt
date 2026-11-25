@@ -3,6 +3,12 @@ package com.tvbox.app.domain
 const val PLAYBACK_HEALTH_COOLDOWN_MS = 30 * 60 * 1000L
 const val PLAYBACK_HEALTH_RETENTION_MS = 30L * 24 * 60 * 60 * 1000L
 const val PLAYBACK_HEALTH_MAX_ENTRIES = 300
+/** 每条线路保留的成功首帧延迟样本上限（环形截断，避免持久化体积膨胀）。 */
+const val PLAYBACK_HEALTH_MAX_LATENCY_SAMPLES = 20
+/** 首帧延迟达到该值即视为「较慢」，用于播放管家徽章判定。 */
+const val PLAYBACK_HEALTH_SLOW_LATENCY_MS = 5_000L
+/** 成功率/卡顿率参与判定的最小采样数，样本太少时不下结论。 */
+const val PLAYBACK_HEALTH_MIN_RATE_SAMPLES = 3
 
 enum class PlaybackIssueType {
     Error,
@@ -13,10 +19,15 @@ data class PlaybackHealthEntry(
     val key: String,
     val lastFailureAtMs: Long = 0L,
     val lastSlowBufferAtMs: Long = 0L,
+    /** 最近一次成功播放的时间戳；即旧口径中的 lastSuccessAt。 */
     val lastSuccessAtMs: Long = 0L,
     val failureCount: Int = 0,
     val slowBufferCount: Int = 0,
     val successCount: Int = 0,
+    /** 成功播放的首帧延迟样本（毫秒），只保留最近 [PLAYBACK_HEALTH_MAX_LATENCY_SAMPLES] 条。 */
+    val successLatencyMs: List<Long> = emptyList(),
+    /** 卡顿样本计数：每次记录缓冲/卡顿时累加，用于计算卡顿率。 */
+    val stutterSampleCount: Int = 0,
 ) {
     fun isRecentlyUnhealthy(nowMs: Long, cooldownMs: Long = PLAYBACK_HEALTH_COOLDOWN_MS): Boolean {
         return recentIssueType(nowMs, cooldownMs) != null
@@ -39,6 +50,141 @@ data class PlaybackHealthEntry(
 
     val issueCount: Int
         get() = failureCount + slowBufferCount
+
+    /** 明确的成功/失败尝试次数（卡顿不单独算一次尝试）。 */
+    val attemptCount: Int
+        get() = successCount + failureCount
+
+    val successRate: Float
+        get() = if (attemptCount == 0) 0f else successCount.toFloat() / attemptCount
+
+    val p50LatencyMs: Long?
+        get() = percentile50(successLatencyMs)
+
+    /** 卡顿样本占「成功 + 卡顿」样本的比例；没有任何样本时为 0。 */
+    val stutterRate: Float
+        get() {
+            val denominator = successCount + stutterSampleCount
+            return if (denominator == 0) 0f else stutterSampleCount.toFloat() / denominator
+        }
+}
+
+/** 取延迟样本的中位数（P50）；空样本返回 null。纯函数，便于单测。 */
+fun percentile50(samples: List<Long>): Long? {
+    if (samples.isEmpty()) return null
+    val sorted = samples.sorted()
+    val middle = sorted.size / 2
+    return if (sorted.size % 2 == 1) {
+        sorted[middle]
+    } else {
+        (sorted[middle - 1] + sorted[middle]) / 2L
+    }
+}
+
+/** 追加一条成功延迟样本，按上限截断最旧样本。纯函数，返回新对象。 */
+fun appendSuccessLatency(
+    entry: PlaybackHealthEntry,
+    latencyMs: Long,
+    maxSamples: Int = PLAYBACK_HEALTH_MAX_LATENCY_SAMPLES,
+): PlaybackHealthEntry {
+    val safeLatency = latencyMs.coerceAtLeast(0L)
+    val limit = maxSamples.coerceAtLeast(0)
+    if (limit == 0) return entry
+    val updated = (entry.successLatencyMs + safeLatency).takeLast(limit)
+    return entry.copy(successLatencyMs = updated)
+}
+
+/** 相对时间文案，纯函数（无 Android 依赖）。无样本或时间倒流时返回「未采样」。 */
+fun formatLastSuccessAgo(lastSuccessAtMs: Long, nowMs: Long): String {
+    if (lastSuccessAtMs <= 0L) return "未采样"
+    val ageMs = nowMs - lastSuccessAtMs
+    if (ageMs < 0L) return "刚刚"
+    if (ageMs < 60_000L) return "刚刚"
+    if (ageMs < 3_600_000L) return "${ageMs / 60_000L} 分钟前"
+    if (ageMs < 86_400_000L) return "${ageMs / 3_600_000L} 小时前"
+    return "${ageMs / 86_400_000L} 天前"
+}
+
+/** 播放管家四联指标：成功率 / P50 首帧延迟 / 卡顿率 / 最近成功距离现在。 */
+data class PlaybackHealthMetrics(
+    val successRate: Float,
+    val p50LatencyMs: Long?,
+    val stutterRate: Float,
+    /** 最近成功距离现在的毫秒数；没有成功样本时为 null。 */
+    val lastSuccessAgoMs: Long?,
+    val lastSuccessAgoText: String,
+    /** 参与统计的尝试次数。 */
+    val sampleCount: Int,
+)
+
+fun PlaybackHealthEntry.metrics(nowMs: Long): PlaybackHealthMetrics {
+    val agoMs = if (lastSuccessAtMs > 0L) (nowMs - lastSuccessAtMs).coerceAtLeast(0L) else null
+    return PlaybackHealthMetrics(
+        successRate = successRate,
+        p50LatencyMs = p50LatencyMs,
+        stutterRate = stutterRate,
+        lastSuccessAgoMs = agoMs,
+        lastSuccessAgoText = formatLastSuccessAgo(lastSuccessAtMs, nowMs),
+        sampleCount = attemptCount,
+    )
+}
+
+/**
+ * 播放管家徽章：四态展示（推荐/较慢/近期失败/未采样）。
+ * 颜色映射由 UI 层按主题 token 完成，避免 domain 依赖 Compose。
+ */
+enum class PlaybackHealthBadge(val label: String) {
+    Recommended("推荐"),
+    Slower("较慢"),
+    RecentFailure("近期失败"),
+    NoSample("未采样"),
+    ;
+}
+
+/** 依据健康条目派生徽章状态。纯函数，规则集中在这里便于单测与复用。 */
+fun derivePlaybackHealthBadge(
+    entry: PlaybackHealthEntry?,
+    nowMs: Long,
+    cooldownMs: Long = PLAYBACK_HEALTH_COOLDOWN_MS,
+    slowLatencyMs: Long = PLAYBACK_HEALTH_SLOW_LATENCY_MS,
+): PlaybackHealthBadge {
+    if (entry == null) return PlaybackHealthBadge.NoSample
+    if (entry.attemptCount == 0 && entry.successLatencyMs.isEmpty() && entry.stutterSampleCount == 0) {
+        return PlaybackHealthBadge.NoSample
+    }
+    when (entry.recentIssueType(nowMs, cooldownMs)) {
+        PlaybackIssueType.Error -> return PlaybackHealthBadge.RecentFailure
+        PlaybackIssueType.SlowBuffer -> return PlaybackHealthBadge.Slower
+        null -> Unit
+    }
+    if (entry.successCount == 0) return PlaybackHealthBadge.RecentFailure
+    val latency = entry.p50LatencyMs
+    if (latency != null && latency >= slowLatencyMs) return PlaybackHealthBadge.Slower
+    if (entry.attemptCount >= PLAYBACK_HEALTH_MIN_RATE_SAMPLES &&
+        entry.successRate < 0.8f
+    ) {
+        return PlaybackHealthBadge.Slower
+    }
+    return PlaybackHealthBadge.Recommended
+}
+
+/** 徽章点击后展示的「为什么这样评」说明，纯函数。 */
+fun explainPlaybackBadge(
+    badge: PlaybackHealthBadge,
+    entry: PlaybackHealthEntry?,
+    nowMs: Long,
+): String {
+    if (entry == null) return "尚无该线路的播放记录，因此显示为未采样。"
+    val metrics = entry.metrics(nowMs)
+    val latencyText = metrics.p50LatencyMs?.let { "$it ms" } ?: "无样本"
+    val basis = "依据最近 ${metrics.sampleCount} 次采样：成功率 ${(metrics.successRate * 100).toInt()}%，" +
+        "首帧中位数 $latencyText，卡顿率 ${(metrics.stutterRate * 100).toInt()}%，最近成功 ${metrics.lastSuccessAgoText}。"
+    return when (badge) {
+        PlaybackHealthBadge.Recommended -> "近期没有失败或卡顿记录，首帧延迟处于正常区间。$basis"
+        PlaybackHealthBadge.Slower -> "近期出现卡顿或首帧延迟偏高，建议换线或观察。$basis"
+        PlaybackHealthBadge.RecentFailure -> "最近一次播放失败，且之后没有成功记录。$basis"
+        PlaybackHealthBadge.NoSample -> "该线路没有可用于评估的播放记录。$basis"
+    }
 }
 
 data class PlaybackHealthSnapshot(
@@ -57,6 +203,26 @@ data class PlaybackHealthSnapshot(
 
     val slowBufferCount: Int
         get() = entries.values.sumOf { it.slowBufferCount }
+
+    /** 所有线路聚合后的四联指标。 */
+    fun metrics(nowMs: Long): PlaybackHealthMetrics {
+        val allEntries = entries.values
+        val attempts = allEntries.sumOf { it.attemptCount }
+        val successes = successCount
+        val stutters = allEntries.sumOf { it.stutterSampleCount }
+        val stutterDenominator = successes + stutters
+        val latencySamples = allEntries.flatMap { it.successLatencyMs }
+        val lastSuccessAtMs = allEntries.maxOfOrNull { it.lastSuccessAtMs }?.takeIf { it > 0L } ?: 0L
+        val agoMs = if (lastSuccessAtMs > 0L) (nowMs - lastSuccessAtMs).coerceAtLeast(0L) else null
+        return PlaybackHealthMetrics(
+            successRate = if (attempts == 0) 0f else successes.toFloat() / attempts,
+            p50LatencyMs = percentile50(latencySamples),
+            stutterRate = if (stutterDenominator == 0) 0f else stutters.toFloat() / stutterDenominator,
+            lastSuccessAgoMs = agoMs,
+            lastSuccessAgoText = formatLastSuccessAgo(lastSuccessAtMs, nowMs),
+            sampleCount = attempts,
+        )
+    }
 
     /** 格式化显示线路质量统计摘要，供 UI 层直接使用。 */
     fun qualitySummaryText(): String {

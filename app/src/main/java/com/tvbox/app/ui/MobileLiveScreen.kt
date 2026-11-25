@@ -1165,6 +1165,7 @@ private fun MobileLivePlayerScreen(
                         debugActive = showDebugOverlay,
                         onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
                     ),
+                    hiddenControls = state.appSettings.playerHiddenControls,
                     actions = PlayerChromeActions(
                         onToggle = {
                             // 走 session 记录播放意图：只用 player.pause() 会让策略仍认为用户想播，

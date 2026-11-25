@@ -2,10 +2,14 @@ package com.tvbox.app.data
 
 import android.content.Context
 import android.util.Log
+import com.tvbox.app.domain.PlaybackEvidence
 import com.tvbox.app.domain.PlaybackHealthEntry
 import com.tvbox.app.domain.PlaybackHealthSnapshot
 import com.tvbox.app.domain.PlaybackIssueType
+import com.tvbox.app.domain.appendEvidence
+import com.tvbox.app.domain.appendSuccessLatency
 import com.tvbox.app.domain.prunePlaybackHealthEntries
+import com.tvbox.app.domain.recentEvidence
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -30,6 +34,9 @@ data class StoredPlaybackHealthEntry(
     val failureCount: Int = 0,
     val slowBufferCount: Int = 0,
     val successCount: Int = 0,
+    /** 新增字段均有默认值，旧 JSON 解码后自动得到空样本。 */
+    val successLatencyMs: List<Long> = emptyList(),
+    val stutterSampleCount: Int = 0,
 ) {
     val latestActivityAtMs: Long
         get() = maxOf(lastFailureAtMs, lastSlowBufferAtMs, lastSuccessAtMs)
@@ -43,6 +50,8 @@ fun PlaybackHealthEntry.toStored(): StoredPlaybackHealthEntry = StoredPlaybackHe
     failureCount = failureCount,
     slowBufferCount = slowBufferCount,
     successCount = successCount,
+    successLatencyMs = successLatencyMs,
+    stutterSampleCount = stutterSampleCount,
 )
 
 fun StoredPlaybackHealthEntry.toDomain(): PlaybackHealthEntry = PlaybackHealthEntry(
@@ -53,6 +62,8 @@ fun StoredPlaybackHealthEntry.toDomain(): PlaybackHealthEntry = PlaybackHealthEn
     failureCount = failureCount,
     slowBufferCount = slowBufferCount,
     successCount = successCount,
+    successLatencyMs = successLatencyMs,
+    stutterSampleCount = stutterSampleCount,
 )
 
 class SharedPreferencesPlaybackHealthStore(
@@ -92,6 +103,22 @@ interface PlaybackHealthRepository {
     suspend fun recordIssue(key: String, issueType: PlaybackIssueType, nowMs: Long): PlaybackHealthSnapshot
     suspend fun recordSuccess(key: String, nowMs: Long): PlaybackHealthSnapshot
     suspend fun clear(): PlaybackHealthSnapshot
+
+    /**
+     * 带首帧延迟的成功记录。默认回退到旧接口，避免破坏已有的匿名实现；
+     * DefaultPlaybackHealthRepository 会真正写入 [PlaybackHealthEntry.successLatencyMs]。
+     */
+    suspend fun recordSuccessWithLatency(
+        key: String,
+        latencyMs: Long,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot = recordSuccess(key, nowMs)
+
+    /** 追加一条证据事件（最新在前，环形上限 50）；默认实现为空操作。 */
+    suspend fun recordEvidence(evidence: PlaybackEvidence): List<PlaybackEvidence> = emptyList()
+
+    /** 读取最近证据，供播放管家面板展示。 */
+    suspend fun getEvidence(limit: Int = 50): List<PlaybackEvidence> = emptyList()
 }
 
 /**
@@ -105,6 +132,8 @@ class DefaultPlaybackHealthRepository(
     private val mutex = Mutex()
     /** 上次写入的条目指纹：用于 getSnapshot 无变化时跳过全量重写。 */
     private var lastWrittenEntries: List<StoredPlaybackHealthEntry> = emptyList()
+    /** 证据日志只放内存：环形上限 50 条，不写 Dropbox、不落盘。 */
+    private var evidenceLog: List<PlaybackEvidence> = emptyList()
 
     /** 有变化才写盘，并同步更新指纹；避免读快照也触发全量 I/O。 */
     private fun writeIfChanged(stored: List<StoredPlaybackHealthEntry>) {
@@ -139,6 +168,7 @@ class DefaultPlaybackHealthRepository(
                 PlaybackIssueType.SlowBuffer -> entry.copy(
                     lastSlowBufferAtMs = nowMs,
                     slowBufferCount = entry.slowBufferCount + 1,
+                    stutterSampleCount = entry.stutterSampleCount + 1,
                 )
             }
             val entries = prunePlaybackHealthEntries(current.values, nowMs)
@@ -147,21 +177,51 @@ class DefaultPlaybackHealthRepository(
         }
     }
 
-    override suspend fun recordSuccess(key: String, nowMs: Long): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
+    override suspend fun recordSuccess(key: String, nowMs: Long): PlaybackHealthSnapshot =
+        recordSuccessInternal(key = key, latencyMs = null, nowMs = nowMs)
+
+    override suspend fun recordSuccessWithLatency(
+        key: String,
+        latencyMs: Long,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot = recordSuccessInternal(key = key, latencyMs = latencyMs, nowMs = nowMs)
+
+    private suspend fun recordSuccessInternal(
+        key: String,
+        latencyMs: Long?,
+        nowMs: Long,
+    ): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
         mutex.withLock {
             val current = readPruned(nowMs).associateBy { it.key }.toMutableMap()
-            val entry = current[key] ?: PlaybackHealthEntry(key = key)
-            current[key] = entry.copy(lastSuccessAtMs = nowMs, successCount = entry.successCount + 1)
+            var entry = current[key] ?: PlaybackHealthEntry(key = key)
+            entry = entry.copy(lastSuccessAtMs = nowMs, successCount = entry.successCount + 1)
+            if (latencyMs != null) {
+                entry = appendSuccessLatency(entry, latencyMs)
+            }
+            current[key] = entry
             val entries = prunePlaybackHealthEntries(current.values, nowMs)
             writeIfChanged(entries.map { it.toStored() })
             entries.toSnapshot()
         }
     }
 
+    override suspend fun recordEvidence(evidence: PlaybackEvidence): List<PlaybackEvidence> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                evidenceLog = appendEvidence(evidenceLog, evidence)
+                evidenceLog
+            }
+        }
+
+    override suspend fun getEvidence(limit: Int): List<PlaybackEvidence> = withContext(Dispatchers.IO) {
+        mutex.withLock { recentEvidence(evidenceLog, limit) }
+    }
+
     override suspend fun clear(): PlaybackHealthSnapshot = withContext(Dispatchers.IO) {
         mutex.withLock {
             store.clear()
             lastWrittenEntries = emptyList()
+            evidenceLog = emptyList()
             PlaybackHealthSnapshot()
         }
     }
