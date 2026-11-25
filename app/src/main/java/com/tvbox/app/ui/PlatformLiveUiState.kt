@@ -44,4 +44,6 @@ data class PlatformLiveUiState(
     /** 平台直播轻提示（自动切换线路结果等）；由 UI 消费后清空。 */
     val notice: String? = null,
     val stream: ResolvedPlatformLiveStream? = null,
+    /** 线路浮层测速进行中：控制「测速」按钮的禁用/加载态，逐条延迟实时回写 stream.candidates。 */
+    val latencyMeasuring: Boolean = false,
 )

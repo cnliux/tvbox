@@ -460,6 +460,8 @@ class TvBoxViewModel(
         "douyu" to "一起看",
     )
     private var platformLiveRecoveryInProgress = false
+    // 线路浮层「测速」防重入：避免连点导致多轮并发测速互相覆盖。
+    private var platformLiveLatencyMeasuring = false
     // 平台直播恢复节流：连续失败窗口内限制次数，避免虎牙 FLV 周期性关流造成无限轮换/重解析。
     private var platformLiveRecoveryWindowStartMs = 0L
     private var platformLiveRecoveryWindowAttempts = 0
@@ -3350,6 +3352,52 @@ class TvBoxViewModel(
     /** 遥控器：切换到上一条候选线路（循环）。 */
     fun playPreviousPlatformLiveCandidate() {
         stepPlatformLiveCandidate(-1)
+    }
+
+    /**
+     * 线路浮层「测速」按钮：并发测全部候选线路（含第三方代理候选）的首字节延迟，
+     * 每条测完立即回写 UI，逐条实时显示，而不是等全部测完才出结果。
+     *
+     * 只更新延迟、不切换线路、不触发重连；第三方候选原先 latencyMs=-1 不显示，
+     * 测速后与官方候选一样显示实时延迟。
+     */
+    fun remeasurePlatformLiveLatencies() {
+        val state = _state.value
+        val stream = state.platformLive.stream ?: return
+        val room = state.platformLive.rooms.getOrNull(state.platformLive.roomIndex) ?: return
+        val candidates = stream.candidates
+        if (candidates.isEmpty()) return
+        if (platformLiveLatencyMeasuring) return  // 防重入
+        platformLiveLatencyMeasuring = true
+        _state.update { it.copy(platformLive = it.platformLive.copy(latencyMeasuring = true)) }
+        viewModelScope.launch {
+            val baseHeaders = stream.headers
+            coroutineScope {
+                candidates.forEachIndexed { index, candidate ->
+                    launch(Dispatchers.IO) {
+                        val latency = measureLiveLineLatencyMs(candidate.url, baseHeaders)
+                        val latencyInt = latency?.toInt()?.coerceAtLeast(1) ?: -1
+                        // 只在房间/线路未变时回写，避免用户切台后旧结果覆盖新流。
+                        _state.update { s ->
+                            val cur = s.platformLive
+                            val curStream = cur.stream ?: return@update s
+                            if (cur.roomIndex != state.platformLive.roomIndex ||
+                                cur.selectedSite?.id != state.platformLive.selectedSite?.id ||
+                                cur.rooms.getOrNull(cur.roomIndex)?.id != room.id
+                            ) return@update s
+                            val updated = curStream.candidates.mapIndexed { i, c ->
+                                if (i == index) c.copy(latencyMs = latencyInt) else c
+                            }
+                            s.copy(platformLive = cur.copy(
+                                stream = curStream.copy(candidates = updated),
+                            ))
+                        }
+                    }
+                }
+            }
+            platformLiveLatencyMeasuring = false
+            _state.update { it.copy(platformLive = it.platformLive.copy(latencyMeasuring = false)) }
+        }
     }
 
     /** 遥控器：切换到下一条候选线路（循环）。 */

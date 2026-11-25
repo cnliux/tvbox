@@ -40,14 +40,19 @@ object LiveLineLatency {
      *
      * 同序很重要：调用方按「平台优先级」排列候选，测量结果不能打乱这个顺序
      * （虎牙 AL/TX/HS 的优先级来自平台，不是速度决定的）。
+     *
+     * [onResult] 可选：每条线路测完立即回调 `(索引, 延迟毫秒)`，供 UI 逐条实时刷新，
+     * 而不必等全部线路测完才出结果。回调在 IO 上下文触发，调用方需自行切回主线程。
      */
     suspend fun measure(
         lines: List<Pair<String, Map<String, String>>>,
+        onResult: ((index: Int, latencyMs: Int) -> Unit)? = null,
     ): List<Int> = withContext(Dispatchers.IO) {
         if (lines.isEmpty()) return@withContext emptyList()
+        val results = arrayOfNulls<Int>(lines.size)
         val slots = AtomicInteger(0)
         coroutineScope {
-            lines.map { (url, headers) ->
+            lines.mapIndexed { index, (url, headers) ->
                 async {
                     // 简单的并发节流：超出上限的排队，仍保持结果顺序。
                     while (slots.get() >= MAX_PARALLEL) {
@@ -55,13 +60,16 @@ object LiveLineLatency {
                     }
                     slots.incrementAndGet()
                     try {
-                        probe(url, headers)
+                        val latency = probe(url, headers)
+                        results[index] = latency
+                        onResult?.invoke(index, latency)
                     } finally {
                         slots.decrementAndGet()
                     }
                 }
             }.awaitAll()
         }
+        results.map { it ?: -1 }
     }
 
     /** 单条线路的首字节毫秒数；失败返回 -1。 */

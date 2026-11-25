@@ -111,7 +111,6 @@ import com.tvbox.app.domain.resolveVideoScaleMode
 import com.tvbox.app.domain.PlatformLiveCategory
 import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
-import com.tvbox.app.domain.ThirdPartyLiveProxy
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
 import com.tvbox.app.ui.components.EmptyState
@@ -148,25 +147,10 @@ private fun PlatformLiveSitesScreen(
 ) {
     val touchMode = LocalTouchMode.current
     val firstCardFocusRequester = remember { FocusRequester() }
-    var showProxyDialog by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         // 手机触摸模式不需要自动聚焦，避免首张卡片常驻焦点框。
         // runCatching：目标节点尚未进入组合时 requestFocus 会抛 IllegalStateException。
         if (!touchMode) runCatching { firstCardFocusRequester.requestFocus() }
-    }
-    if (showProxyDialog) {
-        PlatformThirdPartyProxyDialog(
-            enabled = state.appSettings.platformThirdPartyProxyEnabled,
-            templates = state.appSettings.platformThirdPartyProxyTemplates,
-            onDismiss = { showProxyDialog = false },
-            onSave = { enabled, templates ->
-                actions.updateAppSettings { it.copy(
-                    platformThirdPartyProxyEnabled = enabled,
-                    platformThirdPartyProxyTemplates = templates,
-                ) }
-                showProxyDialog = false
-            },
-        )
     }
     PlatformLiveBrowseSurface(
         title = "直播",
@@ -183,22 +167,6 @@ private fun PlatformLiveSitesScreen(
         onRetry = actions::refreshPlatformLive,
         columnsOverride = 0,
     ) {
-        item(key = "third-party-proxy", span = { GridItemSpan(maxLineSpan) }) {
-            val proxyEnabled = state.appSettings.platformThirdPartyProxyEnabled
-            val proxyRaw = state.appSettings.platformThirdPartyProxyTemplates
-            val isDefault = proxyRaw.isBlank()
-            val subtitle = when {
-                !proxyEnabled -> "已关闭：用 Go 官方解析加载虎牙/斗鱼"
-                isDefault -> "已开启：内置默认代理（cfss.cc 主 + mursor 备用）"
-                else -> "已开启：自定义 ${proxyRaw.lines().count { it.isNotBlank() }} 条代理地址"
-            }
-            PlatformLiveTextCard(
-                title = "第三方代理",
-                subtitle = subtitle,
-                label = if (proxyEnabled) "已开启" else "已关闭",
-                onClick = { showProxyDialog = true },
-            )
-        }
         item(key = "favorites") {
             PlatformLiveTextCard(
                 title = "收藏",
@@ -236,84 +204,6 @@ private fun PlatformLiveSitesScreen(
             }
         }
     }
-}
-
-/**
- * 第三方代理配置对话框（「管理」页「第三方代理」卡片入口）。
- *
- * - 开关控制是否启用第三方代理优先（关闭时虎牙/斗鱼走 Go 官方解析）。
- * - 地址模板每行一条；留空即回落到内置默认模板（[ThirdPartyLiveProxy.defaultTemplates]）。
- * - 「恢复内置默认」把模板清空，UI 明确标出「使用内置默认」，避免用户不知道有默认值。
- */
-@Composable
-private fun PlatformThirdPartyProxyDialog(
-    enabled: Boolean,
-    templates: String,
-    onDismiss: () -> Unit,
-    onSave: (Boolean, String) -> Unit,
-) {
-    var draftEnabled by remember { mutableStateOf(enabled) }
-    var draftTemplates by remember { mutableStateOf(templates) }
-    val isDefaultTemplates = draftTemplates.isBlank()
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("第三方代理") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("启用第三方代理", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "开启后虎牙/斗鱼优先用第三方地址加载，官方解析作兜底",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    }
-                    Switch(checked = draftEnabled, onCheckedChange = { draftEnabled = it })
-                }
-                OutlinedTextField(
-                    value = draftTemplates,
-                    onValueChange = { draftTemplates = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("代理地址模板（每行一条）") },
-                    placeholder = { Text("https://cfss.cc/cdn/{site}/{room}.flv\nhttps://mursor.ottiptv.cc/{site}/{room}") },
-                    supportingText = {
-                        Text(
-                            if (isDefaultTemplates) "留空＝内置默认代理（cfss.cc 主 + mursor 备用）"
-                            else "占位符：{site} 站点全名、{room} 房间号、{siteAlias} 站点短码",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    },
-                    minLines = 3,
-                    maxLines = 6,
-                )
-                if (isDefaultTemplates) {
-                    Text(
-                        "当前：使用内置默认配置",
-                        color = MaterialTheme.colorScheme.primary,
-                        style = MaterialTheme.typography.labelMedium,
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
-                        draftTemplates = ""
-                    }) { Text("恢复内置默认") }
-                    TextButton(onClick = {
-                        draftTemplates = ThirdPartyLiveProxy.defaultTemplates.joinToString("\n")
-                    }) { Text("填入内置默认地址") }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(draftEnabled, draftTemplates.trim()) }) { Text("保存") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
 }
 
 @Composable
@@ -1951,6 +1841,14 @@ private fun PlatformLivePlayerScreen(
 
         if (showLineControl && stream?.hasCandidates == true) {
             val lineStream = stream
+            // 浮层打开期间自动循环测速：立即测一轮，之后每 15s 刷新一次，
+            // 每条候选（含第三方代理）测完立即逐条更新延迟；浮层关闭协程自动取消。
+            LaunchedEffect(room.id, lineStream.candidates.size) {
+                while (true) {
+                    actions.remeasurePlatformLiveLatencies()
+                    kotlinx.coroutines.delay(LINE_LATENCY_REFRESH_INTERVAL_MS)
+                }
+            }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1968,12 +1866,26 @@ private fun PlatformLivePlayerScreen(
                     contentColor = Color.White
                 ) {
                     Column(modifier = Modifier.padding(24.dp)) {
-                        Text(
-                            text = "候选线路切换 - ${room.title}",
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = "候选线路切换 - ${room.title}",
+                                style = MaterialTheme.typography.titleMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            // 测速进行中：不占额外按钮，仅给出轻提示（延迟值本身实时刷新）。
+                            if (state.platformLive.latencyMeasuring) {
+                                Text(
+                                    text = "测速中…",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                )
+                            }
+                        }
                         Spacer(modifier = Modifier.height(16.dp))
                         LazyColumn(
                             state = lineListState,
@@ -2422,6 +2334,8 @@ private fun formatOnline(value: Int): String {
 
 private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 4_000L
 private const val PLATFORM_LIVE_LOG_TAG = "TVBoxPlatformLive"
+/** 线路浮层自动循环测速间隔：浮层打开期间周期性刷新各候选（含第三方）首字节延迟。 */
+private const val LINE_LATENCY_REFRESH_INTERVAL_MS = 15_000L
 /** 任务2/3 音视频重同步：连续软卡顿采样达到该次数后，先 seekTo 强制重对齐解码时钟，再考虑硬恢复。 */
 private const val PLATFORM_LIVE_SOFT_STALL_RESYNC_THRESHOLD = 3
 

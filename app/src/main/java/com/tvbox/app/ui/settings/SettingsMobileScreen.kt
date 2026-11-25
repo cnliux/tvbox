@@ -104,6 +104,7 @@ import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.StartupPhase
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.UpdateChannel
+import com.tvbox.app.domain.ThirdPartyLiveProxy
 import com.tvbox.app.domain.VideoScaleMode
 import com.tvbox.app.domain.RemoteKeyAction
 import com.tvbox.app.domain.RemoteKeyBindings
@@ -1122,37 +1123,45 @@ private fun LiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
         BoolSettingRow("第三方代理解析", "各平台优先用第三方地址加载，多个第三方互为备用", state.appSettings.platformThirdPartyProxyEnabled) {
             actions.updateAppSettings { s -> s.copy(platformThirdPartyProxyEnabled = it) }
         }
-        if (state.appSettings.platformThirdPartyProxyEnabled) {
-            SettingsGroupDivider()
-            SettingsRow(
-                icon = Icons.Default.Settings,
-                title = "第三方代理地址",
-                subtitle = "用 # 站点名 分组（如 # douyu / # 虎牙），组内每行一条模板；未分组的行对所有平台兜底。占位符 {site} 站点、{siteAlias} 短码、{room} 房间号",
-                stackedTrailing = true,
-                trailing = {
-                    val current = state.appSettings.platformThirdPartyProxyTemplates
-                    val draft = remember(current) { mutableStateOf(current) }
-                    TextField(
-                        value = draft.value,
-                        onValueChange = { draft.value = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        minLines = 3,
-                        maxLines = 8,
-                        placeholder = { Text("# douyu\nhttps://host/{siteAlias}/{room}.flv\n\nhttps://fallback/{site}/{room}") },
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                    ) {
+        SettingsGroupDivider()
+        // 地址框始终展开显示，不随开关折叠；内置默认地址直接呈现，避免用户看不到实际生效的默认值。
+        SettingsRow(
+            icon = Icons.Default.Settings,
+            title = "第三方代理地址",
+            subtitle = "用 # 站点名 分组（如 # douyu / # 虎牙），组内每行一条模板；未分组的行对所有平台兜底。占位符 {site} 站点、{siteAlias} 短码、{room} 房间号",
+            stackedTrailing = true,
+            trailing = {
+                val current = state.appSettings.platformThirdPartyProxyTemplates
+                val draft = remember(current) { mutableStateOf(current) }
+                TextField(
+                    value = draft.value,
+                    onValueChange = { draft.value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 4,
+                    maxLines = 10,
+                    placeholder = { Text(ThirdPartyLiveProxy.defaultTemplates.joinToString("\n")) },
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                ) {
+                    if (draft.value != current) {
                         TextButton(onClick = { draft.value = current }) { Text("还原") }
                         Spacer(Modifier.width(8.dp))
-                        Button(onClick = {
-                            actions.updateAppSettings { it.copy(platformThirdPartyProxyTemplates = draft.value) }
-                        }) { Text("保存") }
                     }
-                },
-            )
-        }
+                    Button(onClick = {
+                        actions.updateAppSettings { it.copy(platformThirdPartyProxyTemplates = draft.value) }
+                    }) { Text("保存") }
+                }
+                if (current.isBlank()) {
+                    Text(
+                        "留空＝使用内置默认（上方灰色示例地址）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            },
+        )
         BoolSettingRow("局域网解析服务", "默认关闭；首次开启需确认安全提示", state.appSettings.lanResolverEnabled) {
             actions.updateAppSettings { s -> s.copy(lanResolverEnabled = it, lanResolverConfirmed = it || s.lanResolverConfirmed) }
         }
