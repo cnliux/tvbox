@@ -447,6 +447,7 @@ class DefaultAppUpdateRepository(
         } catch (error: Throwable) {
             android.util.Log.w("TVBoxUpdate", "Update download failed: ${logSafeText(error.message)} (${error::class.simpleName})")
             downloadMutex.withLock {
+                // 必须在 IO 上下文中同步清掉失败任务，避免重进时误复用半成品（此处非主线程）。
                 if (readTask()?.filePath == currentTask.filePath) downloadPrefs.edit().remove("task").commit()
             }
             // 失败包与 cancelDownload 使用同一套清理，避免残留半成品被误当成功安装包。

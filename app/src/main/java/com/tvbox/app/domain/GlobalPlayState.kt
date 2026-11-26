@@ -50,9 +50,16 @@ internal var _bootMs: Long? = null
     private set
 fun bootTimestampMs(): Long = _bootMs ?: System.currentTimeMillis().also { _bootMs = it }
 
-/** 应用上下文持有器：由 TvBoxApplication.onCreate 写入，供 JVM 单测返回 null 而不 crash。 */
+/**
+ * 应用上下文持有器：由 TvBoxApplication.onCreate 写入，供 JVM 单测返回 null 而不 crash。
+ *
+ * R1 内存安全：这里**只允许**写入 Application 上下文（生命周期 == 进程，不存在泄漏），
+ * 绝不可塞 Activity/View 等短生命周期对象，否则就是典型 StaticFieldLeak。
+ * 类型收窄为 Application 而非 Context，从编译期就挡住误传 Activity。
+ */
 object TvBoxApplicationRef {
-    @Volatile var context: android.content.Context? = null
+    @Volatile
+    var context: android.app.Application? = null
 }
 
 /**

@@ -28,7 +28,7 @@ class TvBoxApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         // T3-24：持有应用上下文引用，供 GlobalPlayState 懒计算版本号使用。
-        TvBoxApplicationRef.context = applicationContext
+        TvBoxApplicationRef.context = this  // 只存 Application 自身，杜绝 Activity 泄漏
         CrashHandler.install(this)
         AnrWatchdog.start()
         CrashHandler.recordOperation("app.onCreate", "version=${BuildConfig.VERSION_NAME}(${BuildConfig.VERSION_CODE})")

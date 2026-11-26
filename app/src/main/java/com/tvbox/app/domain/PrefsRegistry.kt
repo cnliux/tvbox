@@ -142,6 +142,8 @@ object PrefsRegistry {
                 appCtx.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
                     .edit()
                     .clear()
+                    // 这里必须用 commit 而非 apply：wipe 在调用方后台线程执行，
+                    // 且「清空后立刻读校验」依赖同步落盘；apply 的异步写会让校验读到旧值。
                     .commit()
             } catch (_: Exception) {
                 // 单个 prefs 失败不影响其它
