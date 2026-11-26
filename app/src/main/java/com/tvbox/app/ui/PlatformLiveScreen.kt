@@ -696,7 +696,7 @@ private fun PlatformLiveTextCard(
             .tvFocusScale(shape = shape)
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
+            .background(if (focused) TvColors.SurfaceRaised else MaterialTheme.colorScheme.surface)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = cardLabel }
             .focusable()
@@ -755,7 +755,7 @@ private fun PlatformLiveImageCard(
                 .tvFocusScale(shape = shape)
                 .clip(shape)
                 .onFocusChanged { focused = it.isFocused || it.hasFocus }
-                .background(if (focused) Color(0xFF252525) else MaterialTheme.colorScheme.surface)
+                .background(if (focused) TvColors.SurfaceRaised else MaterialTheme.colorScheme.surface)
                 .clickable(role = Role.Button, onClick = onClick)
                 .semantics(mergeDescendants = true) { contentDescription = cardLabel }
                 .focusable(),
@@ -1893,7 +1893,7 @@ private fun PlatformLivePlayerScreen(
                         .align(Alignment.Center)
                         .width(420.dp)
                         .clip(MaterialTheme.shapes.medium),
-                    color = Color(0xFF1A1A1A),
+                    color = TvColors.Surface,
                     contentColor = Color.White
                 ) {
                     Column(modifier = Modifier.padding(24.dp)) {
@@ -1933,7 +1933,7 @@ private fun PlatformLivePlayerScreen(
                                         .background(
                                             when {
                                                 focused -> Color.White.copy(alpha = 0.10f)
-                                                selected -> Color(0xFF7AE2BA).copy(alpha = 0.2f)
+                                                selected -> TvColors.Success.copy(alpha = 0.2f)
                                                 else -> Color.Transparent
                                             },
                                         )
@@ -1964,7 +1964,7 @@ private fun PlatformLivePlayerScreen(
                                         .padding(12.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) Color(0xFF7AE2BA) else Color.White.copy(alpha = 0.6f))
+                                    Text("${index + 1}", modifier = Modifier.width(24.dp), color = if (selected) TvColors.Success else Color.White.copy(alpha = 0.6f))
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = "${candidate.cdn} | ${candidate.protocol.uppercase()}",
@@ -1980,15 +1980,15 @@ private fun PlatformLivePlayerScreen(
                                                 text = label,
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = when {
-                                                    candidate.latencyMs in 0..300 -> Color(0xFF7AE2BA)
-                                                    candidate.latencyMs in 301..800 -> Color(0xFFFFD54F)
-                                                    else -> Color(0xFFFF8A80)
+                                                    candidate.latencyMs in 0..300 -> TvColors.Success
+                                                    candidate.latencyMs in 301..800 -> TvColors.Warning
+                                                    else -> TvColors.Danger
                                                 },
                                                 maxLines = 1,
                                             )
                                         }
                                     }
-                                    if (selected) Text("当前", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
+                                    if (selected) Text("当前", color = TvColors.Success, style = MaterialTheme.typography.labelSmall)
                                 }
                             }
                         }
@@ -2010,7 +2010,7 @@ private fun PlatformLivePlayerScreen(
                                 )
                                 Text(
                                     text = playbackUrl ?: lineStream.url,
-                                    color = Color(0xFF7AE2BA),
+                                    color = TvColors.Success,
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 3,
                                     overflow = TextOverflow.Ellipsis,
@@ -2128,7 +2128,7 @@ private fun PlatformLivePlayerScreen(
             ) {
                 Text(
                     text = debugMonitorText,
-                    color = Color(0xFF7AE2BA),
+                    color = TvColors.Success,
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                 )
@@ -2299,8 +2299,8 @@ private fun PlatformLiveRoomListRow(
             .clip(shape)
             .background(
                 when {
-                    focused -> Color(0xFF7AE2BA).copy(alpha = 0.22f)
-                    playing -> Color(0xFF7AE2BA).copy(alpha = 0.10f)
+                    focused -> TvColors.Success.copy(alpha = 0.22f)
+                    playing -> TvColors.Success.copy(alpha = 0.10f)
                     else -> Color.White.copy(alpha = 0.04f)
                 }
             )
@@ -2323,7 +2323,7 @@ private fun PlatformLiveRoomListRow(
                 .width(96.dp)
                 .height(54.dp)
                 .clip(shape)
-                .background(Color(0xFF222222)),
+                .background(TvColors.SurfaceRaised),
         )
         Spacer(modifier = Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -2348,7 +2348,7 @@ private fun PlatformLiveRoomListRow(
         if (playing) {
             Text(
                 text = "播放中",
-                color = Color(0xFF7AE2BA),
+                color = TvColors.Success,
                 style = MaterialTheme.typography.labelSmall,
             )
         }

@@ -1405,12 +1405,13 @@ private enum class TvSettingCategory(
     val gradientStart: Color,
     val gradientEnd: Color,
 ) {
-    General("通用与外观", "设备·主题·更新", Icons.Default.Settings, Color(0xFF4DA3FF), Color(0xFF1E3A5F)),
-    Playback("播放", "倍速·解码·音频", Icons.Default.PlayArrow, Color(0xFF1ED760), Color(0xFF0E4A23)),
-    Controls("手势与控制", "快捷键·键位绑定", Icons.Default.Build, Color(0xFF9C9CFF), Color(0xFF2E2E5C)),
-    Search("找片与AI", "AI·语音·脱敏", Icons.Default.Search, Color(0xFFFF7EB6), Color(0xFF5C1E3A)),
-    Sources("数据源与网络", "视频源·直播源·UA", Icons.AutoMirrored.Filled.List, Color(0xFFFFA42B), Color(0xFF5C3A0E)),
-    Live("直播", "EPG·选台·频道", Icons.AutoMirrored.Filled.List, Color(0xFFFF7043), Color(0xFF5C2410)),
-    Data("历史与数据", "历史·备份·清理", Icons.Default.Delete, Color(0xFFFF7171), Color(0xFF5C1E25)),
-    About("关于", "版本·协议·更新", Icons.Default.Info, Color(0xFF55F0A1), Color(0xFF14532D)),
+    // F-07：渐变取自 SettingCategoryPalette 唯一真源（与手机版共用，杜绝两份调色板漂移）。
+    General("通用与外观", "设备·主题·更新", Icons.Default.Settings, SettingCategoryPalette.gradientStart(0), SettingCategoryPalette.gradientEnd(0)),
+    Playback("播放", "倍速·解码·音频", Icons.Default.PlayArrow, SettingCategoryPalette.gradientStart(1), SettingCategoryPalette.gradientEnd(1)),
+    Controls("手势与控制", "快捷键·键位绑定", Icons.Default.Build, SettingCategoryPalette.gradientStart(2), SettingCategoryPalette.gradientEnd(2)),
+    Search("找片与AI", "AI·语音·脱敏", Icons.Default.Search, SettingCategoryPalette.gradientStart(3), SettingCategoryPalette.gradientEnd(3)),
+    Sources("数据源与网络", "视频源·直播源·UA", Icons.AutoMirrored.Filled.List, SettingCategoryPalette.gradientStart(4), SettingCategoryPalette.gradientEnd(4)),
+    Live("直播", "EPG·选台·频道", Icons.AutoMirrored.Filled.List, SettingCategoryPalette.gradientStart(5), SettingCategoryPalette.gradientEnd(5)),
+    Data("历史与数据", "历史·备份·清理", Icons.Default.Delete, SettingCategoryPalette.gradientStart(6), SettingCategoryPalette.gradientEnd(6)),
+    About("关于", "版本·协议·更新", Icons.Default.Info, SettingCategoryPalette.gradientStart(7), SettingCategoryPalette.gradientEnd(7)),
 }

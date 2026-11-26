@@ -436,7 +436,7 @@ private fun LiveOverlayChannelRow(
         }
         Spacer(Modifier.width(6.dp))
         if (isFavorite) {
-            Text("★", color = Color(0xFFFFB300), style = MaterialTheme.typography.labelSmall)
+            Text("★", color = TvColors.Warning, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.width(4.dp))
         }
         Text(
@@ -496,14 +496,36 @@ internal fun liveLineLatencyColor(
     hasResult: Boolean,
     latencyMs: Long?,
     testing: Boolean,
+    colors: LiveLatencyColors,
 ): Color = when {
-    testing && !hasResult -> Color.White.copy(alpha = 0.45f)
-    !hasResult -> Color.White.copy(alpha = 0.45f)
-    latencyMs == null -> Color(0xFFFF7171)
-    latencyMs < 200L -> Color(0xFF1ED760)
-    latencyMs < 800L -> Color.White.copy(alpha = 0.7f)
-    else -> Color(0xFFFFB300)
+    testing && !hasResult -> colors.neutral
+    !hasResult -> colors.neutral
+    latencyMs == null -> colors.slow
+    latencyMs < 200L -> colors.fast
+    latencyMs < 800L -> colors.medium
+    else -> colors.mediumStrong
 }
+
+/**
+ * F-07：直播线路延迟配色。与播放器延迟标志同源，改为主题语义色后
+ * 切主题不再「面板还是老绿老黄」。
+ */
+internal data class LiveLatencyColors(
+    val fast: Color,
+    val medium: Color,
+    val mediumStrong: Color,
+    val slow: Color,
+    val neutral: Color,
+)
+
+@Composable
+internal fun rememberLiveLatencyColors(): LiveLatencyColors = LiveLatencyColors(
+    fast = TvColors.Success,
+    medium = TvColors.TextSecondary,
+    mediumStrong = TvColors.Warning,
+    slow = TvColors.Danger,
+    neutral = TvColors.TextTertiary,
+)
 
 /**
  * 线路浮层：保留原有"手动切线路 / 复制 URL / 查看真实 URL"能力，
@@ -642,7 +664,7 @@ internal fun LiveLineOverlay(
                             Row {
                                 Text(
                                     text = liveLineLatencyLabel(hasResult, latency, state.liveLineTesting),
-                                    color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
+                                    color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting, rememberLiveLatencyColors()),
                                     style = MaterialTheme.typography.labelSmall,
                                     fontFamily = FontFamily.Monospace,
                                 )

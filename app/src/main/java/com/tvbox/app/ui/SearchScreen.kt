@@ -1446,7 +1446,7 @@ internal fun MobileSearchScreen(
             // 否则 edge-to-edge 下搜索框顶边会被状态栏压住、视觉上超出页面边界。
             Surface(
                 modifier = Modifier.windowInsetsPadding(WindowInsets.statusBars),
-                color = Color(0xFF1E1E1E),
+                color = TvColors.Surface,
                 shadowElevation = 2.dp,
             ) {
                 Row(
@@ -1488,11 +1488,11 @@ internal fun MobileSearchScreen(
                         keyboardActions = KeyboardActions(onSearch = { submit() }),
                         textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
                         colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
-                            unfocusedContainerColor = Color(0xFF2A2A2A),
-                            focusedContainerColor = Color(0xFF2A2A2A),
+                            unfocusedContainerColor = TvColors.SurfaceRaised,
+                            focusedContainerColor = TvColors.SurfaceRaised,
                             unfocusedTextColor = Color.White,
                             focusedTextColor = Color.White,
-                            unfocusedBorderColor = Color(0xFF444444),
+                            unfocusedBorderColor = TvColors.Border,
                             focusedBorderColor = TvColors.FocusRing,
                         ),
                     )
@@ -1652,7 +1652,7 @@ private fun HotSearchChips(
                     .clickable(role = Role.Button) { onWordClick(word) }
                     .semantics { contentDescription = "热门搜索：$word" },
                 shape = RoundedCornerShape(18.dp),
-                color = Color(0xFF2A2A2A),
+                color = TvColors.SurfaceRaised,
             ) {
                 Box(
                     modifier = Modifier
@@ -1743,7 +1743,7 @@ private fun SourceFilterBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color(0xFF161616)),
+            .background(TvColors.Background),
     ) {
         LazyRow(
             state = listState,
@@ -1778,7 +1778,7 @@ private fun SourceFilterChip(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val container = if (selected) Color(0xFF1ED760) else Color(0xFF2A2A2A)
+    val container = if (selected) TvColors.Success else TvColors.SurfaceRaised
     val content = if (selected) Color.Black else Color.White.copy(alpha = 0.85f)
     Surface(
         shape = RoundedCornerShape(18.dp),
@@ -1817,7 +1817,7 @@ private fun SearchGroupHeader(
 ) {
     Surface(
         shape = RoundedCornerShape(8.dp),
-        color = Color(0xFF222222),
+        color = TvColors.Border,
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
@@ -1837,7 +1837,7 @@ private fun SearchGroupHeader(
                     .width(3.dp)
                     .height(18.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color(0xFF1ED760)),
+                    .background(TvColors.Success),
             )
             Text(
                 text = group.sourceName,

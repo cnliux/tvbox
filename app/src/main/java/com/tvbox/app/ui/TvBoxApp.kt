@@ -333,7 +333,7 @@ private fun UpdateDownloadCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("更新 ${update.versionName}", modifier = Modifier.weight(1f), style = MaterialTheme.typography.labelLarge)
                 if (downloading) Text(state.updateDownloadProgress?.let { "$it%" } ?: "下载中",
-                    style = MaterialTheme.typography.labelMedium, color = Color(0xFF7AE2BA))
+                    style = MaterialTheme.typography.labelMedium, color = TvColors.Success)
                 // 下载中 X = 取消下载；失败态 X = 关闭卡片。完成后保留安装入口，不提供关闭。
                 if (downloading || errorCardVisible) {
                     IconButton(onClick = if (downloading) onCancelDownload else onDismiss) {
@@ -350,12 +350,12 @@ private fun UpdateDownloadCard(
                 val progress = state.updateDownloadProgress
                 if (progress == null) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 else LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth(),
-                    color = Color(0xFF7AE2BA), trackColor = Color.White.copy(alpha = 0.15f))
+                    color = TvColors.Success, trackColor = Color.White.copy(alpha = 0.15f))
                 Text("可继续使用，完成后打开安装界面", style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.65f))
                 if (downloadStalled) {
                     Text("网络较慢，长时间无进展，可取消后重试", style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFFFFC46B))
+                        color = TvColors.Warning)
                 }
                 TextButton(onClick = onCancelDownload) { Text("取消下载", color = Color.White) }
             } else {
@@ -2977,7 +2977,7 @@ private fun MobileOnboardingBanner(state: TvBoxUiState, actions: TvBoxViewModel)
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 8.dp),
-        color = Color(0xFF1A3A2A),
+        color = TvColors.SurfaceRaised,
         shape = RoundedCornerShape(10.dp),
     ) {
         Row(

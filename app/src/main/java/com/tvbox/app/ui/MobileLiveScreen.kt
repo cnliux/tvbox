@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.ui.theme.TvColors
 import android.content.Context
 import android.content.pm.ActivityInfo
 import android.media.AudioManager
@@ -123,13 +124,16 @@ import java.util.Locale
  */
 
 // ---- 设计规范配色（严格执行设计稿） ----
-private val LiveAccent = Color(0xFFE50914)
-private val LiveBackground = Color(0xFF0D0D10)
-private val LiveCard = Color(0xFF16161B)
-private val LiveDivider = Color(0xFF141418)
-private val LiveField = Color(0xFF1A1A1E)
-private val LiveLogoPlaceholderBg = Color(0xFF1A1A22)
-private val LiveFavoriteGold = Color(0xFFFFB300)
+// M-09：手机直播页颜色收敛到主题语义 token，切主题时整页跟随变化
+// （此前写死 8 个颜色，切主题后本页纹丝不动，与全局观感割裂）。
+// 保留原变量名，改为 @Composable getter，31 处调用点无需改动。
+private val LiveAccent: Color @Composable get() = TvColors.Danger
+private val LiveBackground: Color @Composable get() = TvColors.Background
+private val LiveCard: Color @Composable get() = TvColors.Surface
+private val LiveDivider: Color @Composable get() = TvColors.Border
+private val LiveField: Color @Composable get() = TvColors.SurfaceRaised
+private val LiveLogoPlaceholderBg: Color @Composable get() = TvColors.SurfaceOverlay
+private val LiveFavoriteGold: Color @Composable get() = TvColors.Warning
 private val LiveEpgCurrentBg = Color(0x0AE50914)
 
 private const val MOBILE_LIVE_LOG_TAG = "TVBoxMobileLive"
@@ -1385,7 +1389,7 @@ private fun MobileLivePlayerScreen(
                                 },
                                 style = MaterialTheme.typography.labelSmall,
                                 maxLines = 1,
-                                color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting),
+                                color = liveLineLatencyColor(hasResult, latency, state.liveLineTesting, rememberLiveLatencyColors()),
                             )
                         }
                     }
@@ -1773,7 +1777,7 @@ private fun MobileLiveDebugOverlay(text: String, modifier: Modifier = Modifier) 
     ) {
         Text(
             text = text,
-            color = Color(0xFF7AE2BA),
+            color = TvColors.Success,
             style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.verticalScroll(rememberScrollState()),
         )

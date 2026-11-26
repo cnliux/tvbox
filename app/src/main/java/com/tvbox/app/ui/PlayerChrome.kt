@@ -662,12 +662,13 @@ private fun PlayerChromeTv(
                                 val durMs = data.durationMs.coerceAtLeast(1L).toFloat()
                                 // 缓冲终点 = 当前播放位置 + 已缓冲时长；拖动时仍以真实位置为基准。
                                 val bufferedEnd = ((data.positionMs + data.bufferedMs) / durMs).coerceIn(0f, 1f)
+                                val progressColor = TvColors.Success
                                 Canvas(Modifier.fillMaxWidth().height(if (progressFocused) 5.dp else 3.dp)) {
                                     val center = size.height / 2
                                     drawLine(Color.White.copy(alpha = 0.28f), Offset(0f, center), Offset(size.width, center), size.height, StrokeCap.Round)
                                     // 缓冲段：浅色延伸在播放进度之下，直观看到"还能往后播多少"。
                                     drawLine(Color.White.copy(alpha = 0.16f), Offset(0f, center), Offset(size.width * bufferedEnd, center), size.height, StrokeCap.Round)
-                                    drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
+                                    drawLine(progressColor, Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                                 }
                             },
                             modifier = Modifier.weight(1f).heightIn(min = 48.dp).padding(horizontal = 8.dp)
@@ -846,7 +847,7 @@ private fun PlayerChromeTouch(
                             )
                         }
                         if (data.buffering) {
-                            Text("缓冲中", color = Color(0xFF7AE2BA), style = MaterialTheme.typography.labelSmall)
+                            Text("缓冲中", color = TvColors.Success, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                 }
@@ -1152,10 +1153,12 @@ private fun PlayerChromePanel(
             ),
         ) + data.subtitleTracks
     }
+    // F-07：延迟档位配色从主题取一次，供纯函数拼装标签使用。
+    val latencyColors = rememberLatencyColors()
     // 进度更新每 250ms 触发一次重组，但标签只依赖面板与列表引用；缓存避免重复 map。
     val labels: List<AnnotatedString> = remember(
         panel, data.episodes, orderedIndexes, data.sources,
-        data.sourceLatencies, data.audioTracks, subtitleOptions,
+        data.sourceLatencies, data.audioTracks, subtitleOptions, latencyColors,
     ) {
         when (panel) {
             // 选集只显示剧集内容：源标题里的「1.」「第01集」前缀会与网格位置重复，
@@ -1163,7 +1166,7 @@ private fun PlayerChromePanel(
             PlayerPanel.Episodes -> data.episodes.mapIndexed { index, title ->
                 AnnotatedString(displayEpisodeTitle(title, index))
             }
-            PlayerPanel.Sources -> orderedIndexes.map { sourceTabLabel(data.sources[it], data.sourceLatencies) }
+            PlayerPanel.Sources -> orderedIndexes.map { sourceTabLabel(data.sources[it], data.sourceLatencies, latencyColors) }
             PlayerPanel.Audio -> data.audioTracks.map { AnnotatedString(it.label) }
             PlayerPanel.Subtitle -> subtitleOptions.map { AnnotatedString(it.label) }
         }
@@ -1584,7 +1587,7 @@ private fun PlayerUrlPanel(
                                     .fillMaxWidth()
                                     .border(
                                         width = 2.dp,
-                                        color = if (expandedIndex == index) Color(0xFF7AE2BA) else Color.Transparent,
+                                        color = if (expandedIndex == index) TvColors.Success else Color.Transparent,
                                         shape = RoundedCornerShape(10.dp),
                                     )
                                     .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -1622,7 +1625,7 @@ private fun PlayerUrlPanel(
             Text(
                 text = feedback ?: " ",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFF7AE2BA),
+                color = TvColors.Success,
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
@@ -1737,7 +1740,7 @@ private fun PlayerChromeMobilePanel(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
                                     MobileChip(
-                                        text = sourceTabLabel(source, data.sourceLatencies),
+                                        text = sourceTabLabel(source, data.sourceLatencies, rememberLatencyColors()),
                                         selected = index == data.sourceIndex,
                                         onClick = { actions.onSelectSource(index); onClose() },
                                     )
@@ -1962,7 +1965,7 @@ internal fun ControlButton(
         shape = shape,
         colors = ButtonDefaults.buttonColors(
             containerColor = when { primary -> Color.White; focused -> Color.White.copy(alpha = 0.18f); else -> Color.Transparent },
-            contentColor = if (primary) Color(0xFF101614) else Color.White.copy(alpha = 0.9f),
+            contentColor = if (primary) TvColors.Background else TvColors.TextPrimary.copy(alpha = 0.9f),
             disabledContainerColor = Color.Transparent, disabledContentColor = Color.White.copy(alpha = 0.3f),
         ),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
@@ -2057,7 +2060,7 @@ private fun SkipSettingsPanel(
             // 片头+片尾区间重叠时跳过不动作：提前说明，避免用户设置了 60s+90s 却毫无反馈。
             Text("提示：片头 + 片尾超过单集时长时跳过不会生效（避免在区间内来回跳）。",
                 style = MaterialTheme.typography.bodySmall,
-                color = Color(0xFFFACC15))
+                color = TvColors.Warning)
         }
     }
 }
@@ -2146,11 +2149,12 @@ private fun MobileProgressRow(
                     (slider.valueRange.endInclusive - slider.valueRange.start).coerceAtLeast(1f)).coerceIn(0f, 1f)
                 val durMs = durationMs.coerceAtLeast(1L).toFloat()
                 val bufferedEnd = ((positionMs + bufferedMs) / durMs).coerceIn(0f, 1f)
+                val progressColor2 = TvColors.Success
                 Canvas(Modifier.fillMaxWidth().height(4.dp)) {
                     val center = size.height / 2
                     drawLine(Color.White.copy(alpha = 0.25f), Offset(0f, center), Offset(size.width, center), size.height, StrokeCap.Round)
                     drawLine(Color.White.copy(alpha = 0.16f), Offset(0f, center), Offset(size.width * bufferedEnd, center), size.height, StrokeCap.Round)
-                    drawLine(Color(0xFF7AE2BA), Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
+                    drawLine(progressColor2, Offset(0f, center), Offset(size.width * fraction, center), size.height, StrokeCap.Round)
                 }
             },
             modifier = Modifier.weight(1f).heightIn(min = 48.dp),
@@ -2176,11 +2180,12 @@ private fun MobilePlayPauseButton(playing: Boolean, onClick: () -> Unit) {
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
+        val iconColor = TvColors.Background
         Canvas(Modifier.size(22.dp)) {
             if (playing) {
                 val barWidth = size.width * 0.26f
-                drawRect(Color(0xFF101614), topLeft = Offset(0f, 0f), size = Size(barWidth, size.height))
-                drawRect(Color(0xFF101614), topLeft = Offset(size.width - barWidth, 0f), size = Size(barWidth, size.height))
+                drawRect(iconColor, topLeft = Offset(0f, 0f), size = Size(barWidth, size.height))
+                drawRect(iconColor, topLeft = Offset(size.width - barWidth, 0f), size = Size(barWidth, size.height))
             } else {
                 val path = Path().apply {
                     moveTo(size.width * 0.12f, 0f)
@@ -2188,7 +2193,7 @@ private fun MobilePlayPauseButton(playing: Boolean, onClick: () -> Unit) {
                     lineTo(size.width * 0.12f, size.height)
                     close()
                 }
-                drawPath(path, Color(0xFF101614))
+                drawPath(path, iconColor)
             }
         }
     }
@@ -2231,7 +2236,7 @@ private fun MobileChip(
             .clip(RoundedCornerShape(10.dp))
             .background(
                 when {
-                    selected -> Color(0xFF1ED760)
+                    selected -> TvColors.Success
                     enabled -> Color.White.copy(alpha = 0.14f)
                     else -> Color.White.copy(alpha = 0.05f)
                 },
@@ -2250,14 +2255,14 @@ private fun MobileChip(
             style = MaterialTheme.typography.labelLarge,
             color = when {
                 !enabled -> Color.White.copy(alpha = 0.32f)
-                selected -> Color(0xFF101614)
+                selected -> TvColors.Background
                 else -> Color.White.copy(alpha = 0.92f)
             },
         )
     }
 }
 
-private fun sourceTabLabel(source: PlayerChromeSource, latencies: Map<String, Long?>): AnnotatedString {
+private fun sourceTabLabel(source: PlayerChromeSource, latencies: Map<String, Long?>, colors: LatencyColors): AnnotatedString {
     val tested = source.lineId.isNotBlank() && latencies.containsKey(source.lineId)
     val latency = latencies[source.lineId]
     val tier = lineLatencyTier(latency, tested)
@@ -2265,7 +2270,7 @@ private fun sourceTabLabel(source: PlayerChromeSource, latencies: Map<String, Lo
         append(source.name)
         if (tested) {
             append(" · ")
-            withStyle(SpanStyle(color = latencyTierColor(tier))) {
+            withStyle(SpanStyle(color = latencyTierColor(tier, colors))) {
                 // 只写毫秒数时用户还得自己记阈值；同时给出档位名，一眼判断快慢。
                 append(latency?.let { "${it}ms · ${lineLatencyTierLabel(tier)}" } ?: lineLatencyTierLabel(tier))
             }
@@ -2273,14 +2278,29 @@ private fun sourceTabLabel(source: PlayerChromeSource, latencies: Map<String, Lo
     }
 }
 
-/** 三色阈值标志的颜色：绿 ≤300ms、黄 ≤800ms、红 >800ms；未测速/超时用中性色。 */
-private fun latencyTierColor(tier: LineLatencyTier): Color = when (tier) {
-    LineLatencyTier.Fast -> Color(0xFF4ADE80)
-    LineLatencyTier.Medium -> Color(0xFFFACC15)
-    LineLatencyTier.Slow -> Color(0xFFF87171)
-    LineLatencyTier.Timeout -> Color.White.copy(alpha = 0.6f)
-    LineLatencyTier.Untested -> Color.White.copy(alpha = 0.6f)
+/**
+ * 三色阈值标志的颜色：绿 ≤300ms、黄 ≤800ms、红 >800ms；未测速/超时用中性色。
+ * F-07：颜色由调用方从主题语义色（Success/Warning/Danger）传入，不再写死十六进制；
+ * 保持纯函数形态以便在 remember/map 等非 @Composable 上下文中使用。
+ */
+private fun latencyTierColor(tier: LineLatencyTier, colors: LatencyColors): Color = when (tier) {
+    LineLatencyTier.Fast -> colors.fast
+    LineLatencyTier.Medium -> colors.medium
+    LineLatencyTier.Slow -> colors.slow
+    LineLatencyTier.Timeout -> colors.neutral
+    LineLatencyTier.Untested -> colors.neutral
 }
+
+/** F-07：延迟档位配色，由 @Composable 侧一次性从主题取好后传入纯函数。 */
+private data class LatencyColors(val fast: Color, val medium: Color, val slow: Color, val neutral: Color)
+
+@Composable
+private fun rememberLatencyColors(): LatencyColors = LatencyColors(
+    fast = TvColors.Success,
+    medium = TvColors.Warning,
+    slow = TvColors.Danger,
+    neutral = TvColors.TextTertiary,
+)
 
 /**
  * 线路行前的圆形阈值标志。
@@ -2289,7 +2309,7 @@ private fun latencyTierColor(tier: LineLatencyTier): Color = when (tier) {
  */
 @Composable
 private fun LatencyTierDot(tier: LineLatencyTier) {
-    val color = latencyTierColor(tier)
+    val color = latencyTierColor(tier, rememberLatencyColors())
     Box(
         modifier = Modifier
             .size(10.dp)
