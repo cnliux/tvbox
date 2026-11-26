@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.48/20048",
+   "createdBy": "1.0.49/20049",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.48/20048",
-  "versionCode": 20048,
-  "versionName": "1.0.48",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
-  "apkSha256": "124b08337a91a4cc24b0698951c171f8c2c775ee6fcdfe5b418709e478d49033",
-  "apkSize": 27013424,
+   "createdBy": "1.0.49/20049",
+  "versionCode": 20049,
+  "versionName": "1.0.49",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.49/juhe-video-v1.0.49.apk",
+  "apkSha256": "1ec33f9988a2327aa8478271f2546e4b5af5bb0d6a7d51bc4ce6de7b829b8003",
+  "apkSize": 27013428,
   "force": false,
   "changelog": [],
-  "release_highlights": ["电视端看直播按键不再打架：OK 直接开节目/频道列表，设置键打开功能面板（线路、播放信息、播放地址都在面板里），不会再按什么键都乱弹按钮栏；", "播放卡顿时，电视端直播画面上直接有「解码」按钮，一键在 自适应→硬解→软解 之间切换并自动重连；", "电视端设置页新增「导出崩溃日志」与平台直播「第三方代理解析」管理；遥控数字 4/5 可加少儿锁 PIN 门禁；节目单过期显示「~」角标并后台自动刷新。"],
+  "release_highlights": ["直播节目单（EPG）现在优先用订阅自带地址，设置里填的地址改为「备用」，订阅没自带时才启用，命中更准；", "手机端和电视端设置都能直接填/清「备用 EPG 地址」，不用再靠导入订阅间接配置；", "修复部分 IPTV 订阅读不到节目单、以及换订阅后残留上一份节目单的问题。"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.49/juhe-video-v1.0.49.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.49/juhe-video-v1.0.49.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.49/juhe-video-v1.0.49.apk"
   ]
 }
