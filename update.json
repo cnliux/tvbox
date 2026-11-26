@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.45/20045",
+   "createdBy": "1.0.46/20046",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.45/20045",
-  "versionCode": 20045,
-  "versionName": "1.0.45",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.45/juhe-video-v1.0.45.apk",
-  "apkSha256": "d1507a05580a7b15d174982d60b964d3e36e43bac0f67a50fc28f59d92f29d16",
-  "apkSize": 27619847,
+   "createdBy": "1.0.46/20046",
+  "versionCode": 20046,
+  "versionName": "1.0.46",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
+  "apkSha256": "bb4335f71d19817a84cbc88f7d5d3d8b940367f1bb6535632b8b3419ae7d4f91",
+  "apkSize": 26390832,
   "force": false,
   "changelog": [],
-  "release_highlights": ["遥控器焦点框随主题换色了，不再出现「忽白忽绿、切主题不换色」的错乱；", "手机端历史页 / 搜索页 / 直播页的点按目标统一到 48dp，误触更少；", "首次启动的《内容免责确认》在手机上也跟随系统字号与主题了，条款可以滚动看完。"],
+  "release_highlights": ["安装后可以正常打开应用了（v1.0.45 存在启动即崩的问题，本版已修复）；", "首次启动的合规确认页可以正常勾选并进入首页，不再卡在「正在保存…」。"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.45/juhe-video-v1.0.45.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.45/juhe-video-v1.0.45.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.45/juhe-video-v1.0.45.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk"
   ]
 }
