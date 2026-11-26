@@ -313,23 +313,41 @@ internal class UnifiedRemoteKeyRouter(
         if (!isKeyUp) return false
         chrome.bump()
         return when (action) {
-            RemoteKeyAction.DirectionLeft -> {
+            RemoteKeyAction.DirectionUp -> {
+                // 与电视直播页（LiveRemoteKeyRouter 默认 UP_DOWN_CHANNEL）对齐：↑↓ 换台。
                 callbacks.onAction(Action.PreviousChannel)
                 true
             }
 
-            RemoteKeyAction.DirectionRight -> {
+            RemoteKeyAction.DirectionDown -> {
                 callbacks.onAction(Action.NextChannel)
                 true
             }
 
-            RemoteKeyAction.Confirm, RemoteKeyAction.PlayPause -> {
+            RemoteKeyAction.DirectionLeft -> {
+                // ←→ 切线路（直播页惯例），不再与 ↑↓ 的换台语义冲突。
+                callbacks.onAction(Action.PreviousLine)
+                true
+            }
+
+            RemoteKeyAction.DirectionRight -> {
+                callbacks.onAction(Action.NextLine)
+                true
+            }
+
+            RemoteKeyAction.Confirm -> {
                 if (callbacks.isBlockingCardVisible()) {
                     false // 失败卡在场，让焦点按钮拿到 OK。
                 } else {
                     callbacks.onAction(Action.Confirm)
                     true
                 }
+            }
+
+            RemoteKeyAction.PlayPause -> {
+                // 媒体播放/暂停键 = 播放/暂停语义（与点播、平台直播一致），不再与 OK 同义。
+                if (isKeyUp) callbacks.onAction(Action.TogglePlayback)
+                true
             }
 
             RemoteKeyAction.Menu -> {
