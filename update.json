@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.50/20050",
+   "createdBy": "1.0.51/20051",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.50/20050",
-  "versionCode": 20050,
-  "versionName": "1.0.50",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.50/juhe-video-v1.0.50.apk",
-  "apkSha256": "93fc4853f2c7887117515ae9d1c75c4f1a188825c145064460eb0f419e488683",
+   "createdBy": "1.0.51/20051",
+  "versionCode": 20051,
+  "versionName": "1.0.51",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
+  "apkSha256": "a5de4b01c7512dfb801be9b4c3f816eb0259bd60bcf3f053c3f444a60c1c5d8f",
   "apkSize": 27013424,
   "force": false,
   "changelog": [],
-  "release_highlights": ["直播换台时节目单（EPG）更快出来：解析失败的节目单不再被缓存 30 分钟，切网络/换频道会重新拉取；", "遥控器操作更跟手：首页返回不再每次跳回顶部、低端盒子打开线路浮层不再「点不动/一按就退」；", "直播频道浮层焦点行更醒目，播放器面板的阈值说明、空节目单在小屏/大字号下不再被裁切。"],
+  "release_highlights": ["支持 `.xml.gz` 压缩节目单（国内常见 EPG 源）；", "手机直播控制栏新增「线路」按钮，竖屏也能一键换线路；", "节目单刷新提速：从最长 7 天更新一次，改为 6 小时自动刷新；"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.50/juhe-video-v1.0.50.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.50/juhe-video-v1.0.50.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.50/juhe-video-v1.0.50.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk"
   ]
 }
