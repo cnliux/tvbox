@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.46/20046",
+   "createdBy": "1.0.47/20047",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.46/20046",
-  "versionCode": 20046,
-  "versionName": "1.0.46",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
-  "apkSha256": "bb4335f71d19817a84cbc88f7d5d3d8b940367f1bb6535632b8b3419ae7d4f91",
-  "apkSize": 26390832,
+   "createdBy": "1.0.47/20047",
+  "versionCode": 20047,
+  "versionName": "1.0.47",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
+  "apkSha256": "94aef512f028de424eec618e72653673621f5a76206a4ad441cd525b59b2d351",
+  "apkSize": 26997044,
   "force": false,
   "changelog": [],
-  "release_highlights": ["安装后可以正常打开应用了（v1.0.45 存在启动即崩的问题，本版已修复）；", "首次启动的合规确认页可以正常勾选并进入首页，不再卡在「正在保存…」。"],
+  "release_highlights": ["切换主题后，播放器控制条、平台直播页、手机直播页、搜索页、首启合规页都跟着换色了（此前这些页面「纹丝不动」）；", "手机端设置页的少儿锁 PIN 弹的是数字键盘，保存按钮不再被输入法盖住；", "手机端历史页 / 底栏的字体跟随你选的「超大」字号一起放大，底栏标签不再被裁成半行；"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.46/juhe-video-v1.0.46.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk"
   ]
 }
