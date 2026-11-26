@@ -1296,8 +1296,12 @@ private fun MobileLivePlayerScreen(
     // 而 LiveChannel 是 data class（含 lines 列表），每次重组都要逐字段深比较；同组上百个频道、
     // 源里几千条频道时就是数十万次比较，滚动必掉帧。这里预先建表，查询 O(1)。
     val channelIndexOf = remember(channels) {
-        val map = HashMap<LiveChannel, Int>(channels.size)
-        channels.forEachIndexed { index, item -> map.putIfAbsent(item, index) }
+        // M-06：以频道在完整列表中的身份（列表下标）为准，建一个 identity 映射，
+        // 不再用 data class 全等做键——同组里频道号重复或字段完全相同的两条频道
+        // 会被 putIfAbsent 折叠成同一个下标，点击直接跳到错误的频道。
+        // identityHashCode 区分实例，配合列表引用变化时整体重建，避免误命中。
+        val map = HashMap<Int, Int>(channels.size)
+        channels.forEachIndexed { index, item -> map[System.identityHashCode(item)] = index }
         map
     }
 
@@ -1351,7 +1355,11 @@ private fun MobileLivePlayerScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(channel.lines, key = { _, line -> line.url }) { index, line ->
+                // M-06：同 URL 多条不同名线路会 key 冲突；拼 name+url+下标保证唯一。
+                itemsIndexed(
+                    channel.lines,
+                    key = { idx, line -> "${line.name}#${line.url}#$idx" },
+                ) { index, line ->
                     val isSelected = index == lineIndex
                     val hasResult = state.liveLineLatencies.containsKey(line.url)
                     val latency = state.liveLineLatencies[line.url]
@@ -1531,10 +1539,15 @@ private fun MobileLivePlayerScreen(
             contentPadding = PaddingValues(horizontal = 14.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            items(relatedChannels, key = { it.number }) { related ->
+            // M-06：同组重复频道号很常见，单用 number 作 key 会冲突；
+                // 拼 groupName+number+首个线路 URL，并退化为下标兜底，保证唯一。
+                itemsIndexed(
+                    relatedChannels,
+                    key = { index, it -> "${it.groupName}#${it.number}#${it.lines.firstOrNull()?.url ?: index}#$index" },
+                ) { _, related ->
                 // 提前取「正在播」用于整卡合并播报，避免读屏逐个朗读名称与节目。
                 val relatedNow = actions.liveEpgNow(related)?.title
-                val relatedIndex = channelIndexOf[related] ?: -1
+                val relatedIndex = channelIndexOf[System.identityHashCode(related)] ?: -1
                 Column(
                     modifier = Modifier
                         .width(100.dp)

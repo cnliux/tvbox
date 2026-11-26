@@ -444,7 +444,8 @@ internal fun MobileHistoryScreen(
                             }
                         } else {
                             sections.forEachIndexed { sectionIndex, section ->
-                                item(key = "header_$sectionIndex") {
+                                // M-06：用稳定的分组标签作 key（下标会随排序/筛选变化导致标题闪错位）。
+                                item(key = "header_${section.label}") {
                                     SectionHeader(
                                         label = section.label,
                                         count = section.items.size,

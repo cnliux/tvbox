@@ -125,6 +125,7 @@ import com.tvbox.app.ui.components.CategoryPill
 import com.tvbox.app.ui.components.DoubanHotPosterCard
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
+import com.tvbox.app.ui.components.TvA11y
 import com.tvbox.app.ui.components.GuidedEmptyState
 import com.tvbox.app.ui.components.HistoryItemCard
 import com.tvbox.app.ui.components.LoadingState
@@ -1969,8 +1970,13 @@ private fun SourceManageCard(
                     // T2-11：8字符指纹标识，点击复制到剪贴板（siteId 的短形式）。
                     val badgeShape = RoundedCornerShape(4.dp)
                     Surface(
+                        // M-04：徽章原约 16dp 高，手机上几乎点不中「复制指纹」。
+                        // 这里把命中区抬到 48dp 最小触摸目标（视觉仍紧凑，仅扩热区），
+                        // 并补无障碍标签，避免与父卡点击语义混淆。
                         modifier = Modifier
-                            .clickable(onClick = onCopyFingerprint)
+                            .heightIn(min = 48.dp)
+                            .clickable(onClickLabel = "复制指纹", onClick = onCopyFingerprint)
+                            .semantics { contentDescription = TvA11y.action("源指纹 $fingerprint", "复制") }
                             .tvFocusScale(shape = badgeShape)
                             .focusable(),
                         shape = badgeShape,
