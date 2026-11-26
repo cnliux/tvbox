@@ -160,26 +160,29 @@ jobs:
             exit 1
           fi
 
-      # P2-19：gomobile JNI 边界不被 R8 fullMode 裁掉。JNI_OnLoad 符号被裁即
-      # 起播平台直播抛 UnsatisfiedLinkError。用 strings 提取导出符号名校验。
+      # P2-19：gomobile JNI 边界不被 R8 fullMode 裁掉。gomobile bind 产出的
+      # 动态库固定命名为 libgojni.so（与 Go 模块名无关），其 JNI 入口以
+      # Java_platformlive_* 导出符号暴露；该符号若被 R8/剥离裁掉，起播平台
+      # 直播将抛 UnsatisfiedLinkError。用 strings 提取导出符号名校验。
+      # 注意：gomobile 库并不导出 JNI_OnLoad，故以 Java_platformlive_ 为边界标志。
       - name: Verify gomobile JNI preserved
         run: |
           mkdir -p /tmp/jni_check
           cd /tmp/jni_check
-          unzip -o "${GITHUB_WORKSPACE}/dist/${APK_NAME}" 'lib/arm64-v8a/*platformlive*.so' >/dev/null 2>&1 || {
-            echo "::error::APK 内未找到 libplatformlive.so"
+          unzip -o "${GITHUB_WORKSPACE}/dist/${APK_NAME}" 'lib/arm64-v8a/*gojni*.so' >/dev/null 2>&1 || {
+            echo "::error::APK 内未找到 libgojni.so（gomobile JNI 动态库）"
             exit 1
           }
-          SO=$(find . -name '*platformlive*.so' | head -1)
+          SO=$(find . -name '*gojni*.so' | head -1)
           if [ -z "$SO" ]; then
-            echo "::error::APK 内未找到 libplatformlive.so"
+            echo "::error::APK 内未找到 libgojni.so（gomobile JNI 动态库）"
             exit 1
           fi
-          echo "检查 $SO 的 JNI 符号…"
-          if strings "$SO" | grep -q "JNI_OnLoad"; then
-            echo "JNI_OnLoad 已保留（未被 R8 剥离）"
+          echo "检查 $SO 的 JNI 边界符号…"
+          if strings "$SO" | grep -q "Java_platformlive_"; then
+            echo "Java_platformlive_* JNI 入口已保留（未被 R8 剥离）"
           else
-            echo "::error::libplatformlive.so 缺少 JNI_OnLoad，R8 fullMode 可能裁掉了 gomobile JNI 边界"
+            echo "::error::libgojni.so 缺少 Java_platformlive_* JNI 入口，R8 fullMode 可能裁掉了 gomobile JNI 边界"
             exit 1
           fi
 
