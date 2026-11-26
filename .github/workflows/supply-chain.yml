@@ -41,12 +41,24 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: platform_live_go/go.mod
+      # platformlive.aar 不入库，而 app 依赖 implementation(files("libs/platformlive.aar")) 是硬依赖：
+      # 只传 -PtvboxSkipPlatformBind=true 而不提供 AAR 会让 Kotlin 编译直接失败
+      # （曾导致本 job 长期红灯）。这里与 ci.yml/release.yml 共用同一份源码哈希缓存，
+      # 未命中则由 preBuild 的 bindPlatformLive 现场用 gomobile 生成。
+      - name: Restore platformlive AAR cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            app/libs/platformlive.aar
+            app/libs/platformlive.fingerprint
+          key: platformlive-aar-${{ hashFiles('platform_live_go/**', 'tools/bind-platform-live.sh') }}
       - name: Initialize CodeQL
         uses: github/codeql-action/init@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3
         with:
           languages: kotlin, java, go
       - name: Build Kotlin (CodeQL needs a build for Java/Kotlin)
-        run: ./gradlew --no-daemon :app:compileDebugKotlin -PtvboxSkipPlatformBind=true
+        # 需要 NDK 才能 gomobile bind；GitHub ubuntu runner 预装 Android SDK/NDK。
+        run: ./gradlew --no-daemon :app:compileDebugKotlin
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@74c1aea9df7c0f02e9b7bfe4a8935abf2e5e3aa6 # v3
 

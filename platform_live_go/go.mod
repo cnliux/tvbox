@@ -1,6 +1,6 @@
 module github.com/cnliux/tvbox/platform_live_go
 
-go 1.26.0
+go 1.27.4
 
 require github.com/dop251/goja v0.0.0-20261102140139-622d10077b6c
 

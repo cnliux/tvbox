@@ -4,6 +4,44 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.47 - 2026-11-26 —「主题统一 + 手机更好用」
+
+**你会感觉到**：
+- 切换主题后，播放器控制条、平台直播页、手机直播页、搜索页、首启合规页都跟着换色了（此前这些页面「纹丝不动」）；
+- 手机端设置页的少儿锁 PIN 弹的是数字键盘，保存按钮不再被输入法盖住；
+- 手机端历史页 / 底栏的字体跟随你选的「超大」字号一起放大，底栏标签不再被裁成半行；
+- 源管理里那个小指纹徽章，手指能正常点到了。
+
+**修了什么**：
+- **F-07 主题漏改**：PlayerChrome（15 处）、PlatformLiveScreen（15 处）、
+  MobileLiveScreen（8 个颜色常量 / 31 处引用）、LiveTvChannelPanel、SearchScreen、
+  TvBoxApp、MobileNavigationBar、FirstRunScreen 的硬编码十六进制色统一收敛到
+  `TvColors` 语义 token；Canvas 绘制因不能调用 @Composable，改为「Composable 侧取色 →
+  纯函数接收」；延迟档位配色抽 `LatencyColors` / `LiveLatencyColors`。
+- **代码压缩**：新增 `SettingCategoryPalette` 作为设置页 8 组分类卡渐变的唯一真源，
+  消除手机版与电视版各抄一份的 16 个重复色值。
+- **M-05** 少儿锁 PIN：`NumberPassword` + `ImeAction.Done`，详情区 `imePadding()`，按钮 48dp。
+- **M-07** `HistoryTokens` 的 16/13/11sp 改为从 `MaterialTheme.typography` 派生。
+- **M-11** 底部导航补「Tab名+选中态」语义，历史页清除按钮/建议词补 contentDescription；
+  新增 `TvA11y.toggle/input/clear`。
+- **M-04** 源管理指纹徽章命中区 16dp → 48dp（视觉仍紧凑）。
+- **M-06** 手机直播页 `channelIndexOf` 由 data class 全等 + `putIfAbsent` 改为
+  identityHashCode 映射（修复同组重复频道号「点击跳错频道」）；相关频道/线路/历史分组
+  的 LazyList key 全部唯一化。
+- **F-05** 搜索页首焦增加一帧等待，窄屏下焦点稳定落在输入框。
+- **S5-30** 移除启动路径上的 `runBlocking` 同步读盘，改为 IO 协程异步判定。
+- **性能**：`LiveChannel` / `LiveChannelLine` / `EpgProgram` / `LiveUiState` /
+  `PlatformLiveUiState` 加 `@Immutable`，直播列表滚动可跳过未变子树重组。
+- **健壮性**：直播源解析加 4MB 上限防 OOM；线路测速对非法 URL 安全降级；
+  备份导出对非 JSON 对象的 legacy body 用 `as?` 兜底；重定向拦截器新增 A→B→A 环检测。
+- **安全**：`TvBoxApplicationRef.context` 类型收窄为 `Application`，编译期封死
+  「Activity 泄漏到静态字段」路径。
+- **资源**：删除全仓零引用的 `res/font/tvbox_iconfont.ttf`（2.8KB）。
+
+**已知问题**：
+- 直播面板焦点陷阱（F-03）仍未接入生产 `LiveScreen`，需真机反复验证按键穿透，留待下版专门处理；
+- 手机/TV 留白与尺寸分端（F-06/M-08）涉及全量手机页重构，未在本版展开。
+
 ## v1.0.46 - 2026-11-26 —「修复启动崩溃」
 
 **你会感觉到**：
