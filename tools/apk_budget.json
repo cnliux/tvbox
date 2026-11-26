@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "note": "T4-30：APK 体积预算。超限不是立刻 fail 而是 comment + PR 描述说明；连续 2 个 PR 超限才 fail。",
+  "budgets": {
+    "juhe-video-v*.apk": {
+      "total": 30000000,
+      "dex": 11000000,
+      "native": 5200000,
+      "res": 7000000,
+      "assets": 3000000
+    }
+  },
+  "tolerancePercent": 3,
+  "consecutiveOverrunsBeforeFail": 2,
+  "verification": {
+    "tool": "apkanalyzer",
+    "diffCommand": "apkanalyzer apk summarize <APK> + 按包名 dex 归类",
+    "mustCompareAgainst": "上一个 tag 的 Release APK"
+  }
+}

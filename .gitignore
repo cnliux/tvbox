@@ -57,6 +57,9 @@ tools/*
 !tools/release_verify.py
 # T-CI 诊断：Unit tests 失败时把失败断言打到 annotation，CI 需要随仓库复用。
 !tools/diagnose_failed_tests.py
+# T4-30 APK 体积预算：BuildConfigGovernanceTest 在 Linux CI 上读取此文件，
+# tools/* 默认忽略导致 checkout 后缺失而测试失败，必须随仓库入库。
+!tools/apk_budget.json
 # T8-52 发版前 checklist：CI 的 Pre-release checklist 步骤引用，需要随仓库复用。
 !tools/release_checklist.py
 !tools/check_schema.sh
