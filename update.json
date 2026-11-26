@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.47/20047",
+   "createdBy": "1.0.48/20048",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.47/20047",
-  "versionCode": 20047,
-  "versionName": "1.0.47",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
-  "apkSha256": "94aef512f028de424eec618e72653673621f5a76206a4ad441cd525b59b2d351",
-  "apkSize": 26997044,
+   "createdBy": "1.0.48/20048",
+  "versionCode": 20048,
+  "versionName": "1.0.48",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
+  "apkSha256": "124b08337a91a4cc24b0698951c171f8c2c775ee6fcdfe5b418709e478d49033",
+  "apkSize": 27013424,
   "force": false,
   "changelog": [],
-  "release_highlights": ["切换主题后，播放器控制条、平台直播页、手机直播页、搜索页、首启合规页都跟着换色了（此前这些页面「纹丝不动」）；", "手机端设置页的少儿锁 PIN 弹的是数字键盘，保存按钮不再被输入法盖住；", "手机端历史页 / 底栏的字体跟随你选的「超大」字号一起放大，底栏标签不再被裁成半行；"],
+  "release_highlights": ["电视端看直播按键不再打架：OK 直接开节目/频道列表，设置键打开功能面板（线路、播放信息、播放地址都在面板里），不会再按什么键都乱弹按钮栏；", "播放卡顿时，电视端直播画面上直接有「解码」按钮，一键在 自适应→硬解→软解 之间切换并自动重连；", "电视端设置页新增「导出崩溃日志」与平台直播「第三方代理解析」管理；遥控数字 4/5 可加少儿锁 PIN 门禁；节目单过期显示「~」角标并后台自动刷新。"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.47/juhe-video-v1.0.47.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.48/juhe-video-v1.0.48.apk"
   ]
 }
