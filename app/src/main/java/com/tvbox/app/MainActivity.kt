@@ -52,8 +52,10 @@ import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LanResolverGuard
 import com.tvbox.app.domain.LegalTerms
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.CompositionLocalProvider
 import com.tvbox.app.crash.CrashHandler
 import com.tvbox.app.ui.FirstRunScreen
+import com.tvbox.app.ui.LocalTouchMode
 import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.theme.TVBoxTheme
@@ -195,16 +197,22 @@ class MainActivity : ComponentActivity() {
             }
         }
         setContent {
-            if (showLegalScreen) {
-                FirstRunScreen(
-                    onAccepted = { viewModel.openHome() },
-                )
-            } else {
-                val state = viewModel.state.collectAsStateWithLifecycle().value
-                TVBoxTheme(
-                    fontScale = state.appSettings.fontScale,
-                    themeAccent = state.appSettings.themeAccent,
-                ) {
+            val state = viewModel.state.collectAsStateWithLifecycle().value
+            TVBoxTheme(
+                fontScale = state.appSettings.fontScale,
+                themeAccent = state.appSettings.themeAccent,
+            ) {
+                if (showLegalScreen) {
+                    // M-02：首启法务页移入主题与设备模式作用域，手机端不再画 TV 焦点框、
+                    // 且正确跟随用户字号/主题；LocalTouchMode 按设备模式提供。
+                    CompositionLocalProvider(
+                        LocalTouchMode provides (state.effectiveDeviceMode == DeviceMode.Mobile),
+                    ) {
+                        FirstRunScreen(
+                            onAccepted = { viewModel.openHome() },
+                        )
+                    }
+                } else {
                     // 首页没有可返回的上层页面：连续按两次返回才退出应用，避免误触直接关闭。
                     BackHandler {
                         if (state.screen != com.tvbox.app.ui.TvScreen.Home) {

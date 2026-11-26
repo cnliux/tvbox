@@ -107,6 +107,7 @@ import com.tvbox.app.domain.lineLatencyTierLabel
 import com.tvbox.app.domain.nextPlaybackSpeed
 import com.tvbox.app.domain.nextVideoScaleMode
 import com.tvbox.app.domain.sortByLatency
+import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.delay
 
 /**
@@ -127,6 +128,8 @@ internal const val PLAYER_CHROME_TOUCH_AUTO_HIDE_MS = 4_000L
  */
 internal class PlayerChromeState(
     initialVisible: Boolean = false,
+    /** M-01：触摸模式（手机）下控件自动隐藏不再把焦点移到播放器根节点。 */
+    val touchMode: Boolean = false,
 ) {
     var visible by mutableStateOf(initialVisible)
     var panel by mutableStateOf(PlayerPanel.None)
@@ -163,6 +166,8 @@ internal class PlayerChromeState(
     }
 
     fun restoreFocus() {
+        // 触摸模式下不抢焦：手机触摸用户没有遥控器，焦点框落在画面上反而是视觉噪音。
+        if (touchMode) return
         runCatching { rootFocus.requestFocus() }
     }
 }
@@ -1369,7 +1374,7 @@ private fun PlayerInfoRowItem(row: PlayerInfoRow, modifier: Modifier = Modifier)
             .focusable()
             .border(
                 width = 2.dp,
-                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                color = if (focused) TvColors.FocusRing else Color.Transparent,
                 shape = RoundedCornerShape(10.dp),
             )
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1494,7 +1499,7 @@ private fun SettingsRowItem(
             .focusable()
             .border(
                 width = 2.dp,
-                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                color = if (focused) TvColors.FocusRing else Color.Transparent,
                 shape = RoundedCornerShape(10.dp),
             )
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1953,7 +1958,7 @@ internal fun ControlButton(
     Button(
         onClick = onClick, enabled = enabled,
         modifier = modifier.heightIn(min = minHeight).onFocusChanged { focused = it.isFocused }
-            .border(2.dp, if (focused && enabled) Color(0xFF7AE2BA) else Color.Transparent, shape),
+            .border(2.dp, if (focused && enabled) TvColors.FocusRing else Color.Transparent, shape),
         shape = shape,
         colors = ButtonDefaults.buttonColors(
             containerColor = when { primary -> Color.White; focused -> Color.White.copy(alpha = 0.18f); else -> Color.Transparent },

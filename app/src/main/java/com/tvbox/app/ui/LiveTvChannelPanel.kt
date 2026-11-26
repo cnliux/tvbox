@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.LiveChannel
+import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.delay
 import androidx.compose.ui.input.key.Key as ComposeKey
 
@@ -130,7 +131,8 @@ internal fun LiveChannelOverlayPanel(
 
     val groupListState = rememberLazyListState()
     val channelListState = rememberLazyListState()
-    val panelFocusRequester = remember { FocusRequester() }
+    // F-04：面板首焦复用统一焦点请求（60ms 延迟 + 每帧重试，低端机目标节点晚进组合时不丢焦）。
+    val panelFocus = rememberTvFocusRequest(key = Unit, delayMs = 60L, retries = 2)
 
     // 焦点行滚进可视区；分组 Tab 同步滚到选中项。
     LaunchedEffect(focusedIndex, visibleChannels) {
@@ -141,10 +143,6 @@ internal fun LiveChannelOverlayPanel(
     }
     LaunchedEffect(groupIndex) {
         groupListState.animateScrollToItem(groupIndex.coerceIn(0, (groups.lastIndex).coerceAtLeast(0)))
-    }
-    LaunchedEffect(Unit) {
-        delay(60)
-        runCatching { panelFocusRequester.requestFocus() }
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
@@ -168,7 +166,7 @@ internal fun LiveChannelOverlayPanel(
                 .width(267.dp)
                 .background(LiveTvPanelBg)
                 .windowInsetsPadding(WindowInsets.safeDrawing)
-                .focusRequester(panelFocusRequester)
+                .then(panelFocus.anchor)
                 .onPreviewKeyEvent { event ->
                     if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     // 浮层打开期间方向键全部由本节点解释，避免外层再触发换台。
@@ -354,7 +352,7 @@ private fun LiveGroupPill(
             .border(
                 // #281：分组标题获得焦点时用 2dp 亮边与选中态区分。
                 width = if (selected || focused) 2.dp else 0.dp,
-                color = if (focused) Color.White else if (selected) LiveTvAccent else Color.Transparent,
+                color = if (focused) TvColors.FocusRing else if (selected) LiveTvAccent else Color.Transparent,
                 shape = RoundedCornerShape(18.dp),
             )
             .clickable(role = Role.Button, onClick = onClick)

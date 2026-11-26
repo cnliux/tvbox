@@ -3,6 +3,7 @@ package com.tvbox.app.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -33,6 +34,8 @@ class TvFocusRequest internal constructor(val requester: FocusRequester) {
  * @param enabled 对应原 effect 内的 `if` 条件。
  * @param delayMs 对应原 effect 内的 `delay(60)`。
  * @param clearFocusWhenDisabled 对应关闭面板时 `focusManager.clearFocus()`。
+ * @param retries 首帧失败后的额外重试次数（F-04：低端机 60ms 后目标节点可能尚未进入组合，
+ *                首焦静默失败；每帧重试一次，直到成功或耗尽次数）。
  */
 @Composable
 fun rememberTvFocusRequest(
@@ -40,6 +43,7 @@ fun rememberTvFocusRequest(
     enabled: Boolean = true,
     delayMs: Long = 0L,
     clearFocusWhenDisabled: Boolean = false,
+    retries: Int = 0,
 ): TvFocusRequest {
     val requester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -47,7 +51,14 @@ fun rememberTvFocusRequest(
         if (key == null) return@LaunchedEffect
         if (enabled) {
             if (delayMs > 0L) delay(delayMs)
-            runCatching { requester.requestFocus() }
+            var attempt = 0
+            while (true) {
+                val ok = runCatching { requester.requestFocus() }.getOrDefault(false)
+                if (ok || attempt >= retries) break
+                // 等待下一帧让目标节点进入组合后再试，避免 60ms 定时抢先于组合完成。
+                withFrameNanos { }
+                attempt++
+            }
         } else if (clearFocusWhenDisabled) {
             focusManager.clearFocus()
         }

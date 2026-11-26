@@ -303,8 +303,10 @@ private fun TvCategoryCard(
                     )
                 )
             )
-            .border(1.dp, category.gradientStart.copy(alpha = 0.25f), shape)
-            .tvFocusScale(shape = shape)
+            .tvFocusScale(
+                shape = shape,
+                idleBorder = category.gradientStart.copy(alpha = 0.25f),
+            )
             .clickable(role = Role.Button, onClick = onClick)
             // 图标、标题、副标题原本各自成节点，整卡合并成一条分类播报。
             .semantics(mergeDescendants = true) {

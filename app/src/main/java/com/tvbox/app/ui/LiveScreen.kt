@@ -196,7 +196,7 @@ private fun LivePlayerScreen(
     // 系统媒体键/耳机线控在应用未获焦时也能控制直播播放。
     rememberPlayerMediaSession(player = player)
     // TV 直播的顶/底信息条、频道 badge 与浮层层级统一由共享控件状态驱动。
-    val chrome = remember { PlayerChromeState(initialVisible = true) }
+    val chrome = remember { PlayerChromeState(initialVisible = true, touchMode = !isTelevision) }
     val playerFocusRequester = chrome.rootFocus
     // 播放信息只在面板打开时采样，关闭即停。
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
@@ -1115,35 +1115,6 @@ private fun LivePlayerScreen(
                     .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(bottom = 80.dp),
             )
-        }
-
-        // #69：TV 端切台横幅——大字号频道名+分组，2s 后由 LaunchedEffect 清除。
-        switchBanner?.let { ch ->
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 28.dp)
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color.Black.copy(alpha = 0.72f))
-                    .padding(horizontal = 22.dp, vertical = 12.dp),
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = ch.name,
-                        color = Color.White,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = ch.groupName,
-                        color = LiveTvAccent,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                    )
-                }
-            }
         }
 
         // #69：TV 端切台横幅——大字号频道名+分组，2s 后由 LaunchedEffect 清除。

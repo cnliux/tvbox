@@ -219,7 +219,7 @@ fun PlayerScreen(
     // 强制硬解无可用硬解并回落时，四个播放页共用同一段一次性提示。
     HardwareDecoderFallbackToast()
     // 控件状态收敛到共享层：visible / panel / 自动隐藏 / 焦点恢复 / 锁屏由 PlayerChromeState 统一管理。
-    val chrome = remember(movie.id, movie.apiLineId) { PlayerChromeState() }
+    val chrome = remember(movie.id, movie.apiLineId) { PlayerChromeState(touchMode = isMobile) }
     val playerFocusRequester = chrome.rootFocus
     // 播放信息只在面板打开时采样，关闭即停；采集器本身不改变播放行为。
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)

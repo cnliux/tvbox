@@ -453,7 +453,8 @@ private fun MobileLiveListScreen(
                 items(searchHistory, key = { it }) { keyword ->
                     Box(
                         modifier = Modifier
-                            .heightIn(min = 36.dp)
+                            // M-03：搜索历史 chip 原 36dp，与同页其他 48dp 控件标准不一，统一 48dp。
+                            .heightIn(min = 48.dp)
                             .clip(RoundedCornerShape(14.dp))
                             .background(LiveField)
                             .clickable(role = Role.Button) { query = keyword }
@@ -911,8 +912,8 @@ private fun MobileLivePlayerScreen(
     // 画面比例按频道记忆；未记忆时回退设置里的全局默认值。
     val scaleContentKey = liveVideoScaleKey(channel.groupName, channel.name)
     val videoScaleMode = state.appSettings.resolveVideoScaleMode(scaleContentKey)
-    // 控件显隐统一走共享状态；竖屏常驻、横屏 4 秒后自动收起。
-    val chrome = remember { PlayerChromeState(initialVisible = true) }
+    // 控件显隐统一走共享状态；竖屏常驻、横屏 4 秒后自动收起。手机页恒为触摸模式。
+    val chrome = remember { PlayerChromeState(initialVisible = true, touchMode = true) }
     // 分层返回：信息/地址面板 → 控件 → 退出播放页。原先只有列表层一个
     // BackHandler(enabled=playerOpen) 直接置 -1，横屏下打开「信息/地址」面板按返回
     // 会整个退出播放层，丢失播放现场；这里与 PlayerScreen / PlatformLive 统一。

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,8 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -107,12 +106,12 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 条款正文（可滚动区域）
+            // 条款正文（可滚动区域）：min 260dp，内容超出时可滚动，小屏/大字号/横屏不裁切。
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
-                    .height(260.dp),
+                    .heightIn(min = 260.dp),
                 color = Color(0xFF1A1A1A),
                 shape = MaterialTheme.shapes.medium,
             ) {
@@ -122,7 +121,8 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
                     color = Color(0xFFCCCCCC),
                     modifier = Modifier
                         .padding(16.dp)
-                        .fillMaxSize(),
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState()),
                 )
             }
 
@@ -207,8 +207,6 @@ private fun TermCheckbox(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
-
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -217,7 +215,6 @@ private fun TermCheckbox(
                 idleBorder = Color(0xFF444444).copy(alpha = 0.6f),
             )
             .clip(MaterialTheme.shapes.medium)
-            .focusRequester(focusRequester)
             .selectable(
                 selected = checked,
                 role = Role.Checkbox,

@@ -120,6 +120,7 @@ import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.tvFocusScale
+import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvLayout
 import com.tvbox.app.util.logSafeHeaderNames
 import com.tvbox.app.util.logSafeText
@@ -863,7 +864,7 @@ private fun PlatformLiveFavoriteStar(
                 .background(if (starFocused) MaterialTheme.colorScheme.primary else Color(0xCC101010))
                 .border(
                     width = if (starFocused) 2.dp else 0.dp,
-                    color = if (starFocused) Color.White else Color.Transparent,
+                    color = if (starFocused) TvColors.FocusRing else Color.Transparent,
                     shape = MaterialTheme.shapes.small,
                 ),
             contentAlignment = Alignment.Center,
@@ -1037,7 +1038,8 @@ private fun PlatformLivePlayerScreen(
         }
     }
     // 控件显隐/自动隐藏/返回层级统一走共享状态；平台直播保留自己的房间与候选语义。
-    val chrome = remember { PlayerChromeState(initialVisible = true) }
+    val chromeTouchMode = LocalTouchMode.current
+    val chrome = remember { PlayerChromeState(initialVisible = true, touchMode = chromeTouchMode) }
     val playerFocusRequester = chrome.rootFocus
 
     // 竖滑调音量/亮度：与手机电视直播页共用 PlayerTouchGestureHandler，保持两个直播页
@@ -1937,7 +1939,7 @@ private fun PlatformLivePlayerScreen(
                                         )
                                         .border(
                                             width = if (focused) 1.dp else 0.dp,
-                                            color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                                            color = if (focused) TvColors.FocusRing else Color.Transparent,
                                             shape = MaterialTheme.shapes.small,
                                         )
                                         .then(
@@ -2304,7 +2306,7 @@ private fun PlatformLiveRoomListRow(
             )
             .border(
                 width = if (focused) 1.dp else 0.dp,
-                color = if (focused) Color(0xFF7AE2BA) else Color.Transparent,
+                color = if (focused) TvColors.FocusRing else Color.Transparent,
                 shape = shape,
             )
             .clickable(role = Role.Button, onClick = onClick)

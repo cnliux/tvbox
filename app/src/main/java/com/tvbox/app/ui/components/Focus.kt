@@ -10,6 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -30,8 +31,9 @@ fun Modifier.tvFocusScale(
     val touchMode = LocalTouchMode.current
     // #363：消费主题层 focusTokensFor(reduceMotion) 的产出。系统开启"减少动画"时
     // focusScale=1f、animationMs=0，此处不再缩放且动效时长归零，尊重系统无障碍偏好。
+    // F-01：ringWidth / ringColor / elevation 一并从 token 消费，改主题后焦点框随主题换色。
     val focusTokens = LocalTvFocus.current
-    val resolvedFocusedBorder = focusedBorder ?: TvColors.Accent
+    val resolvedFocusedBorder = focusedBorder ?: TvColors.FocusRing
     val resolvedIdleBorder = idleBorder ?: TvColors.Border
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
@@ -39,18 +41,21 @@ fun Modifier.tvFocusScale(
         animationSpec = tween(durationMillis = focusTokens.animationMs),
         label = "tv-focus-scale",
     )
+    val ringWidth = when {
+        focused && !touchMode -> focusTokens.ringWidth
+        focused -> 2.dp
+        else -> 1.dp
+    }
+    val elevation = if (focused) focusTokens.elevation else 0.dp
     this
+        .shadow(elevation = elevation, shape = shape, clip = false)
         .onFocusChanged { focused = it.isFocused || it.hasFocus }
         .graphicsLayer {
             scaleX = scale
             scaleY = scale
         }
         .border(
-            width = when {
-                focused && !touchMode -> 3.dp
-                focused -> 2.dp
-                else -> 1.dp
-            },
+            width = ringWidth,
             color = if (focused) resolvedFocusedBorder else resolvedIdleBorder,
             shape = shape,
         )

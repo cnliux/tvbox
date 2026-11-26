@@ -4,6 +4,24 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.45 - 2026-11-26 —「焦点更统一，手机更好点」
+
+**你会感觉到**：
+- 遥控器焦点框随主题换色了，不再出现「忽白忽绿、切主题不换色」的错乱；
+- 手机端历史页 / 搜索页 / 直播页的点按目标统一到 48dp，误触更少；
+- 首次启动的《内容免责确认》在手机上也跟随系统字号与主题了，条款可以滚动看完。
+
+**修了什么**：
+- 焦点 token 契约：`focusTokensFor(themeAccent, ringColor, reduceMotion)` 按主题解析，`tvFocusScale` 消费 `ringWidth/ringColor/elevation`；`TvFocusTokensTest` 重写为「字段被消费」契约断言 + 主题×reduceMotion 矩阵（F-01）。
+- 焦点色统一：`Focus.kt` 默认值 `Accent→FocusRing`；清除直播面板 / 播放器 / 平台直播 / 搜索框的散落固定白 / 薄荷绿 / 绿焦点色；设置分类卡去掉静态渐变边与 `tvFocusScale` 叠加的双边框（F-02）。
+- 直播面板首焦重试：`rememberTvFocusRequest` 增 `retries`（每帧重试），面板首焦 60ms + 2 帧重试，低端机不丢焦（F-04）。
+- 直播切台横幅重复绘制删除：两段相同 `switchBanner?.let` 保留一段（F-08）。
+- 手机播放器自动隐藏不抢焦：`PlayerChromeState` 增 `touchMode`，`restoreFocus()` 触摸模式直接返回；四个播放页按各自设备模式传入（M-01）。
+- 首启法务页：移入 `TVBoxTheme` 并按设备模式提供 `LocalTouchMode`；条款正文 `heightIn(min=260dp)+verticalScroll`；删死代码 FocusRequester（M-02）。
+- 手机触摸热区统一 48dp：历史页搜索入口 / 清除✕ / HistoryChip / 建议词、手机搜索页清除✕、手机直播搜索历史 chip（M-03）。
+
+**已知问题**：部分需真机确认的聚焦行为（直播面板焦点陷阱接线、7 处列表行焦点边框走统一缩放）待真机走查后跟进。
+
 ## v1.0.44 - 2026-11-26 —「更稳、更安全、更好用」
 
 **你会感觉到**：

@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -289,7 +291,7 @@ internal fun MobileHistoryScreen(
                                     border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2A2A)),
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(34.dp),
+                                        .heightIn(min = 48.dp),
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp),
@@ -328,8 +330,15 @@ internal fun MobileHistoryScreen(
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = Color(0xFF5C5C5C),
                                                 modifier = Modifier
-                                                    .semantics { role = androidx.compose.ui.semantics.Role.Button }
+                                                    .semantics {
+                                                        role = androidx.compose.ui.semantics.Role.Button
+                                                        // M-11：清除按钮需要无障碍名称，读屏才不念成"按钮"。
+                                                        contentDescription = "清空搜索"
+                                                    }
                                                     .clickable { historyQuery = "" }
+                                                    // M-03：原约26dp触摸目标过小，扩到 48dp。
+                                                    .heightIn(min = 48.dp)
+                                                    .wrapContentHeight(Alignment.CenterVertically)
                                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                             )
                                             state.historyUpdateChecking -> CircularProgressIndicator(
@@ -416,6 +425,10 @@ internal fun MobileHistoryScreen(
                                                     style = MaterialTheme.typography.bodySmall,
                                                     color = Color(0xFF888888),
                                                     modifier = Modifier
+                                                        // M-03：建议词原为纯 Text+clickable（约16-20dp）几乎点不中，
+                                                        // 扩到 48dp 最小触摸目标。
+                                                        .heightIn(min = 48.dp)
+                                                        .wrapContentHeight(Alignment.CenterVertically)
                                                         .semantics { role = androidx.compose.ui.semantics.Role.Button }
                                                         .clickable { historyQuery = suggest },
                                                 )
@@ -550,7 +563,7 @@ private fun HistoryChip(
         else     -> TvColors.Surface to TvColors.TextSecondary
     }
     Surface(
-        modifier = Modifier.height(32.dp),
+        modifier = Modifier.heightIn(min = 48.dp),
         shape = RoundedCornerShape(16.dp),
         color = bg,
         onClick = onClick,

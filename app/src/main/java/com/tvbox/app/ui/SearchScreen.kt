@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.width
@@ -1476,6 +1477,9 @@ internal fun MobileSearchScreen(
                                             fieldValue = queryFieldValue("")
                                             actions.clearSearch()
                                         }
+                                        // M-03：原约30-34dp触摸目标过小，扩到 48dp。
+                                        .heightIn(min = 48.dp)
+                                        .wrapContentHeight(Alignment.CenterVertically)
                                         .padding(horizontal = 12.dp, vertical = 8.dp),
                                 )
                             }
@@ -1489,7 +1493,7 @@ internal fun MobileSearchScreen(
                             unfocusedTextColor = Color.White,
                             focusedTextColor = Color.White,
                             unfocusedBorderColor = Color(0xFF444444),
-                            focusedBorderColor = Color(0xFF1ED760),
+                            focusedBorderColor = TvColors.FocusRing,
                         ),
                     )
                     Spacer(modifier = Modifier.width(8.dp))

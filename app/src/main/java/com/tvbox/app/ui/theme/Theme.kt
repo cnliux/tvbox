@@ -332,7 +332,7 @@ fun TVBoxTheme(
             1f,
         ) == 0f
     }
-    val focusTokens = focusTokensFor(reduceMotion)
+    val focusTokens = focusTokensFor(themeAccent, ringColor = tokens.focusRing, reduceMotion = reduceMotion)
     androidx.compose.runtime.CompositionLocalProvider(
         LocalTvColors provides tokens,
         LocalTvLayout provides layoutTokens(fontScale),
