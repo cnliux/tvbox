@@ -8,8 +8,17 @@ package com.tvbox.app.domain
  * 地址在 `$` 之前。少数源会把多条地址写在同一行用逗号分隔。
  * M3U 约定：`#EXTINF` 元数据行 + 紧随其后的地址行，支持 `#EXTVLCOPT` 附带请求头。
  */
+/**
+ * R3 健壮性：单个直播源允许的最大字符数。超过则截断解析——
+ * 恶意/异常源可达数十 MB，逐行解析会瞬间撑爆 2GB 盒子的堆（T3-21 内存水位相关）。
+ * 4MB 已足够容纳十万级频道，正常源远达不到。
+ */
+internal const val MAX_LIVE_SOURCE_CHARS = 4 * 1024 * 1024
+
 fun parseLiveChannels(raw: String): List<LiveChannel> {
-    val normalized = raw
+    // 超长源先截断，避免 OOM；截断点后必然不完整的最后一行由解析逻辑自然丢弃。
+    val bounded = if (raw.length > MAX_LIVE_SOURCE_CHARS) raw.substring(0, MAX_LIVE_SOURCE_CHARS) else raw
+    val normalized = bounded
         .replace("\r\n", "\n")
         .replace('\r', '\n')
         .removePrefix("﻿")

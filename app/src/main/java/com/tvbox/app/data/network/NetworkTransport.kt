@@ -354,6 +354,9 @@ class RedirectTrackingInterceptor(
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
+        // R3：显式记录已访问 URL，识别 A→B→A 这类重定向环（源站常见「假死」手法）。
+        // 环内继续跟随只会白烧超时预算，命中即返回当前 3xx 响应交给上层判定。
+        val visited = LinkedHashSet<String>().apply { add(request.url.toString()) }
         repeat(maxHops) {
             val response = chain.proceed(request)
             when (response.code) {
@@ -365,6 +368,10 @@ class RedirectTrackingInterceptor(
                     val hop = RedirectPolicy.Hop(request.url.toString(), location)
                     onRedirect(hop)
                     response.close()
+                    // 目标 URL 已访问过 = 重定向环，立即停止跟随。
+                    if (!visited.add(location)) {
+                        return@intercept response
+                    }
                     // 构建下一跳请求
                     val nextBuilder = request.newBuilder().url(location)
                     // T1-03：跨子域/跨站/降级后按目标 host 重算 UA 并写回请求头，

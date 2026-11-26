@@ -109,8 +109,10 @@ object SourceConfigBackup {
             put("createdBy", "${Schemas.current(Schemas.Kind.SourceConfig)}/${VERSION}")
             put("checksum", checksum)
             // 展开 legacy body 字段（顺序与历史输出保持一致）
-            val legacy = Json.parseToJsonElement(legacyBody) as JsonObject
-            legacy.entries.forEach { (key, value) -> put(key, value) }
+            // R3：legacy body 来自历史导入数据，可能不是 JSON 对象（数组/字符串/null）。
+            // 用 as? 安全转换，非对象时跳过展开而不是抛 ClassCastException 中断整个导出。
+            (Json.parseToJsonElement(legacyBody) as? JsonObject)
+                ?.entries?.forEach { (key, value) -> put(key, value) }
         }.toString()
     }
 

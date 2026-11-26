@@ -77,7 +77,14 @@ object LiveLineLatency {
         var connection: HttpURLConnection? = null
         val startedAt = System.nanoTime()
         return try {
-            connection = URL(url).openConnection() as HttpURLConnection
+            // R3：用户导入的源可能含非法/非 http(s) URL；openConnection 也可能返回
+            // 非 HttpURLConnection。两者都按「测速失败」处理，绝不让异常冒泡到调用方。
+            val opened = try {
+                URL(url).openConnection()
+            } catch (_: Exception) {
+                return -1
+            }
+            connection = opened as? HttpURLConnection ?: return -1
             connection.connectTimeout = PROBE_TIMEOUT_MS
             connection.readTimeout = PROBE_TIMEOUT_MS
             connection.instanceFollowRedirects = true
