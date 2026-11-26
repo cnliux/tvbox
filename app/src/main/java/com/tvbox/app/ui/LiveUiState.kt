@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
+import androidx.compose.runtime.Immutable
 
 /**
  * 电视直播 UI 状态（从 [TvBoxUiState] 拆出，字段语义与原 `live*` 前缀字段保持一致）。
@@ -12,6 +13,7 @@ import com.tvbox.app.domain.LiveChannel
  * - [favoriteChannelNumbers]/[favoriteKeys]：旧频道号收藏与持久化的 `分组#频道名` 收藏键。
  * - [lineLatencies]/[lineTesting]：当前频道各线路首包延迟与测速状态。
  */
+@Immutable
 data class LiveUiState(
     val channels: List<LiveChannel> = emptyList(),
     val channelIndex: Int = 0,

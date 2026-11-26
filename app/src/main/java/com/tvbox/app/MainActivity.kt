@@ -1,5 +1,7 @@
 package com.tvbox.app
 
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
 import android.Manifest
 import android.content.Intent
 import android.content.ClipData
@@ -32,7 +34,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
-import kotlinx.coroutines.runBlocking
 import com.tvbox.app.data.DataStoreAppSettingsRepository
 import com.tvbox.app.data.DefaultAppUpdateRepository
 import com.tvbox.app.data.EmbeddedPlatformLiveRepository
@@ -175,8 +176,12 @@ class MainActivity : ComponentActivity() {
         // 必须是 Compose 可观察状态：用户勾选并落盘 ack 后要能立即切到首页，
         // 否则 setContent 分支永远停在法务页（v1.0.45 曾因写成不可变 val 导致
         // "正在保存…" 卡死 —— onAccepted 只改了 screen 却没有重算本标志）。
-        val showLegalScreenState = androidx.compose.runtime.mutableStateOf(
-            runBlocking {
+        // S5-30：不再 runBlocking 阻塞主线程读 SharedPreferences（首个 Activity 启动路径上
+        // 的同步磁盘读）。初始值给 null 表示「尚未判定」，setContent 里据此先渲染空白
+        // 背景（一帧内即完成），判定结果回到主线程后再决定法务页 / 首页。
+        val showLegalScreenState = androidx.compose.runtime.mutableStateOf<Boolean?>(null)
+        lifecycleScope.launch {
+            val requiresAck = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 val prefs = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
                 val v = prefs.getInt(LegalTerms.VERSION_KEY, -1)
                 val hash = prefs.getString(LegalTerms.HASH_KEY, null)?.takeIf { it.isNotBlank() }
@@ -186,8 +191,9 @@ class MainActivity : ComponentActivity() {
                     null
                 }
                 LegalTerms.requiresAcknowledgement(ack)
-            },
-        )
+            }
+            showLegalScreenState.value = requiresAck
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -209,7 +215,16 @@ class MainActivity : ComponentActivity() {
                 fontScale = state.appSettings.fontScale,
                 themeAccent = state.appSettings.themeAccent,
             ) {
-                if (showLegalScreenState.value) {
+                // 判定未完成时先渲染空背景（一帧），避免闪现法务页再跳首页。
+                val legal = showLegalScreenState.value
+                if (legal == null) {
+                    // 判定中：铺满背景色，不显示任何内容（通常仅一帧）。
+                    androidx.compose.foundation.layout.Box(
+                        modifier = androidx.compose.ui.Modifier
+                            .fillMaxSize()
+                            .background(com.tvbox.app.ui.theme.TvColors.Background),
+                    )
+                } else if (legal) {
                     // M-02：首启法务页移入主题与设备模式作用域，手机端不再画 TV 焦点框、
                     // 且正确跟随用户字号/主题；LocalTouchMode 按设备模式提供。
                     CompositionLocalProvider(

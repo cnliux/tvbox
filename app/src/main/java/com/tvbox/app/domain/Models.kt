@@ -1,5 +1,7 @@
 package com.tvbox.app.domain
 
+import androidx.compose.runtime.Immutable
+
 data class Category(
     val id: Int,
     val parentId: Int,
@@ -67,6 +69,7 @@ data class PagedMovies(
     val movies: List<Movie>,
 )
 
+@Immutable
 data class LiveChannel(
     val number: Int,
     val groupName: String,
@@ -82,6 +85,7 @@ data class LiveChannel(
     val tvgId: String = "",
 )
 
+@Immutable
 data class LiveChannelLine(
     val name: String,
     val url: String,

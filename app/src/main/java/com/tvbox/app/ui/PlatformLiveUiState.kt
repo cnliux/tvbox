@@ -5,6 +5,7 @@ import com.tvbox.app.domain.PlatformLiveParentCategory
 import com.tvbox.app.domain.PlatformLiveRoom
 import com.tvbox.app.domain.PlatformLiveSite
 import com.tvbox.app.domain.ResolvedPlatformLiveStream
+import androidx.compose.runtime.Immutable
 
 /**
  * 平台直播 UI 状态（从 [TvBoxUiState] 拆出，字段语义与原 `platformLive*` 保持一致）。
@@ -13,6 +14,7 @@ import com.tvbox.app.domain.ResolvedPlatformLiveStream
  * - [parentIndex]/[categoryIndex]/[roomIndex]：各列表上次选中下标，用于返回时恢复滚动与焦点。
  * - [notice]：轻提示（自动切换线路结果等），由 UI 消费后清空。
  */
+@Immutable
 data class PlatformLiveUiState(
     val destination: PlatformLiveDestination = PlatformLiveDestination.Sites,
     val sites: List<PlatformLiveSite> = emptyList(),
