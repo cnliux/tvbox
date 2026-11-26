@@ -1,5 +1,6 @@
 package com.tvbox.app.ui
 
+import com.tvbox.app.ui.theme.TvColors
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
@@ -100,7 +101,7 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
             Text(
                 text = "请仔细阅读以下条款并逐项确认后继续",
                 style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFFAAAAAA),
+                color = TvColors.TextSecondary,
                 modifier = Modifier.padding(horizontal = 24.dp),
             )
 
@@ -117,13 +118,13 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
                     .fillMaxWidth()
                     .padding(horizontal = 24.dp)
                     .heightIn(min = 260.dp),
-                color = Color(0xFF1A1A1A),
+                color = TvColors.Surface,
                 shape = MaterialTheme.shapes.medium,
             ) {
                 Text(
                     text = LegalTerms.TEXT,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFFCCCCCC),
+                    color = TvColors.TextSecondary,
                     modifier = Modifier.padding(16.dp),
                 )
             }
@@ -194,7 +195,7 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
                 Text(
                     text = "完成全部勾选后方可继续",
                     style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFF888888),
+                    color = TvColors.TextTertiary,
                 )
             }
 
@@ -214,7 +215,7 @@ private fun TermCheckbox(
             .fillMaxWidth()
             .tvFocusScale(
                 shape = MaterialTheme.shapes.medium,
-                idleBorder = Color(0xFF444444).copy(alpha = 0.6f),
+                idleBorder = TvColors.Border.copy(alpha = 0.6f),
             )
             .clip(MaterialTheme.shapes.medium)
             .selectable(
@@ -222,7 +223,7 @@ private fun TermCheckbox(
                 role = Role.Checkbox,
                 onClick = { onCheckedChange(!checked) },
             ),
-        color = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else Color(0xFF1E1E1E),
+        color = if (checked) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f) else TvColors.Surface,
         border = if (checked) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null,
     ) {
         Row(
@@ -242,14 +243,14 @@ private fun TermCheckbox(
                     modifier = Modifier.size(22.dp),
                     shape = MaterialTheme.shapes.small,
                     color = Color.Transparent,
-                    border = BorderStroke(1.5.dp, Color(0xFF888888)),
+                    border = BorderStroke(1.5.dp, TvColors.TextTertiary),
                 ) {}
             }
             Spacer(modifier = Modifier.width(14.dp))
             Text(
                 text = label,
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (checked) Color.White else Color(0xFFBBBBBB),
+                color = if (checked) Color.White else TvColors.TextSecondary,
             )
         }
     }

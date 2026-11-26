@@ -227,7 +227,7 @@ private fun MobileTopBar(
     Surface(
         // 手机模式为 edge-to-edge 布局，顶部栏自己吸收状态栏高度，避免被状态栏遮挡。
         modifier = Modifier.fillMaxWidth().windowInsetsPadding(WindowInsets.statusBars),
-        color = Color(0xFF1E1E1E),
+        color = TvColors.Surface,
         shadowElevation = 2.dp,
     ) {
         Row(
@@ -284,7 +284,7 @@ private fun MobileSourceDropdown(
                     contentDescription = "视频源：${currentLine?.name ?: "未选择"}"
                 },
             shape = shape,
-            color = Color(0xFF2C2C2C),
+            color = TvColors.SurfaceRaised,
         ) {
             Row(
                 modifier = Modifier
@@ -295,7 +295,7 @@ private fun MobileSourceDropdown(
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.List,
                     contentDescription = null,
-                    tint = Color(0xFF1ED760),
+                    tint = TvColors.Success,
                     modifier = Modifier.size(15.dp),
                 )
                 Spacer(modifier = Modifier.width(6.dp))
@@ -319,7 +319,7 @@ private fun MobileSourceDropdown(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier.widthIn(min = 200.dp, max = 320.dp),
-            containerColor = Color(0xFF232323),
+            containerColor = TvColors.SurfaceOverlay,
         ) {
             if (lines.isEmpty()) {
                 DropdownMenuItem(
@@ -333,7 +333,7 @@ private fun MobileSourceDropdown(
                         text = {
                             Text(
                                 text = if (selected) "✓ ${line.name}" else line.name,
-                                color = if (selected) Color(0xFF1ED760) else Color.White,
+                                color = if (selected) TvColors.Success else Color.White,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
@@ -367,7 +367,7 @@ private fun MobileSearchEntry(
                 contentDescription = if (query.isNotBlank()) "搜索：$query" else "搜索"
             },
         shape = shape,
-        color = Color(0xFF2C2C2C),
+        color = TvColors.SurfaceRaised,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp),
