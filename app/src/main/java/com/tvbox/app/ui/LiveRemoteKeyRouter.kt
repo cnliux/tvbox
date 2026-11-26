@@ -146,13 +146,17 @@ class LiveRemoteKeyRouter(
         // 换源/线路浮层改由设置键提供，不因确认键改开列表而丢失入口。
         if (action == AndroidKeyEvent.KEYCODE_DPAD_CENTER || action == AndroidKeyEvent.KEYCODE_ENTER) {
             if (hasBlockingFailureCard()) return null
-            return if (up) {
+            return if (!up) {
+                LiveRemoteResult(state)
+            } else if (state.uiState == UIState.CHANNEL_LIST) {
+                // 列表已开：再按 OK 收起（面板顶部「确认键收起」提示的兑现）。
+                // 焦点不在列表行项上时按键会落到路由，若这里仍只「打开」则列表永远关不掉。
+                LiveRemoteResult(state, listOf(LiveRemoteEffect.ClosePanel))
+            } else {
                 LiveRemoteResult(
                     state.copy(uiState = UIState.CHANNEL_LIST),
                     listOf(LiveRemoteEffect.OpenChannelList),
                 )
-            } else {
-                LiveRemoteResult(state)
             }
         }
 
@@ -206,10 +210,14 @@ class LiveRemoteKeyRouter(
                 RemoteKeyAction.PlayPause -> effects += LiveRemoteEffect.TogglePlayback
                 RemoteKeyAction.Previous -> effects += LiveRemoteEffect.PreviousChannel
                 RemoteKeyAction.Next -> effects += LiveRemoteEffect.NextChannel
-                // 菜单键 = 打开频道列表（高频节目浏览入口）；同步 uiState 供面板焦点陷阱使用。
+                // 菜单键 = 打开频道列表（高频节目浏览入口），已开则收起；同步 uiState 供面板焦点陷阱使用。
                 RemoteKeyAction.Menu -> {
-                    effects += LiveRemoteEffect.OpenChannelList
-                    nextState = nextState.copy(uiState = UIState.CHANNEL_LIST)
+                    if (nextState.uiState == UIState.CHANNEL_LIST) {
+                        effects += LiveRemoteEffect.ClosePanel
+                    } else {
+                        effects += LiveRemoteEffect.OpenChannelList
+                        nextState = nextState.copy(uiState = UIState.CHANNEL_LIST)
+                    }
                 }
                 // 设置键 = 打开功能面板（线路入口收进面板内），与菜单键的列表语义区分。
                 RemoteKeyAction.Settings -> effects += LiveRemoteEffect.OpenSettings
