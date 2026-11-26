@@ -35,6 +35,19 @@ private val EPG_DOCTYPE_REGEX = Regex("<!\\s*DOCTYPE", RegexOption.IGNORE_CASE)
 /** ENTITY 声明（大小写不敏感）：billion laughs 类嵌套实体在正则前后都可能造成回溯爆炸。 */
 private val EPG_ENTITY_REGEX = Regex("<!\\s*ENTITY", RegexOption.IGNORE_CASE)
 
+/**
+ * L5：剥离 XML 注释（`<!-- ... -->`）与 CDATA 段（`<![CDATA[ ... ]]>`），供 DTD 子串扫描用。
+ * 注释/CDATA 里出现的 `<!DOCTYPE`/`<!ENTITY` 字面是正文内容而非真实 DTD 声明，
+ * 不剥离会把含这类文本的合法 EPG 整份误杀。未闭合的注释/CDATA 一律截断到开头，保守扫描剩余部分。
+ */
+internal fun stripXmlCommentsAndCdata(raw: String): String {
+    val noCdata = EPG_CDATA_REGEX.replace(raw, "")
+    return EPG_COMMENT_REGEX.replace(noCdata, "")
+}
+
+private val EPG_COMMENT_REGEX = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL)
+private val EPG_CDATA_REGEX = Regex("<!\\[CDATA\\[.*?]]>", RegexOption.DOT_MATCHES_ALL)
+
 /** stop 缺失/无法解析时的兜底节目时长（30 分钟），保证"正在播出"仍能命中。 */
 private const val EPG_FALLBACK_PROGRAM_MS = 30L * 60L * 1000L
 
@@ -110,8 +123,11 @@ private val EPG_SPACES_REGEX = Regex("\\s+")
 fun parseXmltvEpg(raw: String, timezoneId: String = ""): Map<String, List<EpgProgram>> {
     // 入口即拒绝 DTD：DOCTYPE / ENTITY 命中任一即返回空表（与本项目「解析失败返回部分结果」风格一致），
     // 绝不展开实体，避免 XXE 与 billion laughs 在后续正则匹配中造成回溯爆炸。
-    if (EPG_DOCTYPE_REGEX.containsMatchIn(raw)) return emptyMap()
-    if (EPG_ENTITY_REGEX.containsMatchIn(raw)) return emptyMap()
+    // L5：扫描前先剥离 XML 注释与 CDATA——注释里提到 `<!DOCTYPE`、CDATA 中出现 `<!DOCTYPE`
+    // 字面属正常内容，不应触发整份拒绝；真实 DTD 声明仍在正文，XXE 防护不变。
+    val dtdScanText = stripXmlCommentsAndCdata(raw)
+    if (EPG_DOCTYPE_REGEX.containsMatchIn(dtdScanText)) return emptyMap()
+    if (EPG_ENTITY_REGEX.containsMatchIn(dtdScanText)) return emptyMap()
     val channelsById = linkedMapOf<String, MutableList<String>>()
     val programmes = linkedMapOf<String, MutableList<EpgProgram>>()
     val text = if (raw.length > EPG_MAX_TEXT_CHARS) raw.substring(0, EPG_MAX_TEXT_CHARS) else raw

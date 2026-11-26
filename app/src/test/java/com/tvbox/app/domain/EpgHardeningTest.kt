@@ -143,4 +143,24 @@ class EpgHardeningTest {
         assertEquals(1, programmes.size)
         assertEquals("新闻联播", programmes.first().title)
     }
+
+    @Test
+    fun `L5 注释与CDATA内的DOCTYPE字面不误杀合法EPG`() {
+        // 注释里提到 <!DOCTYPE、CDATA 中出现 <!DOCTYPE 字面：都是正文内容，不是真实 DTD 声明，
+        // 不应触发整份拒绝。真实 DTD（正文声明）仍由 XXE fixture 用例保证拒绝。
+        val benignMention = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <tv>
+              <!-- this feed contains no ENTITY and no DOCTYPE declaration -->
+              <channel id="cctv1"><display-name>CCTV-1</display-name></channel>
+              <programme channel="cctv1" start="20260101080000 +0800" stop="20260101090000 +0800">
+                <title>新闻联播</title>
+                <desc><![CDATA[文档里提到 <!DOCTYPE html> 只是举例]]></desc>
+              </programme>
+            </tv>
+        """.trimIndent()
+
+        val result = parseXmltvEpg(benignMention)
+        assertEquals("注释/CDATA 内 DOCTYPE 字面不应整份拒绝", 1, result["cctv1"].orEmpty().size)
+    }
 }

@@ -9,6 +9,8 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
@@ -19,6 +21,20 @@ import kotlinx.coroutines.withTimeout
  */
 private fun liveSourceHealthTimeoutMs(): Long =
     AnrConservativePolicy.probeTimeoutMs(AnrWatchdog.isConservativeMode)
+
+/**
+ * 健康探针并发上限：一次性把几十~上百个源全部 `async` 会挤占连接池/带宽并占满低端盒子的线程，
+ * 与 [AnrConservativePolicy] 的 ANR 降级目标相悖。这里用信号量做闸门，只限并发、不改结果聚合语义。
+ *
+ * 档位沿用策略对象口径：正常 8，降级（[AnrWatchdog.isConservativeMode]）压到 3，与
+ * [AnrConservativePolicy.searchParallelism] 的降级档（6→3）保持一致，避免自造另一套重复逻辑。
+ */
+private const val MAX_CONCURRENT_HEALTH_PROBES = 8
+private const val MAX_CONCURRENT_HEALTH_PROBES_CONSERVATIVE = 3
+
+private fun healthProbePermits(): Int =
+    if (AnrWatchdog.isConservativeMode) MAX_CONCURRENT_HEALTH_PROBES_CONSERVATIVE
+    else MAX_CONCURRENT_HEALTH_PROBES
 
 /**
  * #282：一键检测所有直播源。
@@ -33,19 +49,23 @@ internal suspend fun checkAllLiveSources(urls: List<String>): String = withConte
     if (targets.isEmpty()) return@withContext "尚未配置直播源，请先在「IPTV 直播源」中添加。"
 
     val fetcher = SourceConfigFetcher()
+    val permits = healthProbePermits()
+    val semaphore = Semaphore(permits)
     val results = coroutineScope {
         targets.map { url ->
             async {
-                val body = try {
-                    withTimeout(liveSourceHealthTimeoutMs()) { fetcher.fetch(url) }
-                } catch (_: TimeoutCancellationException) {
-                    null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (_: Exception) {
-                    null
+                semaphore.withPermit {
+                    val body = try {
+                        withTimeout(liveSourceHealthTimeoutMs()) { fetcher.fetch(url) }
+                    } catch (_: TimeoutCancellationException) {
+                        null
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        null
+                    }
+                    url to body?.let(::dryRunLiveSource)
                 }
-                url to body?.let(::dryRunLiveSource)
             }
         }.awaitAll()
     }

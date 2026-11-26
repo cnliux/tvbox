@@ -178,7 +178,10 @@ fun MobileLiveScreen(
         actions.consumeLiveNotice()
     }
 
-    BackHandler(enabled = playerOpen) {
+    // 列表层的返回出口：只在非播放态生效。播放层内部有 PlayerChromeBackHandler
+    // （面板 → 控件 → 退出）分层处理 BACK，播放态下必须禁用本层，否则外层 BackHandler
+    // 会抢先消费 BACK，导致打开「信息/地址」面板按返回时整层退出、丢失播放现场。
+    BackHandler(enabled = !playerOpen) {
         selectedChannelNumber = -1
     }
 

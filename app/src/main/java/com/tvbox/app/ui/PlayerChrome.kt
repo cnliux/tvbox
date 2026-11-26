@@ -85,6 +85,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
@@ -108,6 +110,7 @@ import com.tvbox.app.domain.nextPlaybackSpeed
 import com.tvbox.app.domain.nextVideoScaleMode
 import com.tvbox.app.domain.sortByLatency
 import com.tvbox.app.ui.theme.TvColors
+import com.tvbox.app.ui.theme.LocalTvFocus
 import kotlinx.coroutines.delay
 
 /**
@@ -1227,7 +1230,11 @@ private fun PlayerChromePanel(
                 Text(
                     "绿 ≤300ms · 黄 ≤800ms · 红 >800ms；未测速线路排在已测线路之后",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.7f), modifier = Modifier.padding(vertical = 8.dp),
+                    color = Color.White.copy(alpha = 0.7f),
+                    // 小屏（compact TV）或大字号下单行会被裁切，允许换行并保留完整阈值参照。
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
             if (emptyTrackHint != null) {
@@ -1375,6 +1382,9 @@ private fun PlayerInfoPanel(
 @Composable
 private fun PlayerInfoRowItem(row: PlayerInfoRow, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
+    // 边框宽度与焦点色从主题令牌取值：切主题（默认↔影院）时与全站焦点框宽度/颜色一致，
+    // 不再硬编码 2dp；idle 保持透明以不改变行布局。
+    val focusTokens = LocalTvFocus.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1382,8 +1392,8 @@ private fun PlayerInfoRowItem(row: PlayerInfoRow, modifier: Modifier = Modifier)
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .border(
-                width = 2.dp,
-                color = if (focused) TvColors.FocusRing else Color.Transparent,
+                width = if (focused) focusTokens.ringWidth else 0.dp,
+                color = if (focused) focusTokens.ringColor else Color.Transparent,
                 shape = RoundedCornerShape(10.dp),
             )
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1516,6 +1526,8 @@ private fun SettingsRowItem(
     modifier: Modifier = Modifier,
 ) {
     var focused by remember { mutableStateOf(false) }
+    // 边框宽度与焦点色从主题令牌取值，与 PlayerInfoRowItem / 全站焦点框一致。
+    val focusTokens = LocalTvFocus.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -1523,8 +1535,8 @@ private fun SettingsRowItem(
             .onFocusChanged { focused = it.isFocused }
             .focusable()
             .border(
-                width = 2.dp,
-                color = if (focused) TvColors.FocusRing else Color.Transparent,
+                width = if (focused) focusTokens.ringWidth else 0.dp,
+                color = if (focused) focusTokens.ringColor else Color.Transparent,
                 shape = RoundedCornerShape(10.dp),
             )
             .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -1595,7 +1607,9 @@ private fun PlayerUrlPanel(
                     text = "暂无可查看的播放地址",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.weight(1f).padding(top = 16.dp),
+                    // 空面板对屏幕阅读用户要明确播报「空」，与全站 EmptyState 的 liveRegion 口径一致。
+                    modifier = Modifier.weight(1f).padding(top = 16.dp)
+                        .semantics { liveRegion = LiveRegionMode.Polite },
                 )
             } else {
                 LazyColumn(
@@ -1748,6 +1762,10 @@ private fun PlayerChromeMobilePanel(
                             "绿 ≤300ms · 黄 ≤800ms · 红 >800ms；未测速线路排在已测线路之后",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color.White.copy(alpha = 0.6f),
+                            // 与上方 Sources 面板同口径：小屏/大字号下允许换行，保留完整阈值参照。
+                            modifier = Modifier.fillMaxWidth(),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
                         )
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(orderedIndexes.size, key = { orderedIndexes[it] }) { position ->
@@ -1894,6 +1912,8 @@ private fun PlayerChromeMobilePanel(
                                 text = "暂无可查看的播放地址",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.6f),
+                                // 空面板明确播报「空」，与全站 EmptyState 的 liveRegion 口径一致。
+                                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
                             )
                         }
                         data.playbackUrls.forEach { item ->

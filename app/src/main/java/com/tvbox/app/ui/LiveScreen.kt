@@ -616,7 +616,10 @@ private fun LivePlayerScreen(
         }
     }
 
+    // H3：首焦需判 isTelevision——手机/触摸端不该被抢占焦点、出现常驻焦点框，
+    // 与下方 streamBlocked 恢复逻辑（625 行）及其它焦点恢复口径一致。
     LaunchedEffect(Unit) {
+        if (!isTelevision) return@LaunchedEffect
         runCatching { playerFocusRequester.requestFocus() }
     }
 

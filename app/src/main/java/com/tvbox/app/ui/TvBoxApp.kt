@@ -634,12 +634,20 @@ private fun HomeScreen(
             if (homeFocus.lastKey == null) runCatching { allCategoryFocusRequester.requestFocus() }
         }
         // #1 页面恢复时强制复位焦点：从后台/系统设置返回（ON_RESUME）时盒子可能丢失焦点，
-        // 显式把焦点拉回逻辑首项（分类行），避免回前台后方向键无响应。
+        // 显式把焦点拉回逻辑首项，避免回前台后方向键无响应。
+        // F1 修复：此前无条件拉回分类行，会覆盖网格卡片的焦点记忆（RestoreGridFocus 按 key 恢复），
+        // 导致每次回首页焦点都跳顶、需重新下滚。现改为——此前聚焦过网格卡片时优先恢复该卡片，
+        // 恢复失败（卡片已不在列表/不可聚焦）才回落分类行；从未进网格时保持原行为。
         val homeLifecycleOwner = LocalLifecycleOwner.current
         DisposableEffect(homeLifecycleOwner) {
             val observer = LifecycleEventObserver { _, event ->
                 if (event == Lifecycle.Event.ON_RESUME) {
-                    runCatching { allCategoryFocusRequester.requestFocus() }
+                    // lastKey 是自定义 getter，先取局部变量以便非空智能转换。
+                    val savedCardKey = homeFocus.lastKey
+                    val restoredToCard = savedCardKey != null && homeFocus.request(savedCardKey)
+                    if (!restoredToCard) {
+                        runCatching { allCategoryFocusRequester.requestFocus() }
+                    }
                 }
             }
             homeLifecycleOwner.lifecycle.addObserver(observer)

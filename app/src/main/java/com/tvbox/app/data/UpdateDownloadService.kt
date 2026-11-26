@@ -167,6 +167,9 @@ class UpdateDownloadService : Service() {
                                         } else if (rangeStart == 0L && offset > 0L) {
                                             writeDownloadStream(response, partial, path,
                                                 receivedBase = 0L, manifestSize = size, append = false)
+                                            // 服务端虽回 206 但起点为 0（未真正续传）：已从头重写 .part，
+                                            // 同步 offset=0，避免后续 restartFresh 判定读到旧 offset 又重复从头。
+                                            offset = 0L
                                         } else {
                                             writeDownloadStream(response, partial, path,
                                                 receivedBase = offset, manifestSize = size, append = true)

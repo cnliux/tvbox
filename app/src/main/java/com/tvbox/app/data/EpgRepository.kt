@@ -76,11 +76,16 @@ class RemoteEpgRepository : EpgRepository {
                 } catch (_: Throwable) {
                     return@withContext cached?.programs ?: emptyMap()
                 }
-                cache.entries.removeIf { now - it.value.fetchedAtMs >= CACHE_TTL_MS }
-                if (cache.size >= MAX_CACHE_ENTRIES) {
-                    cache.entries.minByOrNull { it.value.fetchedAtMs }?.key?.let { cache.remove(it) }
+                // 只有解析出节目时才写入缓存：空结果常来自 HTML 错误页 / DTD 拒绝 / XMLTV 无 programme，
+                // 缓存它会让空节目单在 TTL 内被反复命中、切网络/换频道都不重拉，EPG 永久空白。
+                // 空结果不缓存：下次进入可重拉，且旧缓存（若有）仍可降级展示。
+                if (parsed.isNotEmpty()) {
+                    cache.entries.removeIf { now - it.value.fetchedAtMs >= CACHE_TTL_MS }
+                    if (cache.size >= MAX_CACHE_ENTRIES) {
+                        cache.entries.minByOrNull { it.value.fetchedAtMs }?.key?.let { cache.remove(it) }
+                    }
+                    cache[cacheKey] = CachedEpg(parsed, now)
                 }
-                cache[cacheKey] = CachedEpg(parsed, now)
                 parsed
             }
         }

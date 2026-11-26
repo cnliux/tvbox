@@ -21,16 +21,32 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.TextUnit
+import androidx.compose.ui.unit.TextUnitType
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.EpgProgram
 import com.tvbox.app.domain.LiveChannel
 
 /** EPG 窄卡固定展示的节目条数。 */
 private const val LIVE_EPG_CARD_ROWS = 4
+
+/**
+ * 取样式可用于布局换算的行高：优先显式 lineHeight，未指定时按字号推导 ~1.25 倍。
+ * 与 [com.tvbox.app.ui.components] 的媒体卡同口径——保证结果是合法 Sp，
+ * 避免字号缩放到「超大」档时占位高度仍写死、节目名被挤压截断。
+ */
+private fun TextStyle.effectiveLineHeight(): TextUnit = when {
+    lineHeight.isSpecified -> lineHeight
+    fontSize.isSpecified -> fontSize * 1.25f
+    else -> TextUnit(16f, TextUnitType.Sp)
+}
 
 /** EPG 窄卡的一行：时间 + 节目名 + 进度。 */
 internal data class LiveEpgRow(
@@ -149,8 +165,14 @@ internal fun LiveEpgCard(
             Box(Modifier.fillMaxWidth().height(1.dp).background(Color.White.copy(alpha = 0.08f)))
             Spacer(Modifier.height(4.dp))
             if (programs.isEmpty()) {
+                // 占位高度按 labelSmall 行高 × 固定节目条数换算，随字号设置缩放，
+                // 避免超大字号下写死的 84.dp 撑不住文字（与媒体卡行高换算同口径）。
+                val density = LocalDensity.current
+                val placeholderHeight = with(density) {
+                    (MaterialTheme.typography.labelSmall.effectiveLineHeight() * LIVE_EPG_CARD_ROWS).toDp()
+                }
                 Box(
-                    modifier = Modifier.fillMaxWidth().height(84.dp),
+                    modifier = Modifier.fillMaxWidth().height(placeholderHeight),
                     contentAlignment = Alignment.Center,
                 ) {
                     Text("暂无节目单", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)

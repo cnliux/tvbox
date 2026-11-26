@@ -74,8 +74,8 @@ internal val LiveTvAccent = Color(0xFFE50914)
 /** 浮层主面板底色 rgba(14,14,18,0.94)。 */
 internal val LiveTvPanelBg = Color(0xF00E0E12)
 
-/** 焦点行底色 rgba(229,9,20,0.12)。 */
-internal val LiveTvFocusBg = Color(0x1FE50914)
+/** 焦点行底色 rgba(229,9,20,0.20)。提高到 0.20 增强深色面板上的对比度，避免遥控滑动跟丢当前位置。 */
+internal val LiveTvFocusBg = Color(0x33E50914)
 
 /** 当前播放行底色 rgba(229,9,20,0.05)。 */
 internal val LiveTvPlayingBg = Color(0x0DE50914)

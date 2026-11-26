@@ -43,8 +43,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.KeyEventType
@@ -62,7 +61,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tvbox.app.domain.LiveChannel
 import com.tvbox.app.ui.theme.TvColors
-import kotlinx.coroutines.delay
 import androidx.compose.ui.input.key.Key as ComposeKey
 
 /**
@@ -380,7 +378,7 @@ private fun LiveOverlayChannelRow(
     onClick: () -> Unit,
 ) {
     val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.02f else 1f,
+        targetValue = if (isFocused) 1.04f else 1f,
         animationSpec = tween(120),
         label = "live-row-scale",
     )
@@ -405,6 +403,13 @@ private fun LiveOverlayChannelRow(
                     isPlaying -> LiveTvPlayingBg
                     else -> Color.Transparent
                 },
+            )
+            // 焦点态叠加 2dp 亮边：深色面板上仅靠 12%→20% 红底 + 竖条仍偏弱，
+            // 与分组标题 pill（LiveGroupPill）同口径用 FocusRing 描边，遥控滑动更易跟住。
+            .border(
+                width = if (isFocused) 2.dp else 0.dp,
+                color = if (isFocused) TvColors.FocusRing else Color.Transparent,
+                shape = RoundedCornerShape(6.dp),
             )
             .clickable(onClick = onClick)
             .semantics(mergeDescendants = true) { contentDescription = rowLabel }
@@ -546,10 +551,8 @@ internal fun LiveLineOverlay(
     onCopyUrl: () -> Unit,
     onViewUrl: () -> Unit,
 ) {
-    val focusRequester = remember { FocusRequester() }
+    val focusRequester = rememberTvFocusRequest(key = Unit, delayMs = 60L, retries = 2)
     LaunchedEffect(Unit) {
-        delay(60)
-        runCatching { focusRequester.requestFocus() }
         // 展开线路即测速：让用户按实际延迟挑线路，而不是逐条点播试错。
         actions.testLiveChannelLines()
     }
@@ -577,7 +580,7 @@ internal fun LiveLineOverlay(
                 .width(420.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(LiveTvPanelBg)
-                .focusRequester(focusRequester)
+                .then(focusRequester.anchor)
                 .onPreviewKeyEvent { event ->
                     // 浮层持有焦点时整次返回在浮层内闭环：KeyDown 即收起并消费，
                     // 避免部分遥控器 KeyUp 丢失、或 KeyUp 落到页面级处理器造成一次空按。
