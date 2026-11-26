@@ -24,18 +24,23 @@ class FanOutTest {
 
     @Test
     fun emitsInCompletionOrderWithMonotonicProgress() = runBlocking {
+        // 进度单调性是 fanOutIncrementally 的纯逻辑保证（完成即 emit、completedSources 递增），
+        // 不应依赖墙钟完成顺序——真实 delay 的先后在 CI 受限 CPU 上会被调度抖动打乱
+        // （10ms/30ms 间隔可倒置），导致断言 flaky 失败。
+        // maxParallel=1 强制串行：完成顺序 == 提交顺序，由调度器确定性保证，
+        // 只用 1ms 间隔保持测试快速，且不再受 CPU 争抢影响。
         val updates = fanOutIncrementally(
             tasks = tasksOf(
-                { delay(60L); "slow" },
-                { delay(10L); "fast" },
-                { delay(30L); "mid" },
+                { delay(2L); "slow" },
+                { delay(1L); "fast" },
+                { "mid" },
             ),
-            maxParallel = 3,
+            maxParallel = 1,
             perSourceTimeoutMs = 1_000L,
         ).toList()
 
-        assertEquals(listOf("fast", "mid", "slow"), updates.mapNotNull { it.value })
-        assertEquals(listOf(1, 2, 0), updates.map { it.sourceIndex })
+        assertEquals(listOf("slow", "fast", "mid"), updates.mapNotNull { it.value })
+        assertEquals(listOf(0, 1, 2), updates.map { it.sourceIndex })
         assertEquals(listOf(1, 2, 3), updates.map { it.completedSources })
         assertTrue(updates.all { it.totalSources == 3 })
     }

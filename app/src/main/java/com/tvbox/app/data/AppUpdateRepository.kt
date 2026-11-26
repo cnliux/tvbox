@@ -506,15 +506,22 @@ class DefaultAppUpdateRepository(
         // 服务被系统杀死后进程内静态 states 会被清空，status 可能长期为 null。
         // 连续 N 次拿不到状态就判定下载任务已失效，避免永久空转。
         var consecutiveNullStatus = 0
+        // B2：服务被系统回收后进程内 states 丢失，轮询可能连续拿不到状态；而服务 onStartCommand
+        // 返回 START_REDELIVER_INTENT，系统稍后会重投递、服务拉起继续写盘。若此处只抛错不停服务，
+        // 会出现「UI 已报任务失效、后台仍在下载」的状态撕裂。故任何判失效的抛错前先 cancel 残留服务。
+        suspend fun failAndStopService(message: String): Nothing {
+            runCatching { UpdateDownloadService.cancel(appContext) }
+            throw IOException(message)
+        }
         while (true) {
             if (System.currentTimeMillis() > deadlineMs) {
-                throw IOException("更新下载超时，请检查网络后重试")
+                failAndStopService("更新下载超时，请检查网络后重试")
             }
             val status = UpdateDownloadService.status(task.filePath)
             if (status == null) {
                 consecutiveNullStatus++
                 if (consecutiveNullStatus >= MAX_NULL_STATUS_POLLS) {
-                    throw IOException("更新下载任务已失效，请重试")
+                    failAndStopService("更新下载任务已失效，请重试")
                 }
             } else {
                 consecutiveNullStatus = 0
@@ -533,7 +540,7 @@ class DefaultAppUpdateRepository(
                 lastReceivedChangeAtMs = nowMs
             }
             if (isOtaDownloadStalled(received, lastReceived, lastReceivedChangeAtMs, nowMs)) {
-                throw IOException("更新下载长时间无进展，请检查网络后重试")
+                failAndStopService("更新下载长时间无进展，请检查网络后重试")
             }
             val total = status?.total?.takeIf { it > 0 } ?: task.manifest.apkSize
             val progress = if (total > 0) (((status?.received ?: 0) * 100) / total).toInt().coerceIn(0, 99) else -1

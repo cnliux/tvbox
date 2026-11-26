@@ -1171,10 +1171,10 @@ private fun LiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             onSelect = { v -> actions.updateAppSettings { it.copy(epgCacheHours = v) } },
         )
         TextSettingRow("EPG 时区", "留空使用系统时区", state.appSettings.epgTimezone) { actions.updateAppSettings { s -> s.copy(epgTimezone = it) } }
-        // 备用 EPG 地址：订阅自带 EPG 时优先使用订阅自带地址，本字段仅作回退。
+        // EPG 地址：用户显式配置优先，未配置时回落订阅自带（M3U url-tvg）。
         TextSettingRow(
-            "备用 EPG 地址",
-            "订阅自带 EPG 时优先使用订阅，未自带才用此地址；留空则回退到内置兜底",
+            "EPG 地址",
+            "优先使用此地址；留空则自动使用订阅自带的 EPG（M3U 头部 url-tvg 等）",
             state.appSettings.epgUrl,
         ) { actions.updateEpgUrl(it) }
         ChoiceSettingRow(

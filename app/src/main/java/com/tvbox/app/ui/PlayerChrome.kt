@@ -475,7 +475,9 @@ internal fun PlayerChromeCapabilities.forOrientation(portrait: Boolean): PlayerC
             settings = false,
             channel = false,
             room = false,
-            lines = false,
+            // 换线路是手机直播的核心高频操作：竖屏同样保留「线路」按钮，
+            // 否则竖屏控制栏没有任何换线路入口（用户必须另找线路胶囊）。
+            lines = this.lines,
             info = false,
             url = false,
             audioTracks = false,

@@ -99,7 +99,10 @@ private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-ur
  * 返回 null 表示源未声明 EPG，调用方应保持「未配置」状态而不是写入空串。
  */
 fun extractM3uEpgUrl(raw: String): String? {
-    for (line in raw.lineSequence().take(32)) {
+    // L8：扫描前 200 行——野生源偶尔把 `#EXTM3U url-tvg=…` 放在若干空白/注释行之后，
+    // 前 32 行可能已越过带 EPG 声明的头。仍只扫头部、不全量正则；裸 `#EXTM3U` 头（无 EPG 属性）
+    // 本就不提前返回，会自然继续找下一个头。
+    for (line in raw.lineSequence().take(200)) {
         val trimmed = line.trim()
         if (!trimmed.startsWith("#EXTM3U", ignoreCase = true)) continue
         // 属性部分在 `#EXTM3U` 之后；直接用 parseAttributes 解析（正确处理引号内冒号/逗号）。
@@ -112,6 +115,7 @@ fun extractM3uEpgUrl(raw: String): String? {
                 ?.firstOrNull { it.startsWith("http://", true) || it.startsWith("https://", true) }
             if (value != null) return value
         }
+        // 这个 `#EXTM3U` 头没带 EPG 声明：不返回，继续找下一个头（罕见但存在的多 EXT M3U）。
     }
     return null
 }

@@ -11,7 +11,9 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Request
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.util.zip.GZIPInputStream
 
 interface EpgRepository {
     /**
@@ -117,17 +119,52 @@ class RemoteEpgRepository : EpgRepository {
                 out.write(buffer, 0, read)
             }
             val data = out.toByteArray()
+            // 应用层 gzip：`.xml.gz` 等静态压缩节目单由服务器原样返回 gzip 字节，
+            // OkHttp 透明 gzip 只处理传输层 `Content-Encoding: gzip`，不会解压它。
+            // 靠 magic（0x1F 0x8B）探测而非 URL 后缀：部分源返回 .gz 后缀却未压缩，
+            // 或 .xml 后缀却实际压缩，magic 探测两种情况都正确。
+            val decompressed = if (isGzip(data)) gunzip(data) else data
             // 去 UTF-8 BOM：用 (offset,length) 构造字符串，避免 copyOfRange 再全量拷贝
             // 一份 40MB 数组（低端盒子峰值内存可省约 40MB）。
-            val hasBom = data.size >= 3 &&
-                data[0].toInt() == 0xEF && data[1].toInt() == 0xBB && data[2].toInt() == 0xBF
+            val hasBom = decompressed.size >= 3 &&
+                decompressed[0].toInt() == 0xEF && decompressed[1].toInt() == 0xBB && decompressed[2].toInt() == 0xBF
             if (hasBom) {
-                String(data.sliceArray(3 until data.size), Charsets.UTF_8)
+                String(decompressed.sliceArray(3 until decompressed.size), Charsets.UTF_8)
             } else {
-                String(data, Charsets.UTF_8)
+                String(decompressed, Charsets.UTF_8)
             }
         }
     }
+
+    /**
+     * 探测 gzip magic：前两字节 `0x1F 0x8B`（RFC 1952）。至少 2 字节才判断，
+     * 空响应/单字节不算 gzip。
+     */
+    private fun isGzip(data: ByteArray): Boolean =
+        data.size >= 2 && data[0].toInt() == 0x1F && data[1].toInt() == 0x8B
+
+    /**
+     * 解压应用层 gzip 节目单。解压后的明文 XMLTV 才是真正要进内存的内容，
+     * 与下载阶段的 [MAX_PAYLOAD_BYTES] 同口径保护——`.gz` 是压缩格式，下载侧的上限
+     * 只约束压缩后字节，解压会内存放大（小体积 .gz 可膨胀数倍到数十倍，极端为 zip bomb），
+     * 因此解压过程同样按上限截断并在超限时抛 IOException，
+     * 由调用方当作下载失败走「降级旧缓存 / 空表」路径，不把超大明文写进缓存。
+     */
+    private fun gunzip(data: ByteArray): ByteArray =
+        GZIPInputStream(ByteArrayInputStream(data)).use { input ->
+            val out = java.io.ByteArrayOutputStream(if (data.size > 0) data.size * 8 else 16_384)
+            val buffer = ByteArray(16_384)
+            var size = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                if (read == 0) continue
+                size += read
+                if (size > MAX_PAYLOAD_BYTES) throw IOException("节目单解压后超过体积上限，已跳过解析")
+                out.write(buffer, 0, read)
+            }
+            out.toByteArray()
+        }
 
     private data class CachedEpg(val programs: Map<String, List<EpgProgram>>, val fetchedAtMs: Long)
 

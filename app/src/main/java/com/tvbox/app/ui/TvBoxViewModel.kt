@@ -5509,7 +5509,7 @@ class TvBoxViewModel(
     private fun loadLiveEpg(force: Boolean = false) {
         val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
-        // S3-19 stale-while-revalidate：仅 STALE（缓存超 7 天）时保持旧节目单继续展示
+        // S3-19 stale-while-revalidate：仅 STALE（缓存超出 FRESH 窗口，默认 6 小时）时保持旧节目单继续展示
         // （UI 叠加「~」角标）并落入下方后台静默重拉；FRESH 直接复用，
         // LOADING（上次拉取失败）维持既有「不再反复重试慢源」语义。
         // force=true（改地址/换源自带 EPG）无条件重拉。

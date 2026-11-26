@@ -4,6 +4,24 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.51 - 2026-11-27 —「EPG 支持压缩源、换线路按钮与节目单刷新提速」
+
+**你会感觉到**：
+- 支持 `.xml.gz` 压缩节目单（国内常见 EPG 源）；
+- 手机直播控制栏新增「线路」按钮，竖屏也能一键换线路；
+- 节目单刷新提速：从最长 7 天更新一次，改为 6 小时自动刷新；
+- EPG 地址逻辑更直观：设置里填的地址优先，没填才用订阅自带。
+
+**修了什么**：
+- **EPG 支持 `.xml.gz` 压缩源**：`RemoteEpgRepository.download()` 按响应字节 gzip magic（`0x1F 0x8B`）探测并用 `GZIPInputStream` 解压再解析；明文 `.xml`、`.xml.gz`、`.gz` 后缀未压缩、gzip+BOM 四种情况全部正确处理；解压同样受 40MB 上限保护（防解压内存放大/zip bomb）。
+- **手机直播竖屏新增「线路」按钮**：`PlayerChrome.forOrientation` 竖屏精简不再关闭 `lines` 能力；`MobileLiveScreen` 注入 `lines`/`onOpenLinePanel`（循环切下一条线路）并在多线路频道显示按钮。此前竖屏控制栏无任何换线路入口。
+- **EPG 刷新窗口对齐**：`EpgCachePolicy.FRESH_TTL_MS` 由 7 天改为 6 小时。原 7 天与仓库层 30 分钟缓存语义倒挂，长驻进程一次拉取后 7 天不更新、节目单长期陈旧；6 小时保证当天刷新到新节目，又避免弱网频繁重拉。
+- **删除内置兜底 EPG**：移除 `BUILTIN_FALLBACK_EPG_URL`，优先级由「订阅自带 > 用户配置 > 内置兜底」改为「用户配置 > 订阅自带 > 无」。都不配置时节目单显示「暂无节目单」，不再联网拉任何内置地址。
+- **flaky 测试加固**（CI Linux 单测失败排查）：`FanOutTest.emitsInCompletionOrderWithMonotonicProgress` 不再依赖真实墙钟完成顺序（10/30/60ms 间隔在 CI 受限 CPU 上会倒置），改 `maxParallel=1` 串行使完成顺序 == 提交顺序，由调度器确定性保证。
+
+**已知问题**：
+- CI「Unit tests」步骤在 Linux runner 持续失败（Windows 本地全绿），疑似个别依赖真实时间/平台差异的测试在受限环境 flaky；已加固最可能的 `FanOutTest` 时序依赖，仍在跟踪其余候选（`ParallelDnsTest`/`DataStore` 并发测试）。
+
 ## v1.0.50 - 2026-11-26 —「直播换台与焦点修复」
 
 **你会感觉到**：

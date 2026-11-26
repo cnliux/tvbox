@@ -962,6 +962,22 @@ private fun MobileLivePlayerScreen(
         Toast.makeText(context, if (wasFavorite) "已取消收藏" else "已收藏", Toast.LENGTH_SHORT).show()
     }
 
+    /**
+     * 手动换线路：循环切到下一条线路（末条回到首条）。
+     *
+     * 与自动容错 [com.tvbox.app.ui.LiveLineFallbackReason] 不同，这是用户主动操作：
+     * 不走退避门控，直接用 selectLiveLine 精确落到「下一条」，行为可预期。
+     * 仅在频道有多条线路时由控制栏「线路」按钮触发（capabilities.lines 已按 lines>1 门控）。
+     */
+    fun cycleToNextLine() {
+        val target = channel.lines
+        if (target.size <= 1) return
+        val next = (lineIndex + 1) % target.size
+        actions.selectLiveLine(next)
+        Toast.makeText(context, "已切换至${target[next].name}", Toast.LENGTH_SHORT).show()
+        chrome.bump()
+    }
+
     fun switchLineAfterIssue(reason: LiveLineFallbackReason) {
         if (!session.canPlay) return
         val latest = latestChannel.value
@@ -1174,6 +1190,9 @@ private fun MobileLivePlayerScreen(
                         cast = true,
                         castLabel = castController.castLabel,
                         castActive = castController.castingDevice != null,
+                        // 换线路：竖屏控制栏保留「线路」按钮（直播核心操作）。
+                        // 仅在频道有多条线路时显示；点击由 onOpenLinePanel 处理。
+                        lines = channel.lines.size > 1,
                         // 手机端调试按钮：竖屏精简后仍保留，替代原缓冲档位循环按钮。
                         debugActive = showDebugOverlay,
                         onToggleDebug = { showDebugOverlay = !showDebugOverlay; chrome.bump() },
@@ -1197,6 +1216,7 @@ private fun MobileLivePlayerScreen(
                         },
                         onPrevious = { actions.playPreviousLiveChannel(); chrome.bump() },
                         onNext = { actions.playNextLiveChannel(); chrome.bump() },
+                        onOpenLinePanel = ::cycleToNextLine,
                         onSelectResize = { mode ->
                             actions.updateContentVideoScaleMode(scaleContentKey, mode)
                             chrome.bump()

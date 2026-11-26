@@ -18,8 +18,9 @@ class EpgCachePolicyTest {
     }
 
     @Test
-    fun `cache within 7 days renders as fresh without tilde`() {
-        val cached = EpgData(mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L))), now - 6L * 24L * 3_600_000L)
+    fun `cache within fresh window renders as fresh without tilde`() {
+        // FRESH 窗口为 6 小时：5 小时前拉取仍算新鲜，直接渲染不加角标。
+        val cached = EpgData(mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L))), now - 5L * 3_600_000L)
         val state = EpgCachePolicy.renderState(cached, now)
         assertEquals(EpgRenderState.FRESH, state)
         assertFalse(state.showWithTilde)
@@ -27,7 +28,7 @@ class EpgCachePolicyTest {
     }
 
     @Test
-    fun `cache at exactly 7 days boundary is stale`() {
+    fun `cache at exactly fresh boundary is stale`() {
         val cached = EpgData(mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L))), now - EpgCachePolicy.FRESH_TTL_MS)
         val state = EpgCachePolicy.renderState(cached, now)
         assertEquals(EpgRenderState.STALE, state)
@@ -36,8 +37,9 @@ class EpgCachePolicyTest {
     }
 
     @Test
-    fun `cache beyond 7 days is stale with tilde and revalidate`() {
-        val cached = EpgData(mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L))), now - 30L * 24L * 3_600_000L)
+    fun `cache beyond fresh window is stale with tilde and revalidate`() {
+        // 超过 6 小时窗口（隔天）：节目单应刷新，旧数据加角标并后台重拉。
+        val cached = EpgData(mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L))), now - 30L * 3_600_000L)
         val state = EpgCachePolicy.renderState(cached, now)
         assertEquals(EpgRenderState.STALE, state)
         assertTrue(state.showWithTilde)
