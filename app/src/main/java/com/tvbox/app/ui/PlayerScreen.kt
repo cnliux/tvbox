@@ -1009,6 +1009,26 @@ fun PlayerScreen(
                     true
                 }
 
+                // MENU = 选项菜单（Android 标准语义）：打开功能面板，倍速等选项在面板内。
+                is UnifiedRemoteKeyRouter.Action.OpenMenu -> {
+                    chrome.openPanel(PlayerPanel.Settings)
+                    true
+                }
+
+                // ESC = 与直播两页一致，直接退出播放页。
+                is UnifiedRemoteKeyRouter.Action.Exit -> {
+                    exitPlayer()
+                    true
+                }
+
+                // 停止键：暂停并保持控制栏（dispatchSeek 已下发，此前未接）。
+                is UnifiedRemoteKeyRouter.Action.Stop -> {
+                    bufferMonitor.onPaused()
+                    session.pause(player)
+                    chrome.bump()
+                    true
+                }
+
                 else -> false
             }
         },

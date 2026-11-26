@@ -1654,6 +1654,17 @@ private fun PlatformLivePlayerScreen(
                     true
                 }
 
+                // 播放/暂停键 = 标准暂停/恢复语义（此前与 OK 同义开列表）。
+                is UnifiedRemoteKeyRouter.Action.TogglePlayback -> {
+                    if (session.interrupted && player != null) {
+                        session.play(player)
+                        actions.reconnectPlatformLiveChannel()
+                    } else if (player != null) {
+                        session.pause(player)
+                    }
+                    true
+                }
+
                 // 设置键：打开功能面板；线路入口收进面板内（settingsLine），与 OK 唤出的节目列表互斥。
                 is UnifiedRemoteKeyRouter.Action.OpenSettings -> {
                     showRoomList = false

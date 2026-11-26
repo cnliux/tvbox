@@ -274,12 +274,20 @@ internal class UnifiedRemoteKeyRouter(
         }
 
         RemoteKeyAction.Menu -> {
-            if (isKeyUp) callbacks.onAction(Action.CycleSpeed)
+            // MENU 按 Android 标准语义 = 选项菜单（功能面板，倍速在面板内）；
+            // 倍速切换保留给长按手势与面板按钮，不再占用 MENU 键。
+            if (isKeyUp) callbacks.onAction(Action.OpenMenu)
             true
         }
 
         RemoteKeyAction.Settings -> {
             if (isKeyUp) callbacks.onAction(Action.OpenSettings)
+            true
+        }
+
+        RemoteKeyAction.Exit -> {
+            // ESC：与直播两页一致，直接退出播放页（此前点播不处理，属三页语义缺口）。
+            if (isKeyUp) callbacks.onAction(Action.Exit)
             true
         }
 
@@ -384,8 +392,15 @@ internal class UnifiedRemoteKeyRouter(
                 true
             }
 
-            RemoteKeyAction.Confirm, RemoteKeyAction.PlayPause -> {
+            RemoteKeyAction.Confirm -> {
                 callbacks.onAction(Action.OpenRoomList)
+                true
+            }
+
+            RemoteKeyAction.PlayPause -> {
+                // 媒体播放/暂停键回归标准语义 = 暂停/恢复播放；
+                // 此前与 OK 同义开列表，导致平台直播页暂停功能不可达。
+                callbacks.onAction(Action.TogglePlayback)
                 true
             }
 
