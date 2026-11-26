@@ -4,6 +4,20 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.52 - 2026-11-27 —「焦点框随主题换色 + CI 假绿修复」
+
+**你会感觉到**：
+- 播放器控制栏所有按钮的焦点框现在随主题换宽换色（默认主题蓝、影院主题金），与全站按钮观感一致；
+- 切换主题后，播放/暂停/换线路等按钮的遥控器焦点框不再保持固定细边框。
+
+**修了什么**：
+- **播放器全站按钮焦点框收编进统一令牌**：`ControlButton`（`PlayerChrome.kt`）此前硬编码 `2dp + 固定 FocusRing`，切换主题时焦点框宽度和颜色都不跟随。改为从 `LocalTvFocus` 取 `ringWidth`/`ringColor`，与第 4 轮已修的 `PlayerInfoRowItem`/`SettingsRowItem` 口径一致，覆盖播放器 46 处按钮调用点（P2-3 收尾项）。
+- **CI 假绿修复（连续失败排查收尾）**：单测失败诊断 annotation 此前用 `::error file=CI-DIAGNOSE::`，非真实路径被 GitHub 静默丢弃，定位不到具体失败测试。改为无 `file` 的 `::error::` 纯消息后定位到真正根因——`tools/apk_budget.json` 被 `.gitignore` 的 `tools/*` 忽略、从未入库，Linux runner checkout 后缺失导致 `BuildConfigGovernanceTest#T4-30` 失败而 Windows 本地假绿。已加入白名单并入库，Linux 单测转绿。
+
+**已知问题**：
+- 直播「换线路」在部分老旧遥控器上若按键只发 KeyUp，浮层返回层级可能与预期略有差异（需真机验证）。
+- 平板/折叠屏展开态仍按电视形态强制横屏（WindowSizeClass 中间档未接入），竖屏体验待优化。
+
 ## v1.0.51 - 2026-11-27 —「EPG 支持压缩源、换线路按钮与节目单刷新提速」
 
 **你会感觉到**：

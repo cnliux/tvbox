@@ -2002,10 +2002,18 @@ internal fun ControlButton(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shape = RoundedCornerShape(if (primary) 24.dp else 10.dp)
+    // 焦点环宽度/颜色从主题令牌取值：切主题（默认↔影院）时与全站按钮焦点框一致，
+    // 不再硬编码 2dp + 固定 FocusRing。ControlButton 是播放器全站按钮的统一焦点环，
+    // 收编进 LocalTvFocus 后随主题换宽换色（P2-3 收尾项）。
+    val focusTokens = LocalTvFocus.current
     Button(
         onClick = onClick, enabled = enabled,
         modifier = modifier.heightIn(min = minHeight).onFocusChanged { focused = it.isFocused }
-            .border(2.dp, if (focused && enabled) TvColors.FocusRing else Color.Transparent, shape),
+            .border(
+                width = if (focused && enabled) focusTokens.ringWidth else 0.dp,
+                color = if (focused && enabled) focusTokens.ringColor else Color.Transparent,
+                shape = shape,
+            ),
         shape = shape,
         colors = ButtonDefaults.buttonColors(
             containerColor = when { primary -> Color.White; focused -> Color.White.copy(alpha = 0.18f); else -> Color.Transparent },
