@@ -171,16 +171,23 @@ class MainActivity : ComponentActivity() {
         pendingInstallPermissionAction = savedInstanceState?.getString("pendingUpdateApk")
             ?.let { InstallPermissionAction.InstallDownloadedApk(it) }
 
-        // T6-39 + S2-10：首次启动法务契约检查（在协程订阅之后、setContent 之前计算，避免 IO 阻塞渲染）。
-        val showLegalScreen = runBlocking {
-            val v = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
-                .getInt(LegalTerms.VERSION_KEY, -1)
-            val h = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
-                .getString(LegalTerms.HASH_KEY, null)
-            val hash = h?.takeIf { it.isNotBlank() }
-            val ack = if (v >= 0 && hash != null) LegalTerms.Ack(v, hash, System.currentTimeMillis()) else null
-            LegalTerms.requiresAcknowledgement(ack)
-        }
+        // T6-39 + S2-10：首次启动法务契约检查。
+        // 必须是 Compose 可观察状态：用户勾选并落盘 ack 后要能立即切到首页，
+        // 否则 setContent 分支永远停在法务页（v1.0.45 曾因写成不可变 val 导致
+        // "正在保存…" 卡死 —— onAccepted 只改了 screen 却没有重算本标志）。
+        val showLegalScreenState = androidx.compose.runtime.mutableStateOf(
+            runBlocking {
+                val prefs = getSharedPreferences("tvbox_legal", MODE_PRIVATE)
+                val v = prefs.getInt(LegalTerms.VERSION_KEY, -1)
+                val hash = prefs.getString(LegalTerms.HASH_KEY, null)?.takeIf { it.isNotBlank() }
+                val ack = if (v >= 0 && hash != null) {
+                    LegalTerms.Ack(v, hash, System.currentTimeMillis())
+                } else {
+                    null
+                }
+                LegalTerms.requiresAcknowledgement(ack)
+            },
+        )
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.RESUMED) {
@@ -202,14 +209,19 @@ class MainActivity : ComponentActivity() {
                 fontScale = state.appSettings.fontScale,
                 themeAccent = state.appSettings.themeAccent,
             ) {
-                if (showLegalScreen) {
+                if (showLegalScreenState.value) {
                     // M-02：首启法务页移入主题与设备模式作用域，手机端不再画 TV 焦点框、
                     // 且正确跟随用户字号/主题；LocalTouchMode 按设备模式提供。
                     CompositionLocalProvider(
                         LocalTouchMode provides (state.effectiveDeviceMode == DeviceMode.Mobile),
                     ) {
                         FirstRunScreen(
-                            onAccepted = { viewModel.openHome() },
+                            onAccepted = {
+                                // 先翻状态再进首页：ack 已由 FirstRunScreen 落盘，
+                                // 这里必须同步关闭法务页分支，避免残留「正在保存…」。
+                                showLegalScreenState.value = false
+                                viewModel.openHome()
+                            },
                         )
                     }
                 } else {

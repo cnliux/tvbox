@@ -19,10 +19,13 @@
 -keep class platformlive.** { *; }
 -keep interface platformlive.** { *; }
 -keep class go.** { *; }
--keepclassmembers class * {
-    @org.jetbrains.annotations.NotNull <methods>;
-}
 -dontwarn go.Seq.**
+# ⚠️ 严禁加回 `-keepclassmembers class * { @org.jetbrains.annotations.NotNull <methods>; }`：
+# 该规则会让 R8 对全工程的 @NotNull 方法做全量保留 + 注解驱动优化，
+# 在 Compose 1.11 / Canvas 上表现为 AndroidComposeView.<init> 抛
+# NullPointerException("throw with null exception")——v1.0.45 release 包
+# 启动即崩正是这条规则引入的（已用真机 release 包二分定位）。
+# gomobile JNI 边界已由下方 platformlive/go 的 -keep 显式收口，无需再靠 @NotNull 兜底。
 
 # P2-19：R8 fullMode 下 gomobile 产物容易裁掉 JNI 边界，补两类 keep：
 # ① AAR 内可能存在的 com.tvbox.platformlive 包（Go 桥接类）；

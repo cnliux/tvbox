@@ -106,7 +106,12 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
 
             Spacer(modifier = Modifier.height(20.dp))
 
-            // 条款正文（可滚动区域）：min 260dp，内容超出时可滚动，小屏/大字号/横屏不裁切。
+            // 条款正文：外层 Column 已整体 verticalScroll，这里**不能再嵌套滚动容器**——
+            // 嵌套滚动会收到父级给出的无限高约束，ScrollNode 直接抛
+            // IllegalStateException("Vertically scrollable component was measured with an
+            // infinity maximum height constraints")，导致首启页启动即崩。
+            // 因此仅保留 heightIn(min=260dp) 保证视觉最小高度，超出部分由外层滚动承载，
+            // 小屏/大字号/横屏依然不裁切（M-02 意图不变）。
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -119,10 +124,7 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
                     text = LegalTerms.TEXT,
                     style = MaterialTheme.typography.bodySmall,
                     color = Color(0xFFCCCCCC),
-                    modifier = Modifier
-                        .padding(16.dp)
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState()),
+                    modifier = Modifier.padding(16.dp),
                 )
             }
 

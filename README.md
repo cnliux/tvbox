@@ -4,7 +4,7 @@
 兼容 Android 7.0（API 24）及以上，使用 Kotlin、Jetpack Compose 与 Media3 ExoPlayer 构建。同一份 APK 通过运行时设备模式
 在电视与手机之间切换布局与交互：电视端以遥控器操作优先，手机端提供触屏手势与竖屏布局。
 
-当前版本以发布产物内的 `update.json` 为准（构建版本号见 `app/build.gradle.kts` 的 `TVBOX_VERSION_NAME` / `TVBOX_VERSION_CODE`，当前为 `1.0.45` / `20045`），不在此处写死以免漂移。Release 原生库只保留 `arm64-v8a`，
+当前版本以发布产物内的 `update.json` 为准（构建版本号见 `app/build.gradle.kts` 的 `TVBOX_VERSION_NAME` / `TVBOX_VERSION_CODE`，当前为 `1.0.46` / `20046`），不在此处写死以免漂移。Release 原生库只保留 `arm64-v8a`，
 启用 R8 full mode 与资源压缩。
 
 ### 身份卡（认准这三样，别装错包）

@@ -4,6 +4,30 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.46 - 2026-11-26 —「修复启动崩溃」
+
+**你会感觉到**：
+- 安装后可以正常打开应用了（v1.0.45 存在启动即崩的问题，本版已修复）；
+- 首次启动的合规确认页可以正常勾选并进入首页，不再卡在「正在保存…」。
+
+**修了什么**：
+- **修复 Release 包启动即崩（NPE）**：`proguard-rules.pro` 中
+  `-keepclassmembers class * { @org.jetbrains.annotations.NotNull <methods>; }`
+  会让 R8 对全工程 @NotNull 方法做注解驱动优化，导致 Compose
+  `AndroidComposeView.<init>` 抛 `NullPointerException("throw with null exception")`。
+  已移除该规则（gomobile JNI 边界仍由 platformlive/go 的显式 -keep 收口），
+  并写下禁止回加的说明。真机 release 包二分定位，修复后完整走通冷启动 → 首页。
+- **修复首启合规页卡在「正在保存…」**：`MainActivity` 的 `showLegalScreen`
+  原为一次性计算的不可变 `val`，勾选落盘后不重算，导致页面永不切换。
+  改为 Compose 可观察状态，`onAccepted` 同步关闭法务分支。
+- **修复首启条款区嵌套滚动崩溃**（debug 包可见）：外层 `Column` 已有
+  `verticalScroll` 时，内层再套 `fillMaxSize + verticalScroll` 会收到无限高约束，
+  ScrollNode 直接抛 `IllegalStateException`。移除内层滚动容器，保留
+  `heightIn(min=260dp)`，小屏/大字号仍可完整阅读。
+
+**已知问题**：
+- 无新增已知问题；v1.0.45 未成功发布的根因（CI 门禁脚本 + 启动崩溃）均已修复。
+
 ## v1.0.45 - 2026-11-26 —「焦点更统一，手机更好点」
 
 **你会感觉到**：
