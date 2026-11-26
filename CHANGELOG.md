@@ -4,6 +4,23 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.49 - 2026-11-26 —「直播节目单优先用订阅自带」
+
+**你会感觉到**：
+- 直播节目单（EPG）现在优先用订阅自带地址，设置里填的地址改为「备用」，订阅没自带时才启用，命中更准；
+- 手机端和电视端设置都能直接填/清「备用 EPG 地址」，不用再靠导入订阅间接配置；
+- 修复部分 IPTV 订阅读不到节目单、以及换订阅后残留上一份节目单的问题。
+
+**修了什么**：
+- **EPG 地址优先级反转**：`resolveEffectiveEpgUrl` 由「用户配置 > 源自带 > 兜底」改为「订阅自带 bundled > 用户配置（备用）> 内置兜底」，与「订阅包含 EPG 就用订阅的」诉求一致；`AppSettings.epgUrl` 注释改为「备用 EPG 地址」。
+- **双端备用 EPG 设置入口**：手机端 `LiveDetail` 新增「备用 EPG 地址」文本行（绑定既有 `updateEpgUrl`）；电视端 `TvLiveDetail` EPG 分组新增同名行，复用 `TextValueEditor`，未自造 D-pad 焦点逻辑。
+- **订阅自带 EPG 残留修复**：`DefaultLiveRepository.getChannels()` 只在「最终成功返回频道的那个源」写入 `lastBundledEpgUrl`（多源回退不再被失败源覆盖）；全部订阅失败时清空旧值，避免误用上一份源 EPG。
+- **直播换线修复（`#EXTINF=` 等号变体）**：`M3uTagLexer` 与 `collectM3uLineExtras` 对 `#EXTINF` 的判定口径统一为同时接受 `:` 与 `=`，修复等号变体下 extras 与 lexer 下标错位、台标/tvg-id/请求头挂错线路、换线能力丢失的问题。
+- 顺带修复工作区遗留编译错误：`AnrWatchdog` 重复 `isConservativeMode` 声明、`LegacySettingsMigrationMarker` 缺 `warmUp()` 导致 `compileDebugKotlin` 失败。
+
+**已知问题**：
+- 多维度代码审查（聚焦/双端/UI/功能）发现的体验与健壮性问题将在后续版本按 P0→P3 顺序持续收敛，详见仓库内审查报告。
+
 ## v1.0.48 - 2026-11-26 —「电视遥控器按键统一」
 
 **你会感觉到**：

@@ -43,7 +43,15 @@ fun nextRotatedPlatformLiveCandidate(
  */
 const val BUILTIN_FALLBACK_EPG_URL = "https://epg.112114.xyz/pp.xml"
 
-/** EPG 地址解析：用户配置 > 源自带（M3U 头部 url-tvg）> 内置兜底地址。 */
+/**
+ * EPG 地址解析。优先级（用户诉求）：
+ * 1. 订阅自带（M3U 头部 url-tvg / x-tvg-url / tvg-url / url-epg）——[bundledUrl]；
+ * 2. 用户在设置里配置的「备用 EPG 地址」——[userConfiguredUrl]，仅当订阅未自带时使用；
+ * 3. 内置兜底 [BUILTIN_FALLBACK_EPG_URL]。
+ *
+ * 空/空白串视为未提供：bundled 为空串时回落备用，备用也空时回落兜底。
+ * 入参与返回值都会做 trim 处理。
+ */
 fun resolveEffectiveEpgUrl(userConfiguredUrl: String, bundledUrl: String): String =
-    userConfiguredUrl.trim().ifBlank { bundledUrl.trim().ifBlank { BUILTIN_FALLBACK_EPG_URL } }
+    bundledUrl.trim().ifBlank { userConfiguredUrl.trim().ifBlank { BUILTIN_FALLBACK_EPG_URL } }
 

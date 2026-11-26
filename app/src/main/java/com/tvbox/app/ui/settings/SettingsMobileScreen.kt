@@ -1171,6 +1171,12 @@ private fun LiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             onSelect = { v -> actions.updateAppSettings { it.copy(epgCacheHours = v) } },
         )
         TextSettingRow("EPG 时区", "留空使用系统时区", state.appSettings.epgTimezone) { actions.updateAppSettings { s -> s.copy(epgTimezone = it) } }
+        // 备用 EPG 地址：订阅自带 EPG 时优先使用订阅自带地址，本字段仅作回退。
+        TextSettingRow(
+            "备用 EPG 地址",
+            "订阅自带 EPG 时优先使用订阅，未自带才用此地址；留空则回退到内置兜底",
+            state.appSettings.epgUrl,
+        ) { actions.updateEpgUrl(it) }
         ChoiceSettingRow(
             icon = Icons.Default.Info,
             title = "节目单越界处理",

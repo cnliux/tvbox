@@ -48,11 +48,23 @@ class PlatformLivePlaybackLogicTest {
     }
 
     @Test
-    fun resolveEffectiveEpgUrlPrefersUserConfig() {
-        assertEquals("https://user.test/epg.xml", resolveEffectiveEpgUrl(" https://user.test/epg.xml ", "https://bundled.test/epg.xml"))
-        assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("  ", "https://bundled.test/epg.xml"))
-        // 用户与源都未提供时回退内置兜底 EPG（APK 兜底，节目单不再永远空白）。
+    fun resolveEffectiveEpgUrlPrefersBundledOverUserBackup() {
+        // 订阅自带 EPG 优先：即便用户已配置备用地址，也优先使用订阅的 url-tvg。
+        assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl(" https://user.test/epg.xml ", " https://bundled.test/epg.xml "))
+    }
+
+    @Test
+    fun resolveEffectiveEpgUrlFallsBackToUserBackupWhenBundledBlank() {
+        // 订阅未自带（空串/空白）时回落到用户配置的备用地址。
+        assertEquals("https://user.test/epg.xml", resolveEffectiveEpgUrl(" https://user.test/epg.xml ", "  "))
+        assertEquals("https://user.test/epg.xml", resolveEffectiveEpgUrl("https://user.test/epg.xml", ""))
+    }
+
+    @Test
+    fun resolveEffectiveEpgUrlFallsBackToBuiltinWhenBothBlank() {
+        // 两者都未提供时回退内置兜底 EPG（APK 兜底，节目单不再永远空白）。
         assertEquals(BUILTIN_FALLBACK_EPG_URL, resolveEffectiveEpgUrl("", ""))
+        assertEquals(BUILTIN_FALLBACK_EPG_URL, resolveEffectiveEpgUrl("   ", "  "))
     }
 
     private fun c(cdn: String) = PlatformLiveStreamCandidate(cdn = cdn, protocol = "flv", url = "https://$cdn.test/live")

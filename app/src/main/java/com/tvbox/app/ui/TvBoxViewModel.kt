@@ -652,7 +652,16 @@ class TvBoxViewModel(
                 .getOrDefault(AppSettings())
             repository.updateCustomApiLines(settings.customVideoApiLines.toApiLines())
             repository.setDisabledLineIds(settings.blockedSourceIds.toSet())
-            repository.setMaxParallelSourceRequests(settings.maxParallelSourceRequests)
+            // S5-29：ANR 保守模式下把搜索/详情源并发上限压到策略档位（6→3）；
+            // 用户设置值更低时以用户值为准，取 min 即可，不写回设置（降级不落盘）。
+            repository.setMaxParallelSourceRequests(
+                minOf(
+                    settings.maxParallelSourceRequests,
+                    com.tvbox.app.domain.AnrConservativePolicy.searchParallelism(
+                        com.tvbox.app.crash.AnrWatchdog.isConservativeMode,
+                    ),
+                ),
+            )
             // #94 启动时把已保存的单源超时推给仓库，搜索/详情立即按该预算执行。
             repository.setPerSourceTimeoutMs(settings.perSourceTimeoutMs)
             repository.setSourceCircuitBreakerEnabled(settings.sourceCircuitBreakerEnabled)

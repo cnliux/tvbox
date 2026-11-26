@@ -43,8 +43,15 @@ object M3uTagLexer {
             if (trimmed.isEmpty()) return@forEachIndexed
             when {
                 trimmed.startsWith("#EXTM3U", ignoreCase = true) -> Unit
-                trimmed.startsWith("#EXTINF:", ignoreCase = true) -> {
-                    val body = trimmed.substringAfter(":", "")
+                trimmed.startsWith("#EXTINF:", ignoreCase = true) ||
+                    trimmed.startsWith("#EXTINF=", ignoreCase = true) -> {
+                    // 兼容 `#EXTINF=` 等号变体：collectM3uLineExtras 只判 `#EXTINF` 前缀
+                    // （LiveParser.kt），lexer 若漏认等号变体，extras 与 lexed.lines 的
+                    // URL 归属会错位，把台标/tvg-id/请求头挂到别的线路上。
+                    val body = when {
+                        trimmed.startsWith("#EXTINF:", ignoreCase = true) -> trimmed.substringAfter(":", "")
+                        else -> trimmed.substringAfter("=", "")
+                    }
                     val attrs = parseAttributes(body)
                     val name = (attrs["name"] ?: "").let(::normalizeText)
                     if (name.isBlank()) {

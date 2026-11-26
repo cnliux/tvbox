@@ -198,7 +198,13 @@ private fun collectM3uLineExtras(rawLines: List<String>): List<M3uLineExtras> {
         val line = (if (index == 0) rawLine.removePrefix("\uFEFF") else rawLine).trim()
         when {
             line.startsWith("#EXTINF", ignoreCase = true) -> {
-                val body = line.substringAfter(":", "")
+                // 与 lexer 同口径：同时接受 `:` 与 `=` 分隔（等号变体），否则等号 EXTINF
+                // 的属性解析不出来，extras 与 lexed.lines 的下标会错位。
+                val body = when {
+                    line.startsWith("#EXTINF:", ignoreCase = true) -> line.substringAfter(":", "")
+                    line.startsWith("#EXTINF=", ignoreCase = true) -> line.substringAfter("=", "")
+                    else -> ""
+                }
                 val attrs = M3uTagLexer.parseAttributes(body)
                 // 判定必须与 lexer 完全一致（同一 normalizeText，不额外 cleanHtml），
                 // 否则 extras 与 lexed.lines 的下标会错位，把元数据挂到别的线路上。

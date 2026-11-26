@@ -42,7 +42,11 @@ data class AppSettings(
     val liveSourceDefaultIndex: Int = -1,
     /** 剧集排序顺序：false=正序（1,2,3…），true=倒序（…,3,2,1）。 */
     val episodeSortReverse: Boolean = false,
-    /** 电视直播节目单 XMLTV 接口地址；空表示未配置。 */
+    /**
+     * 电视直播节目单（XMLTV）「备用 EPG 地址」；空表示未配置。
+     * 仅当直播订阅未自带 EPG（M3U 头部无 url-tvg / x-tvg-url / tvg-url / url-epg）时才使用；
+     * 订阅自带 EPG 时优先使用订阅自带地址，本字段被忽略。
+     */
     val epgUrl: String = "",
     /** 电视直播 EPG 窄卡展示的节目条数。 */
     val epgCardRows: Int = QuantitySettings.EpgCardRows.default,

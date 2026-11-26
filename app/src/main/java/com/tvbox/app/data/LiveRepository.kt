@@ -69,7 +69,9 @@ class DefaultLiveRepository : LiveRepository {
         val snapshot = config
         val allUrls = snapshot.urls
         if (allUrls.isEmpty()) {
-            throw IOException("请添加自定义直播源地址后重试")
+            // 全部源加载失败：清空上一份源残留的自带 EPG，避免误用与当前订阅无关的节目单地址。
+        lastBundledEpgUrl = null
+        throw IOException("请添加自定义直播源地址后重试")
         }
         val orderedUrls = resolveSourceOrder(allUrls, snapshot.defaultIndex, snapshot.selectionIndex)
         var lastError: Throwable? = null
@@ -99,7 +101,9 @@ class DefaultLiveRepository : LiveRepository {
                     return@forEach
                 }
                 // 源自带的节目单地址（M3U 头部 url-tvg 等）；TXT 源没有该声明，保持 null。
-                lastBundledEpgUrl = runCatching { extractM3uEpgUrl(rawText) }.getOrNull()
+                // 注意：多源回退时只有「最终成功返回 channels 的那个源」的自带 EPG 才能成为最终值，
+                // 后续失败的源不得覆盖已成功源的值（见下方成功分支）。
+                val sourceBundledEpgUrl = runCatching { extractM3uEpgUrl(rawText) }.getOrNull()
                 val channels = parseLiveChannels(rawText)
                     .map { ch ->
                         if (ch.groupName == "电视直播" && snapshot.defaultGroup.isNotBlank()) ch.copy(groupName = snapshot.defaultGroup) else ch
@@ -111,18 +115,25 @@ class DefaultLiveRepository : LiveRepository {
                         LIVE_SOURCE_TAG,
                         "【源加载成功】${logSafeUrl(endpoint.url)} channels=${channels.size} lines=${channels.sumOf { it.lines.size }}",
                     )
+                    // 只有「最终成功返回 channels 的这个源」的自带 EPG 才是最终值；多源回退时
+                    // 前序成功源若被丢弃，其 EPG 也会在此处被最终源覆盖。
+                    lastBundledEpgUrl = sourceBundledEpgUrl
                     return@withContext channels
                 }
                 lastError = IOException("直播源未返回可用频道")
                 lastLoadError = "直播源未返回可用频道"
                 android.util.Log.w(LIVE_SOURCE_TAG, "【源无频道】${logSafeUrl(sourceUrl)} 解析结果为空（HTML 目录页或格式不识别）")
-                throw IOException("直播源未返回可用频道")
+                // 全部源加载失败：清空上一份源残留的自带 EPG，避免误用与当前订阅无关的节目单地址。
+        lastBundledEpgUrl = null
+        throw IOException("直播源未返回可用频道")
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
                 lastError = error
             }
         }
+        // 全部源加载失败：清空上一份源残留的自带 EPG，避免误用与当前订阅无关的节目单地址。
+        lastBundledEpgUrl = null
         throw IOException(
             if (snapshot.defaultIndex in orderedUrls.indices) {
                 "默认直播源及备用源均不可用（${lastLoadError ?: "网络异常"}）"

@@ -776,6 +776,24 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         SettingsGroupDivider()
+        // 备用 EPG 地址：订阅自带 EPG 时优先使用订阅自带地址；本字段仅当订阅未自带时作为回退。
+        // 复用 TvSourcesDetail 的 TextValueEditor 文本编辑模式，沿用 TvSettingsRow 焦点结构，不新增自定义焦点逻辑。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "备用 EPG 地址",
+            subtitle = state.appSettings.epgUrl.ifBlank {
+                "未配置 · 订阅自带 EPG 时优先使用订阅，未自带才用此地址"
+            },
+            trailing = {
+                TextValueEditor(
+                    value = state.appSettings.epgUrl,
+                    onSave = actions::updateEpgUrl,
+                    fieldModifier = Modifier.width(220.dp).focusable(),
+                    saveButton = { onSaveDraft -> TvFocusButton(text = "保存", onClick = onSaveDraft) },
+                )
+            },
+        )
+        SettingsGroupDivider()
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "数字选台候选行数",
