@@ -1,11 +1,14 @@
 package com.tvbox.app.domain
 
+import androidx.compose.runtime.Immutable
+
 /**
  * ViewModel 超大 State 的细粒度切片（第 100/101/103/104/141/142/144/145 轮）。
  * 首页 / 搜索 / 直播各自只持有自己需要的字段，派生值由纯函数计算，
  * 对应 Compose 侧用 derivedStateOf 包一层即可避免整棵子树重组。
  */
 
+@Immutable
 data class HomeFeedSlice(
     val page: Int = 1,
     val pageCount: Int = 0,
@@ -14,6 +17,7 @@ data class HomeFeedSlice(
     val itemCount: Int = 0,
 )
 
+@Immutable
 data class SearchSlice(
     val keyword: String = "",
     val completedSources: Int = 0,
@@ -22,6 +26,7 @@ data class SearchSlice(
     val resultCount: Int = 0,
 )
 
+@Immutable
 data class LiveSlice(
     val channelNumber: Int = 0,
     val lineIndex: Int = 0,

@@ -17,6 +17,9 @@ package com.tvbox.app.domain
  *    满足「同输入同输出」，否则比不标注更危险（错误跳过重组会导致界面不更新）。
  *
  * 实际标注落点见：`ui/components/PosterImage.kt`（档位枚举）、
- * `ui/components/TvFocusableSurface.kt`（焦点面骨架）。新增核心组件请沿用同一规则。
+ * `ui/components/TvFocusableSurface.kt`（焦点面骨架）、
+ * `domain/Models.kt`（点播/直播/平台直播数据模型，S5-26）、
+ * `domain/PlaybackUiState.kt` / `domain/UiStateSlices.kt` / `ui/UpdateUiState.kt` / `ui/SourceManagerUiState.kt`（UI 状态切片，S5-26）。
+ * 新增核心组件请沿用同一规则。
  */
 object StabilityAnnotations

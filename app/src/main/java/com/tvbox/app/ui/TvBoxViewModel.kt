@@ -2455,6 +2455,14 @@ class TvBoxViewModel(
         }
     }
 
+    /**
+     * T2-18：源体检卡「立即体检」：不管周期性开关是否关闭，马上跑一轮静默后台体检
+     * （仍遵守探活冷却与「用户正在手动测速则跳过」的既有约束）。
+     */
+    fun runSourceHealthCheckNow() {
+        viewModelScope.launch { runBackgroundSourceHealthCheck(force = true) }
+    }
+
     /** 源失败熔断开关：连续超时的源自动休眠，避免反复打到坏源拖慢首屏。 */
     fun updateSourceCircuitBreakerEnabled(enabled: Boolean) {
         val settings = _state.value.appSettings.copy(sourceCircuitBreakerEnabled = enabled)
@@ -4085,10 +4093,11 @@ class TvBoxViewModel(
      * 单轮后台体检：静默并发测速全部视频接口（不复用用户测速的进度条状态），
      * 结果合并进延迟表并持久化；随后按延迟自动排序（快源靠前、失效靠后）。
      * 用户正在手动测速时跳过本轮，避免两路测速互相覆盖进度与结论。
+     * [force] 为 true 时（T2-18 体检卡「立即体检」）跳过「开关必须开启」的门控。
      */
-    private suspend fun runBackgroundSourceHealthCheck() {
+    private suspend fun runBackgroundSourceHealthCheck(force: Boolean = false) {
         val current = _state.value
-        if (!current.appSettings.sourceHealthCheckEnabled) return
+        if (!current.appSettings.sourceHealthCheckEnabled && !force) return
         if (current.source.testing) return
         val lines = current.apiLines
         if (lines.isEmpty()) return

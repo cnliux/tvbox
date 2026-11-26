@@ -14,8 +14,10 @@ object UaScope {
      * T2-16：探针专用 UA。源站常按 UA 区分「真实播放」与「探测请求」，
      * 用固定内置值才能让后台体检拿到与播放口径可比的延迟；因此它不随
      * unified/scoped 模式变化，也不复用播放 UA。
+     * 唯一持有点：[ProbeScheduler] 发探针时经 [ProbeUaLease] 切换全局 UA，
+     * 全仓不要再复制这个字符串。
      */
-    const val ProbeUserAgent = "TVBox-HealthProbe/1.0 (+source-speed-check)"
+    const val ProbeUserAgent = "TVBox-Probe/1.0 (+healthcheck)"
 
     /** 脱敏时保留的尾部字符数。 */
     const val RedactTailChars: Int = 12

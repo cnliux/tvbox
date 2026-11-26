@@ -1,5 +1,7 @@
 package com.tvbox.app.domain
 
+import androidx.compose.runtime.Immutable
+
 /**
  * 播放页状态层（第 84/86/110/111/112/151/152/153 轮）。
  * 跳过片头片尾配置、长按时间轴提示、播放错误的可操作提示都抽成纯 Kotlin，
@@ -9,6 +11,7 @@ package com.tvbox.app.domain
 private const val SKIP_CREDITS_PREFS_VERSION = "v1"
 private const val MAX_SKIP_SECONDS = 600
 
+@Immutable
 data class SkipCreditsPreferences(
     val enabled: Boolean = false,
     val introSeconds: Int = 0,
@@ -43,6 +46,7 @@ fun decodeSkipCreditsPreferences(raw: String?): SkipCreditsPreferences {
 }
 
 /** 长按加速度的时间轴提示：显示当前步进档位与预计落点，不引入额外动画库。 */
+@Immutable
 data class SeekTimelineHint(
     val stepSeconds: Int,
     val targetSeconds: Int,
@@ -68,6 +72,7 @@ fun seekTimelineHint(
 }
 
 /** 错误分级后的可操作提示；action 交由播放页映射到「重试 / 换线路 / 换来源」。 */
+@Immutable
 data class PlaybackErrorPresentation(
     val kind: PlaybackErrorKind,
     val title: String,

@@ -14,6 +14,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -137,6 +138,10 @@ import com.tvbox.app.ui.components.tvFocusScale
 import com.tvbox.app.ui.history.MobileHistoryScreen
 import com.tvbox.app.ui.settings.SettingsMobileScreen
 import com.tvbox.app.ui.settings.SettingsTvSplitScreen
+import com.tvbox.app.ui.settings.source.SOURCE_HEALTH_CARD_HOLD_MS
+import com.tvbox.app.ui.settings.source.SourceHealthCardOverlay
+import com.tvbox.app.ui.settings.source.buildSourceHealthCardModel
+import com.tvbox.app.ui.settings.source.buildSourceHealthReport
 import com.tvbox.app.ui.theme.TvColors
 import com.tvbox.app.ui.theme.TvLayout
 
@@ -1921,6 +1926,8 @@ private fun sourceStatusLabel(lineId: String, latencies: Map<String, Long?>): Pa
 /**
  * 源列表卡片（规范布局）：左侧「标题 + 副标题（测速 | 接口地址）」，
  * 右侧「状态标签（正常/失效）+ 箭头」；整卡可点，打开操作弹窗（测速/屏蔽/删除）。
+ * T2-18：长按（clickable 的 onLongClick，触摸/遥控按键通用）或焦点停留满
+ * [SOURCE_HEALTH_CARD_HOLD_MS]（遥控器 onFocusChanged）进入源健康「体检卡」。
  */
 @Composable
 private fun SourceManageCard(
@@ -1931,18 +1938,35 @@ private fun SourceManageCard(
     fingerprint: String,
     onCopyFingerprint: () -> Unit,
     onClick: () -> Unit,
+    onOpenHealthCard: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(10.dp)
     var focused by remember { mutableStateOf(false) }
     val latencyLabel = sourceLatencyLabel(line.id, latencies)
     val (statusText, statusColor) = sourceStatusLabel(line.id, latencies)
+    // T2-18：遥控器「焦点停留 1s 进入体检卡」——[onFocusChanged] 置位 focused 后，
+    // 在此行停留满 [SOURCE_HEALTH_CARD_HOLD_MS] 才打开；卡片打开后焦点移到浮层，停留自然结束。
+    LaunchedEffect(focused) {
+        if (focused) {
+            delay(SOURCE_HEALTH_CARD_HOLD_MS)
+            if (focused) onOpenHealthCard()
+        }
+    }
     Surface(
         modifier = modifier
             .tvFocusScale(shape = shape)
             .clip(shape)
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(role = Role.Button, onClick = onClick)
+            .combinedClickable(
+                role = Role.Button,
+                onClick = onClick,
+                // T2-18：触摸/遥控器「按住」进入体检卡。combinedClickable 原生区分轻点与长按：
+                // 轻点走操作弹窗，按住超过系统长按时长即进入体检卡（与 TV 焦点停留 1s 等价），
+                // 且长按触发后抬手不会误触发轻点，避免弹窗叠加（项目内同用法见 HistoryCardRow）。
+                onLongClick = onOpenHealthCard,
+                onLongClickLabel = "打开源体检卡",
+            )
             .focusable(),
         shape = shape,
         color = if (focused) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
@@ -2463,6 +2487,8 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
     var sourceQuery by remember { mutableStateOf("") }
     // 当前打开操作弹窗（测速/屏蔽/删除）的源 id；null 表示弹窗关闭。
     var actionLineId by remember { mutableStateOf<String?>(null) }
+    // T2-18：体检卡当前展示的源行；null 表示未打开。
+    var healthCardLineId by remember { mutableStateOf<String?>(null) }
     val normalizedSourceQuery = sourceQuery.trim()
     val visibleSourceLines = remember(state.allSourceLines, normalizedSourceQuery) {
         if (normalizedSourceQuery.isBlank()) {
@@ -2600,6 +2626,7 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
                                     (context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(clip)
                                 },
                                 onClick = { actionLineId = line.id },
+                                onOpenHealthCard = { healthCardLineId = line.id },
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
@@ -2665,6 +2692,51 @@ private fun VideoSourceManagementScreen(state: TvBoxUiState, actions: TvBoxViewM
         } else {
             // 源已被删除但弹窗还开着：直接关闭，避免引用悬空。
             actionLineId = null
+        }
+    }
+
+    // T2-18：源健康「体检卡」——源行长按（触摸）/ 焦点停留满 1s（遥控器）打开。
+    // 「立即体检」触发一轮静默后台体检；「导出报告」生成脱敏的 DiagnosticEnvelope JSON。
+    healthCardLineId?.let { id ->
+        val healthLine = state.allSourceLines.firstOrNull { it.id == id }
+        if (healthLine != null) {
+            val fingerprintMap = remember(state.allSourceLines) {
+                state.resolvedSites
+                    .flatMap { site -> listOf(site.winner) + site.shadowed }
+                    .associate { candidate -> candidate.siteKey to candidate.fingerprint }
+            }
+            val healthModel = remember(healthLine, fingerprintMap, state.playbackHealth, state.sourceLatencies, state.appSettings) {
+                buildSourceHealthCardModel(
+                    line = healthLine,
+                    fingerprint = fingerprintMap[healthLine.id].orEmpty(),
+                    health = state.playbackHealth,
+                    latencies = state.sourceLatencies,
+                    settings = state.appSettings,
+                )
+            }
+            val reportText = remember(healthModel) {
+                buildSourceHealthReport(
+                    model = healthModel,
+                    appVersion = com.tvbox.app.BuildConfig.VERSION_NAME,
+                    versionCode = com.tvbox.app.BuildConfig.VERSION_CODE,
+                    deviceModel = android.os.Build.MODEL,
+                    androidVersion = "Android ${android.os.Build.VERSION.RELEASE}",
+                    sdkInt = android.os.Build.VERSION.SDK_INT,
+                )
+            }
+            SourceHealthCardOverlay(
+                model = healthModel,
+                healthCheckRunning = state.source.healthCheckRunning,
+                onRunHealthCheck = { actions.runSourceHealthCheckNow() },
+                onExportReport = {
+                    val safeName = healthLine.name.replace(Regex("[^0-9A-Za-z\\u4e00-\\u9fff_-]"), "_")
+                    exportToDownloads("source_health_$safeName.json") { reportText }
+                },
+                onDismiss = { healthCardLineId = null },
+            )
+        } else {
+            // 源已被删除但卡片还开着：直接关闭，避免引用悬空。
+            healthCardLineId = null
         }
     }
 

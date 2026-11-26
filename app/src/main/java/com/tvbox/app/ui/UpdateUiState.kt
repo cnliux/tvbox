@@ -1,8 +1,14 @@
 package com.tvbox.app.ui
 
+import androidx.compose.runtime.Immutable
 import com.tvbox.app.domain.AppUpdate
 
-/** 应用内更新 UI 状态（从 [TvBoxUiState] 拆出，降低单一状态体积；字段语义与原 `update*` 保持一致）。 */
+/**
+ * 应用内更新 UI 状态（从 [TvBoxUiState] 拆出，降低单一状态体积；字段语义与原 `update*` 保持一致）。
+ * S5-26：字段全 val 且无可变引用，标注 [Immutable]（比 @Stable 更强），
+ * Compose 可据此跳过持有该切片子树的无效重组。
+ */
+@Immutable
 data class UpdateUiState(
     val availableUpdate: AppUpdate? = null,
     val dialogVisible: Boolean = false,

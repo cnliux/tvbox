@@ -1,10 +1,15 @@
 package com.tvbox.app.ui
 
+import androidx.compose.runtime.Immutable
 import com.tvbox.app.domain.ResolvedSite
 import com.tvbox.app.domain.SiteCandidate
 import com.tvbox.app.domain.SiteResolver
 
-/** 源管理/测速/导入 UI 状态（从 [TvBoxUiState] 拆出；字段语义与原 `source*`/`detailSource*` 保持一致）。 */
+/**
+ * 源管理/测速/导入 UI 状态（从 [TvBoxUiState] 拆出；字段语义与原 `source*`/`detailSource*` 保持一致）。
+ * S5-26：字段全 val（latencies 为不可变 Map），标注 [Immutable]，避免该切片参与整棵子树重组。
+ */
+@Immutable
 data class SourceManagerUiState(
     val latencies: Map<String, Long?> = emptyMap(),
     val testing: Boolean = false,

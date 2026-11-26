@@ -2,18 +2,21 @@ package com.tvbox.app.domain
 
 import androidx.compose.runtime.Immutable
 
+@Immutable
 data class Category(
     val id: Int,
     val parentId: Int,
     val name: String,
 )
 
+@Immutable
 data class ApiLine(
     val id: String,
     val name: String,
     val baseUrls: List<String>,
 )
 
+@Immutable
 data class Movie(
     val id: Int,
     val apiLineId: String,
@@ -47,6 +50,7 @@ data class Movie(
     }
 }
 
+@Immutable
 data class PlaySource(
     val name: String,
     val episodes: List<PlayEpisode>,
@@ -55,11 +59,13 @@ data class PlaySource(
     val sourceName: String = name,
 )
 
+@Immutable
 data class PlayEpisode(
     val title: String,
     val url: String,
 )
 
+@Immutable
 data class PagedMovies(
     val page: Int,
     val pageCount: Int,
@@ -108,6 +114,7 @@ data class LiveChannelLine(
         }
 }
 
+@Immutable
 data class PlatformLiveChannel(
     val number: Int,
     val id: String,
@@ -117,18 +124,21 @@ data class PlatformLiveChannel(
     val group: String,
 )
 
+@Immutable
 data class PlatformLiveSite(
     val id: String,
     val name: String,
     val description: String,
 )
 
+@Immutable
 data class PlatformLiveParentCategory(
     val id: String,
     val name: String,
     val cover: String,
 )
 
+@Immutable
 data class PlatformLiveCategory(
     val id: String,
     val name: String,
@@ -137,6 +147,7 @@ data class PlatformLiveCategory(
     val cover: String,
 )
 
+@Immutable
 data class PlatformLiveRoom(
     val id: String,
     val site: String,
@@ -149,6 +160,7 @@ data class PlatformLiveRoom(
     val categoryName: String,
 )
 
+@Immutable
 data class PlatformLiveStreamCandidate(
     val cdn: String,
     val protocol: String,
@@ -165,6 +177,7 @@ data class PlatformLiveStreamCandidate(
         }
 }
 
+@Immutable
 data class ResolvedPlatformLiveStream(
     val channelId: String,
     val title: String,
@@ -235,6 +248,7 @@ fun ResolvedPlatformLiveStream.withThirdPartyProxyPrepended(
     return copy(candidates = thirdPartyCandidates + candidates)
 }
 
+@Immutable
 data class AppUpdate(
     val versionCode: Long,
     val versionName: String,
