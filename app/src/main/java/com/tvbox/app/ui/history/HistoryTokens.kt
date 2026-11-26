@@ -1,8 +1,10 @@
 package com.tvbox.app.ui.history
 
 import androidx.compose.runtime.Composable
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tvbox.app.ui.theme.TvColors
@@ -60,9 +62,12 @@ object HistoryTokens {
         val PosterPadStart = 0.dp
         val PosterPadEnd   = 0.dp
         val Radius  = 6.dp
-        val TitleSz = 16.sp
-        val MetaSz  = 13.sp
-        val BadgeSz = 11.sp
+        // M-07：字号不再写死，改为从 MaterialTheme.typography 派生，
+        // 用户选「超大」时跟着放大（此前固定 16/13/11sp 导致手机端字号档对它无效）。
+        // 仍是 @Composable getter，调用方保持在 @Composable 作用域内即可，无需改调用点。
+        val TitleSz: TextUnit @Composable get() = MaterialTheme.typography.titleMedium.fontSize
+        val MetaSz: TextUnit @Composable get() = MaterialTheme.typography.bodyMedium.fontSize
+        val BadgeSz: TextUnit @Composable get() = MaterialTheme.typography.labelSmall.fontSize
         val SegH    = 0.5.dp
         val ProgH   = 4.dp
         val PadH    = 16.dp

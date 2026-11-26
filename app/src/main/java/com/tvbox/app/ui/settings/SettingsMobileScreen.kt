@@ -1,5 +1,9 @@
 package com.tvbox.app.ui.settings
 
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.ImeAction
+import com.tvbox.app.ui.components.TvA11y
 import androidx.activity.compose.BackHandler
 import com.tvbox.app.data.LiveTuningDebugPrefs
 import androidx.compose.animation.Crossfade
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -1836,19 +1841,34 @@ private fun KidsLockPinRow(state: TvBoxUiState, actions: TvBoxViewModel) {
         subtitle = if (enabled) "已开启 · 仅保存 PIN 摘要，不保存明文" else "关闭 · 设置 4~6 位数字 PIN 后开启",
         stackedTrailing = true,
         trailing = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // M-05：键盘弹起时把本行顶上来，避免「保存 PIN」被输入法遮挡。
+            Column(
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.imePadding(),
+            ) {
                 TextField(
                     value = draft,
                     onValueChange = { draft = it; error = null },
                     placeholder = { Text("4~6 位数字 PIN") },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
+                    // M-05：PIN 应弹数字密码键盘而不是全键盘；Done 收起键盘避免遮挡保存按钮。
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.NumberPassword,
+                        imeAction = ImeAction.Done,
+                    ),
+                    modifier = Modifier.semantics {
+                        // M-11：输入框只播报用途，不念出已输入内容。
+                        contentDescription = TvA11y.input("少儿锁 PIN，4~6 位数字")
+                    },
                 )
                 error?.let {
                     Text(it, color = TvColors.Danger, style = MaterialTheme.typography.labelSmall)
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = {
+                    TextButton(
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        onClick = {
                         if (!KidsLockPolicy.isValidPin(draft)) {
                             error = "请输入 4~6 位数字 PIN"
                         } else {
@@ -1857,12 +1877,16 @@ private fun KidsLockPinRow(state: TvBoxUiState, actions: TvBoxViewModel) {
                             draft = ""
                             error = null
                         }
-                    }) { Text("保存 PIN", color = TvColors.Accent) }
-                    TextButton(onClick = {
+                    },
+                    ) { Text("保存 PIN", color = TvColors.Accent) }
+                    TextButton(
+                        modifier = Modifier.heightIn(min = 48.dp),
+                        onClick = {
                         actions.updateAppSettings { s -> s.copy(kidsLockPinHash = "") }
                         draft = ""
                         error = null
-                    }) { Text("关闭锁", color = TvColors.TextSecondary) }
+                    },
+                    ) { Text("关闭锁", color = TvColors.TextSecondary) }
                 }
             }
         },

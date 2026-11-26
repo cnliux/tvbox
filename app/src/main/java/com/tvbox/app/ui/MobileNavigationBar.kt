@@ -56,6 +56,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.ui.components.TvA11y
+import com.tvbox.app.ui.theme.TvColors
 
 /**
  * 手机模式底部导航包装器：首页 / 历史 / 搜索 / 电视 / 直播。
@@ -129,12 +131,12 @@ fun MobileNavWrapper(
                         .heightIn(min = 56.dp),
                     windowInsets = WindowInsets.navigationBars,
                     tonalElevation = 0.dp,
-                    containerColor = Color(0xFF1A1A1A),
+                    containerColor = TvColors.Surface,
                 ) {
                     tabs.forEach { (screen, label) ->
                         val isSelected = screen == currentTab
-                        // 「电视」（电视直播）Tab 使用新页面的红色强调色，其余保持绿色。
-                        val selectedColor = if (screen == MobileNavScreen.Live) MobileNavLiveAccent else MobileNavDefaultAccent
+                        // 「电视」（电视直播）Tab 用强调红，其余用主题强调色。
+                        val selectedColor = mobileNavAccent(screen == MobileNavScreen.Live)
                         NavigationBarItem(
                             icon = { NavIcon(screen, isSelected) },
                             label = {
@@ -142,8 +144,10 @@ fun MobileNavWrapper(
                                     label,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) selectedColor else Color.White.copy(alpha = 0.6f),
-                                    maxLines = 1,
+                                    color = if (isSelected) selectedColor else TvColors.TextTertiary,
+                                    // F-06：大字号（1.36 倍）下强制单行会被裁切，
+                                    // 允许两行并省略，配合 56dp 下限容器。
+                                    maxLines = 2,
                                     overflow = TextOverflow.Ellipsis,
                                 )
                             },
@@ -153,9 +157,14 @@ fun MobileNavWrapper(
                             },
                             colors = NavigationBarItemDefaults.colors(
                                 selectedIconColor = selectedColor,
-                                unselectedIconColor = Color.White.copy(alpha = 0.6f),
+                                unselectedIconColor = TvColors.TextTertiary,
                                 indicatorColor = Color.Transparent,
                             ),
+                            // M-11：底部 Tab 图标无色语义，把「Tab 名 + 是否选中」挂到可点击项上，
+                            // 读屏不再只念枚举名或「按钮」。
+                            modifier = Modifier.semantics {
+                                contentDescription = TvA11y.choice(label, isSelected)
+                            },
                         )
                     }
                 }
@@ -167,9 +176,8 @@ fun MobileNavWrapper(
 @Composable
 private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
     val tint = when {
-        selected && screen == MobileNavScreen.Live -> MobileNavLiveAccent
-        selected -> MobileNavDefaultAccent
-        else -> Color.White.copy(alpha = 0.6f)
+        selected -> mobileNavAccent(screen == MobileNavScreen.Live)
+        else -> TvColors.TextTertiary
     }
     val icon = when (screen) {
         MobileNavScreen.Home -> Icons.Filled.Home
@@ -190,11 +198,13 @@ private fun NavIcon(screen: MobileNavScreen, selected: Boolean) {
 
 public enum class MobileNavScreen { Home, History, Search, Live, PlatformLive }
 
-/** 底部导航默认选中色（绿）。 */
-private val MobileNavDefaultAccent = Color(0xFF1ED760)
-
-/** 「电视」（电视直播）Tab 选中色：与手机直播页强调色一致的红色 #E50914。 */
-private val MobileNavLiveAccent = Color(0xFFE50914)
+/**
+ * M-09：底部导航强调色收敛到主题语义 token（不再各存一份 #1ED760/#E50914）。
+ * 「电视」Tab 用 Danger 区分「直播」语义，其余用 Accent，切主题时跟随变化。
+ */
+@Composable
+private fun mobileNavAccent(isLive: Boolean): Color =
+    if (isLive) TvColors.Danger else TvColors.Accent
 
 private fun TvBoxViewModel.navigateToMobileScreen(screen: MobileNavScreen) {
     when (screen) {

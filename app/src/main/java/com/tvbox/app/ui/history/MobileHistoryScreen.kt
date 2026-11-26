@@ -76,6 +76,7 @@ import com.tvbox.app.ui.history.component.HistoryProgressBar
 import com.tvbox.app.ui.history.component.PosterWithDecor
 import com.tvbox.app.ui.history.component.SectionHeader
 import com.tvbox.app.ui.history.component.StatusRow
+import com.tvbox.app.ui.components.TvA11y
 import com.tvbox.app.ui.theme.TvColors
 import kotlinx.coroutines.launch
 
@@ -253,7 +254,7 @@ internal fun MobileHistoryScreen(
             // 因为手机版底部已有 MobileNavigationBar 自行处理导航栏空间，再加 systemBars
             // 底部 padding 会压缩内容导致搜索框以上的区域被挤出视口）。
             .windowInsetsPadding(WindowInsets.statusBars),
-        color = Color(0xFF121212),
+        color = TvColors.Background,
     ) {
         if (state.historyItems.isEmpty()) {
             EmptyState(
@@ -287,8 +288,8 @@ internal fun MobileHistoryScreen(
                                 // 第一行：搜索框
                                 Surface(
                                     shape = RoundedCornerShape(10.dp),
-                                    color = Color(0xFF0D0D0D),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2A2A2A)),
+                                    color = TvColors.Surface,
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, TvColors.Border),
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .heightIn(min = 48.dp),
@@ -300,7 +301,7 @@ internal fun MobileHistoryScreen(
                                         Icon(
                                             imageVector = Icons.Default.Search,
                                             contentDescription = null,
-                                            tint = Color(0xFF5C5C5C),
+                                            tint = TvColors.TextTertiary,
                                             modifier = Modifier.size(18.dp),
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -309,7 +310,7 @@ internal fun MobileHistoryScreen(
                                                 Text(
                                                     text = "搜索剧名 / 演员 / 源名",
                                                     style = MaterialTheme.typography.bodyMedium,
-                                                    color = Color(0xFF5C5C5C),
+                                                    color = TvColors.TextTertiary,
                                                     maxLines = 1,
                                                 )
                                             }
@@ -320,7 +321,7 @@ internal fun MobileHistoryScreen(
                                                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                                                     color = TvColors.TextPrimary,
                                                 ),
-                                                cursorBrush = androidx.compose.ui.graphics.SolidColor(Color(0xFFFFB020)),
+                                                cursorBrush = androidx.compose.ui.graphics.SolidColor(TvColors.Warning),
                                                 modifier = Modifier.fillMaxWidth(),
                                             )
                                         }
@@ -328,12 +329,12 @@ internal fun MobileHistoryScreen(
                                             historyQuery.isNotEmpty() -> Text(
                                                 text = "✕",
                                                 style = MaterialTheme.typography.bodyMedium,
-                                                color = Color(0xFF5C5C5C),
+                                                color = TvColors.TextTertiary,
                                                 modifier = Modifier
                                                     .semantics {
                                                         role = androidx.compose.ui.semantics.Role.Button
                                                         // M-11：清除按钮需要无障碍名称，读屏才不念成"按钮"。
-                                                        contentDescription = "清空搜索"
+                                                        contentDescription = TvA11y.clear("搜索内容")
                                                     }
                                                     .clickable { historyQuery = "" }
                                                     // M-03：原约26dp触摸目标过小，扩到 48dp。
@@ -344,7 +345,7 @@ internal fun MobileHistoryScreen(
                                             state.historyUpdateChecking -> CircularProgressIndicator(
                                                 modifier = Modifier.size(16.dp),
                                                 strokeWidth = 2.dp,
-                                                color = Color(0xFFFFB020),
+                                                color = TvColors.Warning,
                                             )
                                         }
                                     }
@@ -423,13 +424,17 @@ internal fun MobileHistoryScreen(
                                                 Text(
                                                     text = suggest,
                                                     style = MaterialTheme.typography.bodySmall,
-                                                    color = Color(0xFF888888),
+                                                    color = TvColors.TextSecondary,
                                                     modifier = Modifier
                                                         // M-03：建议词原为纯 Text+clickable（约16-20dp）几乎点不中，
                                                         // 扩到 48dp 最小触摸目标。
                                                         .heightIn(min = 48.dp)
                                                         .wrapContentHeight(Alignment.CenterVertically)
-                                                        .semantics { role = androidx.compose.ui.semantics.Role.Button }
+                                                        .semantics {
+                                                            role = androidx.compose.ui.semantics.Role.Button
+                                                            // M-11：建议词原本只念文字不带动作语义。
+                                                            contentDescription = TvA11y.action(suggest, "按此筛选")
+                                                        }
                                                         .clickable { historyQuery = suggest },
                                                 )
                                             }

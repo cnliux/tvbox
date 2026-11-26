@@ -36,6 +36,23 @@ object TvA11y {
 
     /** 播放进度：续看卡与播放器共用，百分比收敛到 0..100。 */
     fun progress(percent: Int): String = "已观看 ${percent.coerceIn(0, 100)}%"
+
+    /**
+     * 开关类控件：名称 + 当前开关状态。
+     * 手机设置页大量 `Switch` 只有旁边一行标题 Text，读屏单独聚焦开关时只念「开关」，
+     * 这里把标题并进标签，一次读完「自动下一集，已开启」。
+     */
+    fun toggle(text: String, checked: Boolean): String =
+        label(text, if (checked) "已开启" else "已关闭")
+
+    /**
+     * 输入框：只播报输入用途（不含内容），内容由可编辑文本自身播报，
+     * 避免读屏把提示语和已输入内容重复念两遍。
+     */
+    fun input(text: String): String = label(text)
+
+    /** 清除类图标按钮：作用对象 + 动作，如「搜索内容，清除」，避免只念「按钮」。 */
+    fun clear(target: String): String = label(target, "清除")
 }
 
 /**
