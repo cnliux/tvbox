@@ -63,34 +63,11 @@ jobs:
         run: ./gradlew --no-daemon :app:testDebugUnitTest
 
       # Linux 单测失败时，Windows 本地往往全绿（平台/时序相关 flaky）。
-      # 这里把失败测试的类名+方法+断言摘要直接打到 Step Summary，
-      # 无需下载 artifact 即可定位具体是哪条 @Test 挂了。
+      # 这里把失败测试的类名+方法+断言摘要用 ::error:: annotation 输出，
+      # 这样会出现在 check-run annotations 里，API 无需登录即可读取定位。
       - name: Diagnose failed tests
         if: failure()
-        run: |
-          echo "### 失败的单元测试" >> "$GITHUB_STEP_SUMMARY"
-          DIR=app/build/test-results/testDebugUnitTest
-          if [ -d "$DIR" ]; then
-            found=0
-            for xml in $(find "$DIR" -name '*.xml'); do
-              # 仅处理含 <failure> 的报告
-              if grep -q "<failure" "$xml"; then
-                found=1
-                cls=$(grep -oPm1 'testsuite name="\K[^"]+' "$xml")
-                echo "- **$cls**" >> "$GITHUB_STEP_SUMMARY"
-                grep -oPm3 '<testcase name="\K[^"]+(?=".*>\s*<failure)' "$xml" 2>/dev/null | head -5 >> "$GITHUB_STEP_SUMMARY" || true
-                # 失败消息首行
-                grep -oPm3 '<failure[^>]*message="\K[^"]{0,300}' "$xml" 2>/dev/null | head -5 >> "$GITHUB_STEP_SUMMARY" || true
-                echo "" >> "$GITHUB_STEP_SUMMARY"
-              fi
-            done
-            [ "$found" = "0" ] && echo "（未找到含 <failure> 的报告，可能是构建失败而非断言失败）" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "（未找到 $DIR，测试任务可能未产出报告）" >> "$GITHUB_STEP_SUMMARY"
-          fi
-          # 同时把原始报告也保留到日志，便于 grep
-          find app/build/test-results -name '*.xml' 2>/dev/null | head -5
-          grep -rl "<failure" app/build/test-results 2>/dev/null || echo "no-failure-xml"
+        run: python3 tools/diagnose_failed_tests.py --dir app/build/test-results/testDebugUnitTest
 
       - name: OSS notices sync (S2-08)
         run: python3 tools/gen_oss_notices.py --check --root .
