@@ -55,6 +55,8 @@ tools/*
 !tools/check_no_secret_in_dex.py
 !tools/pending_todo_lint.py
 !tools/release_verify.py
+# T8-52 发版前 checklist：CI 的 Pre-release checklist 步骤引用，需要随仓库复用。
+!tools/release_checklist.py
 !tools/check_schema.sh
 web/
 *.stackdump
