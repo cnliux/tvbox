@@ -102,10 +102,17 @@ class DefaultAppUpdateRepository(
     private val appContext = context.applicationContext
     private val connectivityManager =
         appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
-    private val downloadPrefs by lazy { appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE) }
+    // S5-30：lazy 优先取已预热实例（Application.onCreate 的 IO 协程经 [warmUp] 置入）；
+    // 预热未完成时回退按需初始化，框架 SharedPreferences 进程缓存仍保证不重复读盘。
+    private val downloadPrefs by lazy {
+        prewarmedDownloadPrefs
+            ?: appContext.getSharedPreferences("background_update", Context.MODE_PRIVATE)
+    }
     // OTA 多 CDN 健康度：只记录线路标识与计数/耗时，不存 URL、不写日志。
-    private val cdnPrefs by lazy { appContext.getSharedPreferences("ota_cdn_health", Context.MODE_PRIVATE) }
+    private val cdnPrefs by lazy {
+        prewarmedCdnPrefs
+            ?: appContext.getSharedPreferences("ota_cdn_health", Context.MODE_PRIVATE)
+    }
     private val downloadMutex = Mutex()
     private val downloadManager = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as? DownloadManager
     private val json = Json {
@@ -124,6 +131,25 @@ class DefaultAppUpdateRepository(
         // 终止，避免子协程继续占用连接/线程到各自 budget 结束。
         .callTimeout(CDN_PROBE_OVERALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
+
+    /**
+     * S5-30：预热持有者。Application.onCreate 于 IO 协程调用 [warmUp]，把两个启动路径
+     * `by lazy` 会读盘的 SharedPreferences 提前打开并放入进程级框架缓存；
+     * 各实例的 [downloadPrefs]/[cdnPrefs] lazy 初始化时优先直接拿到已预热实例。
+     */
+    companion object {
+        @Volatile
+        private var prewarmedDownloadPrefs: android.content.SharedPreferences? = null
+        @Volatile
+        private var prewarmedCdnPrefs: android.content.SharedPreferences? = null
+
+        /** 预热入口——应在后台线程（Application.onCreate 的 IO 协程）调用，幂等可重入。 */
+        fun warmUp(context: Context) {
+            val appCtx = context.applicationContext
+            prewarmedDownloadPrefs = appCtx.getSharedPreferences("background_update", Context.MODE_PRIVATE)
+            prewarmedCdnPrefs = appCtx.getSharedPreferences("ota_cdn_health", Context.MODE_PRIVATE)
+        }
+    }
 
     // ------------------------------------------------------------ 更新前策略门禁（纯逻辑 + 系统状态）
 

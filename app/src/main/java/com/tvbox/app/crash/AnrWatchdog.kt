@@ -29,6 +29,18 @@ object AnrWatchdog {
     private var watchdogThread: Thread? = null
     private val started = AtomicBoolean(false)
 
+    /**
+     * S5-29：降级（保守）模式标志。ANR 被检测到后自动进入保守模式，
+     * 下游经 [com.tvbox.app.domain.AnrConservativePolicy] 消费：
+     * 关闭弹幕、搜索并发 6→3、健康检查探针超时 8s→3s、UI 顶部显示琥珀条。
+     *
+     * 写方是看门狗线程、读方是主线程/ViewModel，用 [Volatile] 保证跨线程可见性。
+     * 一旦置 true 进程内不再自动复位：降级比回弹安全，且复位策略不属于看门狗职责。
+     */
+    @Volatile
+    var isConservativeMode: Boolean = false
+        private set
+
     private val heartbeat = Runnable {
         lastSeenAtMs = System.currentTimeMillis()
         pending.set(false)
@@ -50,6 +62,8 @@ object AnrWatchdog {
                     Thread.sleep(CHECK_INTERVAL_MS)
                     if (!pending.get()) continue
                     // T3-23：ANR检测时记录面包屑，便于复现排查
+                    // S5-29：首次 ANR 即进入保守降级模式，下游经 AnrConservativePolicy 自动降资源。
+                    isConservativeMode = true
                     GlobalPlayState.breadcrumb.record(
                         System.currentTimeMillis(),
                         "anr_detected",

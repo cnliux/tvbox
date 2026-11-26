@@ -124,6 +124,24 @@ object PrefsRegistry {
     /** 全部 prefs 名称（去重后），供外部只读枚举使用 */
     val allNames: List<String> get() = entries.map { it.name }
 
+    /**
+     * S5-30：启动预热。在调用方线程（应为 IO 协程）打开 [names] 对应文件，触发框架的
+     * 进程级 SharedPreferences 缓存（同步解析 XML 并载入内存）。启动路径上 `by lazy`
+     * 消费者之后首次调用 getSharedPreferences 时直接拿到已预热实例，不再同步读盘。
+     * 幂等：文件已被框架缓存时仅是一次 map 查找；单文件失败不影响其余，
+     * 预热失败只是回落到 lazy 消费者的按需读盘路径，绝不向调用方传播异常。
+     */
+    fun warmUp(context: android.content.Context, names: List<String>) {
+        val appCtx = context.applicationContext
+        for (name in names) {
+            try {
+                appCtx.getSharedPreferences(name, android.content.Context.MODE_PRIVATE)
+            } catch (_: Exception) {
+                // 预热失败 → 消费者按需读盘兜底，忽略
+            }
+        }
+    }
+
     /** 指定档位应清空的 prefs 名称列表 */
     fun namesFor(tier: ResetTier): List<String> =
         entries.filter { entry ->

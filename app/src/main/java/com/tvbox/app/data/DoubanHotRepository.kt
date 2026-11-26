@@ -99,9 +99,10 @@ data class DoubanHotCacheRecord(
 )
 
 class SharedDoubanHotCache(context: Context) : DoubanHotCache {
-    // lazy：getSharedPreferences 首次调用会同步解析 XML，避免在启动路径（ViewModel 工厂）上读盘。
+    // S5-30：lazy 优先取已预热实例（Application.onCreate 的 IO 协程经 [warmUp] 置入，进程级共享）；
+    // 预热未完成时回退原路径按需初始化（框架 SharedPreferences 进程缓存仍生效，不会重复读盘）。
     private val preferences by lazy {
-        context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        prewarmed ?: context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
     private val json = Json {
         ignoreUnknownKeys = true
@@ -120,8 +121,21 @@ class SharedDoubanHotCache(context: Context) : DoubanHotCache {
         preferences.edit().putString(key, json.encodeToString(record)).apply()
     }
 
-    private companion object {
+    companion object {
         const val PREFERENCES_NAME = "douban_hot_cache"
+
+        /** S5-30：进程级已预热实例；写方是 IO 预热协程，读方是各实例的 lazy，@Volatile 保证可见性。 */
+        @Volatile
+        private var prewarmed: android.content.SharedPreferences? = null
+
+        /**
+         * S5-30：预热入口——应在后台线程（Application.onCreate 的 IO 协程）调用，幂等可重入。
+         * 置入的是进程级 SharedPreferences 框架缓存，本类所有实例（含 Activity 侧新建的）
+         * 的 [preferences] lazy 初始化都会直接拿到它，启动路径不再同步解析 XML。
+         */
+        fun warmUp(context: Context) {
+            prewarmed = context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+        }
     }
 }
 

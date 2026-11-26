@@ -1182,7 +1182,13 @@ private fun PlatformLivePlayerScreen(
         }
     }
     // 用 rememberSaveable：手机横屏/切后台引起的重组不应把用户关掉的弹幕又打开。
-    var danmakuEnabled by rememberSaveable(room.id) { mutableStateOf(true) }
+    // S5-29：ANR 保守降级模式下初值按 AnrConservativePolicy 关闭弹幕（只影响新进入的直播间；
+    // 已保存的用户操作状态不强制改写，避免与用户手动开关打架）。
+    var danmakuEnabled by rememberSaveable(room.id) {
+        mutableStateOf(com.tvbox.app.domain.AnrConservativePolicy.danmakuEnabled(
+            com.tvbox.app.crash.AnrWatchdog.isConservativeMode,
+        ))
+    }
 
     // 播放器监听器只在 player 变化时重建，但日志里要记录当前的线路/URL/画面模式；
     // 用 rememberUpdatedState 避免按值捕获建播放器那一刻的旧值。

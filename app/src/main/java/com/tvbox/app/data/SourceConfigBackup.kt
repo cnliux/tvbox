@@ -200,8 +200,7 @@ object SourceConfigBackup {
             }
             .toMap()
 
-        val favoritesJson = (root["favorites"] as? JsonElement)?.takeIf { it != JsonNull }
-            ?.toString()
+        val favoritesJson = root["favorites"]?.takeIf { it != JsonNull }?.toString()
         return Result(Payload(lines, liveUrls, order, weights, favoritesJson), null)
     }
 

@@ -56,7 +56,7 @@ class UpdateDownloadService : Service() {
     @Volatile
     private var activeStartId = 0
     // APK 下载是流式长请求：连接/读两段取 T1-09 的 OTA 档（[Timeouts.OTA]，connect 5s + read 15s 无进度），
-    // 整次调用上限仍放宽到 10 分钟，避免大包下载被 20s 的 call 预算截断（断点续传由上层负责）。
+    // 整次调用上限仍放宽到 10 分钟，避免大包下载被 20s 的 call 预算截断（T1-10 起断点续传由本服务按 Range 负责）。
     private val client = HttpClients.default.newBuilder()
         .connectTimeout(Timeouts.OTA.connectMs, TimeUnit.MILLISECONDS)
         .readTimeout(Timeouts.OTA.readMs, TimeUnit.MILLISECONDS)

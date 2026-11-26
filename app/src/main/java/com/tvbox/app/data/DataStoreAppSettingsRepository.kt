@@ -105,17 +105,31 @@ private class DeferredLegacySettingsSource(
 internal interface LegacySettingsMigrationMarker {
     fun isMigrated(): Boolean
     fun markMigrated()
+
+    /**
+     * S5-30：启动预热钩子。生产实现触发迁移标记文件的 lazy 读盘，
+     * 让首个访问者直接拿到已预热的 SharedPreferences 实例。
+     * 默认空实现：无预热语义的进程内标记直接忽略。
+     */
+    fun warmUp() {}
 }
 
 /** 生产实现：独立 SharedPreferences 文件，DataStore 重置不会影响该标记。 */
 internal class SharedPreferencesLegacySettingsMigrationMarker(context: Context) :
     LegacySettingsMigrationMarker {
     // lazy：避免在启动路径（ViewModel 工厂）上同步解析 XML。
+    // S5-30：启动路径由 Application.onCreate 的 IO 协程经 PrefsRegistry.warmUp 预热
+    // "app_settings_migration" 文件（框架进程级缓存），lazy 首个访问者直接拿到已预热实例。
     private val prefs by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         context.applicationContext.getSharedPreferences(MIGRATION_PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     override fun isMigrated(): Boolean = prefs.getBoolean(KEY_MIGRATED, false)
+
+    /** S5-30：触发 lazy 读盘，预热 "app_settings_migration" 文件到框架进程级缓存。 */
+    override fun warmUp() {
+        prefs.getBoolean(KEY_MIGRATED, false)
+    }
 
     override fun markMigrated() {
         if (!prefs.edit().putBoolean(KEY_MIGRATED, true).commit()) {
@@ -176,6 +190,19 @@ internal class DataStoreAppSettingsRepository(
      */
     @Volatile
     private var degradedRead = false
+
+    /**
+     * S5-30：启动预热入口——在后台线程（Application.onCreate 的 IO 协程）调用。
+     * 触发迁移标记 [SharedPreferencesLegacySettingsMigrationMarker] 的 lazy 读盘（getSettings
+     * 每次都会 isMigrated()，是启动路径上最频繁的 SharedPreferences 读取）。
+     * 旧版设置来源 [DeferredLegacySettingsSource] 迁移完成后永不参与读取，按原注释不开启预热。
+     */
+    fun warmUp() {
+        when (val marker = migrationMarker) {
+            is SharedPreferencesLegacySettingsMigrationMarker -> marker.warmUp()
+            else -> Unit
+        }
+    }
 
     override suspend fun getSettings(): AppSettings = withContext(Dispatchers.IO) {
         // 已迁移且 schema 完整：直接读，不与写操作互斥，避免高频读被迁移/保存写操作阻塞。

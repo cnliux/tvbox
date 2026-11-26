@@ -1,5 +1,7 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.crash.AnrWatchdog
+import com.tvbox.app.domain.AnrConservativePolicy
 import com.tvbox.app.domain.dryRunLiveSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -10,8 +12,13 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
-/** #282：单个直播源健康检查超时，避免一条死链拖住整组检测。 */
-private const val LIVE_SOURCE_HEALTH_TIMEOUT_MS = 10_000L
+/**
+ * #282：单个直播源健康检查超时，避免一条死链拖住整组检测。
+ * S5-29：超时不再写死，按 AnrWatchdog 是否处于保守降级模式经 [AnrConservativePolicy.probeTimeoutMs] 取值
+ * （正常 8s，降级 3s：主线程卡过时尽快放弃死链、把线程让回去）。
+ */
+private fun liveSourceHealthTimeoutMs(): Long =
+    AnrConservativePolicy.probeTimeoutMs(AnrWatchdog.isConservativeMode)
 
 /**
  * #282：一键检测所有直播源。
@@ -30,7 +37,7 @@ internal suspend fun checkAllLiveSources(urls: List<String>): String = withConte
         targets.map { url ->
             async {
                 val body = try {
-                    withTimeout(LIVE_SOURCE_HEALTH_TIMEOUT_MS) { fetcher.fetch(url) }
+                    withTimeout(liveSourceHealthTimeoutMs()) { fetcher.fetch(url) }
                 } catch (_: TimeoutCancellationException) {
                     null
                 } catch (cancelled: CancellationException) {

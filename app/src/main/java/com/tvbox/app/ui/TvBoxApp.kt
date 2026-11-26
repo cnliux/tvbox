@@ -113,7 +113,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+import com.tvbox.app.crash.AnrWatchdog
 import com.tvbox.app.data.TextFileExporter
+import com.tvbox.app.domain.AnrConservativePolicy
 import com.tvbox.app.domain.ApiLine
 import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
@@ -216,6 +218,33 @@ fun TvBoxApp(
                 actions.dismissHealthPanel()
                 onShowHealthPanel()
             },
+        )
+        // S5-29：ANR 保守降级模式生效时的顶部琥珀条。标志由看门狗线程置位（@Volatile），
+        // 这里每次重组直接读取，置位后的下一帧即显示；纯展示、不可交互。
+        if (AnrConservativePolicy.showAmberBanner(AnrWatchdog.isConservativeMode)) {
+            AnrConservativeBanner(
+                modifier = Modifier.align(Alignment.TopCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
+                    .padding(horizontal = 16.dp),
+            )
+        }
+    }
+}
+
+/** S5-29：ANR 保守降级模式下顶部的琥珀色提示条，说明哪些能力被自动降档。 */
+@Composable
+private fun AnrConservativeBanner(modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(Color(0xFFB26A00))
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "性能保护模式：检测到系统卡顿，已自动关闭弹幕并降低搜索并发 / 健康检查超时",
+            color = Color(0xFFFFE082),
+            style = MaterialTheme.typography.labelSmall,
         )
     }
 }
