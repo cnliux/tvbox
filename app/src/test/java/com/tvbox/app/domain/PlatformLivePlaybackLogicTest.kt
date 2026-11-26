@@ -51,7 +51,8 @@ class PlatformLivePlaybackLogicTest {
     fun resolveEffectiveEpgUrlPrefersUserConfig() {
         assertEquals("https://user.test/epg.xml", resolveEffectiveEpgUrl(" https://user.test/epg.xml ", "https://bundled.test/epg.xml"))
         assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("  ", "https://bundled.test/epg.xml"))
-        assertEquals("", resolveEffectiveEpgUrl("", ""))
+        // 用户与源都未提供时回退内置兜底 EPG（APK 兜底，节目单不再永远空白）。
+        assertEquals(BUILTIN_FALLBACK_EPG_URL, resolveEffectiveEpgUrl("", ""))
     }
 
     private fun c(cdn: String) = PlatformLiveStreamCandidate(cdn = cdn, protocol = "flv", url = "https://$cdn.test/live")

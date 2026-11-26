@@ -347,6 +347,11 @@ internal data class PlayerChromeCapabilities(
     val orientation: Boolean = false,
     val mute: Boolean = false,
     val settings: Boolean = false,
+    /**
+     * 设置面板内的「线路 / 切源」入口：页面自己的线路浮层（LiveScreen / PlatformLiveScreen）。
+     * 打开后关闭设置面板并回调 [PlayerChromeActions.onOpenLinePanel]；与内置 Sources 面板互斥使用。
+     */
+    val settingsLine: Boolean = false,
     val channel: Boolean = false,
     val room: Boolean = false,
     val lines: Boolean = false,
@@ -1134,6 +1139,7 @@ private fun PlayerChromePanel(
             onOpenPanel = { target -> state.openPanel(target) },
             onClose = { state.closePanel() },
             modifier = modifier,
+            onOpenLineOverlay = { state.closePanel(); actions.onOpenLinePanel() },
         )
         return
     }
@@ -1421,9 +1427,14 @@ private fun PlayerSettingsPanel(
     onOpenPanel: (PlayerPanel) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 设置面板「线路」项回调：页面自己的线路浮层（settingsLine 能力位）。 */
+    onOpenLineOverlay: (() -> Unit)? = null,
 ) {
     val items = buildList {
-        if (capabilities.sources || capabilities.lines) {
+        if (capabilities.settingsLine && onOpenLineOverlay != null) {
+            // 直播页的线路浮层是页面自有浮层，不走内置 Sources 面板；线路入口不因设置键收编而丢失。
+            add(PlayerSettingsItem("线路", "切换播放线路 / 候选", customAction = onOpenLineOverlay))
+        } else if (capabilities.sources || capabilities.lines) {
             add(PlayerSettingsItem("线路", "切换播放线路 / 候选", PlayerPanel.Sources))
         }
         if (capabilities.episodes) {
@@ -1469,10 +1480,18 @@ private fun PlayerSettingsPanel(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                itemsIndexed(items, key = { _, item -> item.target }) { index, item ->
+                itemsIndexed(items, key = { _, item -> item.label }) { index, item ->
                     SettingsRowItem(
                         item = item,
-                        onSelect = { onOpenPanel(item.target) },
+                        onSelect = {
+                            // 页面自定义动作（线路浮层）先关设置面板再打开，保持单层浮层语义。
+                            if (item.customAction != null) {
+                                onClose()
+                                item.customAction()
+                            } else {
+                                item.target?.let(onOpenPanel)
+                            }
+                        },
                         modifier = if (index == 0) Modifier.then(firstFocus.anchor) else Modifier,
                     )
                 }
@@ -1484,7 +1503,10 @@ private fun PlayerSettingsPanel(
 private data class PlayerSettingsItem(
     val label: String,
     val subtitle: String,
-    val target: PlayerPanel,
+    /** 目标内置面板；与 [customAction] 二选一。 */
+    val target: PlayerPanel? = null,
+    /** 页面自定义动作（如打开直播页自己的线路浮层）；设置后忽略 [target]。 */
+    val customAction: (() -> Unit)? = null,
 )
 
 @Composable

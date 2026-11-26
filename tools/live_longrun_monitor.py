@@ -13,8 +13,11 @@
 
 用法：
     python tools/live_longrun_monitor.py --rounds 10 --rooms 10 --seconds 600
+    python tools/live_longrun_monitor.py --rounds 2 --rooms 4 --seconds 60 --json   # T4-29 契约
 输出：
     .tmp_dbg/longrun/roundN_<site>_<room>.jsonl 与 roundN_summary.json
+    （--out 可改产物目录；--json 时 stdout 只出一行契约 JSON，进度/人类可读走 stderr）
+退出码（tools/_common.py 唯一真源）：0=PASS 1=FAIL 2=USAGE_ERROR 3=SKIP（环境不可用）。
 """
 
 from __future__ import annotations
@@ -30,7 +33,12 @@ import sys
 import threading
 import time
 
-import requests
+from _common import EXIT_BUSINESS, EXIT_ENV, EXIT_OK, EnvError, run as cli_run
+
+try:
+    import requests
+except ImportError:  # 依赖缺失 = 环境不可用（verdict=SKIP），不在 import 期直接崩。
+    requests = None
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # 签名服务用仓库内的 Go 解析服务（cmd/platform-live-server），与 APK 内置解析同一条代码路径；
@@ -354,7 +362,7 @@ def run_room(site: str, rid: str, seconds: int, logf) -> Stats:
 # ── 轮次调度 ───────────────────────────────────────────────────
 
 
-def one_round(index: int, room_count: int, seconds: int) -> dict:
+def one_round(index: int, room_count: int, seconds: int, out_dir: str = "") -> dict:
     ensure_service()
     pool_h = huya_rooms()
     pool_d = douyu_rooms()
@@ -363,13 +371,14 @@ def one_round(index: int, room_count: int, seconds: int) -> dict:
     half = max(1, room_count // 2)
     targets = ([("huya", r) for r in pool_h[:half]]
                + [("douyu", r) for r in pool_d[:room_count - half]])
+    out_dir = out_dir or OUT_DIR
     print("[round %d] targets=%s" % (index, targets), flush=True)
 
     results, lock = {}, threading.Lock()
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
 
     def worker(site, rid):
-        path = os.path.join(OUT_DIR, "round%d_%s_%s.jsonl" % (index, site, rid))
+        path = os.path.join(out_dir, "round%d_%s_%s.jsonl" % (index, site, rid))
         # line buffering：否则整轮跑完才落盘，中途完全看不到进度（曾因此误判"零产出"）。
         with open(path, "w", encoding="utf-8", buffering=1) as f:
             st = run_room(site, rid, seconds, f)
@@ -382,31 +391,86 @@ def one_round(index: int, room_count: int, seconds: int) -> dict:
     for t in threads:
         t.join()
 
-    with open(os.path.join(OUT_DIR, "round%d_summary.json" % index), "w",
+    with open(os.path.join(out_dir, "round%d_summary.json" % index), "w",
               encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=1)
     return results
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rounds", type=int, default=10)
-    ap.add_argument("--rooms", type=int, default=10)
-    ap.add_argument("--seconds", type=int, default=600)
-    args = ap.parse_args()
+def _configure(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--rooms", type=int, default=10)
+    parser.add_argument("--seconds", type=int, default=600)
+    parser.add_argument("--pretty", action="store_true", help="人类可读摘要走 stderr")
+    parser.add_argument("--out", default="", help="产物输出目录（默认 .tmp_dbg/longrun）")
 
-    ensure_service()
-    all_rounds = {}
+
+def _build(args: argparse.Namespace) -> tuple[int, dict]:
+    if requests is None:
+        raise EnvError("缺少 requests 依赖，无法运行长跑监控")
+    if not ensure_service():
+        # 签名服务不可达且自愈失败 = 环境不可用（verdict=SKIP），不算业务失败。
+        return EXIT_ENV, {"skip_reason": "签名服务不可用（自愈失败）"}
+
+    out_dir = args.out or OUT_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    all_rounds: dict = {}
+    defects: list = []
     for i in range(1, args.rounds + 1):
         try:
-            all_rounds[i] = one_round(i, args.rooms, args.seconds)
+            all_rounds[i] = one_round(i, args.rooms, args.seconds, out_dir)
         except Exception as error:  # noqa: BLE001
             print("[round %d] FAILED %s" % (i, error), flush=True)
             all_rounds[i] = {"__error__": str(error)}
-        with open(os.path.join(OUT_DIR, "all_rounds.json"), "w", encoding="utf-8") as f:
+            defects.append("round %d: %s" % (i, error))
+        with open(os.path.join(out_dir, "all_rounds.json"), "w", encoding="utf-8") as f:
             json.dump(all_rounds, f, ensure_ascii=False, indent=1)
         print("[round %d] done" % i, flush=True)
-    return 0
+
+    # 零会话房间视为缺陷：签名/拉流全失败，监控对该房间没有产出任何数据。
+    ok_results = [st for r in all_rounds.values() if isinstance(r, dict)
+                  for st in r.values() if isinstance(st, dict) and "__error__" not in st]
+    for i, results in all_rounds.items():
+        if not isinstance(results, dict):
+            continue
+        for key, st in results.items():
+            if isinstance(st, dict) and "__error__" not in st and st.get("sessions", 0) == 0:
+                defects.append("round %d %s: 0 sessions (sign_fail=%s)"
+                               % (i, key, st.get("sign_fail", 0)))
+
+    metrics = {
+        "rounds": args.rounds,
+        "rooms_scheduled": sum(1 for r in all_rounds.values() if isinstance(r, dict)
+                               for st in r.values() if isinstance(st, dict)),
+        "rooms_ok": sum(1 for st in ok_results if st.get("sessions", 0) > 0),
+        "total_sessions": sum(st.get("sessions", 0) for st in ok_results),
+        "sign_failures": sum(st.get("sign_fail", 0) for st in ok_results),
+        "stream_errors": sum(len(st.get("errs", [])) for st in ok_results),
+    }
+    artifacts = [os.path.join(out_dir, "all_rounds.json")]
+    artifacts += [os.path.join(out_dir, "round%d_summary.json" % i)
+                  for i in sorted(k for k in all_rounds if isinstance(k, int))
+                  if os.path.isfile(os.path.join(out_dir, "round%d_summary.json" % i))]
+
+    code = EXIT_OK if not defects else EXIT_BUSINESS
+    if args.pretty:
+        print("longrun %s rooms_ok=%d/%d sessions=%d sign_fail=%d stream_errs=%d defects=%d"
+              % ("PASS" if code == EXIT_OK else "FAIL", metrics["rooms_ok"],
+                 metrics["rooms_scheduled"], metrics["total_sessions"],
+                 metrics["sign_failures"], metrics["stream_errors"], len(defects)),
+              file=sys.stderr)
+        for d in defects:
+            print("  - %s" % d, file=sys.stderr)
+    return code, {
+        "metrics": metrics,
+        "defects": defects,
+        "artifacts": artifacts,
+        "errors": defects,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    return cli_run("live_longrun_monitor", argv, _build, configure=_configure, description=__doc__)
 
 
 if __name__ == "__main__":

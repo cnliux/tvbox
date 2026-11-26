@@ -3,6 +3,7 @@ package com.tvbox.app.domain
 import java.text.ParsePosition
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.TimeZone
 
 /**
  * XMLTV 节目单解析（手写正则抽取，项目不引入 XML 依赖）。
@@ -50,12 +51,39 @@ private val EPG_TIME_PATTERNS = listOf(
 // SimpleDateFormat 构造成本高且非线程安全：节目单常有数万条 programme，
 // 逐条 new 6 个格式对象会把解析退化成 CPU 密集任务。按线程缓存一组预建格式复用，
 // isLenient=false 与原实现一致；仅「解析」是单线程循环，ThreadLocal 保证并发安全。
-private val EPG_TIME_FORMATS: ThreadLocal<List<SimpleDateFormat>> =
-    ThreadLocal.withInitial {
+// 缓存按「EPG 时区」分组：无时区后缀的时间戳按用户配置的源时区解释（epgTimezone），
+// 留空则跟随设备默认时区（空键 ""）。
+private val EPG_TIME_FORMATS: ThreadLocal<MutableMap<String, List<SimpleDateFormat>>> =
+    ThreadLocal.withInitial { mutableMapOf<String, List<SimpleDateFormat>>() }
+
+private fun epgTimeFormats(timezoneId: String): List<SimpleDateFormat> =
+    EPG_TIME_FORMATS.get().getOrPut(timezoneId) {
+        val zone = epgTimeZone(timezoneId)
         EPG_TIME_PATTERNS.map { pattern ->
-            SimpleDateFormat(pattern, Locale.US).apply { isLenient = false }
+            SimpleDateFormat(pattern, Locale.US).apply {
+                isLenient = false
+                if (zone != null) timeZone = zone
+            }
         }
     }
+
+/**
+ * 解析用户配置的 EPG 时区 ID：空串返回 null（跟随设备）；
+ * `TimeZone.getTimeZone` 对未知 ID 静默回退 GMT，这里把疑似拼错的值也按未配置处理，
+ * 避免一次手滑让节目时间整体偏移数小时。
+ */
+private fun epgTimeZone(timezoneId: String): TimeZone? {
+    val trimmed = timezoneId.trim()
+    if (trimmed.isEmpty()) return null
+    val zone = runCatching { TimeZone.getTimeZone(trimmed) }.getOrNull() ?: return null
+    if (zone.id == "GMT" &&
+        !trimmed.startsWith("GMT", ignoreCase = true) &&
+        !trimmed.startsWith("UT", ignoreCase = true)
+    ) {
+        return null
+    }
+    return zone
+}
 
 // 预编译正则：XMLTV 常有数万条 programme，逐条构造 Regex 会把解析退化成 CPU 密集任务。
 private val EPG_CHANNEL_REGEX =
@@ -75,7 +103,11 @@ private val EPG_COLON_ZONE_REGEX = Regex("([+-]\\d{2}):(\\d{2})$")
 private val EPG_UTC_LITERAL_ZONE_REGEX = Regex("Z$")
 private val EPG_SPACES_REGEX = Regex("\\s+")
 
-fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
+/**
+ * [timezoneId]：无时区后缀时间戳（`20240101120000`）的解释时区（IANA ID，如 `Asia/Shanghai`）；
+ * 空或非法值跟随设备默认时区。带显式偏移的时间戳不受影响。
+ */
+fun parseXmltvEpg(raw: String, timezoneId: String = ""): Map<String, List<EpgProgram>> {
     // 入口即拒绝 DTD：DOCTYPE / ENTITY 命中任一即返回空表（与本项目「解析失败返回部分结果」风格一致），
     // 绝不展开实体，避免 XXE 与 billion laughs 在后续正则匹配中造成回溯爆炸。
     if (EPG_DOCTYPE_REGEX.containsMatchIn(raw)) return emptyMap()
@@ -88,7 +120,7 @@ fun parseXmltvEpg(raw: String): Map<String, List<EpgProgram>> {
     val safeText = truncateEpgByDepth(text)
     // 两段分别容错：畸形源导致后段抛异常时，前段已解析的 id 与 display-name 别名不再一起丢失。
     runCatching { parseXmltvChannels(safeText, channelsById) }
-    runCatching { parseXmltvProgrammes(safeText, programmes) }
+    runCatching { parseXmltvProgrammes(safeText, programmes, timezoneId) }
     // 按 id 键 + display-name 键双写；display-name 撞车时合并去重。
     val result = linkedMapOf<String, MutableList<EpgProgram>>()
     programmes.forEach { (id, list) ->
@@ -169,7 +201,11 @@ private fun parseXmltvChannels(text: String, into: MutableMap<String, MutableLis
     }
 }
 
-private fun parseXmltvProgrammes(text: String, into: MutableMap<String, MutableList<EpgProgram>>) {
+private fun parseXmltvProgrammes(
+    text: String,
+    into: MutableMap<String, MutableList<EpgProgram>>,
+    timezoneId: String,
+) {
     // 兼容自闭合 `<programme .../>`（无 title 的占位条目直接跳过）。
     for (match in EPG_PROGRAMME_REGEX.findAll(text)) {
         // P28：单条 programme 长度上限——超阈值说明被塞入巨型实体或污染片段，直接跳过该条。
@@ -177,9 +213,9 @@ private fun parseXmltvProgrammes(text: String, into: MutableMap<String, MutableL
         val attrs = xmltvAttributes(match.groupValues[1])
         val channel = attrs["channel"] ?: continue
         if (channel.isBlank()) continue
-        val startMs = parseXmltvTime(attrs["start"]) ?: continue
+        val startMs = parseXmltvTime(attrs["start"], timezoneId) ?: continue
         // 异常 XMLTV 里 stop 可能早于 start；非法区间按兜底时长处理，避免节目永远不命中"正在播出"。
-        val stopMs = parseXmltvTime(attrs["stop"])
+        val stopMs = parseXmltvTime(attrs["stop"], timezoneId)
             ?.takeIf { it > startMs }
             ?: (startMs + EPG_FALLBACK_PROGRAM_MS)
         // <sub-title> / <desc> 忽略，只取第一个 <title>。
@@ -197,7 +233,7 @@ private fun xmltvAttributes(fragment: String): Map<String, String> =
         match.groupValues[1].lowercase() to value.trim()
     }
 
-private fun parseXmltvTime(raw: String?): Long? {
+private fun parseXmltvTime(raw: String?, timezoneId: String): Long? {
     val value = raw?.trim()?.takeIf { it.isNotBlank() } ?: return null
     // 毫秒段（`.500`）先行剥离，再把带冒号的时区归一化为 `Z` 格式。
     val withoutMillis = value.replaceFirst(EPG_MILLIS_REGEX, "$1")
@@ -207,7 +243,7 @@ private fun parseXmltvTime(raw: String?): Long? {
         // 被整条丢弃，这里统一改写为 +0000 后交给带时区格式解析。
         .replace(EPG_UTC_LITERAL_ZONE_REGEX, "+0000")
     // 复用按线程缓存的格式组：每条 programme 原本会 new 6 个 SimpleDateFormat。
-    for (format in EPG_TIME_FORMATS.get().orEmpty()) {
+    for (format in epgTimeFormats(timezoneId)) {
         // 必须完整消费字符串：SimpleDateFormat.parse(String) 会静默忽略尾部多余字符，
         // 曾导致 `+08:00` 被当成无时区时间按设备本地时区解析（偏移数小时）。
         val position = ParsePosition(0)

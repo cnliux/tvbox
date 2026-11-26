@@ -42,7 +42,7 @@ class TvBoxStateReducersTest {
     fun staleEpgResponseIsIgnoredAfterUrlChanged() {
         val state = TvBoxUiState(appSettings = AppSettings(epgUrl = "https://new.example/epg.xml"))
         val programs = mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L)))
-        val result = state.applyEpgResult("https://old.example/epg.xml", programs)
+        val result = state.applyEpgResult("https://old.example/epg.xml", programs, 1_000L)
         assertEquals(emptyMap<String, List<EpgProgram>>(), result.live.epgByChannel)
         assertFalse(result.live.epgLoaded)
     }
@@ -51,9 +51,24 @@ class TvBoxStateReducersTest {
     fun currentEpgResponseIsApplied() {
         val state = TvBoxUiState(appSettings = AppSettings(epgUrl = "https://epg.example/list.xml"))
         val programs = mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L)))
-        val result = state.applyEpgResult("https://epg.example/list.xml", programs)
+        val result = state.applyEpgResult("https://epg.example/list.xml", programs, 1_000L)
         assertEquals(programs, result.live.epgByChannel)
         assertTrue(result.live.epgLoaded)
+        // S3-19：成功拉取记录抓取时刻，供 EpgCachePolicy 判定新鲜度。
+        assertEquals(1_000L, result.live.epgFetchedAtMs)
+    }
+
+    /** S3-19：拉取失败（空节目单）时保留过期缓存继续展示，且时间戳不前进（角标继续 `~`）。 */
+    @Test
+    fun failedEpgFetchKeepsStaleCache() {
+        val oldCache = mapOf("cctv1" to listOf(EpgProgram("旧节目", 0L, 60_000L)))
+        val state = TvBoxUiState(
+            appSettings = AppSettings(epgUrl = "https://epg.example/list.xml"),
+            live = LiveUiState(epgByChannel = oldCache, epgLoaded = true, epgFetchedAtMs = 1_000L),
+        )
+        val result = state.applyEpgResult("https://epg.example/list.xml", emptyMap(), 9_999L)
+        assertEquals(oldCache, result.live.epgByChannel)
+        assertEquals(1_000L, result.live.epgFetchedAtMs)
     }
 
     /** 回归：取消必须被识别为“非失败”，不能生成错误提示。 */

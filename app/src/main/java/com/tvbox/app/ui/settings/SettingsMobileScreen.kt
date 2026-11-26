@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
@@ -272,9 +273,14 @@ private fun MobileSettingsLanding(
                 val rows = MobileSettingCategory.entries.chunked(2)
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     rows.forEach { rowCategories ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        // IntrinsicSize.Min：同一行两张卡取最大内容高度，保证同行等高；
+                        // 卡片本身再带统一 minHeight，跨行也不再出现高矮不一。
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.height(IntrinsicSize.Min),
+                        ) {
                             rowCategories.forEach { category ->
-                                Box(modifier = Modifier.weight(1f)) {
+                                Box(modifier = Modifier.weight(1f).fillMaxSize()) {
                                     MobileCategoryCard(
                                         category = category,
                                         deviation = categoryDeviationCount(category, state.appSettings),
@@ -314,6 +320,7 @@ private fun MobileCategoryCard(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .heightIn(min = 132.dp)
             .clip(shape)
             .background(
                 Brush.linearGradient(
@@ -367,6 +374,8 @@ private fun MobileCategoryCard(
                     color = TvColors.TextPrimary,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     text = category.subtitle,

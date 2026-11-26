@@ -27,8 +27,10 @@ object SourceBackupGateway {
         liveUrls: List<String>,
         order: List<String> = emptyList(),
         weights: Map<String, Int> = emptyMap(),
+        /** S3-18：统一收藏段（FavoriteRegistry.exportAll 的 JSON 文本）；null 时备份不含收藏。 */
+        favorites: String? = null,
     ): ExportResult {
-        val raw = SourceConfigBackup.export(lines, liveUrls, order, weights)
+        val raw = SourceConfigBackup.export(lines, liveUrls, order, weights, favorites)
         val state = backupExportState(SourceConfigBackup.hasSensitiveKeys(raw))
         return ExportResult(
             payload = raw.takeIf { state.canExport },
@@ -46,7 +48,8 @@ object SourceBackupGateway {
                 ImportResult(null, "备份中没有可恢复的源")
             else -> ImportResult(
                 payload,
-                "预览：${payload.lines.size} 个视频源、${payload.liveUrls.size} 个直播订阅",
+                "预览：${payload.lines.size} 个视频源、${payload.liveUrls.size} 个直播订阅" +
+                    if (payload.favoritesJson != null) "（含统一收藏段，恢复时一并导入）" else "",
             )
         }
     }

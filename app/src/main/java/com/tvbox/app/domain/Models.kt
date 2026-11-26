@@ -275,4 +275,10 @@ data class AppUpdate(
      * 老清单没有该字段时为空，UI 回退到 [changelog]。
      */
     val releaseHighlights: List<String> = emptyList(),
+    /**
+     * T1-10：清单里的可选 ETag（`apkEtag`）。安装包地址支持 Range 时用于断点续传门禁：
+     * 服务端返回的 ETag 与清单不一致说明包已变更，必须弃断点从头下载。
+     * 老清单没有该字段时为空串，续传行为退化为「只按 Range 支持与否」。
+     */
+    val apkEtag: String = "",
 )

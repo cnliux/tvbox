@@ -63,6 +63,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.input.key.KeyEventType
@@ -87,18 +88,22 @@ import com.tvbox.app.domain.audioOutputModeLabel
 import com.tvbox.app.domain.PLAYER_SPEED_STEPS
 import com.tvbox.app.domain.PlayerControlLayout
 import com.tvbox.app.domain.PlayerSurface
+import com.tvbox.app.domain.ParentalLock
 import com.tvbox.app.domain.PerSourceTimeout
 import com.tvbox.app.domain.QuantitySetting
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.TvFontScale
 import com.tvbox.app.domain.RemoteKeyAction
 import com.tvbox.app.domain.RemoteKeyBindings
+import com.tvbox.app.domain.ThirdPartyLiveProxy
 import com.tvbox.app.domain.keepOnly
 import com.tvbox.app.domain.learnKey
 import com.tvbox.app.ui.settings.remote.RemoteProfileDialog
 import com.tvbox.app.ui.settings.remote.remoteBindingRows
 import com.tvbox.app.domain.UpdateChannel
 import com.tvbox.app.domain.VideoScaleMode
+import com.tvbox.app.ui.PinPadDialog
+import com.tvbox.app.ui.PinPadMode
 import com.tvbox.app.ui.TvBoxUiState
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.components.DangerConfirmDialog
@@ -484,6 +489,22 @@ private fun TvGeneralDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                 )
             },
         )
+        SettingsGroupDivider()
+        // 导出崩溃日志：合并本地崩溃日志与面包屑，脱敏后经系统分享送出（与手机端同一实现）。
+        val exportContext = LocalContext.current
+        TvSettingsRow(
+            icon = Icons.Default.Info,
+            title = "导出崩溃日志",
+            subtitle = "脱敏合并本地崩溃日志与面包屑，经系统分享导出",
+            trailing = {
+                TvFocusButton(text = "导出", onClick = {
+                    val result = exportCrashLogs(exportContext)
+                    result?.let {
+                        android.widget.Toast.makeText(exportContext, it, android.widget.Toast.LENGTH_LONG).show()
+                    }
+                })
+            },
+        )
     }
 }
 
@@ -734,6 +755,9 @@ private fun TvControlsDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 
 @Composable
 private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
+    // T6-42 少儿锁 PIN 设置弹窗（开启后未设置 PIN 时自动弹出；「更换」入口随时可用）。
+    var showKidsLockSetup by remember { mutableStateOf(false) }
+    val kidsLockConfigured = ParentalLock.isConfigured(state.appSettings.parentalLockPin)
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -815,6 +839,119 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                     onSelect = actions::updateRelatedChannelCount,
                 )
             },
+        )
+        SettingsGroupDivider()
+        // T6-42 人因合规：少儿锁开关行。开启后遥控数字 4/5（电视直播/平台直播）入口需 PIN。
+        // PIN 只存 SHA-256 摘要（parentalLockPin），绝不存明文；开启但尚未设置 PIN 时引导立即设置。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "少儿锁",
+            subtitle = when {
+                state.appSettings.parentalLockEnabled && kidsLockConfigured ->
+                    "已开启 · 遥控 4/5 入口需 PIN，仅保存 PIN 摘要"
+                state.appSettings.parentalLockEnabled ->
+                    "已开启 · PIN 尚未设置，请点「设置」"
+                else ->
+                    "关闭 · 开启后遥控 4/5（电视直播/平台直播）入口需 PIN"
+            },
+            trailing = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    if (state.appSettings.parentalLockEnabled) {
+                        TvFocusButton(
+                            text = if (kidsLockConfigured) "更换" else "设置",
+                            onClick = { showKidsLockSetup = true },
+                        )
+                    }
+                    Switch(
+                        checked = state.appSettings.parentalLockEnabled,
+                        onCheckedChange = {
+                            actions.updateAppSettings { s -> s.copy(parentalLockEnabled = it) }
+                            // 打开且尚无 PIN：立即引导设置，避免「开了锁却没 PIN 可输」。
+                            if (it && !kidsLockConfigured) showKidsLockSetup = true
+                        },
+                    )
+                }
+            },
+        )
+    }
+    TvSettingsGroupGap()
+    // 卡 2：第三方代理解析（平台直播）：开关 + 模板编辑，与手机端设置页同一组配置字段。
+    val thirdPartyContext = LocalContext.current
+    var showThirdPartyEditor by remember { mutableStateOf(false) }
+    val templateCount = state.appSettings.platformThirdPartyProxyTemplates
+        .lines()
+        .count { it.contains("{") }
+    TvSettingsGroup {
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "第三方代理解析",
+            subtitle = "各平台优先用第三方地址加载，多个第三方互为备用",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.platformThirdPartyProxyEnabled,
+                    onCheckedChange = actions::updatePlatformThirdPartyProxyEnabled,
+                )
+            },
+        )
+        SettingsGroupDivider()
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "第三方地址模板",
+            subtitle = if (templateCount > 0) "$templateCount 条模板 · 支持按站点覆盖" else "未自定义 · 使用内置默认模板",
+            trailing = {
+                TvFocusButton(text = "编辑", onClick = { showThirdPartyEditor = true })
+            },
+        )
+    }
+    if (showThirdPartyEditor) {
+        val current = state.appSettings.platformThirdPartyProxyTemplates
+        var draft by remember(current) { mutableStateOf(current) }
+        AlertDialog(
+            onDismissRequest = { showThirdPartyEditor = false },
+            title = { Text("第三方地址模板") },
+            text = {
+                Column {
+                    Text(
+                        text = "每行一条，支持 {site}/{room} 占位符（另有 {siteAlias} 短码）；留空使用内置默认。",
+                        color = TvColors.TextSecondary,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        minLines = 5,
+                        maxLines = 10,
+                        placeholder = { Text(ThirdPartyLiveProxy.defaultTemplates.joinToString("\n")) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    actions.updatePlatformThirdPartyProxyTemplates(draft)
+                    showThirdPartyEditor = false
+                    android.widget.Toast.makeText(thirdPartyContext, "第三方模板已保存", android.widget.Toast.LENGTH_SHORT).show()
+                }) { Text("保存", color = TvColors.Accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showThirdPartyEditor = false }) { Text("取消") }
+            },
+        )
+    }
+    // T6-42 少儿锁 PIN 设置/更换：两次输入一致才把摘要落盘；关闭弹窗不影响开关状态。
+    if (showKidsLockSetup) {
+        PinPadDialog(
+            mode = PinPadMode.Setup,
+            storedHash = state.appSettings.parentalLockPin,
+            onPinHashSaved = { hash ->
+                actions.updateAppSettings { s -> s.copy(parentalLockPin = hash) }
+                showKidsLockSetup = false
+            },
+            onDismiss = { showKidsLockSetup = false },
         )
     }
 }

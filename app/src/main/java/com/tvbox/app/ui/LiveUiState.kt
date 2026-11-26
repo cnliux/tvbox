@@ -37,6 +37,12 @@ data class LiveUiState(
     val epgByChannel: Map<String, List<EpgProgram>> = emptyMap(),
     /** 节目单是否已完成一次拉取（无论成败），避免反复重试慢源。 */
     val epgLoaded: Boolean = false,
+    /**
+     * S3-19：节目单上次「成功」拉取的毫秒时间戳；0 表示尚无成功记录。
+     * 与 [epgByChannel] 一起构成 [com.tvbox.app.domain.EpgData]，
+     * 由 [com.tvbox.app.domain.EpgCachePolicy.renderState] 判定 FRESH/STALE/LOADING。
+     */
+    val epgFetchedAtMs: Long = 0,
     /** 当前生效的「源自带 EPG 地址」，用于换源时判断是否需要重新采用。 */
     val epgBundledUrl: String = "",
     /** 当前频道各线路的首包延迟（url → 毫秒）；null 值表示测速超时/不可达。 */

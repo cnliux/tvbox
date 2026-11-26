@@ -1,5 +1,6 @@
 package com.tvbox.app.ui.settings.source
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -40,7 +41,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-/** T2-18：源健康「体检卡」的遥控停留/触摸长按进入时长（毫秒）。 */
+/** T2-18：源健康「体检卡」的遥控器焦点停留进入时长（毫秒）。
+ *  触摸/遥控按键长按路径走系统长按时长（combinedClickable 的 onLongClick），不共用该常量。 */
 const val SOURCE_HEALTH_CARD_HOLD_MS: Long = 1_000L
 
 /** T2-18：可用度统计只取近 7 天内有活动的健康记录。 */
@@ -202,7 +204,7 @@ fun buildSourceHealthReport(
  * T2-18：源健康「体检卡」浮层。
  *
  * 进入方式（在 [com.tvbox.app.ui.SourceManageCard] 上）：
- * - 触摸设备：长按（pointerInput 检测）；
+ * - 触摸 / 遥控按键：长按（combinedClickable 的 onLongClick）；
  * - 遥控器：焦点停留在源行满 1s（onFocusChanged + LaunchedEffect）。
  *
  * 两个操作按钮：[立即体检] 触发一轮（后台）源体检；[导出报告] 生成
@@ -381,6 +383,8 @@ fun SourceHealthCardOverlay(
     onExportReport: () -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // 卡片打开期间，返回键先关卡片，不直接退出源管理页。
+    BackHandler(enabled = true) { onDismiss() }
     Box(
         modifier = Modifier
             .fillMaxWidth()

@@ -94,7 +94,10 @@ import com.tvbox.app.data.LiveFavoritesRepository
 import com.tvbox.app.data.liveFavoriteKey
 import com.tvbox.app.data.legacyLiveFavoriteKey
 import com.tvbox.app.data.isLiveFavorite as containsLiveFavorite
+import com.tvbox.app.domain.EpgCachePolicy
+import com.tvbox.app.domain.EpgData
 import com.tvbox.app.domain.EpgProgram
+import com.tvbox.app.domain.EpgRenderState
 import com.tvbox.app.domain.findEpgPrograms
 import com.tvbox.app.domain.Movie
 import com.tvbox.app.domain.PlaybackAgent
@@ -3347,6 +3350,19 @@ class TvBoxViewModel(
         return liveEpgPrograms(channel).firstOrNull { it.startMs > now }
     }
 
+    /**
+     * S3-19：节目单是否已过期（仍在渲染缓存旧数据）。
+     * UI 在节目名上叠加「~」角标提示；过期时 [loadLiveEpg] 会静默后台重拉，成功后替换。
+     */
+    fun liveEpgStale(): Boolean {
+        val live = _state.value.live
+        if (live.epgByChannel.isEmpty()) return false
+        return EpgCachePolicy.renderState(
+            EpgData(live.epgByChannel, live.epgFetchedAtMs),
+            System.currentTimeMillis(),
+        ) == EpgRenderState.STALE
+    }
+
     /** 保存/清除节目单接口地址：立即持久化，并清缓存后重新拉取。 */
     fun updateEpgUrl(url: String) {
         val trimmed = url.trim()
@@ -3355,7 +3371,8 @@ class TvBoxViewModel(
         _state.update {
             it.copy(
                 appSettings = settings,
-                live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false),
+                // S3-19：EPG 地址变了，旧缓存的时间戳一并失效。
+                live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L),
             )
         }
         saveSettings(settings)
@@ -4555,9 +4572,12 @@ class TvBoxViewModel(
                         }
                     }.awaitAll().filterNotNull()
                 }
+                // 订阅 lives[].epg 声明的节目单：用户没配过 EPG 时自动启用第一个。
+                val adoptImportedEpg = current.appSettings.epgUrl.isBlank() && imported.liveEpgUrls.isNotEmpty()
                 val settings = current.appSettings.copy(
                     customVideoApiLines = mergedCustom,
                     liveSourceUrls = current.appSettings.liveSourceUrls + newLiveUrls,
+                    epgUrl = if (adoptImportedEpg) imported.liveEpgUrls.first() else current.appSettings.epgUrl,
                 )
                 applySourceSettings(settings)
                 applyLiveSourceConfig(settings)
@@ -4573,6 +4593,7 @@ class TvBoxViewModel(
                     } else {
                         append(addedParts.joinToString("，"))
                     }
+                    if (adoptImportedEpg) append("，已启用订阅节目单地址")
                     if (imported.skipped > 0) append("，跳过 ${imported.skipped} 个无效条目")
                     // 直播源校验摘要：每个源一行，失败的源给出具体原因。
                     liveDryRuns.forEach { (url, dryRun) ->
@@ -4593,6 +4614,15 @@ class TvBoxViewModel(
                         appSettings = settings,
                         source = it.source.copy(importing = false, managerMessage = message),
                     )
+                }
+                // 订阅 lives[].epg 启用后立即拉取节目单（状态已含新 epgUrl，否则要等下次进入直播页）。
+                if (adoptImportedEpg) {
+                    _state.update {
+                        it.copy(
+                            live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L),
+                        )
+                    }
+                    loadLiveEpg(force = true)
                 }
                 message
             }
@@ -5438,6 +5468,8 @@ class TvBoxViewModel(
                     epgBundledUrl = bundled,
                     epgByChannel = emptyMap(),
                     epgLoaded = false,
+                    // S3-19：换源即旧 EPG 时间戳失效。
+                    epgFetchedAtMs = 0L,
                 ),
             )
         }
@@ -5468,7 +5500,17 @@ class TvBoxViewModel(
     private fun loadLiveEpg(force: Boolean = false) {
         val url = effectiveEpgUrl(_state.value)
         if (url.isBlank()) return
-        if (!force && _state.value.live.epgLoaded) return
+        // S3-19 stale-while-revalidate：仅 STALE（缓存超 7 天）时保持旧节目单继续展示
+        // （UI 叠加「~」角标）并落入下方后台静默重拉；FRESH 直接复用，
+        // LOADING（上次拉取失败）维持既有「不再反复重试慢源」语义。
+        // force=true（改地址/换源自带 EPG）无条件重拉。
+        if (!force && _state.value.live.epgLoaded) {
+            val renderState = EpgCachePolicy.renderState(
+                EpgData(_state.value.live.epgByChannel, _state.value.live.epgFetchedAtMs),
+                System.currentTimeMillis(),
+            )
+            if (renderState != EpgRenderState.STALE) return
+        }
         // T3-21：CRITICAL 档预算为 0 小时，直接跳过全量节目单拉取（EPG 本就是增强项）。
         val epgHours = com.tvbox.app.domain.MemoryGovernor.effectiveEpgHours(
             _state.value.appSettings.epgCacheHours,
@@ -5477,15 +5519,22 @@ class TvBoxViewModel(
         if (epgHours <= 0) return
         epgJob = relaunch(epgJob) {
             // 取消必须透传：否则被取消的旧请求会以空节目单写回 epgLoaded=true。
+            val now = System.currentTimeMillis()
+            // EPG UA 作用域与 EPG 时区来自设置页（此前是死配置）。
+            val epgSettings = _state.value.appSettings
             val programs = try {
-                epgRepository.fetch(url)
+                epgRepository.fetch(
+                    url,
+                    com.tvbox.app.domain.UaScope.resolve("epg", epgSettings),
+                    epgSettings.epgTimezone,
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
                 emptyMap()
             }
-            val bounded = trimEpgToBudget(programs, epgHours, System.currentTimeMillis())
-            _state.update { state -> state.applyEpgResult(url, bounded) }
+            val bounded = trimEpgToBudget(programs, epgHours, now)
+            _state.update { state -> state.applyEpgResult(url, bounded, now) }
         }
     }
 

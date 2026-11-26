@@ -6,6 +6,7 @@ import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.add
@@ -42,6 +43,11 @@ object SourceConfigBackup {
         val liveUrls: List<String>,
         val order: List<String>,
         val weights: Map<String, Int>,
+        /**
+         * S3-18：统一收藏段（[com.tvbox.app.domain.FavoriteRegistry.exportAll] 的原始 JSON 文本）。
+         * 老备份没有该段时为空；导入时由调用方交给 FavoriteRegistry.importAll 落回各存储。
+         */
+        val favoritesJson: String? = null,
     )
 
     data class Result(
@@ -97,6 +103,12 @@ object SourceConfigBackup {
         liveUrls: List<String>,
         order: List<String> = emptyList(),
         weights: Map<String, Int> = emptyMap(),
+        /**
+         * S3-18：统一收藏段（FavoriteRegistry.exportAll 的 JSON 文本）。null/空白/非法 JSON 时
+         * 不写 favorites 段；该段放在 legacy body 之外，checksum 仍只覆盖 legacy 字段，
+         * 老客户端 ignoreUnknownKeys 自动忽略，存量备份不受影响。
+         */
+        favorites: String? = null,
     ): String {
         // #395/T7-44：新备份带 schema 信封，旧客户端 ignoreUnknownKeys=true 自动忽略。
         // checksum 只覆盖 legacy body（与历史版本格式一致），保证存量备份仍可校验。
@@ -113,6 +125,11 @@ object SourceConfigBackup {
             // 用 as? 安全转换，非对象时跳过展开而不是抛 ClassCastException 中断整个导出。
             (Json.parseToJsonElement(legacyBody) as? JsonObject)
                 ?.entries?.forEach { (key, value) -> put(key, value) }
+            // S3-18：favorites 段（kind + id 列表）；解析失败静默跳过，不让收藏问题阻断源备份。
+            favorites
+                ?.takeIf { it.isNotBlank() }
+                ?.let { raw -> runCatching { Json.parseToJsonElement(raw) }.getOrNull() }
+                ?.let { put("favorites", it) }
         }.toString()
     }
 
@@ -183,7 +200,9 @@ object SourceConfigBackup {
             }
             .toMap()
 
-        return Result(Payload(lines, liveUrls, order, weights), null)
+        val favoritesJson = (root["favorites"] as? JsonElement)?.takeIf { it != JsonNull }
+            ?.toString()
+        return Result(Payload(lines, liveUrls, order, weights, favoritesJson), null)
     }
 
     /** 导出前自检：JSON 任意层级的键名命中敏感词就应拒绝导出。 */

@@ -44,11 +44,12 @@ data class DlnaDevice(
 class DlnaCaster(context: Context) {
     private val appContext = context.applicationContext
     // 局域网 SOAP/描述请求：沿用统一客户端，但使用更短的 SOCKET 超时避免投屏卡住。
+    // DLNA 投屏不是 [com.tvbox.app.data.network.Timeouts] 五档场景之一，预算保留本地常量（T1-09 门禁只认具名常量）。
     private val client = HttpClients.default.newBuilder()
-        .connectTimeout(3, TimeUnit.SECONDS)
-        .readTimeout(5, TimeUnit.SECONDS)
-        .writeTimeout(5, TimeUnit.SECONDS)
-        .callTimeout(10, TimeUnit.SECONDS)
+        .connectTimeout(DLNA_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(DLNA_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .writeTimeout(DLNA_READ_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(DLNA_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
 
     suspend fun discover(timeoutMs: Long = 3_500L): List<DlnaDevice> = withContext(Dispatchers.IO) {
@@ -262,6 +263,10 @@ class DlnaCaster(context: Context) {
         const val TAG = "DlnaCaster"
         const val SSDP_ADDRESS = "239.255.255.250"
         const val SSDP_PORT = 1900
+        // 局域网投屏的短超时口径（沿用 T1-09 前既有 3/5/10s，只除魔法数字、不改行为）。
+        const val DLNA_CONNECT_TIMEOUT_MS = 3_000L
+        const val DLNA_READ_TIMEOUT_MS = 5_000L
+        const val DLNA_CALL_TIMEOUT_MS = 10_000L
         const val AV_TRANSPORT_SERVICE = "urn:schemas-upnp-org:service:AVTransport:1"
         const val AV_TRANSPORT_SERVICE_SUFFIX = "AVTransport:1"
         val XML_MEDIA_TYPE = "text/xml; charset=utf-8".toMediaType()

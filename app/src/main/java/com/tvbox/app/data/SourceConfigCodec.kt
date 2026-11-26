@@ -23,6 +23,8 @@ object SourceConfigCodec {
         val lines: List<CustomVideoApiLine>,
         val liveUrls: List<String>,
         val skipped: Int,
+        /** TVBox 订阅 `lives[].epg` 声明的节目单地址（http 才收），供导入时自动启用。 */
+        val liveEpgUrls: List<String> = emptyList(),
     )
 
     data class Result(
@@ -108,6 +110,7 @@ object SourceConfigCodec {
         if (tvboxSites != null) {
             val lines = mutableListOf<CustomVideoApiLine>()
             val liveUrls = mutableListOf<String>()
+            val liveEpgUrls = mutableListOf<String>()
             var skipped = 0
             tvboxSites.forEach { element ->
                 val item = element as? JsonObject ?: return@forEach
@@ -134,6 +137,11 @@ object SourceConfigCodec {
                 if (livesElement is JsonArray) {
                     livesElement.forEach { element ->
                         val item = element as? JsonObject ?: return@forEach
+                        // TVBox 标准 lives 条目自带 `epg` 字段（XMLTV 地址）：此前被静默丢弃，
+                        // 导入含该字段的订阅后节目单永远空白。收集后由导入流程在用户未配置时启用。
+                        item.stringOrNull("epg")?.trim()
+                            ?.takeIf { it.startsWith("http://", true) || it.startsWith("https://", true) }
+                            ?.let { if (it !in liveEpgUrls) liveEpgUrls += it }
                         val url = item.stringOrNull("url") ?: return@forEach
                         // 直播订阅是文件地址：不能补尾斜杠，否则 xxx.m3u/ 必然 404。
                         url.split('#')
@@ -143,7 +151,12 @@ object SourceConfigCodec {
                 }
             }
             return Result(
-                imported = ImportedSources(lines = distinctLines, liveUrls = liveUrls.distinct(), skipped = skipped),
+                imported = ImportedSources(
+                    lines = distinctLines,
+                    liveUrls = liveUrls.distinct(),
+                    skipped = skipped,
+                    liveEpgUrls = liveEpgUrls,
+                ),
                 error = null,
             )
         }

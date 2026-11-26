@@ -23,14 +23,28 @@ internal fun TvBoxUiState.applyCategoryResult(
     return copy(categories = filterBlockedCategories(categories, appSettings.blockedVideoCategories))
 }
 
-/** EPG 结果归并：拉取期间 EPG 地址被改掉时丢弃过期响应。 */
+/**
+ * EPG 结果归并：拉取期间 EPG 地址被改掉时丢弃过期响应。
+ *
+ * S3-19 stale-while-revalidate：拉取失败（空节目单）且旧缓存仍在时保留旧数据，
+ * 不推进 [epgFetchedAtMs]（旧数据继续按 STALE 显示「~」角标，等待下次重验）；
+ * 拉取成功则静默替换——UI 的频道列表以频道号为 key，替换不引起焦点跳动。
+ */
 internal fun TvBoxUiState.applyEpgResult(
     requestedUrl: String,
     programs: Map<String, List<EpgProgram>>,
+    fetchedAtMs: Long,
 ): TvBoxUiState {
     val currentUrl = resolveEffectiveEpgUrl(appSettings.epgUrl, live.epgBundledUrl)
     if (currentUrl != requestedUrl) return this
-    return copy(live = live.copy(epgByChannel = programs, epgLoaded = true))
+    if (programs.isEmpty() && live.epgByChannel.isNotEmpty()) return this
+    return copy(
+        live = live.copy(
+            epgByChannel = programs,
+            epgLoaded = true,
+            epgFetchedAtMs = if (programs.isEmpty()) 0L else fetchedAtMs,
+        ),
+    )
 }
 
 /** 隐藏被屏蔽的影片分类，同时隐藏其子分类。 */

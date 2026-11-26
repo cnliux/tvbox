@@ -119,6 +119,7 @@ import com.tvbox.app.domain.Category
 import com.tvbox.app.domain.DangerousAction
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.HealthPageMetrics
+import com.tvbox.app.domain.ParentalLock
 import com.tvbox.app.domain.QuantitySettings
 import com.tvbox.app.domain.dangerousActionConfirmation
 import com.tvbox.app.ui.components.AppHeader
@@ -588,6 +589,9 @@ private fun HomeScreen(
         var forceNavigationVisible by remember { mutableStateOf(false) }
         var movingToNavigation by remember { mutableStateOf(false) }
         var navigationUpHeld by remember { mutableStateOf(false) }
+        // T6-42 少儿锁门禁：parentalLockEnabled 时按遥控 4/5 先过 PIN 校验才放行对应入口。
+        // 门禁目标只在本页组合内存活：成功/取消后清空，导航离页后组合销毁，再次按 4/5 需重新校验。
+        var pinGate by remember { mutableStateOf<ParentalLockGate?>(null) }
         val movieGridState = rememberLazyGridState()
         val homeFocus = rememberReturnFocus()
         val homeTopContentVisible by remember {
@@ -633,10 +637,23 @@ private fun HomeScreen(
                         AndroidKeyEvent.KEYCODE_NUMPAD_2 to { actions.openSearch() },
                         AndroidKeyEvent.KEYCODE_3       to { actions.openHistory() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_3 to { actions.openHistory() },
-                        AndroidKeyEvent.KEYCODE_4       to { actions.openLive() },
-                        AndroidKeyEvent.KEYCODE_NUMPAD_4 to { actions.openLive() },
-                        AndroidKeyEvent.KEYCODE_5       to { actions.openPlatformLive() },
-                        AndroidKeyEvent.KEYCODE_NUMPAD_5 to { actions.openPlatformLive() },
+                        // T6-42：数字 4/5 是少儿锁门禁入口（开关未开时行为与改动前完全一致）。
+                        AndroidKeyEvent.KEYCODE_4       to {
+                            if (state.appSettings.parentalLockEnabled) pinGate = ParentalLockGate.Live
+                            else actions.openLive()
+                        },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_4 to {
+                            if (state.appSettings.parentalLockEnabled) pinGate = ParentalLockGate.Live
+                            else actions.openLive()
+                        },
+                        AndroidKeyEvent.KEYCODE_5       to {
+                            if (state.appSettings.parentalLockEnabled) pinGate = ParentalLockGate.PlatformLive
+                            else actions.openPlatformLive()
+                        },
+                        AndroidKeyEvent.KEYCODE_NUMPAD_5 to {
+                            if (state.appSettings.parentalLockEnabled) pinGate = ParentalLockGate.PlatformLive
+                            else actions.openPlatformLive()
+                        },
                         AndroidKeyEvent.KEYCODE_6       to { actions.openSettings() },
                         AndroidKeyEvent.KEYCODE_NUMPAD_6 to { actions.openSettings() },
                         AndroidKeyEvent.KEYCODE_7       to { actions.selectDoubanHot() },
@@ -723,8 +740,36 @@ private fun HomeScreen(
                 )
             }
         }
+        // T6-42 少儿锁门禁弹窗（Dialog 层，不参与 PageSurface 布局）：
+        // 已设 PIN → Verify 模式校验；未设 PIN → Setup 模式引导设置（设置完成后
+        // 本次不自动进入受锁目标，防止孩子把「设置 PIN」当成解锁通道）。
+        pinGate?.let { gate ->
+            PinPadDialog(
+                mode = if (ParentalLock.isConfigured(state.appSettings.parentalLockPin)) {
+                    PinPadMode.Verify
+                } else {
+                    PinPadMode.Setup
+                },
+                storedHash = state.appSettings.parentalLockPin,
+                onVerified = {
+                    pinGate = null
+                    when (gate) {
+                        ParentalLockGate.Live -> actions.openLive()
+                        ParentalLockGate.PlatformLive -> actions.openPlatformLive()
+                    }
+                },
+                onPinHashSaved = { hash ->
+                    actions.updateAppSettings { s -> s.copy(parentalLockPin = hash) }
+                    pinGate = null
+                },
+                onDismiss = { pinGate = null },
+            )
+        }
     }
 }
+
+/** T6-42 少儿锁需 PIN 校验的遥控入口（数字 4/5 的两个目标屏）。 */
+private enum class ParentalLockGate { Live, PlatformLive }
 
 /** 历史网格的首项是随滚动头部 item；数据下标 → 网格下标换算用。 */
 private const val HISTORY_HEADER_ITEM_COUNT = 1
@@ -1926,7 +1971,7 @@ private fun sourceStatusLabel(lineId: String, latencies: Map<String, Long?>): Pa
 /**
  * 源列表卡片（规范布局）：左侧「标题 + 副标题（测速 | 接口地址）」，
  * 右侧「状态标签（正常/失效）+ 箭头」；整卡可点，打开操作弹窗（测速/屏蔽/删除）。
- * T2-18：长按（clickable 的 onLongClick，触摸/遥控按键通用）或焦点停留满
+ * T2-18：长按（combinedClickable 的 onLongClick，触摸/遥控按键通用）或焦点停留满
  * [SOURCE_HEALTH_CARD_HOLD_MS]（遥控器 onFocusChanged）进入源健康「体检卡」。
  */
 @Composable

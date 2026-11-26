@@ -463,8 +463,9 @@ class DefaultAppUpdateRepository(
             return apk
         }
         try {
+            // T1-10：带上清单 ETag，服务侧据此做断点续传门禁（ETag 不一致时弃 .part 从头下）。
             UpdateDownloadService.start(appContext, task.downloadUrl, task.filePath,
-                task.manifest.apkSize, task.manifest.apkSha256)
+                task.manifest.apkSize, task.manifest.apkSha256, task.manifest.apkEtag)
         } catch (error: Exception) {
             android.util.Log.w("TVBoxUpdate", "Unable to start app download service: ${logSafeText(error.message)}")
             throw IOException("无法启动应用下载服务，请返回应用后重试", error)
@@ -589,7 +590,9 @@ class DefaultAppUpdateRepository(
     private fun matchesPendingTask(task: PendingSystemDownload, update: AppUpdate): Boolean =
         task.manifest.versionCode == update.versionCode &&
             task.manifest.apkUrl == update.apkUrl &&
-            task.manifest.apkSha256 == update.apkSha256
+            task.manifest.apkSha256 == update.apkSha256 &&
+            // T1-10：ETag 变化说明服务端包已变更，旧任务的半成品 .part 不再可续传，不复用。
+            task.manifest.apkEtag == update.apkEtag
 
     // ------------------------------------------------------------ CDN 健康度（本机，仅计数与耗时）
 
@@ -781,6 +784,8 @@ internal fun parseAppUpdateManifest(
             .filter(::isSecureOtaUrl)
             .distinct(),
         releaseHighlights = dto.releaseHighlights.map { it.trim() }.filter { it.isNotBlank() },
+        // T1-10：ETag 可选；清单没给就空串，续传退化为纯 Range 语义。
+        apkEtag = dto.apkEtag.trim(),
     )
 }
 
@@ -804,6 +809,11 @@ private data class UpdateManifestDto(
     @SerialName("channel") val channel: String = "stable",
     /** S7-40：CHANGELOG「你会感觉到」三行；老清单缺省为空。 */
     @SerialName("release_highlights") val releaseHighlights: List<String> = emptyList(),
+    /**
+     * T1-10：可选安装包 ETag（`apkEtag`）。老清单缺省为空串，客户端忽略；
+     * 非空时用于断点续传门禁——服务端返回的 ETag 与它不一致就弃断点从头下载。
+     */
+    @SerialName("apkEtag") val apkEtag: String = "",
 )
 
 private const val USER_AGENT = "TVBox-Android"
@@ -929,6 +939,7 @@ private fun UpdateManifestDto.toDomain() = AppUpdate(
     minVersionCode = minVersionCode,
     channel = channel,
     releaseHighlights = releaseHighlights,
+    apkEtag = apkEtag,
 )
 
 private fun AppUpdate.toManifestDto() = UpdateManifestDto(
@@ -943,4 +954,5 @@ private fun AppUpdate.toManifestDto() = UpdateManifestDto(
     minVersionCode = minVersionCode,
     channel = channel,
     releaseHighlights = releaseHighlights,
+    apkEtag = apkEtag,
 )

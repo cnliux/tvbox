@@ -63,6 +63,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.datasource.DefaultHttpDataSource
 import com.tvbox.app.domain.DeviceMode
+import com.tvbox.app.domain.DecoderStrategy
 import com.tvbox.app.domain.LiveInfoBannerDuration
 import com.tvbox.app.domain.LiveRemoteDirectionMapping
 import com.tvbox.app.domain.LiveChannel
@@ -697,6 +698,8 @@ private fun LivePlayerScreen(
             directionMapping = remoteDirectionMapping,
             // 失败卡在场时确认键交给「重试 / 下一台」按钮。
             hasBlockingFailureCard = { streamBlocked },
+            // 功能面板（设置/信息/地址）打开时路由整体惰性，按键交给面板焦点链。
+            hasChromePanel = { chrome.panel != PlayerPanel.None },
             // 通用动作（播放/暂停 / 设置 / 信息 / 菜单 / 上一台 / 下一台）经统一绑定表翻译。
             bindings = remoteKeyBindings,
         )
@@ -726,12 +729,12 @@ private fun LivePlayerScreen(
                 showLineControl = true
                 bumpBars()
             }
-            LiveRemoteEffect.OpenLineControl -> {
-                // 设置键的高频语义：直接打开线路浮层（切源/线路），与 OK 唤控制栏行为一致。
+            LiveRemoteEffect.OpenSettings -> {
+                // 设置键的高频语义：打开功能面板；线路入口收进面板内（settingsLine），与频道列表互斥。
                 channelListVisible = false
                 previewChannel = null
-                showLineControl = true
-                bumpBars()
+                showLineControl = false
+                chrome.openPanel(PlayerPanel.Settings)
             }
             LiveRemoteEffect.OpenChannelList -> {
                 showLineControl = false
@@ -803,11 +806,6 @@ private fun LivePlayerScreen(
                         bumpBars()
                     },
                 )
-            }
-            .onPreviewKeyEvent { event ->
-                // 原 PlayerChannelKeyMap 的「任意键点亮信息条」语义保留在这里。
-                if (event.type == KeyEventType.KeyUp) chrome.bump()
-                false
             }
             .liveRemoteKeyInput(
                 router = remoteRouter,
@@ -922,11 +920,28 @@ private fun LivePlayerScreen(
                 resize = true,
                 channel = true,
                 lines = true,
+                settings = true,
+                // 设置面板内的「线路」项：打开页面自己的线路浮层，入口不因设置键收编而丢失。
+                settingsLine = true,
                 info = true,
                 url = true,
                 favorite = true,
                 favoriteLabel = if (actions.isLiveFavorite(currentChannel)) "♥ 已收藏" else "♥ 收藏",
                 favoriteSelected = actions.isLiveFavorite(currentChannel),
+                // 解码策略快捷切换（自适应 → 硬解 → 软解）：换策略会重建播放器并自动重连当前线路。
+                actions = listOf(
+                    PlayerChromeAction(
+                        label = "解码:${state.appSettings.decoderStrategy.displayName}",
+                        onClick = {
+                            val next = DecoderStrategy.entries[
+                                (state.appSettings.decoderStrategy.ordinal + 1) % DecoderStrategy.entries.size,
+                            ]
+                            actions.updateDecoderStrategy(next)
+                            showPrompt("解码策略：${next.displayName}（正在重连当前线路）")
+                            bumpBars()
+                        },
+                    ),
+                ),
             ),
             hiddenControls = state.appSettings.playerHiddenControls,
             hiddenControlsBySurface = state.appSettings.playerHiddenControlsBySurface,
@@ -958,6 +973,7 @@ private fun LivePlayerScreen(
                     showLineControl = true
                     bumpBars()
                 },
+                onSettings = { chrome.openPanel(PlayerPanel.Settings) },
                 onFavorite = { actions.toggleLiveFavorite(currentChannel); bumpBars() },
                 onBack = { actions.goBack() },
                 onInteraction = { bumpBars() },
@@ -999,15 +1015,19 @@ private fun LivePlayerScreen(
                 channel = epgChannel,
                 lineIndex = if (previewChannel == null) state.liveLineIndex else 0,
                 nowProgram = actions.liveEpgNow(epgChannel),
+                // S3-19：节目单过期（缓存超 7 天、后台静默重拉中）时叠加「~」角标。
+                stale = actions.liveEpgStale(),
                 programs = remember(
                     epgChannel,
                     clockTick,
                     state.liveEpgByChannel,
                     state.appSettings.epgCardRows,
+                    state.appSettings.epgOutOfRangePolicy,
                 ) {
                     buildLiveEpgDisplay(
                         actions.liveEpgPrograms(epgChannel),
                         rows = state.appSettings.epgCardRows,
+                        outOfRangePolicy = state.appSettings.epgOutOfRangePolicy,
                     )
                 },
                 nowMs = remember(clockTick) { System.currentTimeMillis() },

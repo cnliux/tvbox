@@ -2,14 +2,19 @@
 """T4-29：tools/ 下 Python 门禁脚本共用的 CLI 契约（唯一真源）。
 
 退出码（所有脚本统一）：
-    0 = 成功
-    1 = 业务失败（门禁命中、校验不通过、发现缺陷）
-    2 = 用法错误（缺参数、未知旗标）
-    3 = 环境错误（缺文件/工具、未预期异常）
+    0 = PASS 成功
+    1 = FAIL 业务失败（门禁命中、校验不通过、发现缺陷）
+    2 = USAGE_ERROR 用法错误（缺参数、未知旗标）
+    3 = SKIP 环境不可用（缺文件/工具、依赖服务不可达等）
 
 --json 模式下 stdout 只输出一行 JSON（紧凑、UTF-8 不转义中文）；
-人类可读输出（含 ::error:: / ::warning::）一律改道 stderr，便于 CI 分离采集。
-JSON 必给字段：schema / ok / tool / exit_code / errors / warnings。
+人类可读输出（含 --pretty 表格、::error:: / ::warning::）一律改道 stderr，便于 CI 分离采集。
+JSON 必给字段：schema / ok / verdict / tool / exit_code / errors / warnings；
+verdict ∈ PASS|FAIL|SKIP|USAGE_ERROR，由退出码推导（T4-29）。
+工具特有字段（metrics / defects / artifacts 等）经 run() 的 **fields 附加。
+
+各脚本在 configure 里按需追加 --pretty / --out 旗标（--out 为可选产物目录），
+人类可读输出统一走 stderr（见 audit_all.py 的 --pretty 先例）。
 
 不带 --json 时脚本输出与历史完全一致（向后兼容）。
 """
@@ -27,6 +32,9 @@ EXIT_OK = 0
 EXIT_BUSINESS = 1
 EXIT_USAGE = 2
 EXIT_ENV = 3
+
+# T4-29：verdict 由退出码推导；SKIP 对应「环境不可用」，供 CI 直接消费。
+VERDICT_BY_CODE = {EXIT_OK: "PASS", EXIT_BUSINESS: "FAIL", EXIT_USAGE: "USAGE_ERROR", EXIT_ENV: "SKIP"}
 
 
 class CliError(Exception):
@@ -90,10 +98,15 @@ def result(
     warnings: list[str] | None = None,
     **fields: Any,
 ) -> dict[str, Any]:
-    """构造带必给字段的契约对象；工具特有字段通过 **fields 附加。"""
+    """构造带必给字段的契约对象；工具特有字段通过 **fields 附加。
+
+    verdict 优先级：脚本经 **fields 显式传入的 verdict（业务级判定，如 audit_all
+    按缺陷给 FAIL）优先；未传入时按退出码推导（PASS/FAIL/USAGE_ERROR/SKIP）。
+    """
     payload: dict[str, Any] = {
         "schema": SCHEMA,
         "ok": bool(ok),
+        "verdict": VERDICT_BY_CODE.get(int(code), "ERROR"),
         "tool": tool,
         "exit_code": int(code),
         "errors": list(errors or []),

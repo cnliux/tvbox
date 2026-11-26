@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.mutablePreferencesOf
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.KidsLockPolicy
+import com.tvbox.app.domain.ParentalLock
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
@@ -24,6 +25,8 @@ class HumanFactorsSettingsPersistenceTest {
         assertEquals("kids_lock_pin_hash", HumanFactorsPrefsKeys.KIDS_LOCK_PIN_HASH)
         assertEquals("screen_time_limit_minutes", HumanFactorsPrefsKeys.SCREEN_TIME_LIMIT_MINUTES)
         assertEquals("driving_mode", HumanFactorsPrefsKeys.DRIVING_MODE)
+        assertEquals("parental_lock_enabled", HumanFactorsPrefsKeys.PARENTAL_LOCK_ENABLED)
+        assertEquals("parental_lock_pin", HumanFactorsPrefsKeys.PARENTAL_LOCK_PIN)
     }
 
     @Test
@@ -93,6 +96,25 @@ class HumanFactorsSettingsPersistenceTest {
         assertTrue(loaded.drivingMode)
         assertTrue(KidsLockPolicy.matches("246810", loaded.kidsLockPinHash))
         assertFalse(KidsLockPolicy.matches("246811", loaded.kidsLockPinHash))
+    }
+
+    @Test
+    fun `repository round trips parental lock fields`() = runBlocking {
+        val store = InMemoryPreferencesDataStore()
+        val repository = DataStoreAppSettingsRepository(store, EmptyLegacySource())
+        // T6-42：家长锁只持久化开关 + PIN 摘要（ParentalLock.hashPin），默认全关。
+        val settings = AppSettings(
+            parentalLockEnabled = true,
+            parentalLockPin = ParentalLock.hashPin("1234"),
+        )
+
+        repository.saveSettings(settings)
+        val loaded = repository.getSettings()
+
+        assertTrue(loaded.parentalLockEnabled)
+        assertEquals(settings.parentalLockPin, loaded.parentalLockPin)
+        assertTrue(ParentalLock.verifyPin("1234", loaded.parentalLockPin))
+        assertFalse(ParentalLock.verifyPin("0000", loaded.parentalLockPin))
     }
 
     private class EmptyLegacySource : LegacySettingsSource {

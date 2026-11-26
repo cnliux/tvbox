@@ -58,6 +58,35 @@ class EpgParserTest {
     }
 
     @Test
+    fun naiveTimestampsUseConfiguredTimezone() {
+        val xml = "<tv>" +
+            "<programme start=\"20260101120000\" stop=\"20260101130000\" channel=\"c1\">" +
+            "<title>无时区后缀</title></programme>" +
+            "</tv>"
+
+        val shanghai = parseXmltvEpg(xml, "Asia/Shanghai")["c1"]?.single()
+        val utc = parseXmltvEpg(xml, "UTC")["c1"]?.single()
+
+        // 同一时间串按源时区解释：东八区 12:00 == UTC 04:00，相差 8 小时。
+        assertEquals(1_767_240_000_000L, shanghai?.startMs)
+        assertEquals(1_767_268_800_000L, utc?.startMs)
+    }
+
+    @Test
+    fun explicitOffsetIgnoresConfiguredTimezone() {
+        val xml = "<tv>" +
+            "<programme start=\"20260101120000 +0800\" stop=\"20260101130000 +0800\" channel=\"c1\">" +
+            "<title>带偏移</title></programme>" +
+            "</tv>"
+
+        val withTz = parseXmltvEpg(xml, "UTC")["c1"]?.single()
+        val withoutTz = parseXmltvEpg(xml)["c1"]?.single()
+
+        assertEquals(withTz?.startMs, withoutTz?.startMs)
+        assertEquals(1_767_240_000_000L, withTz?.startMs)
+    }
+
+    @Test
     fun keepsProgrammesWithoutChannelDeclaration() {
         val xml = "<tv>" +
             "<programme start=\"20260101080000\" stop=\"20260101090000\" channel=\"orphan\">" +

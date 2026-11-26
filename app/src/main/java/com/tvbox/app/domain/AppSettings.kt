@@ -228,6 +228,18 @@ data class AppSettings(
     val screenTimeLimitMinutes: Int = 0,
     /** 车载模式：限制交互复杂度（简化 UI、减少多级菜单），默认关闭。 */
     val drivingMode: Boolean = false,
+    /**
+     * T6-42 少儿锁（家长锁）总开关：开启后遥控表数字 4（电视直播）/ 5（平台直播）
+     * 入口需输入 4 位 PIN 才能进入。与手机端 [kidsLockPinHash]（设置页少儿锁）并存，
+     * 本字段专门服务电视端遥控入口门禁。
+     */
+    val parentalLockEnabled: Boolean = false,
+    /**
+     * T6-42 少儿锁 PIN 摘要：SHA-256 前 16 位十六进制（Argon2id 对 4 位数字 PIN 过重，
+     * 且 4 位 PIN 本身仅 1 万种组合，SHA-256 摘要足够）。
+     * 只存摘要、绝不存明文；空串表示未设置。校验统一走 [ParentalLock.verifyPin]。
+     */
+    val parentalLockPin: String = "",
 )
 
 /**

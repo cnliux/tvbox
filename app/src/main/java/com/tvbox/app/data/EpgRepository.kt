@@ -14,8 +14,15 @@ import okhttp3.Request
 import java.io.IOException
 
 interface EpgRepository {
-    /** 拉取并解析 XMLTV；失败返回空 Map（不抛异常，EPG 是增强项不阻塞主流程）。 */
-    suspend fun fetch(epgUrl: String): Map<String, List<EpgProgram>>
+    /**
+     * 拉取并解析 XMLTV；失败返回空 Map（不抛异常，EPG 是增强项不阻塞主流程）。
+     * [userAgent]：空串回退内置默认；[timezoneId]：无时区后缀时间戳的解释时区（空跟随设备）。
+     */
+    suspend fun fetch(
+        epgUrl: String,
+        userAgent: String = "",
+        timezoneId: String = "",
+    ): Map<String, List<EpgProgram>>
 }
 
 /**
@@ -29,19 +36,29 @@ class RemoteEpgRepository : EpgRepository {
     private val mutex = Mutex()
     private val cache = mutableMapOf<String, CachedEpg>()
 
-    override suspend fun fetch(epgUrl: String): Map<String, List<EpgProgram>> {
+    override suspend fun fetch(
+        epgUrl: String,
+        userAgent: String,
+        timezoneId: String,
+    ): Map<String, List<EpgProgram>> {
         val normalized = epgUrl.trim()
         val httpUrl = normalized.startsWith("http://", ignoreCase = true) ||
             normalized.startsWith("https://", ignoreCase = true)
         // URL 空/非 http 直接返回空 Map。
         if (normalized.isBlank() || !httpUrl) return emptyMap()
+        // 缓存 key 同时带时区：同一 URL 在不同时区下解析结果不同（无时区后缀时间戳）。
+        val tzKey = timezoneId.trim()
+        val cacheKey = "$normalized\u0000$tzKey"
+        val resolvedUa = userAgent.trim().ifBlank {
+            com.tvbox.app.domain.UserAgentSetting.Default
+        }
         return withContext(Dispatchers.IO) {
             mutex.withLock {
-                val cached = cache[normalized]
+                val cached = cache[cacheKey]
                 val now = System.currentTimeMillis()
                 if (cached != null && now - cached.fetchedAtMs < CACHE_TTL_MS) return@withContext cached.programs
                 val text = try {
-                    download(normalized)
+                    download(normalized, resolvedUa)
                 } catch (cancelled: CancellationException) {
                     // 换源/离页取消时不能把取消误判成「网络失败」并继续占用 Mutex。
                     throw cancelled
@@ -53,7 +70,7 @@ class RemoteEpgRepository : EpgRepository {
                     return@withContext cached?.programs ?: emptyMap()
                 }
                 val parsed = try {
-                    parseXmltvEpg(text)
+                    parseXmltvEpg(text, tzKey)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Throwable) {
@@ -63,17 +80,17 @@ class RemoteEpgRepository : EpgRepository {
                 if (cache.size >= MAX_CACHE_ENTRIES) {
                     cache.entries.minByOrNull { it.value.fetchedAtMs }?.key?.let { cache.remove(it) }
                 }
-                cache[normalized] = CachedEpg(parsed, now)
+                cache[cacheKey] = CachedEpg(parsed, now)
                 parsed
             }
         }
     }
 
-    private suspend fun download(url: String): String {
-        // 与 SourceConfigFetcher 同口径的 UA 标识。
+    private suspend fun download(url: String, userAgent: String): String {
+        // 与 SourceConfigFetcher 同口径的 UA 标识；UA 作用域（epg）由调用方通过参数传入。
         val request = Request.Builder()
             .url(url)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 12) TVBox-Android/1.3")
+            .header("User-Agent", userAgent)
             .build()
         return HttpClients.default.executeCancellable(request, NetworkRetryPolicy.IdempotentGet).use { response ->
             val body = response.body

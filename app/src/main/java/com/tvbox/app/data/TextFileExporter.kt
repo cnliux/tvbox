@@ -69,12 +69,16 @@ internal class TextFileExporter(context: Context) {
     }
 }
 
+/** 订阅文本拉取的超时口径：沿用既有 60s 读 / 120s 整次调用预算（不是 [com.tvbox.app.data.network.Timeouts] 五档场景之一）。 */
+private const val SOURCE_CONFIG_READ_TIMEOUT_MS = 60_000L
+private const val SOURCE_CONFIG_CALL_TIMEOUT_MS = 120_000L
+
 /** Fetches a remote configuration text over plain HTTP(S), used by the paste/URL import dialog. */
 internal class SourceConfigFetcher {
     private val client = HttpClients.default.newBuilder()
         // 订阅文本可能较大且允许慢速，沿用既有读超时并给整次调用更长上限。
-        .readTimeout(60L, java.util.concurrent.TimeUnit.SECONDS)
-        .callTimeout(120L, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(SOURCE_CONFIG_READ_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+        .callTimeout(SOURCE_CONFIG_CALL_TIMEOUT_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
         .build()
 
     suspend fun fetch(url: String): String = withContext(Dispatchers.IO) {

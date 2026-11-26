@@ -1565,6 +1565,21 @@ private fun PlatformLivePlayerScreen(
                 )
             )
         }
+        // 电视端解码策略快捷切换（自适应 → 硬解 → 软解）：换策略会重建播放器并重连当前频道。
+        if (!isMobile) {
+            add(
+                PlayerChromeAction(
+                    label = "解码:${decoderStrategy.displayName}",
+                    onClick = {
+                        val next = com.tvbox.app.domain.DecoderStrategy.entries[
+                            (decoderStrategy.ordinal + 1) % com.tvbox.app.domain.DecoderStrategy.entries.size,
+                        ]
+                        actions.updateDecoderStrategy(next)
+                        chrome.bump()
+                    },
+                )
+            )
+        }
     }
     val lineListState = rememberLazyListState()
     val lineFocusRequester = remember { FocusRequester() }
@@ -1595,7 +1610,8 @@ private fun PlatformLivePlayerScreen(
             callbacks = UnifiedRemoteKeyRouter.Callbacks(
                 onAction = { false },
                 chrome = chrome,
-                isOverlayVisible = { showLineControl || showRoomList },
+                // 功能面板（设置/信息/地址）与页面浮层同属「浮层态」：打开期间路由惰性，按键交给焦点链。
+                isOverlayVisible = { showLineControl || showRoomList || chrome.panel != PlayerPanel.None },
             ),
         )
     }
@@ -1638,15 +1654,18 @@ private fun PlatformLivePlayerScreen(
                     true
                 }
 
-                // 设置键：打开线路浮层（切候选线路/清晰度的高频入口），与 MENU 的重连区分。
-                is UnifiedRemoteKeyRouter.Action.OpenLineOverlay -> {
-                    if (stream?.hasCandidates == true) {
-                        showLineControl = true
-                        chrome.bump()
-                        true
-                    } else {
-                        false
-                    }
+                // 设置键：打开功能面板；线路入口收进面板内（settingsLine），与 OK 唤出的节目列表互斥。
+                is UnifiedRemoteKeyRouter.Action.OpenSettings -> {
+                    showRoomList = false
+                    showLineControl = false
+                    chrome.openPanel(PlayerPanel.Settings)
+                    true
+                }
+
+                // 停止键 / ESC：直接退出平台直播页，不经过「先收控件」链路。
+                is UnifiedRemoteKeyRouter.Action.Exit -> {
+                    actions.goBack()
+                    true
                 }
 
                 is UnifiedRemoteKeyRouter.Action.OpenInfo -> {
@@ -1658,7 +1677,7 @@ private fun PlatformLivePlayerScreen(
             }
         },
         chrome = chrome,
-        isOverlayVisible = { showLineControl || showRoomList },
+        isOverlayVisible = { showLineControl || showRoomList || chrome.panel != PlayerPanel.None },
     )
 
     Box(
@@ -1778,6 +1797,9 @@ private fun PlatformLivePlayerScreen(
                     room = true,
                     // 线路不再用内置按钮，与弹幕/监控一起由 actions 统一注入，保证同排同样式。
                     lines = false,
+                    // 设置键 / 设置按钮 → 功能面板；面板内的「线路」项打开页面自己的线路浮层。
+                    settings = true,
+                    settingsLine = true,
                     info = true,
                     url = true,
                     cast = true,
@@ -1830,6 +1852,7 @@ private fun PlatformLivePlayerScreen(
                             chrome.bump()
                         }
                     },
+                    onSettings = { chrome.openPanel(PlayerPanel.Settings) },
                     onOrientation = {
                         activity?.requestedOrientation = if (isPortraitNow) {
                             android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE

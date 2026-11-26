@@ -51,8 +51,9 @@ internal class UnifiedRemoteKeyRouter(
         data object OpenSettings : Action
         data object OpenInfo : Action
         data object OpenMenu : Action
-        /** 直播专属：打开「线路 / 切源」浮层（设置键的高频语义，区别于 MENU 的频道/节目列表）。 */
-        data object OpenLineOverlay : Action
+
+        /** 通用退出：直播页 = 退出播放回到上级列表；点播 = 退出播放页。 */
+        data object Exit : Action
 
         /** 通用停止：点播=暂停并保持控制栏，直播=停止并退出到列表语义。 */
         data object Stop : Action
@@ -334,14 +335,20 @@ internal class UnifiedRemoteKeyRouter(
             }
 
             RemoteKeyAction.Settings -> {
-                // 电视直播：设置键 = 打开线路浮层（切源/线路的高频入口），与 MENU 的频道列表区分。
-                callbacks.onAction(Action.OpenLineOverlay)
+                // 电视直播：设置键 = 打开功能面板（线路入口收进面板内），与 MENU 的频道列表区分。
+                callbacks.onAction(Action.OpenSettings)
                 true
             }
 
             RemoteKeyAction.Stop -> {
                 // 直播：按停止 = 停止并退出到列表语义。
-                callbacks.onAction(Action.Stop)
+                callbacks.onAction(Action.Exit)
+                true
+            }
+
+            RemoteKeyAction.Exit -> {
+                // ESC：直接退出直播页，不经过「先收控件」链路。
+                callbacks.onAction(Action.Exit)
                 true
             }
 
@@ -356,7 +363,6 @@ internal class UnifiedRemoteKeyRouter(
     ): Boolean {
         if (!isKeyUp) return false
         if (callbacks.isOverlayVisible()) return false
-        chrome.bump()
         return when (action) {
             RemoteKeyAction.DirectionLeft -> {
                 callbacks.onAction(Action.PreviousRoom)
@@ -394,14 +400,20 @@ internal class UnifiedRemoteKeyRouter(
             }
 
             RemoteKeyAction.Settings -> {
-                // 平台直播：设置键 = 打开线路浮层（切源/候选线路的高频入口），与 MENU 的重连区分。
-                callbacks.onAction(Action.OpenLineOverlay)
+                // 平台直播：设置键 = 打开功能面板（线路入口收进面板内），与 MENU 的重连区分。
+                callbacks.onAction(Action.OpenSettings)
                 true
             }
 
             RemoteKeyAction.Stop -> {
                 // 直播：按停止 = 停止并退出到列表语义。
-                callbacks.onAction(Action.Stop)
+                callbacks.onAction(Action.Exit)
+                true
+            }
+
+            RemoteKeyAction.Exit -> {
+                // ESC：直接退出平台直播页，不经过「先收控件」链路。
+                callbacks.onAction(Action.Exit)
                 true
             }
 

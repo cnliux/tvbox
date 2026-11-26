@@ -72,6 +72,9 @@ enum class RemoteKeyAction(val id: String, val displayName: String) {
 
     /** 停止键：点播=暂停并保持控制栏，直播=停止并退出到列表语义。 */
     Stop("stop", "停止"),
+
+    /** 退出键（ESC）：直播/播放页直接退出，不经过「先收控件」链路。 */
+    Exit("exit", "退出（ESC）"),
     ;
 
     companion object {
@@ -242,6 +245,7 @@ data class RemoteKeyBindings(
             RemoteKeyAction.Info to setOf(KeyEvent.KEYCODE_INFO),
             RemoteKeyAction.Menu to setOf(KeyEvent.KEYCODE_MENU),
             RemoteKeyAction.Stop to setOf(KeyEvent.KEYCODE_MEDIA_STOP),
+            RemoteKeyAction.Exit to setOf(KeyEvent.KEYCODE_ESCAPE),
         )
     }
 }

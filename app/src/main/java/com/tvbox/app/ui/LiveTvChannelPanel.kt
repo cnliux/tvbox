@@ -289,6 +289,8 @@ internal fun LiveChannelOverlayPanel(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(vertical = 4.dp),
                     ) {
+                        // S3-19：key 用频道号（频道稳定 id）而非列表下标，EPG 静默替换时
+                        // 行重组不引起焦点/滚动跳动。
                         itemsIndexed(visibleChannels, key = { _, entry -> entry.value.number }) { indexInVisible, entry ->
                             val channel = entry.value
                             LiveOverlayChannelRow(
@@ -296,7 +298,10 @@ internal fun LiveChannelOverlayPanel(
                                 isFocused = indexInVisible == focusedIndex,
                                 isPlaying = entry.index == state.liveChannelIndex,
                                 isFavorite = actions.isLiveFavorite(channel),
-                                nowTitle = actions.liveEpgNow(channel)?.title,
+                                // S3-19：节目单过期时节目名带「~」角标（仍在渲染缓存旧数据）。
+                                nowTitle = actions.liveEpgNow(channel)?.title?.let { title ->
+                                    if (actions.liveEpgStale()) "$title~" else title
+                                },
                                 onClick = { onChannelPicked(entry.index) },
                             )
                         }

@@ -611,13 +611,17 @@ private fun MobileLiveListScreen(
                 contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(filtered, key = { _, pair -> pair.index }) { _, pair ->
+                // S3-19：key 用频道号（频道稳定 id）而非列表下标，EPG 静默替换时不跳焦点。
+                itemsIndexed(filtered, key = { _, pair -> pair.value.number }) { _, pair ->
                     val channel = pair.value
                     MobileLiveChannelRow(
                         channel = channel,
                         isPlaying = pair.index == currentPlayingIndex,
                         isFavorite = actions.isLiveFavorite(channel),
-                        nowTitle = actions.liveEpgNow(channel)?.title,
+                        // S3-19：节目单过期（缓存超 7 天，后台静默重拉中）时节目名带「~」角标。
+                        nowTitle = actions.liveEpgNow(channel)?.title?.let { title ->
+                            if (actions.liveEpgStale()) "$title~" else title
+                        },
                         nextTitle = actions.liveEpgNext(channel)?.title,
                         onClick = { onChannelClick(pair.index) },
                         onToggleFavorite = {

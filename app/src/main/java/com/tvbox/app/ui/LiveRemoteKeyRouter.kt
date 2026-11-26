@@ -54,7 +54,6 @@ sealed interface LiveRemoteEffect {
     data object NextSource : LiveRemoteEffect
     data object OpenController : LiveRemoteEffect
     data object OpenChannelList : LiveRemoteEffect
-    data object OpenLineControl : LiveRemoteEffect
     data object ClosePanel : LiveRemoteEffect
     data object ExitLive : LiveRemoteEffect
     data object CommitNumber : LiveRemoteEffect
@@ -81,6 +80,11 @@ class LiveRemoteKeyRouter(
     /** 失败卡（重试/下一台）在场时确认键必须让给当前聚焦按钮。 */
     private val hasBlockingFailureCard: () -> Boolean = { false },
     /**
+     * PlayerChrome 功能面板（设置/信息/播放地址等）打开时路由整体惰性：
+     * 所有键（含 BACK）放行给面板焦点链与 PlayerChromeBackHandler，避免两套浮层互相干扰。
+     */
+    private val hasChromePanel: () -> Boolean = { false },
+    /**
      * 统一遥控键位绑定（设置页可自定义）：用于「播放/暂停 / 设置 / 信息 / 菜单 / 上一台 / 下一台」等
      * 跨页通用动作的键码判定。方向键（换台/切源）与数字选台是直播特化语义，仍走 directionMapping
      * 与数字处理，不进绑定表；其余通用键码先经 [bindings.actionsFor] 翻译成 [LiveRemoteEffect]。
@@ -103,6 +107,9 @@ class LiveRemoteKeyRouter(
 
         // 长按连发一律吞掉但不重复执行，避免换台/切源像机关枪。
         if (repeatCount > 0) return LiveRemoteResult(state)
+
+        // 功能面板打开时路由整体惰性：面板焦点链 + PlayerChromeBackHandler 接管全部按键。
+        if (hasChromePanel()) return null
 
         // BACK：面板/数字输入态消费并按弹栈语义在 ACTION_UP 执行；
         // 全屏且无遮挡时若 exitLiveOnBackInFullscreen=false，则放行给已有的 BackHandler 链路。
@@ -204,12 +211,14 @@ class LiveRemoteKeyRouter(
                     effects += LiveRemoteEffect.OpenChannelList
                     nextState = nextState.copy(uiState = UIState.CHANNEL_LIST)
                 }
-                // 设置键 = 打开线路浮层（切源/线路的高频入口），与菜单键的列表语义区分。
-                RemoteKeyAction.Settings -> effects += LiveRemoteEffect.OpenLineControl
+                // 设置键 = 打开功能面板（线路入口收进面板内），与菜单键的列表语义区分。
+                RemoteKeyAction.Settings -> effects += LiveRemoteEffect.OpenSettings
                 // 信息键 = 打开节目信息面板（低频）。
                 RemoteKeyAction.Info -> effects += LiveRemoteEffect.OpenInfo
                 // 停止键 = 停止播放并回到列表（直播不可暂停，P1-06）。
                 RemoteKeyAction.Stop -> effects += LiveRemoteEffect.ExitLive
+                // ESC = 直接退出直播页。
+                RemoteKeyAction.Exit -> effects += LiveRemoteEffect.ExitLive
                 else -> Unit // 方向/快进快退/BACK 在直播页无对应语义
             }
         }
@@ -431,7 +440,6 @@ fun LivePlayerRemoteShell(
                     LiveRemoteEffect.PreviousSource -> onPreviousSource()
                     LiveRemoteEffect.NextSource -> onNextSource()
                     LiveRemoteEffect.OpenController,
-                    LiveRemoteEffect.OpenLineControl,
                     LiveRemoteEffect.OpenChannelList,
                     LiveRemoteEffect.ClosePanel,
                     is LiveRemoteEffect.NumberChanged,

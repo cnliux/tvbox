@@ -29,6 +29,10 @@ internal object HumanFactorsPrefsKeys {
     const val SCREEN_TIME_LIMIT_MINUTES = "screen_time_limit_minutes"
     /** 车载模式开关。 */
     const val DRIVING_MODE = "driving_mode"
+    /** T6-42 少儿锁（家长锁）总开关：遥控 4/5 入口门禁。 */
+    const val PARENTAL_LOCK_ENABLED = "parental_lock_enabled"
+    /** T6-42 少儿锁 PIN 摘要（SHA-256 前 16 位十六进制），空串表示未设置；绝不存明文。 */
+    const val PARENTAL_LOCK_PIN = "parental_lock_pin"
 }
 
 /** 从偏好快照叠加人因合规三项字段；缺键/类型不符时保持 AppSettings 默认（关闭、无限制）。 */
@@ -38,6 +42,9 @@ internal fun AppSettings.withHumanFactorsFrom(values: Map<String, Any?>): AppSet
     screenTimeLimitMinutes = (values[HumanFactorsPrefsKeys.SCREEN_TIME_LIMIT_MINUTES] as? Int ?: 0)
         .coerceIn(0, 24 * 60),
     drivingMode = values[HumanFactorsPrefsKeys.DRIVING_MODE] as? Boolean ?: false,
+    parentalLockEnabled = values[HumanFactorsPrefsKeys.PARENTAL_LOCK_ENABLED] as? Boolean ?: false,
+    parentalLockPin = (values[HumanFactorsPrefsKeys.PARENTAL_LOCK_PIN] as? String)
+        ?.trim()?.take(64).orEmpty(),
 )
 
 /** 把人因合规字段写入偏好容器，复用 [putString]/[putInt]/[putBoolean] 既有 codec 原语。 */
@@ -48,6 +55,8 @@ internal fun MutablePreferences.writeHumanFactors(settings: AppSettings) {
         settings.screenTimeLimitMinutes.coerceIn(0, 24 * 60),
     )
     putBoolean(HumanFactorsPrefsKeys.DRIVING_MODE, settings.drivingMode)
+    putBoolean(HumanFactorsPrefsKeys.PARENTAL_LOCK_ENABLED, settings.parentalLockEnabled)
+    putString(HumanFactorsPrefsKeys.PARENTAL_LOCK_PIN, settings.parentalLockPin)
 }
 
 /** 旧版设置来源。仅在首次迁移与迁移失败重试时读取，迁移完成后不再参与常规读取。 */

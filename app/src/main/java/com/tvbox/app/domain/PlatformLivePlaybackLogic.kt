@@ -36,7 +36,14 @@ fun nextRotatedPlatformLiveCandidate(
     return null
 }
 
-/** EPG 地址解析：用户配置优先，其次源自带（M3U 头部 url-tvg）。 */
+/**
+ * APK 兜底 EPG：用户未配置且源未声明（M3U 无 url-tvg、TXT/订阅无 epg 字段）时的最后一级节目单地址。
+ * 公共全量 XMLTV 镜像（HTTPS，满足 CleartextGuard 内置域名要求）；拉取失败静默，
+ * EPG 本就是增强项，不阻塞直播主流程。
+ */
+const val BUILTIN_FALLBACK_EPG_URL = "https://epg.112114.xyz/pp.xml"
+
+/** EPG 地址解析：用户配置 > 源自带（M3U 头部 url-tvg）> 内置兜底地址。 */
 fun resolveEffectiveEpgUrl(userConfiguredUrl: String, bundledUrl: String): String =
-    userConfiguredUrl.trim().ifBlank { bundledUrl.trim() }
+    userConfiguredUrl.trim().ifBlank { bundledUrl.trim().ifBlank { BUILTIN_FALLBACK_EPG_URL } }
 

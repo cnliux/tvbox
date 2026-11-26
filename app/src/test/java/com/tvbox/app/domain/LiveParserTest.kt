@@ -87,6 +87,12 @@ class LiveParserTest {
     }
 
     @Test
+    fun extractM3uEpgUrlSupportsUrlEpgAttribute() {
+        val raw = "#EXTM3U url-epg=\"https://c.example/epg.xml\""
+        assertEquals("https://c.example/epg.xml", extractM3uEpgUrl(raw))
+    }
+
+    @Test
     fun extractM3uEpgUrlReturnsNullWhenAbsent() {
         assertNull(extractM3uEpgUrl("#EXTM3U\n#EXTINF:-1,CCTV-1\nhttp://a.example/1.m3u8"))
     }

@@ -23,6 +23,12 @@ import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 
+/** 弹幕长连接建连档：12s（弹幕长连接不在 [com.tvbox.app.data.network.Timeouts] 五档场景内，保留本地常量）。 */
+private const val DANMAKU_CONNECT_TIMEOUT_MS = 12_000L
+
+/** OkHttp「不设超时」哨兵值：readTimeout/callTimeout 传 0 表示不限（长连接 WebSocket 必须清零）。 */
+private const val NO_TIMEOUT_MS = 0L
+
 /** 虎牙主播 uid 解析用正则；固定 pattern 提到顶层预编译，避免每次解析重复构造。 */
 private val HUYA_LUID_REGEX = Regex("lUid\":([0-9]+)")
 private val HUYA_CHANNEL_ID_REGEX = Regex("lChannelId\":([0-9]+)")
@@ -107,9 +113,9 @@ internal abstract class BaseDanmakuClient(
     // 复用全局客户端的 dispatcher/连接池：每个实例 new 一个会在频繁换房时堆积线程。
     // callTimeout 必须清零，否则默认 60s 会把长连接 WebSocket 掐断。
     private val client = HttpClients.default.newBuilder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.MILLISECONDS)
-        .callTimeout(0, TimeUnit.MILLISECONDS)
+        .connectTimeout(DANMAKU_CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(NO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .callTimeout(NO_TIMEOUT_MS, TimeUnit.MILLISECONDS)
         .build()
 
     protected val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

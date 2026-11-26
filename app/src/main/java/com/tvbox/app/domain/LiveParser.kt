@@ -89,8 +89,8 @@ fun parseLiveChannels(raw: String): List<LiveChannel> {
 // 预编译：TXT 逐行解析与 M3U 每条 EXTINF 都会用到，逐次构造正则会把大直播源解析退化成 CPU 密集任务。
 private val CCTV_NUM_PREFIX_REGEX = Regex("^\\d+(?=CCTV-)")
 
-/** M3U 头部可能出现的 EPG 属性名，按常见度依次尝试。 */
-private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-url", "epg")
+/** M3U 头部可能出现的 EPG 属性名，按常见度依次尝试（`url-epg` 是部分国内源的变体写法）。 */
+private val M3U_EPG_ATTRIBUTES = listOf("url-tvg", "x-tvg-url", "x-tvg", "tvg-url", "url-epg", "epg")
 
 /**
  * 从 M3U 头部 `#EXTM3U` 行读取节目单地址（`url-tvg` / `x-tvg-url` / `tvg-url` 等）。
