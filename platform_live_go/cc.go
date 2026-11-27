@@ -11,6 +11,7 @@ package platformlive
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"regexp"
 	"sort"
@@ -643,12 +644,38 @@ func (r *ccResolver) Resolve(roomInput string) (*ResolvedLiveStream, error) {
 		return nil, newError("网易CC未返回有效播放地址")
 	}
 	best := tiers[0]
+	// 把所有画质档展开为候选线路：最佳画质档排最前（index 0 = 默认线路），
+	// 其余档位按 rank 从高到低追加。候选名带画质标识（如「蓝光·主线路」），
+	// 让「线路」按钮在多画质档、单一 CDN 时也能切换画质。
+	candidates := ccExpandQualityTiers(tiers)
 	return &ResolvedLiveStream{
 		RoomID:     roomID,
 		Title:      Text(room["title"], "网易CC直播 "+roomID),
 		Anchor:     TextStrict(room["nickname"]),
 		Quality:    ccQualityLabel(best.key),
-		Candidates: UniqueCandidates(best.candidates),
+		Candidates: candidates,
 		Headers:    ccPlayHeaders(),
 	}, nil
+}
+
+// ccExpandQualityTiers 把所有画质档展开为候选线路。
+// tiers 已按 rank 降序（ccQualityTiers 内部排序），首档为最佳画质，候选保持原始 CDN 名
+// 作为默认线路（index 0）；其余档位候选 CDN 名追加画质后缀（如「主线路·高清」）
+// 区分同名 CDN 的不同画质。各档内部去重，跨档不去重（不同画质本就是不同地址）。
+func ccExpandQualityTiers(tiers []ccTier) []LiveStreamCandidate {
+	if len(tiers) == 0 {
+		return nil
+	}
+	result := UniqueCandidates(tiers[0].candidates)
+	for _, tier := range tiers[1:] {
+		label := ccQualityLabel(tier.key)
+		if label == "" {
+			label = tier.key
+		}
+		for _, candidate := range UniqueCandidates(tier.candidates) {
+			candidate.CDN = fmt.Sprintf("%s·%s", candidate.CDN, label)
+			result = append(result, candidate)
+		}
+	}
+	return result
 }

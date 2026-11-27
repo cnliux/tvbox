@@ -179,8 +179,14 @@ func TestCCResolveChoosesBestQualityAndExpandsRelativeCDN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve error: %v", err)
 	}
-	if stream.Quality != "原画" || len(stream.Candidates) != 2 {
+	// 多画质展开：原画档 2 条（hs/ks）排最前，高清档 1 条（ks）追加，共 3 条候选；
+	// 首条仍是原画档默认线路，非首档 CDN 名带画质后缀（如「ks·高清」）。
+	if stream.Quality != "原画" || len(stream.Candidates) != 3 {
 		t.Fatalf("stream = %+v", stream)
+	}
+	if stream.Candidates[0].CDN != "hs" ||
+		stream.Candidates[2].CDN != "ks·高清" {
+		t.Fatalf("candidates = %+v", stream.Candidates)
 	}
 	urls := map[string]bool{}
 	for _, candidate := range stream.Candidates {
@@ -232,11 +238,16 @@ func TestCCResolveStreamListRelativeQueries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Resolve error: %v", err)
 	}
-	if stream.Quality != "原画" || len(stream.Candidates) != 1 {
+	// 多画质展开：原画档 1 条 + 低清档 1 条 = 2 条；首条仍是原画档相对 query 展开后的地址。
+	if stream.Quality != "原画" || len(stream.Candidates) != 2 {
 		t.Fatalf("stream = %+v", stream)
 	}
 	if stream.Candidates[0].URL != "http://cgi.v.cc.163.com/redirect/video/5200.m3u8?secret=abc&wsSecret=xyz&wsTime=123" {
 		t.Fatalf("candidate URL = %q", stream.Candidates[0].URL)
+	}
+	// 非首档 CDN 名带画质后缀
+	if stream.Candidates[1].CDN != "fws·低清" {
+		t.Fatalf("candidates[1].CDN = %q", stream.Candidates[1].CDN)
 	}
 }
 

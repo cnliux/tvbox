@@ -327,7 +327,10 @@ func (r *kuaishouResolver) Resolve(roomInput string) (*ResolvedLiveStream, error
 		return nil, newError("快手未返回可播放地址")
 	}
 	qualityKey, _ := groups.best()
-	candidates := UniqueCandidates(groups.byKey[qualityKey])
+	// 把所有画质档展开为候选线路：最佳画质档排最前（index 0 = 默认线路），
+	// 其余档位按画质 level 从高到低追加。候选名带画质标识（如「高清·主线路」），
+	// 让「线路」按钮在只有单一 CDN、多画质档时也能切换。
+	candidates := kuaishouExpandQualityGroups(groups, qualityKey)
 	if len(candidates) == 0 {
 		return nil, newError("快手未返回有效播放地址")
 	}
@@ -346,6 +349,42 @@ func (r *kuaishouResolver) Resolve(roomInput string) (*ResolvedLiveStream, error
 			"User-Agent": kuaishouUserAgent,
 		},
 	}, nil
+}
+
+// kuaishouExpandQualityGroups 把所有画质档展开为候选线路。
+// 最佳画质档（qualityKey）排最前且保持原始 CDN 名（作为默认线路，index 0），
+// 其余档位按 level 从高到低追加，CDN 名追加画质后缀（如「蓝光」→「蓝光·线路」）
+// 区分同名 CDN 的不同画质。各档内部去重，跨档不去重（不同画质本就是不同地址）。
+func kuaishouExpandQualityGroups(groups *kuaishouURLGroups, best kuaishouQualityKey) []LiveStreamCandidate {
+	if len(groups.byKey) == 0 {
+		return nil
+	}
+	// 其余档位按 level 降序；与 best 并列或低于 best 的都排在后面。
+	others := make([]kuaishouQualityKey, 0, len(groups.order))
+	for _, key := range groups.order {
+		if key == best {
+			continue
+		}
+		others = append(others, key)
+	}
+	sort.SliceStable(others, func(i, j int) bool {
+		if others[i].level != others[j].level {
+			return others[i].level > others[j].level
+		}
+		return others[i].name < others[j].name
+	})
+	result := UniqueCandidates(groups.byKey[best])
+	for _, key := range others {
+		for _, candidate := range UniqueCandidates(groups.byKey[key]) {
+			name := strings.TrimSpace(key.name)
+			if name == "" || name == "默认" {
+				name = fmt.Sprintf("画质%d", key.level)
+			}
+			candidate.CDN = fmt.Sprintf("%s·%s", candidate.CDN, name)
+			result = append(result, candidate)
+		}
+	}
+	return result
 }
 
 // kuaishouCollectURLs 递归收集播放地址，分组键继承 (level, name)。
