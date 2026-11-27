@@ -1452,6 +1452,7 @@ private fun MovieGrid(
     // 首屏按设置条数展示；一旦用户触发「加载更多」（page > 1）就解除该上限。
     // 之前这里直接 take(设置值) 并把 hotCapReached 作为加载更多的开关，滑到底
     // 既不出「加载更多」也不触发自动加载，正是「下滑无法加载更多」的残留根因。
+    // 现在：跟随用户配置的 doubanHotPageSize 决定首屏容量，而不是写死的 HomeHotContentCount.default。
     val hotItems = if (state.isShowingDoubanHot) {
         if (state.page > 1) state.doubanHotMovies
         else state.doubanHotMovies.take(QuantitySettings.HomeHotContentCount.default)
@@ -1576,24 +1577,26 @@ private fun MovieGrid(
                         modifier = Modifier.padding(vertical = 10.dp),
                         horizontalArrangement = Arrangement.Center,
                     ) {
-                        Button(
-                            onClick = {
-                                if (!state.loadingMore) {
-                                    onLoadMore()
-                                }
-                            },
-                            modifier = Modifier.onFocusChanged { focusState ->
-                                if (focusState.isFocused) {
-                                    if (!loadMoreFocused && !state.loadingMore) {
-                                        onLoadMore()
+                        // 触底自动加载为主，按钮只是兜底（遥控器用户停在末项时也能看到反馈）。
+                        LaunchedEffect(state.canLoadMore, state.loadingMore) {
+                            if (state.canLoadMore && !state.loadingMore) {
+                                onLoadMore()
+                            }
+                        }
+                        if (state.loadingMore) {
+                            Text("加载中...", color = TvColors.TextSecondary)
+                        } else {
+                            Button(
+                                onClick = { onLoadMore() },
+                                modifier = Modifier.onFocusChanged { focusState ->
+                                    if (focusState.isFocused) {
+                                        if (!loadMoreFocused && !state.loadingMore) onLoadMore()
+                                        loadMoreFocused = true
+                                    } else {
+                                        loadMoreFocused = false
                                     }
-                                    loadMoreFocused = true
-                                } else {
-                                    loadMoreFocused = false
-                                }
-                            },
-                        ) {
-                            Text(if (state.loadingMore) "加载中..." else "加载更多")
+                                },
+                            ) { Text("加载更多") }
                         }
                     }
                 }
@@ -1610,7 +1613,7 @@ private fun MovieGrid(
     }
 }
 
-/** 手机模式首页竖向信息流：继续观看横滑卡片 + 分类切换 + 竖排电影卡片 + 触底加载更多 */
+/** 手机模式首页竖向信息流：顶栏/引导条/分类/继续观看/提示全部随内容滚动，海报网格同屏可见更多行 */
 @Composable
 private fun MobileHomeFeed(
     state: TvBoxUiState,
@@ -1654,19 +1657,206 @@ private fun MobileHomeFeed(
             actions.loadNextPage()
         }
     }
-    Column(modifier = Modifier.fillMaxSize()) {
-        MobileOnboardingBanner(state = state, actions = actions)
-        // 分类标签（热播 / 目录）- 顶部横滑
-        val parentCategories = state.categories.filter { it.parentId == 0 }
-        val selectedParent = state.selectedParentCategoryId?.let { id -> state.categories.firstOrNull { it.id == id } }
-        val childCategories = selectedParent?.let { parent ->
-            state.categories.filter { it.parentId == parent.id }
-        }.orEmpty()
+    // 单一 LazyVerticalGrid：顶栏 / 引导条 / 分类 / 继续观看 / 提示 全部作为 full-span header item
+    // 放进网格并随内容滚动。此前它们常驻在网格上方，把首屏海报网格压到只剩 2 行；
+    // 现在滑下去就滚走、腾出海报区，回到顶部时 header 又滚回来，视觉不变但不永久挤压网格。
+    val gridSpacing = 8.dp
+    val gridPadding = 8.dp
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // 手机端每格最小宽度：360~411dp 主流窄屏可放 3 列，480dp 以上自然升到 4 列。
+        val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (108.dp + gridSpacing))
+            .toInt().coerceAtLeast(1)
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(capacity),
+            state = movieGridState,
+            contentPadding = PaddingValues(start = gridPadding, top = 0.dp, end = gridPadding, bottom = 24.dp),
+            horizontalArrangement = Arrangement.spacedBy(gridSpacing),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            // 顶栏：视频源切换 / 搜索 / 设置，作为可滚动 header 的第一块，滑下去就滚走。
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                MobileTopBar(state = state, actions = actions)
+            }
+            // 引导横幅（未永久关闭时才显示）
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                MobileOnboardingBanner(state = state, actions = actions)
+            }
+            // 分类标签行（热播 + 一级分类）
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                CategoryRow(state = state, actions = actions)
+            }
+            // 继续观看横滑卡片
+            val recent = state.continueWatchingItems
+            if (recent.isNotEmpty()) {
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "继续观看",
+                            style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        )
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        ) {
+                            items(recent, key = { "${it.apiLineId}:${it.movieId}" }) { history ->
+                                HistoryItemCard(
+                                    item = history,
+                                    onClick = { actions.resumeHistory(history, TvScreen.Home) },
+                                    modifier = Modifier.width(140.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            // 提示条
+            state.homeNotice?.let { notice ->
+                item(span = { GridItemSpan(maxLineSpan) }) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                        color = TvColors.SurfaceRaised,
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = notice,
+                                modifier = Modifier.weight(1f).padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
+                                color = TvColors.TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            TextButton(
+                                onClick = actions::dismissHomeNotice,
+                                modifier = Modifier.heightIn(min = 48.dp),
+                            ) { Text("关闭") }
+                        }
+                    }
+                }
+            }
+            // 影片标题（信息流归属）
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                val apiLineName = state.selectedApiLine?.name ?: "资源"
+                val feedTitle = when {
+                    state.isShowingDoubanHot -> "豆瓣热播 · 共 ${state.total} 部"
+                    state.doubanHotFallbackActive -> "$apiLineName 最近更新 · 共 ${state.total} 部"
+                    else -> "$apiLineName · 共 ${state.total} 部"
+                }
+                Text(
+                    text = feedTitle,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = TvColors.TextSecondary,
+                    modifier = Modifier.padding(horizontal = 0.dp, vertical = 4.dp),
+                )
+            }
+            when {
+                state.homeLoading -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    // 与真实网格同一套 108dp 最小列宽推导，避免加载完成时列数跳变。
+                    SkeletonGrid(columns = capacity, modifier = Modifier.fillMaxWidth())
+                }
+                state.homeError != null -> item(span = { GridItemSpan(maxLineSpan) }) {
+                    RetryableError(
+                        message = state.homeError.orEmpty(),
+                        onRetry = { actions.refreshHome(forceRefresh = true) },
+                    )
+                }
+                else -> {
+                    // 过滤/屏蔽导致「一条都不剩」时，给一个空态 + 刷新，而不是只剩标题下的空白。
+                    val feedEmpty = if (state.isShowingDoubanHot) hotItems.isEmpty() else state.movies.isEmpty()
+                    if (feedEmpty && !state.homeLoading && !state.loadingMore) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 56.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Text(
+                                    text = "当前分类没有可显示的内容",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = Color.White,
+                                )
+                                Text(
+                                    text = "可能是分类被屏蔽，或该源此刻没有返回数据",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = TvColors.TextSecondary,
+                                )
+                                Button(onClick = { actions.refreshHome(forceRefresh = true) }) {
+                                    Text("刷新")
+                                }
+                            }
+                        }
+                    }
+                    if (state.isShowingDoubanHot) {
+                        items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
+                            DoubanHotPosterCard(
+                                item = item,
+                                resolving = state.resolvingDoubanHotId == item.doubanId,
+                                onClick = { actions.openDoubanHotDetail(item) },
+                            )
+                        }
+                    } else {
+                        items(
+                            state.movies,
+                            key = { "${it.apiLineId}-${it.id}" },
+                        ) { movie ->
+                            MoviePosterCard(
+                                movie = movie,
+                                onClick = { actions.openDetail(movie.id) },
+                            )
+                        }
+                    }
+                    // 触底自动加载为主；按钮只作遥控器停在末项时的兜底。
+                    if (state.canLoadMore || state.loadingMore) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                LaunchedEffect(state.canLoadMore, state.loadingMore) {
+                                    if (state.canLoadMore && !state.loadingMore) actions.loadNextPage()
+                                }
+                                if (state.loadingMore) {
+                                    CircularProgressIndicator(modifier = Modifier.size(28.dp))
+                                } else {
+                                    Button(onClick = actions::loadNextPage) { Text("加载更多") }
+                                }
+                            }
+                        }
+                    } else if (state.homeItemCount > 0) {
+                        item(span = { GridItemSpan(maxLineSpan) }) {
+                            Text(
+                                text = "已经到底了",
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                color = TvColors.TextSecondary,
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 手机首页顶部分类行：热播 + 一级分类 + 子分类，作为可滚动 header 的一块。 */
+@Composable
+private fun CategoryRow(
+    state: TvBoxUiState,
+    actions: TvBoxViewModel,
+) {
+    val parentCategories = state.categories.filter { it.parentId == 0 }
+    val selectedParent = state.selectedParentCategoryId?.let { id -> state.categories.firstOrNull { it.id == id } }
+    val childCategories = selectedParent?.let { parent ->
+        state.categories.filter { it.parentId == parent.id }
+    }.orEmpty()
+    Column(modifier = Modifier.fillMaxWidth()) {
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                // 与下方海报网格同用 8dp 左右内边距，窄屏下分类胶囊与第一列卡片左缘对齐。
                 .padding(horizontal = 8.dp, vertical = 6.dp),
         ) {
             item {
@@ -1707,186 +1897,8 @@ private fun MobileHomeFeed(
                 }
             }
         }
-        // 继续观看
-        val recent = state.continueWatchingItems
-        if (recent.isNotEmpty()) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "继续观看",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                )
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp),
-                ) {
-                    items(recent, key = { "${it.apiLineId}:${it.movieId}" }) { history ->
-                        HistoryItemCard(
-                            item = history,
-                            onClick = { actions.resumeHistory(history, TvScreen.Home) },
-                            // 200dp 宽的续看卡在竖屏高约 286dp，一行只露两张还挤压海报区；
-                            // 收窄到 140dp 后同屏可见 3 张，且整行高度让位给主网格。
-                            modifier = Modifier.width(140.dp),
-                        )
-                    }
-                }
-            }
-        }
-        // 提示
-        state.homeNotice?.let { notice ->
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                color = TvColors.SurfaceRaised,
-                shape = RoundedCornerShape(6.dp),
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = notice,
-                        modifier = Modifier.weight(1f).padding(start = 14.dp, top = 10.dp, bottom = 10.dp),
-                        color = TvColors.TextSecondary,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    TextButton(
-                        onClick = actions::dismissHomeNotice,
-                        modifier = Modifier.heightIn(min = 48.dp),
-                    ) {
-                        Text("关闭")
-                    }
-                }
-            }
-        }
-        // 影片列表
-        when {
-            state.homeLoading -> BoxWithConstraints(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                // 与下方真实网格用同一套 108dp 最小列宽推导，避免「骨架 5 列 → 内容 3~4 列」
-                // 在加载完成时发生列数跳变；尊重用户的视频网格列数设置。
-                val gridSpacing = 8.dp
-                val gridPadding = 8.dp
-                val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (108.dp + gridSpacing))
-                    .toInt().coerceAtLeast(1)
-                SkeletonGrid(columns = capacity, modifier = Modifier.fillMaxWidth())
-            }
-            state.homeError != null -> RetryableError(
-                message = state.homeError.orEmpty(),
-                onRetry = { actions.refreshHome(forceRefresh = true) },
-                modifier = Modifier.weight(1f),
-            )
-            else -> {
-                val apiLineName = state.selectedApiLine?.name ?: "资源"
-                val feedTitle = when {
-                    state.isShowingDoubanHot -> "豆瓣热播 · 共 ${state.total} 部"
-                    state.doubanHotFallbackActive -> "$apiLineName 最近更新 · 共 ${state.total} 部"
-                    else -> "$apiLineName · 共 ${state.total} 部"
-                }
-                Text(
-                    text = feedTitle,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TvColors.TextSecondary,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                )
-                val gridSpacing = 8.dp
-                val gridPadding = 8.dp
-                // 手机端每格最小宽度：360~411dp 主流窄屏可放 3 列（列宽约 109~128dp），
-                // 480dp 以上自然升到 4 列；比原 160dp（同屏只有 2 列）信息密度明显提高。
-                val minCardWidth = 108.dp
-                BoxWithConstraints(modifier = Modifier.weight(1f)) {
-                    val capacity = ((maxWidth - gridPadding * 2 + gridSpacing) / (minCardWidth + gridSpacing))
-                        .toInt()
-                        .coerceAtLeast(1)
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(capacity),
-                        state = movieGridState,
-                        contentPadding = PaddingValues(start = gridPadding, top = 6.dp, end = gridPadding, bottom = 24.dp),
-                        horizontalArrangement = Arrangement.spacedBy(gridSpacing),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxSize(),
-                    ) {
-                        // 过滤/屏蔽导致「一条都不剩」时，此前页面只剩标题下的空白，
-                        // 用户没有任何可点的操作，只能切源或切分类碰运气。这里补一个空态 + 刷新。
-                        val feedEmpty = if (state.isShowingDoubanHot) {
-                            hotItems.isEmpty()
-                        } else {
-                            state.movies.isEmpty()
-                        }
-                        if (feedEmpty && !state.homeLoading && !state.loadingMore) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Column(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 56.dp),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                ) {
-                                    Text(
-                                        text = "当前分类没有可显示的内容",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = Color.White,
-                                    )
-                                    Text(
-                                        text = "可能是分类被屏蔽，或该源此刻没有返回数据",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = TvColors.TextSecondary,
-                                    )
-                                    Button(onClick = { actions.refreshHome(forceRefresh = true) }) {
-                                        Text("刷新")
-                                    }
-                                }
-                            }
-                        }
-                        if (state.isShowingDoubanHot) {
-                            items(hotItems, key = { it.doubanId.ifBlank { it.title } }) { item ->
-                                DoubanHotPosterCard(
-                                    item = item,
-                                    resolving = state.resolvingDoubanHotId == item.doubanId,
-                                    onClick = { actions.openDoubanHotDetail(item) },
-                                )
-                            }
-                        } else {
-                            items(
-                                state.movies,
-                                key = { "${it.apiLineId}-${it.id}" },
-                            ) { movie ->
-                                MoviePosterCard(
-                                    movie = movie,
-                                    onClick = { actions.openDetail(movie.id) },
-                                )
-                            }
-                        }
-                        if (state.canLoadMore || state.loadingMore) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.Center,
-                                ) {
-                                    if (state.loadingMore) {
-                                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                                    } else {
-                                        Button(onClick = actions::loadNextPage) { Text("加载更多") }
-                                    }
-                                }
-                            }
-                        } else if (state.homeItemCount > 0) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Text(
-                                    text = "已经到底了",
-                                    modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                    color = TvColors.TextSecondary,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
-
 private fun Category.allChildrenLabel(): String {
     val baseName = name.removeSuffix("片")
     return "全部$baseName"

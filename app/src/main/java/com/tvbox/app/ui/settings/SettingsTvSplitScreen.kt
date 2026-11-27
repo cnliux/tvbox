@@ -1146,6 +1146,20 @@ private fun TvDataDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClearHi
     TvSettingsGroupGap()
     // 卡 2：备份与清除数据：线路统计清空（危险操作，走二次确认）。
     TvSettingsGroup {
+        // 播放管家自动换线：播放失败/首帧超时/频繁卡顿时按证据自动切换到下一条候选线路。
+        // 此前 UI 层一度丢失此开关（数据层与逻辑一直在），现恢复入口。
+        TvSettingsRow(
+            icon = Icons.Default.PlayArrow,
+            title = "播放管家自动换线",
+            subtitle = "播放失败/首帧超时/频繁卡顿时自动切到下一条线路",
+            trailing = {
+                Switch(
+                    checked = state.appSettings.playbackAgentAutoSwitchEnabled,
+                    onCheckedChange = actions::updatePlaybackAgentAutoSwitch,
+                )
+            },
+        )
+        SettingsGroupDivider()
         TvSettingsRow(
             icon = Icons.Default.Delete,
             title = "清空线路统计",

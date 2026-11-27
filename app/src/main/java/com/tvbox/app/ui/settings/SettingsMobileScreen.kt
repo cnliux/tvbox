@@ -819,6 +819,16 @@ private fun PlaybackDetail(state: TvBoxUiState, actions: TvBoxViewModel, onClear
             },
             onSelect = { v -> actions.updateAppSettings { it.copy(audioOutputMode = v) } },
         )
+        SettingsGroupDivider()
+        // 播放管家自动换线：播放失败/首帧超时/频繁卡顿时按证据自动切换到下一条候选线路。
+        // 此前 UI 层一度丢失此开关（数据层与逻辑一直在），现恢复入口。
+        BoolSettingRow(
+            "播放管家自动换线",
+            "播放失败/首帧超时/频繁卡顿时自动切到下一条线路",
+            state.appSettings.playbackAgentAutoSwitchEnabled,
+        ) { enabled ->
+            actions.updatePlaybackAgentAutoSwitch(enabled)
+        }
     }
 }
 

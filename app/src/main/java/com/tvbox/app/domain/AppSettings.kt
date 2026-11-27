@@ -188,9 +188,9 @@ data class AppSettings(
     val flvProxyMode: String = "auto",
     /**
      * 虎牙/斗鱼第三方代理解析：存在候选时优先用第三方地址加载直播数据，
-     * 支持多条模板作为彼此备用，官方 Go 解析候选退为兜底。默认关闭。
+     * 支持多条模板作为彼此备用，官方 Go 解析候选退为兜底。默认开启。
      */
-    val platformThirdPartyProxyEnabled: Boolean = false,
+    val platformThirdPartyProxyEnabled: Boolean = true,
     /** 第三方代理地址模板，每行一条，{room} 占位房间号、{site} 占位站点。 */
     val platformThirdPartyProxyTemplates: String = "",
     /** 局域网解析服务默认关闭；首次开启必须先确认安全提示。 */

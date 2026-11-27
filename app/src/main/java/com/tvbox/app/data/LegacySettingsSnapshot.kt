@@ -325,7 +325,7 @@ internal fun readLegacySettings(
         epgOutOfRangePolicy = string(SettingsStorageKeys.EPG_OUT_OF_RANGE_POLICY, "clip"),
         platformDefaultQuality = string(SettingsStorageKeys.PLATFORM_DEFAULT_QUALITY, "original"),
         flvProxyMode = string(SettingsStorageKeys.FLV_PROXY_MODE, "auto"),
-        platformThirdPartyProxyEnabled = boolean(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_ENABLED, false),
+        platformThirdPartyProxyEnabled = boolean(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_ENABLED, true),
         platformThirdPartyProxyTemplates = string(SettingsStorageKeys.PLATFORM_THIRD_PARTY_PROXY_TEMPLATES, ""),
         lanResolverEnabled = boolean(SettingsStorageKeys.LAN_RESOLVER_ENABLED, false),
         lanResolverConfirmed = boolean(SettingsStorageKeys.LAN_RESOLVER_CONFIRMED, false),

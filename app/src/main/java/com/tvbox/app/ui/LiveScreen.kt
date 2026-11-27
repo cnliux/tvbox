@@ -912,6 +912,12 @@ private fun LivePlayerScreen(
                 playbackInfo = diagnostics?.info,
                 decoderStrategy = state.appSettings.decoderStrategy,
                 decoderFallbackKinds = HardwareDecoderFallbackNotice.kinds,
+                // 电视直播「信息」面板展示节目单：是否存在（按频道能否命中节目单数据判断，
+                // 不依赖此刻是否有节目，深夜空档不会误报为无）+ 当前节目 + 下一档 + 过期角标。
+                hasEpg = actions.liveEpgPrograms(currentChannel).isNotEmpty(),
+                epgNow = actions.liveEpgNow(currentChannel)?.title,
+                epgNext = actions.liveEpgNext(currentChannel)?.title,
+                epgStale = actions.liveEpgStale(),
                 playbackUrls = listOf(
                     PlayerChromeUrl(
                         label = "实际播放地址（播放列表线路）",

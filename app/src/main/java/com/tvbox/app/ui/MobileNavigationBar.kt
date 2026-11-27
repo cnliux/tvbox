@@ -106,9 +106,16 @@ fun MobileNavWrapper(
     // 手机模式电视直播页自带 52dp 搜索栏（见 MobileLiveScreen），不再叠加公共顶栏；
     // 搜索页自带 64dp 真实搜索框（MobileSearchScreen），公共顶栏那个只是「点不动」的
     // 假入口，叠上去会白吃 56dp 还把键盘顶掉，所以同样排除。
+    // 首页也不在此处常驻顶栏：首页把顶栏并入自己的可滚动 header（见 MobileHomeFeed），
+    // 否则「状态栏 + 56dp 顶栏 + 引导条 + 两行分类 + 继续观看」全部固定在网格上方，
+    // 首屏海报网格同屏只剩 2 行。首页仍单独渲染一个一模一样的顶栏，视觉不变，
+    // 但它随内容一起滚出/滚回，不永久挤压网格。
+    // currentTab 由 state.screen 1:1 派生（见上方 when），用它在 wrapper 作用域判断当前是否首页，
+    // 避免引用 content lambda 的 navScreen 参数（此处不可见）。
     val showTopBar = showChrome &&
         state.screen != TvScreen.Live &&
-        state.screen != TvScreen.Search
+        state.screen != TvScreen.Search &&
+        currentTab != MobileNavScreen.Home
     // LocalTouchMode 由 TvBoxApp 根部按设备模式统一提供，这里不再硬编码 true，
     // 否则手机+外接遥控的焦点语义会与顶层覆盖层不一致。
     Column(modifier = Modifier.fillMaxSize()) {
@@ -216,9 +223,11 @@ private fun TvBoxViewModel.navigateToMobileScreen(screen: MobileNavScreen) {
 
 /**
  * 手机模式顶部栏：左侧视频源下拉切换，右侧搜索入口，最右为设置入口。
+ * 首页会把它当作可滚动 header 的第一块复用（[MobileHomeFeed]），
+ * 其他标签页仍由 [MobileNavWrapper] 常驻渲染。
  */
 @Composable
-private fun MobileTopBar(
+internal fun MobileTopBar(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
@@ -264,7 +273,7 @@ private fun MobileTopBar(
 }
 
 @Composable
-private fun MobileSourceDropdown(
+internal fun MobileSourceDropdown(
     state: TvBoxUiState,
     actions: TvBoxViewModel,
 ) {
@@ -350,7 +359,7 @@ private fun MobileSourceDropdown(
 }
 
 @Composable
-private fun MobileSearchEntry(
+internal fun MobileSearchEntry(
     query: String,
     onOpenSearch: () -> Unit,
     modifier: Modifier = Modifier,

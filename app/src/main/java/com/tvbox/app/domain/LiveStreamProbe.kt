@@ -249,6 +249,10 @@ suspend fun probeLiveLineLatencyWithConfidence(
             val headBuilder = Request.Builder().head().url(url)
             headers.sanitizedForHttp().forEach { (key, value) -> headBuilder.header(key, value) }
             var confidence = DurationConfidence.NONE
+            // HEAD 本身无 body，用 HEAD RTT 作为延迟近似值：请求发出前记起点，响应回来算差值。
+            // 此前这里漏记起点、直接返回了 System.currentTimeMillis() 绝对值，
+            // 导致 HEAD 成功的线路测速结果异常偏大（约 1.7e12 ms），排序/展示全错。
+            val headStartedAt = System.currentTimeMillis()
             HttpClients.probe.executeCancellable(headBuilder.build()).use { response ->
                 when {
                     response.isSuccessful -> {
@@ -263,8 +267,7 @@ suspend fun probeLiveLineLatencyWithConfidence(
             }
             // HEAD 成功但未提供 content-range/content-length（多数流媒体场景），落到 GET 取实际首字节延迟
             if (confidence != DurationConfidence.NONE) {
-                // HEAD 本身无 body，用 HEAD RTT 作为延迟近似值并附带可信度
-                return@withContext System.currentTimeMillis() to confidence
+                return@withContext (System.currentTimeMillis() - headStartedAt) to confidence
             }
             // 兜底 GET：读首字节计时
             probeGetRangeFallback(url, headers)?.let { resp ->

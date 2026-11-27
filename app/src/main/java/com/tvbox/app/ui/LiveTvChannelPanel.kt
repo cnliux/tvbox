@@ -300,6 +300,10 @@ internal fun LiveChannelOverlayPanel(
                                 nowTitle = actions.liveEpgNow(channel)?.title?.let { title ->
                                     if (actions.liveEpgStale()) "$title~" else title
                                 },
+                                // EPG 有无角标：只要节目单 Map 里能查到该频道的节目列表（非空），
+                                // 就视为该频道有节目单；不依赖当前时刻是否有节目（否则深夜空档会误报）。
+                                hasEpg = !state.liveEpgByChannel[channel.tvgId].isNullOrEmpty() ||
+                                    !state.liveEpgByChannel[channel.name].isNullOrEmpty(),
                                 onClick = { onChannelPicked(entry.index) },
                             )
                         }
@@ -375,6 +379,7 @@ private fun LiveOverlayChannelRow(
     isPlaying: Boolean,
     isFavorite: Boolean,
     nowTitle: String?,
+    hasEpg: Boolean,
     onClick: () -> Unit,
 ) {
     val scale by animateFloatAsState(
@@ -383,11 +388,12 @@ private fun LiveOverlayChannelRow(
         label = "live-row-scale",
     )
     // 频道行内台标占位、名称、节目、星标、编号是多个语义节点；
-    // 合并成「频道名 + 编号 + 当前节目 + 是否正在播放」一条播报。
+    // 合并成「频道名 + 编号 + 是否有节目单 + 当前节目 + 是否正在播放」一条播报。
     val rowLabel = buildString {
         append(channel.name)
         append("，编号 ").append(channel.number)
         if (isPlaying) append("，正在播放")
+        append(if (hasEpg) "，有节目单" else "，无节目单")
         if (!nowTitle.isNullOrBlank()) append("，正在播 ").append(nowTitle)
         if (isFavorite) append("，已收藏")
     }
@@ -445,6 +451,16 @@ private fun LiveOverlayChannelRow(
             )
         }
         Spacer(Modifier.width(6.dp))
+        // EPG 有无角标：「EPG」=节目单可用；「—」=节目单缺失。遥控浏览时可一眼看出哪些频道有节目单。
+        Text(
+            text = if (hasEpg) "EPG" else "—",
+            color = if (hasEpg) TvColors.Accent else Color.White.copy(alpha = 0.3f),
+            style = MaterialTheme.typography.labelSmall,
+            modifier = Modifier
+                .border(1.dp, if (hasEpg) TvColors.Accent.copy(alpha = 0.6f) else Color.White.copy(alpha = 0.2f), RoundedCornerShape(3.dp))
+                .padding(horizontal = 4.dp, vertical = 1.dp),
+        )
+        Spacer(Modifier.width(4.dp))
         if (isFavorite) {
             Text("★", color = TvColors.Warning, style = MaterialTheme.typography.labelSmall)
             Spacer(Modifier.width(4.dp))
