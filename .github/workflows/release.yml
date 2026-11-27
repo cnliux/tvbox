@@ -151,6 +151,34 @@ jobs:
           ls -la dist
           echo "APK_NAME=${APK_NAME}" >> "$GITHUB_ENV"
 
+      # 发布硬闸：没有 release keystore 或 APK 实际未签名时立刻终止，绝不允许未签名包上传。
+      - name: Verify release APK signature
+        env:
+          TVBOX_RELEASE_STORE_FILE_B64: ${{ secrets.TVBOX_RELEASE_STORE_FILE_B64 }}
+          TVBOX_RELEASE_CERT_SHA256: ${{ secrets.TVBOX_RELEASE_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TVBOX_RELEASE_STORE_FILE_B64}" ]; then
+            echo "::error::缺少 TVBOX_RELEASE_STORE_FILE_B64，终止发布"
+            exit 1
+          fi
+          APKSIGNER=$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -type f -name apksigner 2>/dev/null | sort -V | tail -1 || true)
+          if [ -z "$APKSIGNER" ]; then
+            APKSIGNER=$(command -v apksigner || true)
+          fi
+          if [ -z "$APKSIGNER" ]; then
+            echo "::error::找不到 apksigner，终止发布"
+            exit 1
+          fi
+          "$APKSIGNER" verify --verbose --print-certs "dist/${APK_NAME}"
+          if [ -n "${TVBOX_RELEASE_CERT_SHA256:-}" ]; then
+            "$APKSIGNER" verify --print-certs "dist/${APK_NAME}" \
+              | grep -iq "${TVBOX_RELEASE_CERT_SHA256}" || {
+                echo "::error::APK 签名证书指纹与基线不一致，终止发布"
+                exit 1
+              }
+          fi
+
       - name: Verify arm64-v8a only
         run: |
           ABIS=$(unzip -Z1 dist/${APK_NAME} 'lib/*' | cut -d/ -f2 | sort -u)

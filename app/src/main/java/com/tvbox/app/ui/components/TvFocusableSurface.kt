@@ -99,11 +99,14 @@ fun TvFocusableSurface(
             .focusable(),
         shape = shape,
         color = when {
+            // 选中态优先于焦点态：焦点环由 tvFocusScale 单独绘制，不能被聚焦配色吞掉。
+            focused && selected -> selectedContainerColor
             focused -> focusedContainerColor
             selected -> selectedContainerColor
             else -> idleContainerColor
         },
         contentColor = when {
+            focused && selected -> selectedContentColor
             focused -> focusedContentColor
             selected -> selectedContentColor
             else -> idleContentColor

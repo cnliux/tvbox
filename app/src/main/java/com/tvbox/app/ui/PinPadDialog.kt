@@ -171,7 +171,7 @@ fun PinPadDialog(
                                     label = padLabels[index],
                                     index = index,
                                     focused = focusedCell == index,
-                                    onFocused = { focusedCell = it },
+                                    onFocused = { focusedCell = it ?: -1 },
                                     onCellPress = { onCellPress(padLabels[index]) },
                                     modifier = if (index == 0) {
                                         Modifier.weight(1f).then(firstCellFocus.anchor)
@@ -215,7 +215,7 @@ private fun PinPadCell(
     label: String,
     index: Int,
     focused: Boolean,
-    onFocused: (Int) -> Unit,
+    onFocused: (Int?) -> Unit,
     onCellPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -229,7 +229,7 @@ private fun PinPadCell(
                     else -> Color.White.copy(alpha = 0.06f)
                 },
             )
-            .onFocusChanged { if (it.isFocused) onFocused(index) }
+            .onFocusChanged { onFocused(if (it.isFocused) index else null) }
             .clickable(onClick = onCellPress)
             .semantics {
                 contentDescription = when (label) {

@@ -526,8 +526,9 @@ enum class DeviceMode(val storageKey: String, val displayName: String, val descr
         }
 
         /**
-         * 纯函数判定（便于单元测试），判定优先级：
-         * Leanback/电视系统 > 无触摸或大屏（≥720dp）→ 电视；
+         * 纯函数判定（便于单元测试）。[screenWidthDp] 需传“方向不变量”（shortest width），
+         * 不能传当前方向的 screenWidthDp，否则横屏手机会被误判成电视。
+         * 判定优先级：Leanback/电视系统 > 无触摸或大屏（≥720dp）→ 电视；
          * 有触摸 + 小屏（<600dp）→ 手机；600–719dp 中间地带（平板/折叠屏）保守取电视。
          */
         internal fun detect(isLeanback: Boolean, screenWidthDp: Int, hasTouch: Boolean): DeviceMode =
@@ -545,6 +546,10 @@ enum class DeviceMode(val storageKey: String, val displayName: String, val descr
  */
 internal enum class DeviceForm { Television, Mobile, Tablet }
 
+/**
+ * [screenWidthDp] 必须是方向无关的最短边宽度（smallestScreenWidthDp），
+ * 横屏手机的 screenWidthDp 会变成屏长，直接传入会把手机误判成电视。
+ */
 internal fun classifyDeviceForm(
     isLeanback: Boolean,
     screenWidthDp: Int,
@@ -562,9 +567,13 @@ private fun readDeviceForm(context: android.content.Context): DeviceForm {
         as? android.app.UiModeManager
     val isLeanback = uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
         context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
+    val configuration = context.resources.configuration
+    // smallestScreenWidthDp 不随横竖屏翻转；异常值回退到宽高中较小者。
+    val stableWidthDp = configuration.smallestScreenWidthDp.takeIf { it > 0 }
+        ?: minOf(configuration.screenWidthDp, configuration.screenHeightDp)
     return classifyDeviceForm(
         isLeanback = isLeanback,
-        screenWidthDp = context.resources.configuration.screenWidthDp,
+        screenWidthDp = stableWidthDp,
         hasTouch = context.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_TOUCHSCREEN),
     )
 }

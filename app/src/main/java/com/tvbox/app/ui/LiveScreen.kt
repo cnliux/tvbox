@@ -626,6 +626,8 @@ private fun LivePlayerScreen(
     // 线路兜底用尽后把遥控焦点移到「重试」，恢复后交还播放器。
     LaunchedEffect(streamBlocked) {
         if (!isTelevision) return@LaunchedEffect
+        // 面板/浮层打开时容错卡不得抢焦，否则用户正在操作的面板会突然失去响应。
+        if (chrome.panel != PlayerPanel.None || channelListVisible || showLineControl) return@LaunchedEffect
         runCatching {
             if (streamBlocked) blockedRetryFocus.requestFocus()
             else playerFocusRequester.requestFocus()
@@ -776,7 +778,6 @@ private fun LivePlayerScreen(
                 }
                 bumpBars()
             }
-            LiveRemoteEffect.OpenSettings -> chrome.openPanel(PlayerPanel.Settings)
             LiveRemoteEffect.OpenInfo -> chrome.openPanel(PlayerPanel.Info)
             is LiveRemoteEffect.SourceSwitched -> {
                 if (effect.continuityHint) showPrompt("已切换至备用线路（自动续流中）")

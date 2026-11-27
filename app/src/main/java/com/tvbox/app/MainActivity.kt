@@ -49,6 +49,8 @@ import com.tvbox.app.data.SharedPlaybackHealthRepository
 import com.tvbox.app.data.SharedPlatformLiveFavoritesRepository
 import com.tvbox.app.data.SharedLiveFavoritesRepository
 import com.tvbox.app.data.SharedSearchHotWordCache
+import com.tvbox.app.data.verifyUpdateApk
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.domain.DeviceMode
 import com.tvbox.app.domain.LanResolverGuard
 import com.tvbox.app.domain.LegalTerms
@@ -61,6 +63,7 @@ import com.tvbox.app.ui.TvBoxApp
 import com.tvbox.app.ui.TvBoxViewModel
 import com.tvbox.app.ui.theme.TVBoxTheme
 import java.io.File
+import java.io.IOException
 
 class MainActivity : ComponentActivity() {
     private val viewModel: TvBoxViewModel by viewModels {
@@ -388,12 +391,59 @@ class MainActivity : ComponentActivity() {
         }
         pendingInstallPermissionAction = null
         permissionSettingsOpen = false
-        // 安装前导出设置（updateExportBeforeInstall=true）：导出失败也继续安装，仅记录明确状态。
+        // 安装前重新校验 SHA-256 与签名证书，防止下载完成到安装之间文件被替换。
         lifecycleScope.launch {
+            try {
+                val pending = appUpdateRepository.pendingDownload()
+                if (pending != null) {
+                    verifyUpdateApk(apkFile, pending.apkSize, pending.apkSha256)
+                }
+                if (!apkSignatureMatchesInstalled(apkFile)) {
+                    throw IOException("安装包签名与当前应用不一致，已拒绝安装")
+                }
+            } catch (error: IOException) {
+                pendingInstallPermissionAction = null
+                viewModel.reportUpdateInstallFailure(
+                    apkFile.absolutePath,
+                    "安装包校验失败：${logSafeText(error.message)}",
+                    fileMissing = true,
+                )
+                return@launch
+            }
+            // 安装前导出设置（updateExportBeforeInstall=true）：导出失败也继续安装，仅记录明确状态。
             val exportStatus = appUpdateRepository.exportSettingsBeforeInstall()
             CrashHandler.recordOperation("ota.preinstall_export", exportStatus.take(120))
             openSystemInstaller(apkFile)
         }
+    }
+
+    /**
+     * 比对 APK 与当前安装包的签名证书集合；API 28+ 使用 signingInfo，低版本回退到 signatures。
+     * 任一集合为空或不一致都拒绝安装，避免仅靠系统覆盖安装隐式校验。
+     */
+    @Suppress("DEPRECATION")
+    private fun apkSignatureMatchesInstalled(apkFile: File): Boolean {
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+        val installed = runCatching { packageManager.getPackageInfo(packageName, flags) }.getOrNull()
+            ?: return false
+        val candidate = runCatching {
+            packageManager.getPackageArchiveInfo(apkFile.absolutePath, flags)
+        }.getOrNull() ?: return false
+        val installedCerts = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            installed.signingInfo?.apkContentsSigners?.map { it.toCharsString() }.orEmpty()
+        } else {
+            installed.signatures?.map { it.toCharsString() }.orEmpty()
+        }
+        val candidateCerts = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            candidate.signingInfo?.apkContentsSigners?.map { it.toCharsString() }.orEmpty()
+        } else {
+            candidate.signatures?.map { it.toCharsString() }.orEmpty()
+        }
+        return installedCerts.isNotEmpty() && installedCerts == candidateCerts
     }
 
     @Suppress("DEPRECATION")
@@ -506,6 +556,15 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
     }
 
+    /**
+     * configChanges 吞掉了旋转/分屏/折叠屏尺寸变化，Activity 不重建；
+     * 必须主动重算设备模式，否则布局会停留在旧的输入方式上。
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        viewModel.refreshEffectiveDeviceMode()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
     }
@@ -513,8 +572,9 @@ class MainActivity : ComponentActivity() {
     /** T3-24：菜单键连按 5 次触发健康面板。 */
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         if (keyCode == android.view.KeyEvent.KEYCODE_MENU) {
+            // 只计数不吞键：MENU 在直播/平台直播里还有打开频道列表等语义。
+            // Compose 已消费时本回调通常不会到达；到这里再 return true 会误吞所有页面。
             viewModel.recordMenuPress()
-            return true
         }
         return super.onKeyUp(keyCode, event)
     }
@@ -532,6 +592,7 @@ private class TvBoxViewModelFactory(
         val doubanHotRepository = DefaultDoubanHotRepository(
             cache = SharedDoubanHotCache(activity.applicationContext),
         )
+        val appSettingsRepository = DataStoreAppSettingsRepository.create(activity.applicationContext)
         return TvBoxViewModel(
             appContext = activity.applicationContext,
             repository = DefaultMovieRepository(),
@@ -543,8 +604,10 @@ private class TvBoxViewModelFactory(
                 },
             ),
             platformLiveRepository = EmbeddedPlatformLiveRepository(activity.applicationContext),
-            appUpdateRepository = DefaultAppUpdateRepository(activity.applicationContext),
-            appSettingsRepository = DataStoreAppSettingsRepository.create(activity.applicationContext),
+            appUpdateRepository = DefaultAppUpdateRepository(activity.applicationContext) {
+                appSettingsRepository.getSettings()
+            },
+            appSettingsRepository = appSettingsRepository,
             playbackHealthRepository = SharedPlaybackHealthRepository(activity.applicationContext),
             historyRepository = SharedHistoryRepository(activity.applicationContext),
             platformLiveFavoritesRepository = SharedPlatformLiveFavoritesRepository(activity.applicationContext),

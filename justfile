@@ -69,7 +69,7 @@ release-cut V:
     #!/usr/bin/env bash
     set -e
     echo "=== 发版收尾：{{V}} ==="
-    ./tools/doctor.sh || echo "⚠️ doctor 未全绿（本机可能缺 gomobile），继续"
+    ./tools/doctor.sh || { echo "doctor 未全绿，终止发版"; exit 1; }
     ./gradlew :app:testDebugUnitTest -PtvboxSkipPlatformBind=true --console=plain
     just smoke
     just audit

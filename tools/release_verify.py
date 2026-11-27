@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """S7-39：发布后校验清单自动化（README「发布后核对资产与 update.json」的机器版）。
 
-一条命令跑 8 项断言：
+一条命令跑 9 项断言：
   ① manifest.json 内 3 个 flavor asset 都在，且本地文件字节数 == manifest.size
   ② 每个 APK 的 sha256 与 manifest.json / update.json 三方一致
   ③ update.json.versionName == tag（堵住「v1.0.39 标题」那类插值 bug）
@@ -10,6 +10,7 @@
   ⑥ aapt2 dump strings：零命中 sk- / AIza（S1-04）
   ⑦ SBOM 附件存在（S4-20）
   ⑧ gh release view --json assets：没有 .apk.1 / 半截上传物
+  ⑨ apksigner verify --print-certs：APK 必须由 release keystore 签名
 
 用法：
     python3 tools/release_verify.py --tag v1.0.43 --skip-remote
@@ -47,6 +48,20 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"重复的 JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def load_json_strict(path: Path) -> dict:
+    """解析 JSON 并拒绝重复 key，避免不同解析器取首值/末值导致发布清单歧义。"""
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=_no_duplicate_keys)
 
 
 def _norm_tag(tag: str) -> str:
@@ -137,6 +152,17 @@ def verify_apk_tooling(apk: Path, adb_tools: dict[str, str]) -> tuple[list[str],
         abis = set(re.findall(r"arm64-v8a|armeabi-v7a|x86_64|x86\b", text))
         if abis and abis != {"arm64-v8a"}:
             problems.append(f"{apk.name} 含非 arm64 ABI: {sorted(abis)}")
+    # ⑨：APK 必须由 release keystore 签名；release.yml 的发布前步骤已做硬闸，
+    # 这里给本地重跑/发布后复核留同一条断言。
+    apksigner = shutil.which("apksigner")
+    if not apksigner:
+        warnings.append("未找到 apksigner，跳过签名断言（⑨）；发布流水线已硬校验")
+    else:
+        signed = subprocess.run(
+            [apksigner, "verify", "--print-certs", str(apk)], capture_output=True, text=True
+        )
+        if signed.returncode != 0 or "Signer #1" not in signed.stdout:
+            problems.append(f"{apk.name} 未检测到有效 release 签名（apksigner verify 失败）")
     return problems, warnings
 
 
@@ -176,8 +202,8 @@ def verify_sbom_and_release(
 
 def verify(args: argparse.Namespace) -> tuple[int, dict]:
     dist = Path(args.dist)
-    update = json.loads(Path(args.update).read_text(encoding="utf-8"))
-    manifest = json.loads((dist / "manifest.json").read_text(encoding="utf-8"))
+    update = load_json_strict(Path(args.update))
+    manifest = load_json_strict(dist / "manifest.json")
 
     problems = verify_versions(args.tag, update)
     problems += verify_manifest_and_assets(dist, manifest, update)
@@ -219,7 +245,17 @@ def verify(args: argparse.Namespace) -> tuple[int, dict]:
 
 
 def self_test() -> int:
-    """纯函数回归：不依赖任何真实产物，覆盖 ③/④、版本错配、三方 sha 不一致、半截上传物。"""
+    """纯函数回归：不依赖任何真实产物，覆盖 ③/④、版本错配、三方 sha 不一致、半截上传物、重复 key。"""
+    with tempfile.TemporaryDirectory() as td:
+        dup = Path(td) / "dup.json"
+        dup.write_text('{"a": 1, "a": 2}', encoding="utf-8")
+        try:
+            load_json_strict(dup)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("重复 JSON key 必须被拒绝")
+
     good = {"versionName": "1.0.43", "apkSha256": "a" * 64}
     assert verify_versions("v1.0.43", good) == []
     assert any("versionName" in p for p in verify_versions("v1.0.39", good))

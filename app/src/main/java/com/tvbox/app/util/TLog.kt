@@ -15,6 +15,12 @@ import com.tvbox.app.BuildConfig
  * `app/src/main` 内禁止直接调用 `Log.`（CI 的 `check_direct_log.py` 门禁）。
  */
 object TLog {
+    /** 用脱敏后的 message 包装异常，但保留原始堆栈，避免 throwable 首行绕过脱敏。 */
+    fun safeThrowable(throwable: Throwable): Throwable =
+        Throwable(CrashLogRedactor.redact(throwable.message.orEmpty()), throwable.cause).apply {
+            stackTrace = throwable.stackTrace
+        }
+
     inline fun d(tag: String, msg: () -> String) {
         if (BuildConfig.DEBUG) Log.d(tag, msg())
     }
@@ -31,7 +37,7 @@ object TLog {
     /** T3-20：带 Throwable 的 warn（裸 `Log.w(tag, msg, error)` 的替代）。 */
     inline fun w(tag: String, throwable: Throwable, redact: Boolean = true, msg: () -> String) {
         val text = msg()
-        Log.w(tag, if (redact) CrashLogRedactor.redact(text) else text, throwable)
+        Log.w(tag, if (redact) CrashLogRedactor.redact(text) else text, if (redact) safeThrowable(throwable) else throwable)
     }
 
     inline fun e(tag: String, redact: Boolean = true, msg: () -> String) {
@@ -40,6 +46,6 @@ object TLog {
     }
 
     inline fun e(tag: String, throwable: Throwable, msg: () -> String) {
-        Log.e(tag, CrashLogRedactor.redact(msg()), throwable)
+        Log.e(tag, CrashLogRedactor.redact(msg()), safeThrowable(throwable))
     }
 }

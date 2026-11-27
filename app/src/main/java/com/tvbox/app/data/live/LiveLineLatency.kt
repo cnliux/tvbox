@@ -4,10 +4,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.max
 
 /**
@@ -50,21 +51,15 @@ object LiveLineLatency {
     ): List<Int> = withContext(Dispatchers.IO) {
         if (lines.isEmpty()) return@withContext emptyList()
         val results = arrayOfNulls<Int>(lines.size)
-        val slots = AtomicInteger(0)
+        val semaphore = Semaphore(MAX_PARALLEL)
         coroutineScope {
             lines.mapIndexed { index, (url, headers) ->
                 async {
-                    // 简单的并发节流：超出上限的排队，仍保持结果顺序。
-                    while (slots.get() >= MAX_PARALLEL) {
-                        kotlinx.coroutines.delay(20)
-                    }
-                    slots.incrementAndGet()
-                    try {
+                    // 信号量保证原子并发上限；检查+自增不再是分离操作。
+                    semaphore.withPermit {
                         val latency = probe(url, headers)
                         results[index] = latency
                         onResult?.invoke(index, latency)
-                    } finally {
-                        slots.decrementAndGet()
                     }
                 }
             }.awaitAll()
@@ -96,10 +91,11 @@ object LiveLineLatency {
             }
             val code = connection.responseCode
             if (code !in 200..299) return -1
-            val input = connection.inputStream
-            val buffer = ByteArray(1024)
-            // 阻塞到第一个字节到达：这就是 TTFB。
-            val read = input.read(buffer)
+            val read = connection.inputStream.use { input ->
+                val buffer = ByteArray(1024)
+                // 阻塞到第一个字节到达：这就是 TTFB。
+                input.read(buffer)
+            }
             val elapsed = ((System.nanoTime() - startedAt) / 1_000_000L).toInt()
             if (read <= 0) return -1
             max(elapsed, 1)

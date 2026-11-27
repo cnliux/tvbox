@@ -910,6 +910,9 @@ private fun PlatformLivePlayerScreen(
         key2 = stream?.url,
         key3 = stream?.safeActiveCandidateIndex,
     ) {
+        // produceState 在 key 变化时不会自动复位 value：先清空，避免旧 handle 已被
+        // awaitDispose 关闭后仍被 playbackUrl 读取一小段时间。
+        value = null
         val resolved = stream
         val candidate = resolved?.activeCandidateOrNull
         val candidateUrl = candidate?.url.orEmpty()
@@ -1295,7 +1298,7 @@ private fun PlatformLivePlayerScreen(
                 val bufferedMs = (p.bufferedPosition - p.currentPosition).coerceAtLeast(0L)
                 android.util.Log.d(
                     PLATFORM_LIVE_LOG_TAG,
-                    "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, skippedOut=$skippedOut, maxDropped=$maxDropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.stats() ?: "continuityProxy=null"}"
+                    "【播放健康】room=${room.id}, ${size.width}x${size.height}, rendered=$rendered, dropped=$dropped, skippedOut=$skippedOut, maxDropped=$maxDropped, bufferedMs=$bufferedMs, posMs=${p.currentPosition}, playWhenReady=${p.playWhenReady}, cdn=${stream?.activeCandidate?.cdn.orEmpty()}, 画面比例=${videoScaleMode.storageKey}, ${continuityProxy?.let(::logSafeStats) ?: "continuityProxy=null"}"
                 )
                 // 窗口增量丢帧率 → 弱设备解码降档（见 TvBoxViewModel.notifyPlatformLiveDecodeHealth）。
                 // 换流/重解析会把解码器计数清零，出现负增量时重置基线跳过本窗口。
@@ -1317,7 +1320,7 @@ private fun PlatformLivePlayerScreen(
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
             while (true) {
                 delay(10_000)
-                android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【连续代理】${handle.stats()}")
+                android.util.Log.d(PLATFORM_LIVE_LOG_TAG, "【连续代理】${logSafeStats(handle)}")
             }
         }
     }
@@ -2402,6 +2405,10 @@ private fun formatOnline(value: Int): String {
         else -> "${value / 10_000}.${(value % 10_000) / 1_000} 万人气"
     }
 }
+
+/** 代理 stats JSON 可能含完整上游 URL 与错误文本，日志输出前统一脱敏。 */
+private fun logSafeStats(handle: com.tvbox.app.data.live.LiveProxyHandle): String =
+    logSafeText(handle.stats())
 
 private const val PLATFORM_LIVE_BADGE_HIDE_DELAY_MS = 4_000L
 private const val PLATFORM_LIVE_LOG_TAG = "TVBoxPlatformLive"

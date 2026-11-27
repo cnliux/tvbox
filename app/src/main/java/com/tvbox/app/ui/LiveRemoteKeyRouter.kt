@@ -148,10 +148,6 @@ class LiveRemoteKeyRouter(
             if (hasBlockingFailureCard()) return null
             return if (!up) {
                 LiveRemoteResult(state)
-            } else if (state.uiState == UIState.CHANNEL_LIST) {
-                // 列表已开：再按 OK 收起（面板顶部「确认键收起」提示的兑现）。
-                // 焦点不在列表行项上时按键会落到路由，若这里仍只「打开」则列表永远关不掉。
-                LiveRemoteResult(state, listOf(LiveRemoteEffect.ClosePanel))
             } else {
                 LiveRemoteResult(
                     state.copy(uiState = UIState.CHANNEL_LIST),

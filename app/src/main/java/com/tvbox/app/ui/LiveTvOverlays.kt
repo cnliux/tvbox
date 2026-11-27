@@ -1,6 +1,7 @@
 package com.tvbox.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -152,7 +153,8 @@ internal fun liveNumberKeyOf(keyCode: Int): Int? = when (keyCode) {
 
 /** 只响应触点、不参与遥控器焦点（信息条按钮用，避免抢走方向键）。 */
 private fun Modifier.liveTap(onClick: () -> Unit): Modifier =
-    this.pointerInput(onClick) { detectTapGestures { onClick() } }
+    // TV 顶栏入口也必须可 D-pad 聚焦/确认；clickable 同时保留触摸点击。
+    this.clickable(role = Role.Button, onClick = onClick)
 
 /**
  * 频道台标：底层先画首字占位，logo 非空时叠 Coil 图片；
@@ -350,7 +352,7 @@ internal fun LiveLoadingState(
     modifier: Modifier = Modifier,
 ) {
     Box(
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -362,7 +364,7 @@ internal fun LiveLoadingState(
             Spacer(Modifier.height(12.dp))
             Text(
                 text = text,
-                color = Color.White.copy(alpha = 0.7f),
+                color = Color.White.copy(alpha = 0.9f),
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

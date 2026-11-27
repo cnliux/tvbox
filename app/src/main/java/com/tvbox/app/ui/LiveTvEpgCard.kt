@@ -175,7 +175,7 @@ internal fun LiveEpgCard(
                     modifier = Modifier.fillMaxWidth().height(placeholderHeight),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("暂无节目单", color = Color.White.copy(alpha = 0.4f), style = MaterialTheme.typography.labelSmall)
+                    Text("暂无节目单", color = Color.White.copy(alpha = 0.6f), style = MaterialTheme.typography.labelSmall)
                 }
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {

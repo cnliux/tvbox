@@ -50,7 +50,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -120,7 +119,13 @@ fun SearchScreen(
     }
     val grid = rememberLazyGridState()
     val returnFocus = rememberReturnFocus()
-    val searchFieldFocus = rememberTvFocusRequest()
+    // 冷启动首焦统一走带延迟+重试的请求，避免搜索框在 LazyGrid item 内晚组合导致焦点落空。
+    val searchFieldFocus = rememberTvFocusRequest(
+        key = Unit,
+        enabled = returnFocus.lastKey == null,
+        delayMs = 60L,
+        retries = 3,
+    )
     val resultsFocus = rememberTvFocusRequest()
     val moveToResults: () -> Unit = {
         if (state.searchResults.isNotEmpty()) {
@@ -148,15 +153,6 @@ fun SearchScreen(
             returnFocus.reset()
             grid.scrollToItem(0)
             savedQuery = state.searchQuery
-        }
-    }
-    LaunchedEffect(Unit) {
-        // F-05：窄屏搜索框位于 LazyVerticalGrid 的 item 内，首帧可能尚未进入组合，
-        // 立即 requestFocus 会静默失败。这里复用一个带 60ms 延迟的请求，
-        // 与播放器面板首焦保持同一套时序（见 rememberTvFocusRequest 契约）。
-        if (returnFocus.lastKey == null) {
-            withFrameNanos { }
-            searchFieldFocus.request()
         }
     }
     // #8 空列表焦点兜底：搜索无结果（非错误/加载中）时把焦点拉回搜索框，避免焦点悬空
@@ -969,7 +965,7 @@ private fun HotSearchWord(
 }
 
 @Composable
-private fun SearchKeyboard(
+fun SearchKeyboard(
     onKey: (String) -> Unit,
     onDelete: () -> Unit,
     onClear: () -> Unit,

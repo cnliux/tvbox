@@ -2081,7 +2081,8 @@ func (p *flvProxy) statsJSON() string {
 	p.statsMu.Lock()
 	backoffBase, backoffMax := p.effectiveShortBackoff()
 	payload := map[string]interface{}{
-		"url":    p.url,
+		// 监控统计可能经 gomobile 直接进 logcat：只输出脱敏地址，禁止完整签名 query 外泄。
+		"url":    SanitizeLogLine(p.url),
 		"client": p.hasClient(),
 		"site":   p.site,
 		"tuning": p.tuning.name,
@@ -2116,7 +2117,7 @@ func (p *flvProxy) statsJSON() string {
 		"tagsWritten":                p.tagsWritten,
 		"bytesWritten":               p.bytesWritten,
 		"lastSessionMs":              p.lastSessionMs,
-		"lastError":                  p.lastError,
+		"lastError":                  SanitizeLogLine(p.lastError),
 		"videoForwarded":             p.videoForwarded,
 		"audioForwarded":             p.audioForwarded,
 		"videoDroppedReplay":         p.videoDroppedReplay,

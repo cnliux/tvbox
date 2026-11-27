@@ -75,8 +75,8 @@ fun FirstRunScreen(onAccepted: suspend () -> Unit) {
     val allChecked = checkOne && checkTwo && checkThree
     val acceptEnabled = allChecked && !submitting
 
-    // 返回键拦截：未提交前不允许离开本页。
-    androidx.activity.compose.BackHandler(enabled = !submitting) { /* 不响应 */ }
+    // 返回键拦截：法律声明落盘前（含 submitting 窗口）都不允许离开本页。
+    androidx.activity.compose.BackHandler(enabled = true) { /* 不响应 */ }
 
     PageSurface { padding ->
         Column(

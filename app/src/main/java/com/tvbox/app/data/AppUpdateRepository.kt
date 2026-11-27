@@ -213,6 +213,23 @@ class DefaultAppUpdateRepository(
                     )
                 }
                 recordCdnSuccess(candidate.id, System.currentTimeMillis() - startedAtMs)
+                if (parsed != null) {
+                    val installedChannel =
+                        if (settingsProvider().updateChannel == com.tvbox.app.domain.UpdateChannel.Stable) {
+                            com.tvbox.app.domain.UpdateChannelPolicy.UpdateChannel.Stable
+                        } else {
+                            com.tvbox.app.domain.UpdateChannelPolicy.UpdateChannel.Canary
+                        }
+                    val blockReason = otaManifestBlockReason(
+                        currentVersionCode = currentVersionCode,
+                        update = parsed,
+                        installedChannel = installedChannel,
+                    )
+                    if (blockReason != null) {
+                        android.util.Log.i("TVBoxUpdate", "更新清单被策略拦截：${logSafeText(blockReason)}")
+                        return@withContext null
+                    }
+                }
                 return@withContext parsed
             } catch (e: TimeoutCancellationException) {
                 lastError = e
@@ -819,7 +836,37 @@ internal fun parseAppUpdateManifest(
         releaseHighlights = dto.releaseHighlights.map { it.trim() }.filter { it.isNotBlank() },
         // T1-10：ETag 可选；清单没给就空串，续传退化为纯 Range 语义。
         apkEtag = dto.apkEtag.trim(),
+        minVersionCode = dto.minVersionCode.coerceAtLeast(0L),
+        channel = normalizeOtaChannel(dto.channel),
     )
+}
+
+/**
+ * 生产 OTA 策略门禁：把版本阶梯、清单通道与安装通道三项判定串起来。
+ * 返回可直接展示/记录的中文阻断原因；null 表示允许向用户呈现更新。
+ */
+internal fun otaManifestBlockReason(
+    currentVersionCode: Long,
+    update: AppUpdate,
+    installedChannel: com.tvbox.app.domain.UpdateChannelPolicy.UpdateChannel,
+): String? {
+    checkMinVersionBlocked(currentVersionCode, update.minVersionCode)?.let { return it }
+    val manifestChannel = com.tvbox.app.domain.UpdateChannelPolicy.UpdateChannel
+        .fromId(normalizeOtaChannel(update.channel))
+    val safeVersionCode = currentVersionCode.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    val decision = com.tvbox.app.domain.UpdateChannelPolicy.shouldOffer(
+        currentVersionCode = safeVersionCode,
+        manifest = com.tvbox.app.domain.UpdateChannelPolicy.UpdateManifestChannel(
+            versionName = update.versionName,
+            versionCode = update.versionCode.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            channel = manifestChannel,
+            minVersionCode = update.minVersionCode.coerceAtMost(Int.MAX_VALUE.toLong()).toInt(),
+            downloadUrl = update.apkUrl,
+            sha256 = update.apkSha256,
+        ),
+        installedChannel = installedChannel,
+    )
+    return if (decision.offer) null else decision.reason
 }
 
 @Serializable

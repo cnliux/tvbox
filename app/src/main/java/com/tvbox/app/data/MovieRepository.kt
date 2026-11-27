@@ -199,10 +199,9 @@ class DefaultMovieRepository(
     }
 
     override suspend fun getResumeDetail(apiLineId: String, id: Int): Movie? = withContext(Dispatchers.IO) {
-        // FIX: 原实现用 require 在「历史源已被移除/禁用」时直接抛 IllegalArgumentException，
-        // 导致 resumeHistory 续播崩溃。与 requireLine 同款兜底：回退到第一个可用源，
-        // 只在该源按 id 取不到时返回 null（由调用方降级为“无法获取播放地址”）。
-        val target = requireLine(apiLineId)
+        // 历史里的 movieId 属于原源的数字命名空间；源被删除/禁用后回退到第一个可用源
+        // 会用同一个 id 打开另一部影片。这里宁可返回 null 让调用方提示“源已变更”，也不跨源猜片。
+        val target = apiLines.firstOrNull { it.id == apiLineId } ?: return@withContext null
         loadPrimaryDetail(target.id, id)
     }
 

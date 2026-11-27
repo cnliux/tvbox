@@ -2,6 +2,7 @@ package com.tvbox.app.data
 
 import android.content.Context
 import com.tvbox.app.domain.detectClientType
+import com.tvbox.app.util.logSafeText
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -53,7 +54,8 @@ object PlatformLiveGoBridge {
     }
 
     private fun bridgeErrorMessage(error: Throwable): String {
-        val raw = error.message?.trim().orEmpty()
-        return raw.ifBlank { "直播解析失败" }
+        val raw = error.message?.trim()
+        if (raw.isNullOrBlank()) return "直播解析失败"
+        return logSafeText(raw)
     }
 }

@@ -32,6 +32,20 @@ class CrashLogRedactorTest {
     }
 
     @Test
+    fun redactsPlatformLiveSignatureParams() {
+        val raw = "live https://example.com/flv?wsSecret=deadbeef&wsTime=1799999999&secret=cafebabe&session=s1&cookie=c1"
+        val out = CrashLogRedactor.redact(raw)
+        assertFalse(out.contains("deadbeef"))
+        assertFalse(out.contains("1799999999"))
+        assertFalse(out.contains("cafebabe"))
+        assertFalse(out.contains("session=s1"))
+        assertFalse(out.contains("cookie=c1"))
+        assertTrue(out.contains("wsSecret=***"))
+        assertTrue(out.contains("wsTime=***"))
+        assertTrue(out.contains("secret=***"))
+    }
+
+    @Test
     fun keepsHostAndPathForTriage() {
         val line = "play https://source.example.com/api.php/provide/vod/?ac=videolist&token=huge-secret"
         val out = CrashLogRedactor.redact(line)

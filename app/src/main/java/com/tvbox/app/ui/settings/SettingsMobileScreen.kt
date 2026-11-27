@@ -71,6 +71,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1690,7 +1692,11 @@ private fun AboutDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
 // 第 314–315 轮 · OTA 下载线路状态与启动耗时接入「关于」分组
 @Composable
 private fun OtaCdnStatusSection(actions: TvBoxViewModel) {
-    val rows = remember(actions) { actions.cdnStatusRows() }
+    // cdnStatusRows 内部读 SharedPreferences：必须离开组合线程，且不能用 remember 永久缓存健康度。
+    var rows by remember { mutableStateOf(emptyList<com.tvbox.app.domain.CdnStatusRow>()) }
+    LaunchedEffect(actions) {
+        rows = withContext(Dispatchers.IO) { actions.cdnStatusRows() }
+    }
     SettingsGroup {
         SettingsRow(
             icon = Icons.Default.Build,

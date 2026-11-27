@@ -33,10 +33,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.tvbox.app.ui.LocalTouchMode
+import com.tvbox.app.ui.SearchKeyboard
+import com.tvbox.app.ui.rememberTvFocusRequest
 import com.tvbox.app.ui.components.LoadingState
 import com.tvbox.app.ui.components.PageSurface
 import com.tvbox.app.ui.components.TvFocusableSurface
@@ -78,6 +83,15 @@ fun AiSearchScreen(
     // 语音结果默认回填输入框；调用方通常传入「回填 + 立即提交」的组合回调。
     val requestVoice = rememberVoiceSearchRequest(onVoiceResult ?: onQueryChange)
     val error = state.errorMessage
+    // TV 端不能依赖软键盘：输入框只读 + 屏幕键盘 + 显式搜索键，与普通搜索页保持一致。
+    val tvMode = !LocalTouchMode.current
+    val softwareKeyboardController = LocalSoftwareKeyboardController.current
+    val inputFocus = rememberTvFocusRequest(
+        key = Unit,
+        enabled = tvMode,
+        delayMs = 60L,
+        retries = 3,
+    )
 
     PageSurface { padding ->
         Column(
@@ -100,9 +114,14 @@ fun AiSearchScreen(
             OutlinedTextField(
                 value = state.query,
                 onValueChange = onQueryChange,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth()
+                    .then(inputFocus.anchor)
+                    .onFocusChanged { focusState ->
+                        if (tvMode && focusState.isFocused) softwareKeyboardController?.hide()
+                    },
                 singleLine = true,
-                label = { Text("描述你想找的影片") },
+                readOnly = tvMode,
+                label = { Text(if (tvMode) "用遥控器输入你想找的影片" else "描述你想找的影片") },
                 placeholder = { Text("例如：科幻、关于时间旅行的电影") },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(onSearch = { onSubmit(state.query) }),
@@ -128,6 +147,27 @@ fun AiSearchScreen(
                     }
                 },
             )
+
+            if (tvMode) {
+                TvFocusableSurface(
+                    shape = RoundedCornerShape(10.dp),
+                    onClick = { onSubmit(state.query) },
+                    focusedContainerColor = TvColors.Accent,
+                    idleContainerColor = TvColors.SurfaceRaised,
+                    focusedContentColor = TvColors.Background,
+                    idleContentColor = TvColors.TextPrimary,
+                    containerMinHeight = 48.dp,
+                    descriptionText = "搜索",
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("搜索", style = MaterialTheme.typography.labelLarge)
+                }
+                SearchKeyboard(
+                    onKey = { key -> onQueryChange(state.query + key) },
+                    onDelete = { onQueryChange(state.query.dropLast(1)) },
+                    onClear = { onQueryChange("") },
+                )
+            }
 
             if (state.keySourceLabel.isNotBlank()) {
                 Text(

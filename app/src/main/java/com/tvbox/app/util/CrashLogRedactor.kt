@@ -9,7 +9,7 @@ package com.tvbox.app.util
  */
 object CrashLogRedactor {
     private val SECRET_QUERY = Regex(
-        "([?&](?:token|key|sign|signature|expire|expires|auth|authorization|access[_-]?token)=)[^&#\\s]+",
+        "([?&](?:token|key|sign|signature|secret|wssecret|wstime|session|cookie|expire|expires|auth|authorization|access[_-]?token)=)[^&#\\s]+",
         RegexOption.IGNORE_CASE,
     )
     private val BEARER = Regex("(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]{8,}")

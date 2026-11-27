@@ -39,7 +39,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -110,9 +109,9 @@ fun MobileNavWrapper(
     val showTopBar = showChrome &&
         state.screen != TvScreen.Live &&
         state.screen != TvScreen.Search
-    // 手机模式统一按触摸界面渲染：关闭遥控器焦点框，避免触摸后高亮残留。
-    CompositionLocalProvider(LocalTouchMode provides true) {
-        Column(modifier = Modifier.fillMaxSize()) {
+    // LocalTouchMode 由 TvBoxApp 根部按设备模式统一提供，这里不再硬编码 true，
+    // 否则手机+外接遥控的焦点语义会与顶层覆盖层不一致。
+    Column(modifier = Modifier.fillMaxSize()) {
             if (showTopBar) {
                 MobileTopBar(state = state, actions = actions)
             }
@@ -169,7 +168,6 @@ fun MobileNavWrapper(
                     }
                 }
             }
-        }
     }
 }
 

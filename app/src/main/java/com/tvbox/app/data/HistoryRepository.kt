@@ -59,7 +59,7 @@ class SharedHistoryRepository internal constructor(
         try { settingsProvider?.invoke() ?: AppSettings() } catch (_: Exception) { AppSettings() }
 
     override suspend fun getHistory(): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
-        mutex.withLock { readHistory() ?: emptyList() }
+        mutex.withLock { displayHistory(readRawHistory() ?: emptyList()) }
     }
 
     override suspend fun saveProgress(
@@ -67,14 +67,15 @@ class SharedHistoryRepository internal constructor(
         maxItems: Int,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val history = readHistory() ?: return@withLock emptyList()
+            // 写回路径只使用原始存储态：展示层的脱敏/TTL/屏蔽过滤绝不能落到磁盘。
+            val history = readRawHistory() ?: return@withLock emptyList()
             val settings = currentAppSettings()
-            // S1-06 OFF 策略：跳过写入，返回原始列表（不破坏已有记录）。
-            if (settings.historyPolicy == HistoryPolicy.OFF) return@withLock history
+            // S1-06 OFF 策略：跳过写入，返回展示态列表（不破坏已有记录）。
+            if (settings.historyPolicy == HistoryPolicy.OFF) return@withLock displayHistory(history)
             // S1-06 访客模式：历史不写。
-            if (settings.guestModeActive) return@withLock history
+            if (settings.guestModeActive) return@withLock displayHistory(history)
             // #318 兼容旧开关，优先于新策略（用户手动开启的旧开关仍生效）。
-            if (settings.historyPrivacyMode) return@withLock history
+            if (settings.historyPrivacyMode) return@withLock displayHistory(history)
 
             // 播放器尚未 READY 时保存会带 duration=0；若直接覆盖，历史进度条会归零且
             // 提前退出时永久丢失总时长。此时沿用同一集已有记录的时长。
@@ -119,7 +120,7 @@ class SharedHistoryRepository internal constructor(
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
                 "Unable to save watch history"
             }
-            updated
+            displayHistory(updated)
         }
     }
 
@@ -130,9 +131,9 @@ class SharedHistoryRepository internal constructor(
         checkedAtEpochMs: Long,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val history = readHistory() ?: return@withLock emptyList()
+            val history = readRawHistory() ?: return@withLock emptyList()
             val index = history.indexOfFirst { it.apiLineId == apiLineId && it.movieId == movieId }
-            if (index < 0) return@withLock history
+            if (index < 0) return@withLock displayHistory(history)
             val current = history[index]
             val mergedLatest = maxOf(
                 current.latestEpisodeCount.coerceAtLeast(0),
@@ -143,7 +144,7 @@ class SharedHistoryRepository internal constructor(
                 checkedAtEpochMs.coerceAtLeast(0L),
             )
             if (mergedLatest == current.latestEpisodeCount && mergedCheckedAt == current.lastUpdateCheckEpochMs) {
-                return@withLock history
+                return@withLock displayHistory(history)
             }
             val updated = history.toMutableList().also {
                 it[index] = current.copy(
@@ -154,7 +155,7 @@ class SharedHistoryRepository internal constructor(
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
                 "Unable to update watch history episode check"
             }
-            updated
+            displayHistory(updated)
         }
     }
 
@@ -170,35 +171,38 @@ class SharedHistoryRepository internal constructor(
         movieId: Int,
     ): List<WatchHistoryItem> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val history = readHistory() ?: return@withLock emptyList()
+            val history = readRawHistory() ?: return@withLock emptyList()
             val updated = history.filterNot {
                 it.apiLineId == apiLineId && it.movieId == movieId
             }
             check(prefs.edit().putString(KEY_ITEMS, json.encodeToString(updated)).commit()) {
                 "Unable to remove watch history item"
             }
-            updated
+            displayHistory(updated)
         }
     }
 
     /**
-     * 读取历史。返回 null 表示「存量数据存在但解码失败」（数据损坏/字段变更），
-     * 调用方必须拒绝用空表覆盖，避免整段历史被误清空。
-     *
-     * 读取时应用策略与 TTL：
-     * - [HistoryPolicy.TITLE_ONLY]：剥离敏感字段后返回匿名化版本。
-     * - TTL 过滤：条目超过 [AppSettings.searchHistoryTtlDays] 天则丢弃（0=永不清，默认30天）。
+     * 读取原始持久化历史（不做展示层过滤/脱敏）。
+     * 返回 null 表示「存量数据存在但解码失败」（数据损坏/字段变更），
+     * 写路径必须拒绝用空表覆盖，避免整段历史被误清空。
      */
-    private fun readHistory(): List<WatchHistoryItem>? {
+    private fun readRawHistory(): List<WatchHistoryItem>? {
         val raw = prefs.getString(KEY_ITEMS, null) ?: return emptyList()
         return runCatching {
             json.decodeFromString<List<WatchHistoryItem>>(raw)
         }.getOrNull()
-            ?.filterNot { isBlockedContent(it.movieName, it.typeName, it.remarks, it.episodeTitle) }
-            ?.filter { appliesTtl(it) }
             ?.sortedByDescending { it.updatedAtEpochMs }
-            ?.map { applyHistoryPolicy(it) }
     }
+
+    /**
+     * 由原始历史生成展示态：屏蔽词过滤、TTL 过滤、按隐私策略脱敏。
+     * 仅用于 [getHistory] 与写操作返回值；任何写回磁盘的输入都必须来自 [readRawHistory]。
+     */
+    private fun displayHistory(raw: List<WatchHistoryItem>): List<WatchHistoryItem> =
+        raw.filterNot { isBlockedContent(it.movieName, it.typeName, it.remarks, it.episodeTitle) }
+            .filter { appliesTtl(it) }
+            .map { applyHistoryPolicy(it) }
 
     /**
      * 判断条目是否命中 TTL 阈值。

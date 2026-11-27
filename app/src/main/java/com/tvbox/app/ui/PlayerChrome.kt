@@ -622,6 +622,9 @@ private fun PlayerChromeTv(
     var lastSeekTime by remember { mutableStateOf(Long.MIN_VALUE) }
     val compact = LocalConfiguration.current.screenWidthDp < 800
     Box(modifier.fillMaxSize()) {
+        // 面板打开时整条控制栏不参与组合：从根上杜绝背景按钮抢焦点，
+        // 关闭面板后 playFocus 会按 state.panel 变化重新请求焦点。
+        if (state.panel == PlayerPanel.None) {
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.88f))))
@@ -758,6 +761,7 @@ private fun PlayerChromeTv(
                     }
                 }
             }
+        }
         }
         PlayerChromePanel(
             state = state,
@@ -1468,7 +1472,7 @@ private fun PlayerSettingsPanel(
             add(PlayerSettingsItem("播放地址", "查看当前播放 URL", PlayerPanel.Url))
         }
     }
-    val firstFocus = rememberTvFocusRequest(key = Unit, delayMs = 60L)
+    val firstFocus = rememberTvFocusRequest(key = Unit, delayMs = 60L, retries = 3)
     val listState = rememberLazyListState()
     Surface(
         modifier.fillMaxHeight(0.6f),
@@ -2018,7 +2022,7 @@ internal fun ControlButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = when { primary -> Color.White; focused -> Color.White.copy(alpha = 0.18f); else -> Color.Transparent },
             contentColor = if (primary) TvColors.Background else TvColors.TextPrimary.copy(alpha = 0.9f),
-            disabledContainerColor = Color.Transparent, disabledContentColor = Color.White.copy(alpha = 0.3f),
+            disabledContainerColor = Color.Transparent, disabledContentColor = Color.White.copy(alpha = 0.5f),
         ),
         contentPadding = PaddingValues(horizontal = 18.dp, vertical = 8.dp),
     ) {

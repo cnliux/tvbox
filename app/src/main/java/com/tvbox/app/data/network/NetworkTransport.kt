@@ -357,39 +357,32 @@ class RedirectTrackingInterceptor(
         // R3：显式记录已访问 URL，识别 A→B→A 这类重定向环（源站常见「假死」手法）。
         // 环内继续跟随只会白烧超时预算，命中即返回当前 3xx 响应交给上层判定。
         val visited = LinkedHashSet<String>().apply { add(request.url.toString()) }
-        repeat(maxHops) {
+        var lastResponse: Response? = null
+        for (hopIndex in 0 until maxHops) {
             val response = chain.proceed(request)
-            when (response.code) {
-                301, 302, 303, 307, 308 -> {
-                    val location = response.header("Location")
-                    if (location.isNullOrBlank()) {
-                        return@intercept response
-                    }
-                    val hop = RedirectPolicy.Hop(request.url.toString(), location)
-                    onRedirect(hop)
-                    response.close()
-                    // 目标 URL 已访问过 = 重定向环，立即停止跟随。
-                    if (!visited.add(location)) {
-                        return@intercept response
-                    }
-                    // 构建下一跳请求
-                    val nextBuilder = request.newBuilder().url(location)
-                    // T1-03：跨子域/跨站/降级后按目标 host 重算 UA 并写回请求头，
-                    // 否则分域 UA 在跳转后失效，或把自定义 UA 带到保留域。
-                    if (RedirectPolicy.mustRecomputeUa(hop)) {
-                        nextBuilder.header("User-Agent", uaForHost(nextBuilder.build().url.host))
-                    }
-                    // 303 规定必须改为 GET
-                    if (response.code == 303) {
-                        request = nextBuilder.method("GET", null).build()
-                    } else {
-                        request = nextBuilder.build()
-                    }
-                }
-                else -> return response
+            lastResponse = response
+            if (response.code !in setOf(301, 302, 303, 307, 308)) return response
+            val location = response.header("Location")
+            if (location.isNullOrBlank()) return response
+            val hop = RedirectPolicy.Hop(request.url.toString(), location)
+            onRedirect(hop)
+            // 环检测/最后一跳都要返回未关闭的响应给上层判定，不能在 close 后返回。
+            if (!visited.add(location) || hopIndex == maxHops - 1) return response
+            val nextBuilder = request.newBuilder().url(location)
+            // T1-03：跨子域/跨站/降级后按目标 host 重算 UA 并写回请求头，
+            // 否则分域 UA 在跳转后失效，或把自定义 UA 带到保留域。
+            if (RedirectPolicy.mustRecomputeUa(hop)) {
+                nextBuilder.header("User-Agent", uaForHost(nextBuilder.build().url.host))
             }
+            val nextRequest = if (response.code == 303) {
+                nextBuilder.method("GET", null).build()
+            } else {
+                nextBuilder.build()
+            }
+            response.close()
+            request = nextRequest
         }
-        // 超过上限后退回最后一次响应（让上层决定如何处理）。
-        return chain.proceed(request)
+        // maxHops<=0 时兜底；正常情况下循环内已 return。
+        return lastResponse ?: chain.proceed(request)
     }
 }

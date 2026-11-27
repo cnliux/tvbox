@@ -184,12 +184,14 @@ fun <T> TvChoiceChips(
             Box(
                 modifier = Modifier
                     .widthIn(max = 260.dp)
+                    // 与 TvFocusableSurface 保持一致：先放焦点缩放/描边，再裁剪背景，
+                    // 否则 clip 会裁掉放大后的焦点环。
+                    .tvFocusScale(shape = focusShape)
                     .clip(focusShape)
                     .background(
                         if (isSelected) TvColors.Accent.copy(alpha = 0.18f)
                         else TvColors.SurfaceRaised.copy(alpha = 0.6f)
                     )
-                    .tvFocusScale(shape = focusShape)
                     .clickable(role = Role.Button) { onSelect(option) }
                     .semantics {
                         // S6-32：遥控版 chips 此前只有选中态，补完整中文标签。

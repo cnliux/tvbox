@@ -232,8 +232,8 @@ internal fun LiveChannelOverlayPanel(
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "确认键收起",
-                    color = Color.White.copy(alpha = 0.4f),
+                    text = "返回键收起",
+                    color = Color.White.copy(alpha = 0.6f),
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
@@ -277,7 +277,7 @@ internal fun LiveChannelOverlayPanel(
                         // #281：折叠态给出明确的展开提示，避免误认为分组真的没有频道。
                         Text(
                             if (selectedGroupCollapsed) "分组已折叠" else "该分组暂无频道",
-                            color = Color.White.copy(alpha = 0.4f),
+                            color = Color.White.copy(alpha = 0.6f),
                             style = MaterialTheme.typography.labelSmall,
                         )
                     }

@@ -125,6 +125,7 @@ import com.tvbox.app.domain.toApiLines
 import com.tvbox.app.domain.GlobalPlayState
 import com.tvbox.app.domain.RemoteBreadcrumb
 import com.tvbox.app.domain.ResolvedSite
+import com.tvbox.app.util.logSafeText
 import com.tvbox.app.util.logSafeUrl
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeoutOrNull
@@ -1839,7 +1840,9 @@ class TvBoxViewModel(
     fun submitSearch() {
         val query = _state.value.searchQuery.trim()
         if (query.isBlank()) {
-            _state.update { it.copy(searchResults = emptyList(), searchError = "请输入搜索关键词") }
+            // 空查询走明确的空态提示，不写 searchError：错误态会被空态分支掩盖，
+            // 且「重试」对空查询没有意义。
+            _state.update { it.copy(searchResults = emptyList(), searchLoading = false, searchError = null) }
             return
         }
         // 显式提交（回车/搜索按钮/热词点击）：跳过防抖立即执行，并把结果区复位为加载态。
@@ -2810,17 +2813,19 @@ class TvBoxViewModel(
                             }
                             publish(snapshot)
                             // T1-04：将时长可信度写入健康记录（幂等，不影响 UI）。
-                            if (latency != null) {
+                            // 必须在测速 job 的作用域内并带 generation 校验，否则切台后的迟到结果
+                            // 会脱离 liveLineTestJob 取消，污染新频道的线路质量徽章。
+                            if (latency != null && liveLineTestGeneration == generation &&
+                                liveLineTestIdentity == identity
+                            ) {
                                 val key = "live_${channel.key()}|${line.url}"
-                                viewModelScope.launch {
-                                    runCatching {
-                                        playbackHealthRepository.recordSuccessWithConfidence(
-                                            key = key,
-                                            latencyMs = latency,
-                                            durationConfidence = confidence,
-                                            nowMs = System.currentTimeMillis(),
-                                        )
-                                    }
+                                runCatching {
+                                    playbackHealthRepository.recordSuccessWithConfidence(
+                                        key = key,
+                                        latencyMs = latency,
+                                        durationConfidence = confidence,
+                                        nowMs = System.currentTimeMillis(),
+                                    )
                                 }
                             }
                         }
@@ -4638,7 +4643,7 @@ class TvBoxViewModel(
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
-            val message = "导入失败：${error.message}"
+            val message = "导入失败：${logSafeText(error.message)}"
             _state.update { it.copy(source = it.source.copy(importing = false, importMessage = message)) }
             message
         }

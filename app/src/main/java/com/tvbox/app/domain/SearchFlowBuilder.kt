@@ -4,6 +4,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 一次搜索会话的增量状态，ViewModel 直接据此写回 UI state。
@@ -47,26 +49,29 @@ fun buildSearchFlow(
     var mergedBySource: Map<String, List<Movie>> = emptyMap()
     var totalSources = 0
     val foundResults = BooleanArray(keywords.size)
+    // 多候选 launch 会并发 collect；合并状态必须在同一把锁内 read-modify-write，
+    // 否则在 Default/IO 调度器上会丢失回包。持锁只生成快照，send 在锁外挂起。
+    val mergeMutex = Mutex()
     coroutineScope {
         keywords.forEachIndexed { index, keyword ->
             launch {
                 search(selectedApiLineId, 1, keyword).collect { update ->
-                    // 主候选已出结果后，较低可信候选的增量不再并入，避免稀释主结果。
                     if (foundResults[0] && index > 0) return@collect
-                    totalSources = maxOf(totalSources, update.totalSources)
-                    if (update.movies.isNotEmpty() && index == 0) foundResults[0] = true
-                    mergedResults = mergeMoviesBySourceAndId(mergedResults, update.movies)
-                    mergedBySource = mergeMoviesBySourceMap(mergedBySource, update.moviesBySource)
-                    // channelFlow 允许多个 launch 子协程并发 send；外层取消时自动关闭通道，
-                    // 这正是 flatMapLatest 切换 query 时取消旧搜索的语义来源。
-                    send(
+                    val emission = mergeMutex.withLock {
+                        totalSources = maxOf(totalSources, update.totalSources)
+                        if (update.movies.isNotEmpty() && index == 0) foundResults[0] = true
+                        mergedResults = mergeMoviesBySourceAndId(mergedResults, update.movies)
+                        mergedBySource = mergeMoviesBySourceMap(mergedBySource, update.moviesBySource)
                         SearchEmission(
                             results = mergedResults,
                             resultsBySource = mergedBySource,
                             completedSources = update.completedSources,
                             totalSources = maxOf(totalSources, update.completedSources),
-                        ),
-                    )
+                        )
+                    }
+                    // channelFlow 允许多个 launch 子协程并发 send；外层取消时自动关闭通道，
+                    // 这正是 flatMapLatest 切换 query 时取消旧搜索的语义来源。
+                    send(emission)
                 }
             }
         }

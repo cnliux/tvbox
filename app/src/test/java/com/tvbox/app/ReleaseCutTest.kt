@@ -1,5 +1,6 @@
 package com.tvbox.app
 
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -14,6 +15,8 @@ class ReleaseCutTest {
         val body = justfile.substringAfter("release-cut V:").substringBefore("\n\n")
         assertTrue(body, "set -e" in body)
         assertTrue(body, "./tools/doctor.sh" in body)
+        assertFalse(body, "|| echo" in body)
+        assertTrue(body, "exit 1" in body)
         assertTrue(body, "testDebugUnitTest" in body)
         assertTrue(body, "just smoke" in body)
         assertTrue(body, "just audit" in body)

@@ -155,6 +155,44 @@ class HistoryRepositoryTest {
         assertEquals(22, saved[0].movieId)
     }
 
+    // ── 写回不得把展示态策略落到磁盘 ─────────────────────────────────
+    @Test
+    fun titleOnlyWriteBackKeepsStoredFields() = runBlocking {
+        val existing = baseItem(movieId = 42, positionMs = 55_000L, episodeUrl = "https://secret.ep/ep.mkv")
+        writeRaw(listOf(existing))
+        val titleOnlyRepo = SharedHistoryRepository(prefs) { AppSettings(historyPolicy = HistoryPolicy.TITLE_ONLY) }
+
+        val displayedResult = titleOnlyRepo.saveProgress(baseItem(movieId = 43, positionMs = 1_000L))
+
+        assertTrue(displayedResult.all { it.episodeUrl.isEmpty() && it.apiLineId.isEmpty() })
+        val stored = SharedHistoryRepository(prefs) { AppSettings(historyPolicy = HistoryPolicy.FULL) }.getHistory()
+        val preserved = stored.first { it.movieId == 42 }
+        assertEquals("ruyi", preserved.apiLineId)
+        assertEquals(55_000L, preserved.positionMs)
+        assertEquals("https://secret.ep/ep.mkv", preserved.episodeUrl)
+    }
+
+    @Test
+    fun ttlFilteredItemsSurviveUnrelatedWrite() = runBlocking {
+        val old = baseItem(
+            movieId = 2,
+            positionMs = 2_000L,
+            addedAtEpochMs = System.currentTimeMillis() - 35L * 86_400_000L,
+        )
+        writeRaw(listOf(old))
+        val ttlRepo = SharedHistoryRepository(prefs) {
+            AppSettings(historyPolicy = HistoryPolicy.FULL, searchHistoryTtlDays = 30)
+        }
+
+        ttlRepo.saveProgress(baseItem(movieId = 3, positionMs = 3_000L))
+
+        val stored = SharedHistoryRepository(prefs) {
+            AppSettings(historyPolicy = HistoryPolicy.FULL, searchHistoryTtlDays = 0)
+        }.getHistory()
+        assertEquals(2, stored.size)
+        assertTrue(stored.any { it.movieId == 2 && it.positionMs == 2_000L })
+    }
+
     // ── 工具方法 ──────────────────────────────────────────────────────
     private fun baseItem(
         movieId: Int,

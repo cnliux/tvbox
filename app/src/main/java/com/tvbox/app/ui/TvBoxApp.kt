@@ -68,6 +68,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -165,9 +166,11 @@ fun TvBoxApp(
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         actions.consumeSettingsSaveError()
     }
+    // 导航层级由设备模式决定：手机走底部导航，电视走页面内顶部快捷入口。
+    // LocalTouchMode 必须在根部提供，否则更新弹窗等顶层覆盖层在手机上仍读到 TV 默认值。
+    val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
+    CompositionLocalProvider(LocalTouchMode provides isMobile) {
     Box(modifier = Modifier.fillMaxSize()) {
-        // 导航层级由设备模式决定：手机走底部导航，电视走页面内顶部快捷入口。
-        val isMobile = state.effectiveDeviceMode == DeviceMode.Mobile
         if (isMobile) {
             MobileNavWrapper(
                 state = state,
@@ -228,6 +231,7 @@ fun TvBoxApp(
                     .padding(horizontal = 16.dp),
             )
         }
+    }
     }
 }
 

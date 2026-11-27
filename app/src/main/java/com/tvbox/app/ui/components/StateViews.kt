@@ -35,6 +35,7 @@ fun SkeletonGrid(
     // #23：加载态焦点兜底——骨架屏整体可聚焦并带语义播报，TV 遥控器上下键不会让焦点悬空。
     Column(
         modifier = modifier
+            .tvFocusScale(shape = RoundedCornerShape(12.dp))
             .focusable()
             .semantics {
                 isTraversalGroup = true

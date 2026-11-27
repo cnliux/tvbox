@@ -1,6 +1,8 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.domain.UpdateChannelPolicy
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -98,6 +100,51 @@ class AppUpdateManifestTest {
     fun sameOrOlderVersionIsNotAnUpdate() {
         assertNull(parseAppUpdateManifest(legacyManifest(), currentVersionCode = 20000L))
         assertNull(parseAppUpdateManifest(legacyManifest(), currentVersionCode = 20001L))
+    }
+
+    @Test
+    fun productionOtaPolicyUsesMinVersionAndChannelGates() {
+        val raw = """
+            {
+              "versionCode": 20050,
+              "versionName": "1.0.5",
+              "apkUrl": "$apkUrl",
+              "apkSha256": "abc",
+              "apkSize": 1,
+              "force": false,
+              "changelog": [],
+              "minVersionCode": 20040,
+              "channel": "canary"
+            }
+        """.trimIndent()
+        val update = requireNotNull(parseAppUpdateManifest(raw, currentVersionCode = 20030L))
+        assertEquals(20040L, update.minVersionCode)
+        assertEquals("canary", update.channel)
+
+        // 版本阶梯门禁：当前版本低于 minVersionCode 时阻断。
+        assertNotNull(
+            otaManifestBlockReason(
+                currentVersionCode = 20030L,
+                update = update,
+                installedChannel = UpdateChannelPolicy.UpdateChannel.Stable,
+            ),
+        )
+        // 阶梯通过后，canary 清单仍不得覆盖 stable 安装。
+        assertNotNull(
+            otaManifestBlockReason(
+                currentVersionCode = 20040L,
+                update = update,
+                installedChannel = UpdateChannelPolicy.UpdateChannel.Stable,
+            ),
+        )
+        // canary 安装允许同通道升级。
+        assertNull(
+            otaManifestBlockReason(
+                currentVersionCode = 20040L,
+                update = update,
+                installedChannel = UpdateChannelPolicy.UpdateChannel.Canary,
+            ),
+        )
     }
 
     @Test

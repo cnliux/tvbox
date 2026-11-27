@@ -1,5 +1,7 @@
 package com.tvbox.app.data
 
+import com.tvbox.app.util.logSafeText
+
 import android.content.Context
 import com.tvbox.app.domain.PlatformLiveChannel
 import com.tvbox.app.domain.PlatformLiveCategory
@@ -196,8 +198,11 @@ class EmbeddedPlatformLiveRepository(
         PlatformLiveGoBridge.start(appContext)
     }
 
-    private fun bridgeErrorMessage(error: Throwable): String =
-        error.message?.trim().orEmpty().ifBlank { "直播解析失败" }
+    private fun bridgeErrorMessage(error: Throwable): String {
+        val raw = error.message?.trim()
+        if (raw.isNullOrBlank()) return "直播解析失败"
+        return logSafeText(raw)
+    }
 }
 
 @Serializable

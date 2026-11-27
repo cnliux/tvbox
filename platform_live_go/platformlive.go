@@ -58,7 +58,7 @@ func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSecond
 	if bridgeHasInit {
 		return bridgeInitErr
 	}
-	bridgeHasInit = true
+	// 只有解析服务真正可用后才标记为已初始化；失败必须允许上层重试。
 	SetDouyinSignScript(stripDouyinScript(signScript))
 	service := NewService(int64(timeoutSeconds), int64(cacheSeconds), func() (string, error) {
 		if catalogJSON == "" {
@@ -67,12 +67,16 @@ func Init(signScript string, catalogJSON string, cacheSeconds int, timeoutSecond
 		return catalogJSON, nil
 	}, clientType)
 	if _, err := service.Catalog(); err != nil {
-		// Python 侧 catalog 解析失败会在 channels_json 调用时抛错；
-		// 这里同样延迟到调用期触发，但记录解析结果状态。
-		bridgeService = service
-		return nil
+		// 目录不可用意味着解析服务不可用：保留错误并允许下次 Init 重试，
+		// 不能标记 started 后让所有调用永久拿到同一个失败。
+		bridgeService = nil
+		bridgeInitErr = err
+		// 不置 bridgeHasInit：下次 Init 重新加载资源，给瞬态/可修复错误一次恢复机会。
+		return err
 	}
 	bridgeService = service
+	bridgeInitErr = nil
+	bridgeHasInit = true
 	return nil
 }
 

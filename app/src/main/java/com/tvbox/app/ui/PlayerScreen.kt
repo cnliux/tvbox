@@ -260,6 +260,8 @@ fun PlayerScreen(
         if (session.interrupted) chrome.bump()
     }
     LaunchedEffect(chrome.visible) {
+        // 手机触摸模式不要把焦点抢回播放器根节点，避免触摸后常驻焦点框。
+        if (isMobile || chrome.touchMode) return@LaunchedEffect
         if (!chrome.visible) {
             androidx.compose.runtime.withFrameNanos { }
             // 控件隐藏时目标节点可能尚未进入组合，requestFocus 需容错（与项目其余调用一致）。
@@ -804,7 +806,8 @@ fun PlayerScreen(
         }
     }
     LaunchedEffect(firstFrameFailure) {
-        if (isTelevision && firstFrameFailure != null) {
+        // 面板打开时失败卡不抢焦；用户关闭面板后再由面板回焦逻辑接管。
+        if (isTelevision && firstFrameFailure != null && chrome.panel == PlayerPanel.None) {
             runCatching { overlayRetryFocus.requestFocus() }
         }
     }
@@ -862,7 +865,7 @@ fun PlayerScreen(
     }
 
     LaunchedEffect(Unit) {
-        runCatching { playerFocusRequester.requestFocus() }
+        if (!isMobile && !chrome.touchMode) runCatching { playerFocusRequester.requestFocus() }
     }
 
     PromptTimer(nonce = seekGesturePromptNonce, hideDelayMs = 1_000L) { seekGesturePrompt = null }
