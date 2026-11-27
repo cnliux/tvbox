@@ -82,6 +82,55 @@ class PlatformLivePlaybackLogicTest {
         assertEquals("", resolveEffectiveEpgUrl("   ", "  ", defaultUrl = "  "))
     }
 
+    @Test
+    fun resolveEpgSourceLabelPrefersUserConfigured() {
+        // 用户显式配置时，无论是否同时存在源自带，来源都标为「用户配置」。
+        assertEquals(
+            "用户配置",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = " https://user.test/epg.xml ",
+                bundledUrl = "https://bundled.test/epg.xml",
+                effectiveUrl = resolveEffectiveEpgUrl(" https://user.test/epg.xml ", "https://bundled.test/epg.xml"),
+            ),
+        )
+    }
+
+    @Test
+    fun resolveEpgSourceLabelMarksBundledWhenUserBlank() {
+        // 用户未配置时回落源自带（M3U url-tvg），来源标为「源自带」。
+        val bundled = "https://bundled.test/epg.xml"
+        assertEquals(
+            "源自带",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = "",
+                bundledUrl = bundled,
+                effectiveUrl = resolveEffectiveEpgUrl("", bundled),
+            ),
+        )
+    }
+
+    @Test
+    fun resolveEpgSourceLabelMarksDefaultWhenUserAndBundledBlank() {
+        // 用户与订阅都未提供时启用内置默认，来源标为「内置默认」（开箱即有节目单）。
+        assertEquals(
+            "内置默认",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = "",
+                bundledUrl = "",
+                effectiveUrl = resolveEffectiveEpgUrl("", ""),
+            ),
+        )
+    }
+
+    @Test
+    fun resolveEpgSourceLabelReturnsUnsetWhenEffectiveUrlBlank() {
+        // 三层都未提供 → effectiveUrl 为空 → 标「未设置」。
+        assertEquals(
+            "未设置",
+            resolveEpgSourceLabel(userConfiguredUrl = "", bundledUrl = "", effectiveUrl = ""),
+        )
+    }
+
     private fun c(cdn: String) = PlatformLiveStreamCandidate(cdn = cdn, protocol = "flv", url = "https://$cdn.test/live")
     private fun resolved(candidates: List<PlatformLiveStreamCandidate>, active: Int) = ResolvedPlatformLiveStream(
         channelId = "ch",

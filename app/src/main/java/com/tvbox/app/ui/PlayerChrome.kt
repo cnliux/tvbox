@@ -330,6 +330,12 @@ internal data class PlayerChromeData(
      * 不依赖「此刻是否有节目」——深夜空档不会误报为无）。主判定字段。
      */
     val hasEpg: Boolean = false,
+    /**
+     * 当前实际生效的 EPG 源地址及来源标签（供「信息」面板展示地址存在性）。
+     * 仅电视直播页传入；点播/平台直播传 null（默认），不渲染这两行。
+     */
+    val epgUrl: String? = null,
+    val epgSourceLabel: String? = null,
 )
 
 /** 能力清单：这一页支持哪些控件；共享层不再判断“是点播还是直播”。 */
@@ -1318,6 +1324,10 @@ internal fun playerInfoRows(
     epgStale: Boolean = false,
     /** 该频道是否存在节目单数据（主判定）；false 时不渲染 EPG 行（点播页默认）。 */
     hasEpg: Boolean = false,
+    /** 当前实际生效的 EPG 源地址；电视直播页传入，其余页 null（默认）不渲染。 */
+    epgUrl: String? = null,
+    /** EPG 源来源标签（用户配置 / 源自带 / 内置默认 / 未设置）；与 [epgUrl] 同进同出。 */
+    epgSourceLabel: String? = null,
 ): List<PlayerInfoRow> {
     val decoder = info?.decoderName?.takeIf { it.isNotBlank() }
     val actualKind = decoder?.let(::decoderKindLabel)
@@ -1327,8 +1337,13 @@ internal fun playerInfoRows(
     val audioFallback = decoderStrategy != DecoderStrategy.Auto &&
         DecoderTrackKind.Audio in fallbackKinds
     return buildList {
-        // 直播节目单：仅在「该频道有节目单数据」(hasEpg) 时渲染（点播页保持 false，不出现该行）。
-        // 显示「是否存在节目单地址/数据」——有则列当前/下一档作佐证，深夜空档也不会误报为无。
+        // 直播节目单：仅在「该频道有节目单数据」(hasEpg) 时渲染当前/下一档；
+        // EPG 源地址行则只要 epgUrl 非空就展示——无节目单的频道也能看到地址存在性。
+        // epgUrl/epgSourceLabel 由电视直播页传入；点播/平台直播传 null，两行均不出现。
+        if (!epgUrl.isNullOrBlank() || !epgSourceLabel.isNullOrBlank()) {
+            add(PlayerInfoRow("EPG 源", epgSourceLabel ?: "—"))
+            add(PlayerInfoRow("EPG 地址", middleEllipsis(epgUrl ?: "—")))
+        }
         if (hasEpg) {
             val nowLabel = epgNow?.let { if (epgStale) "$it~" else it } ?: "—"
             val nextLabel = epgNext ?: "—"
@@ -1375,11 +1390,13 @@ private fun PlayerInfoPanel(
     epgNext: String? = null,
     epgStale: Boolean = false,
     hasEpg: Boolean = false,
+    epgUrl: String? = null,
+    epgSourceLabel: String? = null,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val rows = remember(info, decoderStrategy, fallbackKinds, epgNow, epgNext, epgStale, hasEpg) {
-        playerInfoRows(info, decoderStrategy, fallbackKinds, epgNow, epgNext, epgStale, hasEpg)
+    val rows = remember(info, decoderStrategy, fallbackKinds, epgNow, epgNext, epgStale, hasEpg, epgUrl, epgSourceLabel) {
+        playerInfoRows(info, decoderStrategy, fallbackKinds, epgNow, epgNext, epgStale, hasEpg, epgUrl, epgSourceLabel)
     }
     val listState = rememberLazyListState()
     val firstFocus = remember { FocusRequester() }
@@ -1897,6 +1914,8 @@ private fun PlayerChromeMobilePanel(
                         data.epgNext,
                         data.epgStale,
                         data.hasEpg,
+                        data.epgUrl,
+                        data.epgSourceLabel,
                     ) {
                         playerInfoRows(
                             data.playbackInfo,
@@ -1906,6 +1925,8 @@ private fun PlayerChromeMobilePanel(
                             data.epgNext,
                             data.epgStale,
                             data.hasEpg,
+                            data.epgUrl,
+                            data.epgSourceLabel,
                         )
                     }
                     // 信息行可能超出一屏：限制高度并允许滚动，不挤压上方的进度与功能行。

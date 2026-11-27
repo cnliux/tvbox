@@ -63,3 +63,22 @@ fun resolveEffectiveEpgUrl(
 ): String =
     userConfiguredUrl.trim().ifBlank { bundledUrl.trim().ifBlank { defaultUrl.trim() } }
 
+/**
+ * 当前生效 EPG 地址的来源标签（供电视直播「信息」面板展示地址存在性）。
+ * 判定规则与 [resolveEffectiveEpgUrl] 一致：用户配置 > 源自带 > 内置默认 > 未设置。
+ * 纯函数，可被 JVM 单测覆盖；[effectiveUrl] 传空表示解析链整体返回空（三层都未提供）。
+ */
+fun resolveEpgSourceLabel(
+    userConfiguredUrl: String,
+    bundledUrl: String,
+    effectiveUrl: String,
+    defaultUrl: String = DEFAULT_EPG_URL,
+): String = when {
+    effectiveUrl.isBlank() -> "未设置"
+    userConfiguredUrl.trim().isNotBlank() -> "用户配置"
+    bundledUrl.trim().isNotBlank() && effectiveUrl == bundledUrl.trim() -> "源自带"
+    effectiveUrl == defaultUrl.trim() -> "内置默认"
+    // 兜底：非空但既非用户/源自带也未命中内置默认（理论不可达），按地址存在展示。
+    else -> "已配置"
+}
+

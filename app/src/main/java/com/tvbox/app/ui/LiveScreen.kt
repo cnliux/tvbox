@@ -82,6 +82,8 @@ import com.tvbox.app.domain.PlaybackBufferMonitor
 import com.tvbox.app.domain.findLiveChannelsByNumberPrefix
 import com.tvbox.app.domain.probeLiveLineMimeType
 import com.tvbox.app.domain.resolveLiveChannelNumberTarget
+import com.tvbox.app.domain.resolveEffectiveEpgUrl
+import com.tvbox.app.domain.resolveEpgSourceLabel
 import com.tvbox.app.ui.components.EmptyState
 import com.tvbox.app.ui.components.ErrorState
 import com.tvbox.app.ui.components.PageSurface
@@ -918,6 +920,13 @@ private fun LivePlayerScreen(
                 epgNow = actions.liveEpgNow(currentChannel)?.title,
                 epgNext = actions.liveEpgNext(currentChannel)?.title,
                 epgStale = actions.liveEpgStale(),
+                // EPG 源地址与来源标签：让用户在「信息」面板直接看到「当前生效的节目单地址是否存在、来自哪一层」。
+                epgUrl = resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl),
+                epgSourceLabel = resolveEpgSourceLabel(
+                    userConfiguredUrl = state.appSettings.epgUrl,
+                    bundledUrl = state.live.epgBundledUrl,
+                    effectiveUrl = resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl),
+                ),
                 playbackUrls = listOf(
                     PlayerChromeUrl(
                         label = "实际播放地址（播放列表线路）",

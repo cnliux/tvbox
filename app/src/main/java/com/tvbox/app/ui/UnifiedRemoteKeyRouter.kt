@@ -311,7 +311,8 @@ internal class UnifiedRemoteKeyRouter(
         chrome: PlayerChromeState,
     ): Boolean {
         if (!isKeyUp) return false
-        chrome.bump()
+        // 底部按钮面板可见时，方向键交给焦点系统在按钮间移动，不再吞掉去换台/换线路。
+        if (chrome.visible) return false
         return when (action) {
             RemoteKeyAction.DirectionUp -> {
                 // 与电视直播页（LiveRemoteKeyRouter 默认 UP_DOWN_CHANNEL）对齐：↑↓ 换台。
@@ -388,6 +389,10 @@ internal class UnifiedRemoteKeyRouter(
         chrome: PlayerChromeState,
     ): Boolean {
         if (!isKeyUp) return false
+        // 底部按钮面板（chrome.visible）可见时，方向键交给焦点系统在按钮间移动，
+        // 不再被「切房间/切候选」吃掉（此前 isOverlayVisible 只判浮层、不判底部面板，
+        // 导致面板打开后左右键失效、焦点无法落到按钮上）。确认/菜单/设置等动作仍由面板焦点链处理。
+        if (chrome.visible) return false
         if (callbacks.isOverlayVisible()) return false
         return when (action) {
             RemoteKeyAction.DirectionLeft -> {
