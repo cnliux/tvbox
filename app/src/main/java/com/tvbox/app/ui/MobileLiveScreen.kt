@@ -934,6 +934,16 @@ private fun MobileLivePlayerScreen(
     DisposableEffect(Unit) {
         onDispose { actions.cancelLiveChannelLineTest() }
     }
+    // 动态延迟：播放页常驻期间每 10s 静默重测一轮当前频道各线路延迟，
+    // 让线路胶囊上的延迟数字持续反映当前网络。startLiveLineTestRound 不改 lineTesting，
+    // 所以这里不会把「重新测速」按钮锁死，也不会与手动测速互相抢占。
+    LaunchedEffect(state.liveChannelIndex) {
+        actions.startLiveLineTestRound()
+        while (true) {
+            kotlinx.coroutines.delay(10_000L)
+            actions.startLiveLineTestRound()
+        }
+    }
     // 播放信息只在面板打开时采样，关闭即停。
     val diagnostics = rememberPlayerDiagnostics(player, chrome.panel == PlayerPanel.Info)
     var channelBadgeVisible by remember { mutableStateOf(true) }

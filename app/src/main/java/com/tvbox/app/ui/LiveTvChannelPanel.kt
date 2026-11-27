@@ -568,9 +568,13 @@ internal fun LiveLineOverlay(
     onViewUrl: () -> Unit,
 ) {
     val focusRequester = rememberTvFocusRequest(key = Unit, delayMs = 60L, retries = 2)
-    LaunchedEffect(Unit) {
-        // 展开线路即测速：让用户按实际延迟挑线路，而不是逐条点播试错。
-        actions.testLiveChannelLines()
+    // 动态延迟：浮层打开期间每 10s 重测一轮，延迟数字持续反映当前网络，而不是展开时的一次性快照。
+    // testLiveChannelLines 内部按 generation 校验，重入即丢弃上一轮迟到结果，不会串频道。
+    LaunchedEffect(channel) {
+        while (true) {
+            actions.testLiveChannelLines()
+            kotlinx.coroutines.delay(10_000L)
+        }
     }
     // 浮层关闭即停：取消尚未完成的测速，不在后台继续跑。
     DisposableEffect(Unit) {

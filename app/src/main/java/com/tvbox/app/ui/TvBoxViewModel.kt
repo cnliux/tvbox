@@ -2754,20 +2754,29 @@ class TvBoxViewModel(
     }
 
     /**
-     * 对当前频道的所有线路发起首包测速，结果写入 [LiveUiState.lineLatencies]。
+     * 对当前频道的所有线路发起首包测速（手动触发），结果写入 [LiveUiState.lineLatencies]。
      *
      * 在线路浮层展开时调用：让用户按实际延迟挑线路，而不是逐条点播试错。
-     * 并发执行但每条独立失败（超时记 null），不阻塞播放，也不改变当前线路。
+     * 置 [LiveUiState.lineTesting] 让 UI 显示「测速中…」，并在进行中忽略重复点击。
      */
     fun testLiveChannelLines() {
+        if (_state.value.live.lineTesting) return
+        _state.update { it.copy(live = it.live.copy(lineTesting = true)) }
+        startLiveLineTestRound()
+    }
+
+    /**
+     * 测速核心：并发测量当前频道所有线路首包延迟，逐条发布不可变快照。
+     * 手动（[testLiveChannelLines]）与浮层自动重测共用；本函数不改 [LiveUiState.lineTesting]，
+     * 由调用方决定是否显示「测速中…」（自动重测静默刷新，不抢占手动按钮状态）。
+     */
+    fun startLiveLineTestRound() {
         val state = _state.value
         val channel = state.live.channels.getOrNull(state.live.channelIndex) ?: return
         val lines = channel.lines
         if (lines.isEmpty()) return
-        if (state.live.lineTesting) return
         val identity = currentLiveLineTestIdentity(state) ?: return
-        // 新频道/新测速：清掉上一轮结果，避免旧延迟误导用户。
-        _state.update { it.copy(live = it.live.copy(lineTesting = true, lineLatencies = emptyMap())) }
+        // 动态重测：保留上一轮延迟数值，本轮逐条覆盖（不清空），UI 不会闪回「测速中」。
         liveLineTestJob?.cancel()
         val generation = ++liveLineTestGeneration
         liveLineTestIdentity = identity
@@ -2775,7 +2784,8 @@ class TvBoxViewModel(
             TLog.i(VM_LIVE_LOG_TAG) { "【线路测速】开始 channel=${channel.name}, lines=${lines.size}" }
             // async 并发，但写入统一加锁并发布不可变快照：避免多个协程同时写 mutableMap
             // 让 UI 读到半成品，同时保留「单条完成即写入」的浮层体验与原顺序。
-            val results = LinkedHashMap<String, Long?>()
+            // 重测轮次：先把上一轮结果继承进来，本轮逐条覆盖，未完成的条目在 UI 上仍保留旧值。
+            val results = LinkedHashMap<String, Long?>(state.live.lineLatencies)
             val resultsMutex = Mutex()
             fun publish(snapshot: Map<String, Long?>) {
                 // 切台/换源后的迟到结果一律丢弃，不覆盖新频道数据。
