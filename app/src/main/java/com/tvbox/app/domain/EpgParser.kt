@@ -29,8 +29,13 @@ private const val EPG_MAX_DEPTH = 2
 /** XMLTV 不使用 DTD：DOCTYPE 与 ENTITY 声明一律拒绝（实体攻击 / XXE 防护）。 */
 private const val EPG_MAX_ENTITY_DECLARATIONS = 0
 
-/** DOCTYPE 声明（大小写不敏感）命中即拒绝整份 EPG：DTD 可声明外部实体，存在 XXE 风险。 */
-private val EPG_DOCTYPE_REGEX = Regex("<!\\s*DOCTYPE", RegexOption.IGNORE_CASE)
+/**
+ * 真实 DTD 内部子集起始（`<!DOCTYPE tv [ ... ]>`）：内部子集才能声明一般实体/参数实体，
+ * 是 XXE 与 billion laughs 的唯一载体，命中即拒绝。
+ * 而常见的 `<!DOCTYPE tv SYSTEM "xmltv.dtd">`（外部 DTD，无内部子集、无 ENTITY）不含任何实体声明，
+ * 正则解析器既不会联网取 DTD 也不会展开实体，放行它可兼容 51zmt 等真实 EPG 源。
+ */
+private val EPG_DOCTYPE_INTERNAL_SUBSET_REGEX = Regex("<!\\s*DOCTYPE[^>]*?\\[", RegexOption.IGNORE_CASE)
 
 /** ENTITY 声明（大小写不敏感）：billion laughs 类嵌套实体在正则前后都可能造成回溯爆炸。 */
 private val EPG_ENTITY_REGEX = Regex("<!\\s*ENTITY", RegexOption.IGNORE_CASE)
@@ -121,12 +126,14 @@ private val EPG_SPACES_REGEX = Regex("\\s+")
  * 空或非法值跟随设备默认时区。带显式偏移的时间戳不受影响。
  */
 fun parseXmltvEpg(raw: String, timezoneId: String = ""): Map<String, List<EpgProgram>> {
-    // 入口即拒绝 DTD：DOCTYPE / ENTITY 命中任一即返回空表（与本项目「解析失败返回部分结果」风格一致），
-    // 绝不展开实体，避免 XXE 与 billion laughs 在后续正则匹配中造成回溯爆炸。
+    // 入口即拒绝 DTD 内部子集与 ENTITY：二者才是 XXE / billion laughs 的载体，
+    // 绝不展开实体，避免在后续正则匹配中造成回溯爆炸。
     // L5：扫描前先剥离 XML 注释与 CDATA——注释里提到 `<!DOCTYPE`、CDATA 中出现 `<!DOCTYPE`
     // 字面属正常内容，不应触发整份拒绝；真实 DTD 声明仍在正文，XXE 防护不变。
+    // 兼容性：仅带外部 DTD（`<!DOCTYPE tv SYSTEM "xmltv.dtd">`，无内部子集、无 ENTITY）的
+    // 真实 EPG 源（如 51zmt）放行——正则解析既不联网取 DTD 也不展开实体，无 XXE 风险。
     val dtdScanText = stripXmlCommentsAndCdata(raw)
-    if (EPG_DOCTYPE_REGEX.containsMatchIn(dtdScanText)) return emptyMap()
+    if (EPG_DOCTYPE_INTERNAL_SUBSET_REGEX.containsMatchIn(dtdScanText)) return emptyMap()
     if (EPG_ENTITY_REGEX.containsMatchIn(dtdScanText)) return emptyMap()
     val channelsById = linkedMapOf<String, MutableList<String>>()
     val programmes = linkedMapOf<String, MutableList<EpgProgram>>()

@@ -37,14 +37,29 @@ fun nextRotatedPlatformLiveCandidate(
 }
 
 /**
+ * 内置默认 EPG 节目单地址（开箱即用的兜底）。
+ *
+ * 选用 51zmt（老张的 EPG）Gitee 镜像：标准 XMLTV `.xml.gz` 压缩格式，DIYP影音 / 百川 / TVBox
+ * 等 IPTV 播放器通用；国内 CDN 稳定，含央视 / 卫视 / 地方台。优先级最低——用户在设置里填的
+ * 地址、订阅自带地址（M3U url-tvg）都优先生效，仅在两者都为空时启用。
+ * 用户可在设置中更改此地址（改小写或清空后由解析链回落）。
+ */
+const val DEFAULT_EPG_URL = "https://gitee.com/taksssss/tv/raw/main/epg/51zmt.xml.gz"
+
+/**
  * EPG 地址解析。优先级：
  * 1. 用户在设置里配置的 EPG 地址——[userConfiguredUrl]；
  * 2. 订阅自带（M3U 头部 url-tvg / x-tvg-url / tvg-url / url-epg）——[bundledUrl]，仅当用户未配置时使用；
- * 3. 都没有则返回空串（不使用内置兜底，节目单显示「暂无节目单」但不阻塞播放）。
+ * 3. 内置默认节目单——[defaultUrl]，用户与订阅都未提供时兜底，保证开箱即有节目单。
+ * 4. [defaultUrl] 也为空则返回空串（节目单显示「暂无节目单」但不阻塞播放）。
  *
- * 空/空白串视为未提供：用户配置为空时回落订阅自带，订阅自带也空则返回空串。
+ * 空/空白串视为未提供：用户配置为空时回落订阅自带，再回落内置默认。
  * 入参与返回值都会做 trim 处理。
  */
-fun resolveEffectiveEpgUrl(userConfiguredUrl: String, bundledUrl: String): String =
-    userConfiguredUrl.trim().ifBlank { bundledUrl.trim() }
+fun resolveEffectiveEpgUrl(
+    userConfiguredUrl: String,
+    bundledUrl: String,
+    defaultUrl: String = DEFAULT_EPG_URL,
+): String =
+    userConfiguredUrl.trim().ifBlank { bundledUrl.trim().ifBlank { defaultUrl.trim() } }
 

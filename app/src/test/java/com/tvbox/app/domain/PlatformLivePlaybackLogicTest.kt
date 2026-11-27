@@ -55,16 +55,31 @@ class PlatformLivePlaybackLogicTest {
 
     @Test
     fun resolveEffectiveEpgUrlFallsBackToBundledWhenUserBlank() {
-        // 用户未配置（空串/空白）时回落到订阅自带的 url-tvg。
+        // 用户未配置（空串/空白）时回落到订阅自带的 url-tvg，不启用内置默认。
         assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("  ", " https://bundled.test/epg.xml "))
         assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("", "https://bundled.test/epg.xml"))
     }
 
     @Test
-    fun resolveEffectiveEpgUrlReturnsEmptyWhenBothBlank() {
-        // 两者都未提供时返回空串（不使用内置兜底，节目单显示「暂无节目单」但不阻塞播放）。
-        assertEquals("", resolveEffectiveEpgUrl("", ""))
-        assertEquals("", resolveEffectiveEpgUrl("   ", "  "))
+    fun resolveEffectiveEpgUrlFallsBackToDefaultWhenUserAndBundledBlank() {
+        // 用户与订阅都未提供时启用内置默认节目单（开箱即有节目单）。
+        assertEquals(
+            "https://default.test/epg.xml.gz",
+            resolveEffectiveEpgUrl("", "", defaultUrl = "https://default.test/epg.xml.gz"),
+        )
+        assertEquals(DEFAULT_EPG_URL, resolveEffectiveEpgUrl("", ""))
+        // 订阅自带优先于内置默认。
+        assertEquals(
+            "https://bundled.test/epg.xml",
+            resolveEffectiveEpgUrl(" ", " https://bundled.test/epg.xml ", defaultUrl = "https://default.test/epg.xml.gz"),
+        )
+    }
+
+    @Test
+    fun resolveEffectiveEpgUrlReturnsEmptyWhenDefaultAlsoBlank() {
+        // 三者皆空才返回空串（节目单显示「暂无节目单」但不阻塞播放）。
+        assertEquals("", resolveEffectiveEpgUrl("", "", defaultUrl = ""))
+        assertEquals("", resolveEffectiveEpgUrl("   ", "  ", defaultUrl = "  "))
     }
 
     private fun c(cdn: String) = PlatformLiveStreamCandidate(cdn = cdn, protocol = "flv", url = "https://$cdn.test/live")

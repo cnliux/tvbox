@@ -145,6 +145,27 @@ class EpgHardeningTest {
     }
 
     @Test
+    fun `外部 DOCTYPE 无内部子集不误杀真实EPG源`() {
+        // 真实 EPG 源（51zmt / 112114 / erw）普遍带 `<!DOCTYPE tv SYSTEM "xmltv.dtd">`：
+        // 外部 DTD、无内部子集、无 ENTITY 声明。正则解析器既不联网取 DTD 也不展开实体，
+        // 放行它才能解析这类源；内置默认节目单正是此格式。
+        val externalDoctype = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE tv SYSTEM "xmltv.dtd">
+            <tv generator-info-name="老张的EPG">
+              <channel id="1"><display-name lang="zh">CCTV1</display-name></channel>
+              <programme start="20261127000730 +0800" stop="20261127003900 +0800" channel="1">
+                <title>今日说法</title>
+              </programme>
+            </tv>
+        """.trimIndent()
+
+        val result = parseXmltvEpg(externalDoctype)
+        assertEquals("外部 DOCTYPE 的合法源应正常解析", 1, result["CCTV1"].orEmpty().size)
+        assertEquals("今日说法", result["CCTV1"].orEmpty().first().title)
+    }
+
+    @Test
     fun `L5 注释与CDATA内的DOCTYPE字面不误杀合法EPG`() {
         // 注释里提到 <!DOCTYPE、CDATA 中出现 <!DOCTYPE 字面：都是正文内容，不是真实 DTD 声明，
         // 不应触发整份拒绝。真实 DTD（正文声明）仍由 XXE fixture 用例保证拒绝。
