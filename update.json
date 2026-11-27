@@ -2,22 +2,22 @@
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.51/20051",
+   "createdBy": "1.0.52/20052",
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.51/20051",
-  "versionCode": 20051,
-  "versionName": "1.0.51",
-  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
-  "apkSha256": "a5de4b01c7512dfb801be9b4c3f816eb0259bd60bcf3f053c3f444a60c1c5d8f",
-  "apkSize": 27013424,
+   "createdBy": "1.0.52/20052",
+  "versionCode": 20052,
+  "versionName": "1.0.52",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
+  "apkSha256": "bfbd8a6aac6cea1e9e9d1d7e94406c9e6ed810133150ef5e5ffc6f1c7f752d48",
+  "apkSize": 27013428,
   "force": false,
   "changelog": [],
-  "release_highlights": ["支持 `.xml.gz` 压缩节目单（国内常见 EPG 源）；", "手机直播控制栏新增「线路」按钮，竖屏也能一键换线路；", "节目单刷新提速：从最长 7 天更新一次，改为 6 小时自动刷新；"],
+  "release_highlights": ["播放器控制栏所有按钮的焦点框现在随主题换宽换色（默认主题蓝、影院主题金），与全站按钮观感一致；", "切换主题后，播放/暂停/换线路等按钮的遥控器焦点框不再保持固定细边框。"],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.51/juhe-video-v1.0.51.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk"
   ]
 }
