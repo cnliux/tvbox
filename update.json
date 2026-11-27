@@ -1,19 +1,23 @@
-{
+ {
    "schema": 1,
    "kind": "update_manifest",
    "minReader": 1,
-   "createdBy": "1.0.52/20052",
-   "versionCode": 20052,
-   "versionName": "1.0.52",
-   "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
-   "apkSha256": "bfbd8a6aac6cea1e9e9d1d7e94406c9e6ed810133150ef5e5ffc6f1c7f752d48",
-   "apkSize": 27013428,
+   "createdBy": "1.0.53/20053",
+   "schema": 1,
+   "kind": "update_manifest",
+   "minReader": 1,
+   "createdBy": "1.0.53/20053",
+  "versionCode": 20053,
+  "versionName": "1.0.53",
+  "apkUrl": "https://github.com/cnliux/tvbox/releases/download/v1.0.53/juhe-video-v1.0.53.apk",
+  "apkSha256": "4e40d5f6a73614105a9933985c5c38e5af1d94e8adee8603fc53ad2e80eed254",
+  "apkSize": 27029812,
   "force": false,
   "changelog": [],
-  "release_highlights": ["播放器控制栏所有按钮的焦点框现在随主题换宽换色（默认主题蓝、影院主题金），与全站按钮观感一致；", "切换主题后，播放/暂停/换线路等按钮的遥控器焦点框不再保持固定细边框。"],
+  "release_highlights": [],
   "apkMirrors": [
-    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
-    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk",
-    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.52/juhe-video-v1.0.52.apk"
+    "https://gh-proxy.org/https://github.com/cnliux/tvbox/releases/download/v1.0.53/juhe-video-v1.0.53.apk",
+    "https://gh-proxy.com/https://github.com/cnliux/tvbox/releases/download/v1.0.53/juhe-video-v1.0.53.apk",
+    "https://ghproxy.net/https://github.com/cnliux/tvbox/releases/download/v1.0.53/juhe-video-v1.0.53.apk"
   ]
 }
