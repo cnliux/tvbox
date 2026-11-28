@@ -211,8 +211,8 @@ func siteTuningFor(site string) flvSiteTuning {
 			shortSessionMs:         4000,
 			maxShortStreak:         0,
 			// 短段退避可被手机端调试按钮运行时调整（默认仍为 2s/8s）。
-			shortBackoffBase: time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
-			shortBackoffMax:  time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
+			shortBackoffBase:     time.Duration(GetDouyuShortBackoffBaseMs()) * time.Millisecond,
+			shortBackoffMax:      time.Duration(GetDouyuShortBackoffMaxMs()) * time.Millisecond,
 			timelineContinuous:   true,
 			timelineAuto:         false,
 			leaseAware:           true,
@@ -699,13 +699,16 @@ func newFlvProxy(service *Service, site, roomID string, candidateIndex int, init
 		},
 	}
 	proxy.pacerTargetMs.Store(GetPacerTargetBufferMs())
+	// goroutine 启动前完成全部字段初始化：HTTP handler（ServeHTTP）会读
+	// diagEnabled/pacerEnabled，若在 go serve 之后赋值会与之形成 data race
+	// （-race 门禁实测在 Serve 接到请求时抓到）。
+	proxy.diagEnabled = os.Getenv("TVBOX_LIVE_PROXY_DIAG") != ""
+	proxy.pacerEnabled = os.Getenv("TVBOX_LIVE_PROXY_NO_PACER") == ""
 	registerFlvProxy(proxy)
 	proxy.server = &http.Server{Handler: proxy}
 	go proxy.runGuarded("serve", func() {
 		_ = proxy.server.Serve(listener)
 	})
-	proxy.diagEnabled = os.Getenv("TVBOX_LIVE_PROXY_DIAG") != ""
-	proxy.pacerEnabled = os.Getenv("TVBOX_LIVE_PROXY_NO_PACER") == ""
 	go proxy.runGuarded("run", proxy.run)
 	return proxy, nil
 }
