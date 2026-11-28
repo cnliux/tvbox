@@ -65,6 +65,9 @@ jobs:
             grep -E -A5 "^(Read|Write|Previous read|Previous write) at" go-race-test.log | head -60 | while IFS= read -r line; do
               if [ -n "$line" ]; then echo "::error::$line"; fi
             done
+            grep -E "_test\.go:" go-race-test.log | head -25 | while IFS= read -r line; do
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done
             grep -E "^--- FAIL:|^FAIL" go-race-test.log | head -10 | while IFS= read -r line; do
               if [ -n "$line" ]; then echo "::error::$line"; fi
             done
