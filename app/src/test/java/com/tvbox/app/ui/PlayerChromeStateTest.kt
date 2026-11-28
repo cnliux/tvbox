@@ -1,7 +1,10 @@
 package com.tvbox.app.ui
 
+import androidx.compose.ui.focus.FocusRequester
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -9,6 +12,67 @@ import org.junit.Test
  * 锁定四页控件状态归并后的显隐与返回层级，防止把点播/直播的旧分叉带回来。
  */
 class PlayerChromeStateTest {
+
+    // ── 问题 8：面板触发控件回焦（panelTriggerFocus）状态机 ──
+
+    @Test
+    fun openPanelWithTriggerStoresItForCloseTimeRestore() {
+        val state = PlayerChromeState()
+        val trigger = FocusRequester()
+        state.openPanel(PlayerPanel.Episodes, trigger)
+        assertEquals(PlayerPanel.Episodes, state.panel)
+        assertSame(trigger, state.panelTriggerFocus)
+    }
+
+    @Test
+    fun openPanelWithoutTriggerLeavesItNull() {
+        val state = PlayerChromeState()
+        state.openPanel(PlayerPanel.Info)
+        assertNull(state.panelTriggerFocus)
+
+        // 按键入口（LiveRemoteKeyRouter 等）不带触发件；关闭时回焦回落播放键/根节点。
+        state.openPanel(PlayerPanel.Settings, null)
+        assertNull(state.panelTriggerFocus)
+    }
+
+    @Test
+    fun keyInitiatedOpenClearsStaleTriggerFromEarlierButtonOpen() {
+        val state = PlayerChromeState()
+        state.openPanel(PlayerPanel.Episodes, FocusRequester())
+        state.openPanel(PlayerPanel.Audio) // 按键再开一个面板：旧触发件必须失效
+        assertNull(state.panelTriggerFocus)
+    }
+
+    @Test
+    fun closePanelKeepsTriggerPendingForDeclarativeRestore() {
+        // 契约：closePanel() 只复位面板；触发件由组合层 LaunchedEffect 声明式消费，
+        // 状态层不能提前清掉，否则关闭当帧读不到回焦目标。
+        val state = PlayerChromeState()
+        val trigger = FocusRequester()
+        state.openPanel(PlayerPanel.Subtitle, trigger)
+        state.closePanel()
+        assertEquals(PlayerPanel.None, state.panel)
+        assertSame(trigger, state.panelTriggerFocus)
+    }
+
+    @Test
+    fun restoreFocusIsNoOpInTouchModeAndDoesNotConsumeTrigger() {
+        val state = PlayerChromeState(touchMode = true)
+        val trigger = FocusRequester()
+        state.openPanel(PlayerPanel.Info, trigger)
+        state.restoreFocus() // 手机端没有 D-pad：不抢焦、不清触发件
+        assertSame(trigger, state.panelTriggerFocus)
+    }
+
+    @Test
+    fun autoHideRestoresRootFocusInTvModeWithoutThrowing() {
+        val state = PlayerChromeState(initialVisible = true)
+        state.hide()
+        assertFalse(state.visible)
+        // 自动隐藏统一回根节点（JVM 无组合时 requestFocus 返回 false，runCatching 兜底不抛）。
+        state.hide()
+        assertFalse(state.visible)
+    }
 
     @Test
     fun autoHideOnlyWhilePlayingWithoutOverlays() {

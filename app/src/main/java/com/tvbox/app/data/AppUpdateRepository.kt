@@ -186,7 +186,18 @@ class DefaultAppUpdateRepository(
         val manifestPath = updateChannel.manifestPath ?: return@withContext null
         val candidates = orderedCandidates(buildOtaManifestCandidates(path = manifestPath))
         var lastError: Throwable? = null
-        for (candidate in candidates) {
+        // 问题 40：清单多 CDN 串行逐个试，单源 10s 超时，全挂时最坏 70s+ 才给出结果。
+        // 给整批加总预算：预算耗尽后剩余候选快速跳过（fail fast），
+        // 单源超时动态收缩为 min(单源超时, 剩余预算)，保证整个检查在有限时间内收尾。
+        val budgetExhaustedAtMs = System.currentTimeMillis() + MANIFEST_CHECK_TOTAL_BUDGET_MS
+        for ((index, candidate) in candidates.withIndex()) {
+            val remainingMs = budgetExhaustedAtMs - System.currentTimeMillis()
+            if (remainingMs <= 0L) {
+                lastError = IOException(
+                    "清单检查总预算 ${MANIFEST_CHECK_TOTAL_BUDGET_MS}ms 耗尽，跳过剩余 ${candidates.size - index} 个候选",
+                )
+                break
+            }
             val startedAtMs = System.currentTimeMillis()
             try {
                 // 明文清单地址一律拒绝；异常走统一失败处理（记录并尝试下一条线路）。
@@ -198,7 +209,7 @@ class DefaultAppUpdateRepository(
                     .build()
                 val raw = try {
                     // 单源整体超时：慢 CDN 快速失败切下一个，避免启动检查被单个挂起连接长时间拖住。
-                    withTimeout(MANIFEST_CHECK_TIMEOUT_MS) {
+                    withTimeout(remainingMs.coerceAtMost(MANIFEST_CHECK_TIMEOUT_MS)) {
                         client.executeCancellable(request, NetworkRetryPolicy.IdempotentGet)
                             .use { response -> response.body.string() }
                     }
@@ -992,6 +1003,9 @@ private const val DOWNLOAD_TIMEOUT_MS = 15L * 60L * 1000L
 
 /** 单个更新清单源的整体超时：慢 CDN 快速失败并切换下一个，不让启动检查长时间挂起。 */
 private const val MANIFEST_CHECK_TIMEOUT_MS = 10_000L
+
+// 问题 40：清单候选整批总预算（单源 10s × 7 候选最坏 70s → 上限 25s 收尾）。
+private const val MANIFEST_CHECK_TOTAL_BUDGET_MS = 25_000L
 
 /** 探活整体上限：前若干候选并发测速，整体留足余量后强制结束（结果回退中性排序）。 */
 private const val CDN_PROBE_OVERALL_TIMEOUT_MS = 4_000L

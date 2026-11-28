@@ -65,6 +65,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -142,6 +143,12 @@ internal class PlayerChromeState(
     /** 页面级浮层（频道列表、线路浮层等）打开时暂停自动隐藏。 */
     var holdVisible by mutableStateOf(false)
     val rootFocus = FocusRequester()
+    /**
+     * 触发面板打开的按钮的 FocusRequester；面板关闭后回焦到该按钮而非播放键。
+     * 用 [mutableStateOf] 使组合层可感知「是否有触发控件」，从而在有关触发件时
+     * 抑制播放键的自动抢焦；按键打开的面板（triggerFocus=null）保持原有播放键回焦行为。
+     */
+    var panelTriggerFocus by mutableStateOf<FocusRequester?>(null)
 
     fun bump() {
         visible = true
@@ -153,8 +160,9 @@ internal class PlayerChromeState(
         interaction++
     }
 
-    fun openPanel(target: PlayerPanel) {
+    fun openPanel(target: PlayerPanel, triggerFocus: FocusRequester? = null) {
         panel = target
+        panelTriggerFocus = triggerFocus
         bump()
     }
 
@@ -170,6 +178,8 @@ internal class PlayerChromeState(
 
     fun restoreFocus() {
         // 触摸模式下不抢焦：手机触摸用户没有遥控器，焦点框落在画面上反而是视觉噪音。
+        // 面板关闭后的「回焦到触发按钮」由组合层（PlayerChromeTv 的 restore 副作用）负责，
+        // 这里只处理自动隐藏等场景，统一回播放器根节点。
         if (touchMode) return
         runCatching { rootFocus.requestFocus() }
     }
@@ -636,10 +646,38 @@ private fun PlayerChromeTv(
 ) {
     val buttonScroll = rememberScrollState()
     var progressFocused by remember { mutableStateOf(false) }
-    val playFocus = rememberTvFocusRequest(key = state.panel, enabled = state.panel == PlayerPanel.None)
+    // 面板触发按钮的回焦请求器必须活在本函数顶层：面板打开时整条控制栏退出组合，
+    // 按钮内部的 remember 会被回收；放顶层后引用跨开关面板保持同一，关闭时才能请求回原按钮。
+    val episodesBtnFocus = remember { FocusRequester() }
+    val sourcesBtnFocus = remember { FocusRequester() }
+    val audioBtnFocus = remember { FocusRequester() }
+    val subtitleBtnFocus = remember { FocusRequester() }
+    val skipBtnFocus = remember { FocusRequester() }
+    val infoBtnFocus = remember { FocusRequester() }
+    val urlBtnFocus = remember { FocusRequester() }
+    // 有关触发件（按钮打开的面板）时抑制播放键自动抢焦，由下面的 restore 副作用回触发按钮；
+    // 无触发件（按键打开 / 初进）保持原有行为——面板关闭后回播放键。
+    val hasTriggerFocus = state.panelTriggerFocus != null
+    val playFocus = rememberTvFocusRequest(
+        key = state.panel,
+        enabled = state.panel == PlayerPanel.None && !hasTriggerFocus,
+    )
     var preview by remember { mutableStateOf<Float?>(null) }
     var lastSeekTime by remember { mutableStateOf(Long.MIN_VALUE) }
     val compact = LocalConfiguration.current.screenWidthDp < 800
+    // 关闭面板后回焦到「触发面板打开的那个按钮」（问题 8）：
+    // 只在存在触发控件时接管；带重试——关闭瞬间控制栏刚重新组合，
+    // 首帧 requestFocus 可能早于按钮节点挂载而失败。
+    // 恢复成功后不清 panelTriggerFocus：清了会让 playFocus 重新启用并抢回播放键，
+    // 触发按钮被保留为「最后触发控件」，直到下次 openPanel 覆盖。
+    LaunchedEffect(state.panel, hasTriggerFocus) {
+        if (state.panel != PlayerPanel.None || !hasTriggerFocus) return@LaunchedEffect
+        val trigger = state.panelTriggerFocus ?: return@LaunchedEffect
+        for (attempt in 0..4) {
+            withFrameNanos { }
+            if (runCatching { trigger.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
     Box(modifier.fillMaxSize()) {
         // 面板打开时整条控制栏不参与组合：从根上杜绝背景按钮抢焦点，
         // 关闭面板后 playFocus 会按 state.panel 变化重新请求焦点。
@@ -650,7 +688,9 @@ private fun PlayerChromeTv(
                 .windowInsetsPadding(WindowInsets.safeDrawing).testTag("player_controls"),
             color = Color.Transparent, contentColor = Color.White,
         ) {
-            Column(Modifier.padding(horizontal = 24.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            // 问题 36：WindowInsets.safeDrawing 不含 TV overscan 区（盒子可放大 5% 显示），
+            // 底部再加 12dp overscan 安全 padding，避免开 overscan 时控制栏被裁切。
+            Column(Modifier.padding(start = 24.dp, top = 12.dp, end = 24.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     buildString {
                         append(data.title)
@@ -754,21 +794,28 @@ private fun PlayerChromeTv(
                     if (!compact) Spacer(Modifier.weight(1f))
                     if (capabilities.cast) ControlButton(capabilities.castLabel ?: "投屏", { actions.onCast(); state.interaction++ },
                         primary = capabilities.castActive)
-                    if (capabilities.episodes) ControlButton("选集", { state.openPanel(PlayerPanel.Episodes) })
-                    if (capabilities.sources) ControlButton("线路", { state.openPanel(PlayerPanel.Sources) })
+                    if (capabilities.episodes) ControlButton("选集", { state.openPanel(PlayerPanel.Episodes, episodesBtnFocus) },
+                        Modifier.focusRequester(episodesBtnFocus))
+                    if (capabilities.sources) ControlButton("线路", { state.openPanel(PlayerPanel.Sources, sourcesBtnFocus) },
+                        Modifier.focusRequester(sourcesBtnFocus))
                     if (capabilities.lines) ControlButton("线路", { actions.onOpenLinePanel(); state.interaction++ })
                     if (capabilities.favorite) ControlButton(capabilities.favoriteLabel ?: "收藏", { actions.onFavorite(); state.interaction++ })
                     if (capabilities.speed) ControlButton("${formatSpeedLabel(data.speed)}x", {
                         actions.onSelectSpeed(nextPlaybackSpeed(data.speed)); actions.onInteraction()
                     })
-                    if (capabilities.audioTracks) ControlButton("音轨", { state.openPanel(PlayerPanel.Audio); actions.onInteraction() })
-                    if (capabilities.subtitleTracks) ControlButton("字幕", { state.openPanel(PlayerPanel.Subtitle); actions.onInteraction() })
+                    if (capabilities.audioTracks) ControlButton("音轨", { state.openPanel(PlayerPanel.Audio, audioBtnFocus); actions.onInteraction() },
+                        Modifier.focusRequester(audioBtnFocus))
+                    if (capabilities.subtitleTracks) ControlButton("字幕", { state.openPanel(PlayerPanel.Subtitle, subtitleBtnFocus); actions.onInteraction() },
+                        Modifier.focusRequester(subtitleBtnFocus))
                     if (capabilities.resize) ControlButton("画面", {
                         actions.onSelectResize(nextVideoScaleMode(data.resizeMode)); actions.onInteraction()
                     })
-                    if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip); actions.onInteraction() })
-                    if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info) })
-                    if (capabilities.url) ControlButton("地址", { state.openPanel(PlayerPanel.Url) })
+                    if (capabilities.skip) ControlButton("跳过", { state.openPanel(PlayerPanel.Skip, skipBtnFocus); actions.onInteraction() },
+                        Modifier.focusRequester(skipBtnFocus))
+                    if (capabilities.info) ControlButton("信息", { state.openPanel(PlayerPanel.Info, infoBtnFocus) },
+                        Modifier.focusRequester(infoBtnFocus))
+                    if (capabilities.url) ControlButton("地址", { state.openPanel(PlayerPanel.Url, urlBtnFocus) },
+                        Modifier.focusRequester(urlBtnFocus))
                     if (capabilities.settings) ControlButton("设置", { actions.onSettings(); state.interaction++ })
                     // 页面按钮（线路、弹幕、调试监控等）与内置按钮同排同样式。
                     capabilities.actions.forEach { action ->

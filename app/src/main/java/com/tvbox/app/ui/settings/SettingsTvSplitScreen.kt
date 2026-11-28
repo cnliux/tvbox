@@ -9,6 +9,7 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -48,15 +49,19 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -72,6 +77,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 import com.tvbox.app.BuildConfig
 import com.tvbox.app.data.checkAllLiveSources
 import com.tvbox.app.domain.DangerousAction
@@ -196,41 +202,51 @@ private fun TvSettingsLanding(
     state: TvBoxUiState,
     onCategoryClick: (TvSettingCategory) -> Unit,
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
-        Text(
-            text = "设置",
-            color = TvColors.TextPrimary,
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(start = 48.dp, end = 48.dp, top = 40.dp),
-        )
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            item { TvSettingsHeroCard(state = state) }
-            item {
-                // 分类卡片：固定小集合（5 个，两列 3 行）。此前两版都有「显示不正常」：
-                //   ① 嵌套 LazyVerticalGrid + 写死 .height(420dp) → 末行「关于」被挤出可视区；
-                //   ② FlowRow + fillMaxWidth(0.5f) → 每卡填满 50% 宽，两张 = 100% + 12dp
-                //      spacedBy 间距 > 可用宽度，第二张被迫换行，永远一行一张、右侧大片空白
-                //      （真机 192.168.1.45 横屏实测确认）。
-                // 改为确定性两列 Row + weight(1f)：weight 会把 spacedBy 间距计入分配，两卡
-                // 必然等宽同行，奇数行补 Spacer 占位保持左列宽度一致，高度仍固定不裁剪。
-                val rows = TvSettingCategory.entries.chunked(2)
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    rows.forEach { rowCategories ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            rowCategories.forEach { category ->
-                                TvCategoryCard(
-                                    category = category,
-                                    onClick = { onCategoryClick(category) },
-                                    modifier = Modifier.weight(1f),
-                                )
-                            }
-                            if (rowCategories.size == 1) {
-                                Spacer(modifier = Modifier.weight(1f))
+    // 问题 44：双列是全屏宽电视的默认形态；分屏/小窗/竖屏盒子按「实际可用宽度」切单列，
+    // 避免 132dp 高卡片在小窗口里被 48dp 边距挤到不可读。用 BoxWithConstraints 实测窗口宽
+    // （LocalConfiguration.screenWidthDp 反映的是屏幕而非分屏窗口，不可靠）。
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        // constraints.maxWidth 是像素 Int：把 900dp 阈值按当前 density 换成像素后比较（分屏窗口实测宽度）。
+        val density = LocalDensity.current
+        val twoColumnMinWidthPx = with(density) { 900.dp.toPx() }
+        val columns = if (constraints.maxWidth >= twoColumnMinWidthPx) 2 else 1
+        Column(modifier = Modifier.fillMaxSize()) {
+            Text(
+                text = "设置",
+                color = TvColors.TextPrimary,
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(start = 48.dp, end = 48.dp, top = 40.dp),
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 20.dp, bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                item { TvSettingsHeroCard(state = state) }
+                item {
+                    // 分类卡片：固定小集合（5 个，两列 3 行 / 窄窗单列 5 行）。此前两版都有「显示不正常」：
+                    //   ① 嵌套 LazyVerticalGrid + 写死 .height(420dp) → 末行「关于」被挤出可视区；
+                    //   ② FlowRow + fillMaxWidth(0.5f) → 每卡填满 50% 宽，两张 = 100% + 12dp
+                    //      spacedBy 间距 > 可用宽度，第二张被迫换行，永远一行一张、右侧大片空白
+                    //      （真机 192.168.1.45 横屏实测确认）。
+                    // 改为确定性多列 Row + weight(1f)：weight 会把 spacedBy 间距计入分配，各卡
+                    // 必然等宽同行，奇数尾行补 Spacer 占位保持列宽一致，高度仍固定不裁剪。
+                    val rows = TvSettingCategory.entries.chunked(columns)
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        rows.forEach { rowCategories ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                rowCategories.forEach { category ->
+                                    TvCategoryCard(
+                                        category = category,
+                                        onClick = { onCategoryClick(category) },
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
+                                // 双列尾行占位保持左列宽度；单列时唯一卡片取满宽，不补占位。
+                                if (columns == 2 && rowCategories.size == 1) {
+                                    Spacer(modifier = Modifier.weight(1f))
+                                }
                             }
                         }
                     }
@@ -758,6 +774,23 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
     // T6-42 少儿锁 PIN 设置弹窗（开启后未设置 PIN 时自动弹出；「更换」入口随时可用）。
     var showKidsLockSetup by remember { mutableStateOf(false) }
     val kidsLockConfigured = ParentalLock.isConfigured(state.appSettings.parentalLockPin)
+    // 弹窗触发控件的回焦锚点（V7）：PIN 盘关闭后把焦点还给「设置/更换」按钮，
+    // 否则焦点残留在已销毁的弹窗焦点树上，遥控 OK/方向键全部失灵。
+    val kidsLockBtnFocus = remember { FocusRequester() }
+    var kidsLockDialogWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(showKidsLockSetup) {
+        if (showKidsLockSetup) {
+            kidsLockDialogWasOpen = true
+            return@LaunchedEffect
+        }
+        if (!kidsLockDialogWasOpen) return@LaunchedEffect // 初始组合不是「刚关闭」，不抢焦点
+        kidsLockDialogWasOpen = false
+        // 弹窗节点可能尚未移除：逐帧重试直到触发控件可聚焦。
+        for (attempt in 0..4) {
+            withFrameNanos { }
+            if (runCatching { kidsLockBtnFocus.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+        }
+    }
     TvSettingsGroup {
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
@@ -881,6 +914,7 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
                         TvFocusButton(
                             text = if (kidsLockConfigured) "更换" else "设置",
                             onClick = { showKidsLockSetup = true },
+                            modifier = Modifier.focusRequester(kidsLockBtnFocus),
                         )
                     }
                     Switch(
@@ -1526,10 +1560,11 @@ private fun TvFocusButton(
     selected: Boolean = false,
     enabled: Boolean = true,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val shape = RoundedCornerShape(8.dp)
     Box(
-        modifier = Modifier
+        modifier = modifier
             .clip(shape)
             .background(
                 when {

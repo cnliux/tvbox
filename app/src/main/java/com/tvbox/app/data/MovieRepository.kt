@@ -355,7 +355,9 @@ class DefaultMovieRepository(
             // 主源失败：不再静默结束（否则 UI 永久 loading），发一个降级 error 信号，
             // 让调用方展示"获取失败"错误提示。备用源同名匹配依赖主源片名，无法在此继续。
             val primaryLine = try { requireLine(apiLineId) } catch (e: Throwable) { null }
-            trySend(
+            // channelFlow 默认 rendezvous 容量 0：trySend 在收集方没停在 receive() 时直接丢包，
+            // 改挂起 send（收集方取消时正常传播，不丢信号也不无限堆积——更新条数有界 ≤ 线路数）。
+            send(
                 MovieDetailUpdate(
                     movie = Movie(
                         id = id,
@@ -388,7 +390,7 @@ class DefaultMovieRepository(
         val matchedSources = mutableMapOf<String, PlaySource>()
         var completedSources = 1
 
-        trySend(
+        send(
             MovieDetailUpdate(
                 movie = primary.copy(playSources = listOfNotNull(primarySource)),
                 completedSources = completedSources,
@@ -443,7 +445,10 @@ class DefaultMovieRepository(
                                     .mapNotNull { matchedSources[it.id] }
                                     .forEach(::add)
                             }
-                            trySend(
+                            // 挂起 send：rendezvous 通道上 trySend 会在收集方忙于消费上一条时丢包，
+                            // 并发补齐（多源同毫秒完成）时最后一条全量快照可能永久缺失。
+                            // Mutex 允许跨挂起点持有，收集方取消时 send 正常抛 CancellationException。
+                            send(
                                 MovieDetailUpdate(
                                     movie = primary.copy(playSources = sources.ifEmpty { primary.playSources }),
                                     completedSources = completedSources,

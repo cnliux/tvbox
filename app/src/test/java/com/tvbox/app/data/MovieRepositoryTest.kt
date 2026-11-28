@@ -281,6 +281,36 @@ class MovieRepositoryTest {
         assertEquals(0, latest)
     }
 
+    @Test
+    fun probeLatestEpisodeCountCancellationReachesInflightSourceTasks() = runBlocking {
+        // 锁定取消传播：调用方取消（新检查/ViewModel 销毁）时，探测在途的源任务必须被中断释放，
+        // 不能让已取消的检查继续在后台跑满 DETAIL_SOURCE_TIMEOUT_MS。
+        val released = AtomicInteger(0)
+        val primary = line("primary")
+        val repo = repository(listOf(primary), mapOf(
+            primary.baseUrls.single() to fakeApi { _, _, _, _, _, _ ->
+                try {
+                    delay(60_000)
+                    response()
+                } finally {
+                    released.incrementAndGet()
+                }
+            },
+        ))
+
+        var cancelled = false
+        try {
+            withTimeout(80) { repo.probeLatestEpisodeCount("primary", 1, "取消") }
+        } catch (_: CancellationException) {
+            cancelled = true
+        }
+        // 源任务在 IO 线程被中断，稍等 finally 记账。
+        delay(30)
+
+        assertTrue(cancelled)
+        assertEquals(1, released.get())
+    }
+
     private fun repository(
         lines: List<ApiLine>,
         apiByBaseUrl: Map<String, MacCmsApi>,

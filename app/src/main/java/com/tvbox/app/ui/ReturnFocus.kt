@@ -57,12 +57,13 @@ internal fun RestoreGridFocus(focus: ReturnFocus, grid: LazyGridState, items: Li
     // 记录「已成功恢复的 key」而不是一次性布尔：12 次请求全失败时不算已恢复，
     // 同页再次 mark() 换 key 后也能重新定位；配置变更后不会因旧布尔而永久跳过恢复。
     val targetKey = focus.lastKey
-    // 用 items.size 而非 items 列表实例作 key：每次重组都会生成新的 List，若直接用作 key
-    // 只要 restoredKey != targetKey 就会每轮重建 effect、重启 12 次焦点恢复循环（焦点抖动/卡死）。
-    // items 内容本身在 effect 内只读（firstOrNull/minByOrNull），size 足以区分「不同列表」。
-    val itemCount = items.size
-    LaunchedEffect(targetKey, itemCount) {
-        if (itemCount == 0 || targetKey == null || focus.restoredKey == targetKey) return@LaunchedEffect
+    // key 用「内容签名」而非 items 列表实例：每次重组都会生成新的 List 实例，直接作 key 会
+    // 在 restoredKey != targetKey 时每轮重建 effect、重启 12 次恢复循环（焦点抖动/卡死）。
+    // 也不能只用 size：搜索结果换一批、历史刷新后可能条数恰好相同，size 不变 effect 不重建，
+    // 焦点仍落在旧列表坐标系上。首/尾 key + 条数构成稳定内容签名，换列表即变、同列表重组不变。
+    val contentSig = items.firstOrNull()?.first + "|" + items.lastOrNull()?.first + "|" + items.size
+    LaunchedEffect(targetKey, contentSig) {
+        if (items.isEmpty() || targetKey == null || focus.restoredKey == targetKey) return@LaunchedEffect
         val target = items.firstOrNull { it.first == targetKey }
             ?: items.minByOrNull { kotlin.math.abs(it.second - focus.lastIndex) }
             ?: return@LaunchedEffect

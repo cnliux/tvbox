@@ -784,6 +784,19 @@ private fun HomeScreen(
         // T6-42 少儿锁门禁弹窗（Dialog 层，不参与 PageSurface 布局）：
         // 已设 PIN → Verify 模式校验；未设 PIN → Setup 模式引导设置（设置完成后
         // 本次不自动进入受锁目标，防止孩子把「设置 PIN」当成解锁通道）。
+        // 门禁是遥控 4/5 唤出、没有触发按钮；取消/保存成功后留首页时，
+        // 焦点残留在已销毁的弹窗焦点树上，显式拉回此前聚焦的卡片（否则分类行）。
+        var pinGateJustClosed by remember { mutableStateOf(false) }
+        LaunchedEffect(pinGateJustClosed) {
+            if (!pinGateJustClosed) return@LaunchedEffect
+            pinGateJustClosed = false
+            val savedKey = homeFocus.lastKey
+            for (attempt in 0..12) {
+                withFrameNanos { }
+                if (savedKey != null && homeFocus.request(savedKey)) return@LaunchedEffect
+                if (runCatching { allCategoryFocusRequester.requestFocus() }.getOrDefault(false)) return@LaunchedEffect
+            }
+        }
         pinGate?.let { gate ->
             PinPadDialog(
                 mode = if (ParentalLock.isConfigured(state.appSettings.parentalLockPin)) {
@@ -802,8 +815,12 @@ private fun HomeScreen(
                 onPinHashSaved = { hash ->
                     actions.updateAppSettings { s -> s.copy(parentalLockPin = hash) }
                     pinGate = null
+                    pinGateJustClosed = true
                 },
-                onDismiss = { pinGate = null },
+                onDismiss = {
+                    pinGate = null
+                    pinGateJustClosed = true
+                },
             )
         }
     }

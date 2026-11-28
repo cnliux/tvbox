@@ -52,8 +52,8 @@ val hasReleaseSigning = listOf(
 ).all { it.isNotBlank() }
 
 // 版本号统一定义：defaultConfig 与 Release APK 文件名共用。
-val TVBOX_VERSION_NAME = "1.0.59"
-val TVBOX_VERSION_CODE = 20059
+val TVBOX_VERSION_NAME = "1.0.60"
+val TVBOX_VERSION_CODE = 20060
 
 android {
     namespace = "com.tvbox.app"
@@ -552,6 +552,91 @@ val lintTodo = tasks.register("lintTodo") {
             "lintTodo 完成：扫描 ${files.size} 个文件，$warnCount 处无域前缀标记（warn），$failCount 处 P0- 前缀（fail）",
         )
     }
+}
+
+// T5-36 / 问题39：Go 循环内 time.After / defer 静态门禁（GoTimerAudit 的 Gradle 版门禁）。
+// 纯文本扫描生产 Go 源（排除 *_test.go：有界循环 + `defer wg.Done()` 惯用法会误报），
+// 与基线 tools/go_timer_audit_baseline.txt 比对——基线之外（新增）的违规 fail，
+// 存量债（flv_proxy.go）在基线内不阻塞；修复存量后删对应基线行。
+// 基线更新：python3 tools/go_timer_audit.py --root . --bootstrap
+val goTimerAudit = tasks.register("goTimerAudit") {
+    group = "verification"
+    description = "扫描 platform_live_go 生产源循环内 time.After/defer，基线外新增违规 fail"
+    val root = rootProject.rootDir
+    val goDir = root.resolve("platform_live_go")
+    val baselineFile = root.resolve("tools/go_timer_audit_baseline.txt")
+    inputs.dir(goDir)
+    inputs.file(baselineFile)
+    outputs.upToDateWhen { false }
+    doLast {
+        // 与 app/src/main/java/com/tvbox/app/domain/GoTimerAudit.kt 同一启发式（逐行大括号深度跟踪 for 块）。
+        fun scanFindings(text: String): List<Int> {
+            val lines = text.lineSequence().toList()
+            val findings = mutableListOf<Int>()
+            var loopDepth = -1
+            var braceDepth = 0
+            lines.forEachIndexed { index, raw ->
+                val line = raw.trim()
+                val opensFor = Regex("""\bfor\b[^@]*\{""").containsMatchIn(line)
+                val before = braceDepth
+                braceDepth += line.count { it == '{' } - line.count { it == '}' }
+                if (opensFor && loopDepth < 0) loopDepth = before + 1
+                if (loopDepth >= 0 && braceDepth < loopDepth) loopDepth = -1
+                if (loopDepth < 0) return@forEachIndexed
+                if (line.contains("time.After(") || Regex("""\bdefer\s+""").containsMatchIn(line)) {
+                    findings.add(index + 1)
+                }
+            }
+            return findings
+        }
+        val perFile = linkedMapOf<String, Int>()
+        if (goDir.isDirectory) {
+            goDir.walkTopDown()
+                .filter { it.isFile && it.extension == "go" && !it.name.endsWith("_test.go") }
+                .forEach { file ->
+                    val count = scanFindings(file.readText()).size
+                    if (count > 0) perFile[file.relativeTo(root).path.replace('\\', '/')] = count
+                }
+        }
+        val baseline: Map<String, Int> = if (baselineFile.exists()) {
+            baselineFile.readLines().asSequence()
+                .map { it.trim() }
+                .filter { it.isNotEmpty() && !it.startsWith("#") }
+                .associate { entry ->
+                    val idx = entry.lastIndexOf(':')
+                    if (idx > 0 && entry.substring(idx + 1).toIntOrNull() != null) {
+                        entry.substring(0, idx) to entry.substring(idx + 1).toInt()
+                    } else {
+                        entry to 1
+                    }
+                }
+        } else {
+            logger.warn("goTimerAudit：基线缺失（$baselineFile），所有违规按新增处理")
+            emptyMap()
+        }
+        val newViolations = perFile.filter { (file, count) ->
+            val allowed = baseline[file]
+            allowed == null || count > allowed
+        }
+        if (newViolations.isNotEmpty()) {
+            throw GradleException(
+                "goTimerAudit 失败：${newViolations.size} 个 Go 文件存在基线外的循环内 time.After/defer 新增违规：\n" +
+                    newViolations.entries.joinToString("\n") { "  ${it.key}: ${it.value}" } +
+                    "\n请修复（循环内 time.After 改 time.NewTicker；循环内 defer 移到作用域函数），" +
+                    "或 python3 tools/go_timer_audit.py --root . --bootstrap 更新基线并提交。",
+            )
+        }
+        val resolved = baseline.keys.filter { perFile[it] == null }
+        if (resolved.isNotEmpty()) {
+            logger.warn("goTimerAudit：基线中 ${resolved.size} 条已清零，建议删除：${resolved.joinToString("、")}")
+        }
+        logger.lifecycle("goTimerAudit 完成：生产 Go 源 ${perFile.size} 个文件在基线内，无基线外新增违规")
+    }
+}
+
+// 接入 preBuild：任何 assemble/compile 前先过门禁（问题39：此前该审计只在单测里以「已知债」方式调用，CI 全绿挡不住新增违规）。
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(goTimerAudit)
 }
 
 // S4-23：依赖锁定——同一 commit 今天和三个月后构建出的依赖必须一致。

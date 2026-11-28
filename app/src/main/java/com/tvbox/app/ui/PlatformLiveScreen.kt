@@ -1593,12 +1593,20 @@ private fun PlatformLivePlayerScreen(
     val lineListState = rememberLazyListState()
     val lineFocusRequester = remember { FocusRequester() }
     var focusedCandidateIndex by remember { mutableStateOf(-1) }
+    // 回焦门控：只有「浮层刚关闭」这一次转变才把焦点拉回播放器根。
+    // 该 effect 同时以候选线切换/列表大小变化为 key——浮层关闭后若后台自动换线
+    // 再次触发，无条件的抢焦会把焦点从用户已移到的控件（如控制栏按钮）上夺走。
+    var lineControlWasOpen by remember { mutableStateOf(false) }
     LaunchedEffect(showLineControl, stream?.safeActiveCandidateIndex, stream?.candidates?.size) {
         if (!showLineControl) {
-            // 关闭浮层后焦点回到播放器根节点，避免焦点遗留在已移除的候选行上。
-            runCatching { playerFocusRequester.requestFocus() }
+            if (lineControlWasOpen) {
+                lineControlWasOpen = false
+                // 关闭浮层后焦点回到播放器根节点，避免焦点遗留在已移除的候选行上。
+                runCatching { playerFocusRequester.requestFocus() }
+            }
             return@LaunchedEffect
         }
+        lineControlWasOpen = true
         val target = stream?.safeActiveCandidateIndex ?: 0
         val bounded = target.coerceIn(0, (stream?.candidates?.lastIndex ?: 0).coerceAtLeast(0))
         lineListState.scrollToItem(bounded)

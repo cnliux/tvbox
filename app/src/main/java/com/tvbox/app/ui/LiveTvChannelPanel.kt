@@ -166,56 +166,65 @@ internal fun LiveChannelOverlayPanel(
                 .windowInsetsPadding(WindowInsets.safeDrawing)
                 .then(panelFocus.anchor)
                 .onPreviewKeyEvent { event ->
-                    if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
                     // 浮层打开期间方向键全部由本节点解释，避免外层再触发换台。
+                    // 问题 17：方向键 KeyDown/KeyUp 两段都消费——此前 KeyDown 放行，Compose 默认焦点
+                    // 移动会在「子节点不可聚焦 + 虚拟焦点」模型上尝试挪焦点，低端机或首按方向键时
+                    // 可能失焦/高亮漂移；虚拟焦点移动仍执行在 KeyUp，与外层遥控键路由时序保持一致。
                     when (event.key) {
-                        ComposeKey.DirectionLeft -> {
-                            if (groupIndex > 0) groupIndex--
-                            onInteraction()
-                            true
-                        }
-                        ComposeKey.DirectionRight -> {
-                            if (groupIndex < groups.lastIndex) groupIndex++
-                            onInteraction()
-                            true
-                        }
-                        ComposeKey.DirectionUp -> {
-                            // #281：频道列表已到顶再按上，焦点移到分组标题；分组标题按确认折叠/展开。
-                            if (focusZone == LivePanelFocusZone.Channels && focusedIndex == 0) {
-                                focusZone = LivePanelFocusZone.Groups
-                            } else if (visibleChannels.isNotEmpty()) {
-                                focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
-                            }
-                            onInteraction()
-                            true
-                        }
-                        ComposeKey.DirectionDown -> {
-                            if (focusZone == LivePanelFocusZone.Groups) {
-                                focusZone = LivePanelFocusZone.Channels
-                            } else if (visibleChannels.isNotEmpty()) {
-                                focusedIndex = (focusedIndex + 1).coerceAtMost(visibleChannels.lastIndex)
-                            }
-                            onInteraction()
-                            true
-                        }
-                        ComposeKey.DirectionCenter, ComposeKey.Enter -> {
-                            if (focusZone == LivePanelFocusZone.Groups) {
-                                // #281：TV 焦点在分组标题按确认键折叠/展开（「全部」不参与折叠）。
-                                if (groupIndex > 0) {
-                                    val groupName = groups[groupIndex]
-                                    collapsedGroups = if (groupName in collapsedGroups) {
-                                        collapsedGroups - groupName
-                                    } else {
-                                        collapsedGroups + groupName
-                                    }
-                                    focusZone = LivePanelFocusZone.Channels
+                        ComposeKey.DirectionLeft, ComposeKey.DirectionRight,
+                        ComposeKey.DirectionUp, ComposeKey.DirectionDown -> {
+                            if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent true
+                            when (event.key) {
+                                ComposeKey.DirectionLeft -> {
+                                    if (groupIndex > 0) groupIndex--
+                                    onInteraction()
                                 }
-                            } else {
-                                val picked = visibleChannels.getOrNull(focusedIndex)
-                                if (picked != null) onChannelPicked(picked.index) else onInteraction()
+                                ComposeKey.DirectionRight -> {
+                                    if (groupIndex < groups.lastIndex) groupIndex++
+                                    onInteraction()
+                                }
+                                ComposeKey.DirectionUp -> {
+                                    // #281：频道列表已到顶再按上，焦点移到分组标题；分组标题按确认折叠/展开。
+                                    if (focusZone == LivePanelFocusZone.Channels && focusedIndex == 0) {
+                                        focusZone = LivePanelFocusZone.Groups
+                                    } else if (visibleChannels.isNotEmpty()) {
+                                        focusedIndex = (focusedIndex - 1).coerceAtLeast(0)
+                                    }
+                                    onInteraction()
+                                }
+                                ComposeKey.DirectionDown -> {
+                                    if (focusZone == LivePanelFocusZone.Groups) {
+                                        focusZone = LivePanelFocusZone.Channels
+                                    } else if (visibleChannels.isNotEmpty()) {
+                                        focusedIndex = (focusedIndex + 1).coerceAtMost(visibleChannels.lastIndex)
+                                    }
+                                    onInteraction()
+                                }
+                                else -> return@onPreviewKeyEvent false
                             }
                             true
                         }
+                        ComposeKey.DirectionCenter, ComposeKey.Enter ->
+                            if (event.type == KeyEventType.KeyUp) {
+                                if (focusZone == LivePanelFocusZone.Groups) {
+                                    // #281：TV 焦点在分组标题按确认键折叠/展开（「全部」不参与折叠）。
+                                    if (groupIndex > 0) {
+                                        val groupName = groups[groupIndex]
+                                        collapsedGroups = if (groupName in collapsedGroups) {
+                                            collapsedGroups - groupName
+                                        } else {
+                                            collapsedGroups + groupName
+                                        }
+                                        focusZone = LivePanelFocusZone.Channels
+                                    }
+                                } else {
+                                    val picked = visibleChannels.getOrNull(focusedIndex)
+                                    if (picked != null) onChannelPicked(picked.index) else onInteraction()
+                                }
+                                true
+                            } else {
+                                false
+                            }
                         else -> false
                     }
                 }
@@ -608,21 +617,26 @@ internal fun LiveLineOverlay(
                         onClose()
                         return@onPreviewKeyEvent true
                     }
-                    if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent false
+                    // 问题 17：上下方向键 KeyDown/KeyUp 两段都消费——KeyDown 放行会触发 LazyColumn 内
+                    // 默认焦点移动，与 pickedIndex 虚拟高亮脱节；高亮移动仍执行在 KeyUp（与频道列表浮层一致）。
                     when (event.key) {
-                        ComposeKey.DirectionUp -> {
-                            pickedIndex = (pickedIndex - 1).coerceAtLeast(0)
+                        ComposeKey.DirectionUp, ComposeKey.DirectionDown -> {
+                            if (event.type != KeyEventType.KeyUp) return@onPreviewKeyEvent true
+                            if (event.key == ComposeKey.DirectionUp) {
+                                pickedIndex = (pickedIndex - 1).coerceAtLeast(0)
+                            } else {
+                                pickedIndex = (pickedIndex + 1).coerceAtMost(channel.lines.lastIndex)
+                            }
                             true
                         }
-                        ComposeKey.DirectionDown -> {
-                            pickedIndex = (pickedIndex + 1).coerceAtMost(channel.lines.lastIndex)
-                            true
-                        }
-                        ComposeKey.DirectionCenter, ComposeKey.Enter -> {
-                            actions.selectLiveLine(pickedIndex)
-                            onClose()
-                            true
-                        }
+                        ComposeKey.DirectionCenter, ComposeKey.Enter ->
+                            if (event.type == KeyEventType.KeyUp) {
+                                actions.selectLiveLine(pickedIndex)
+                                onClose()
+                                true
+                            } else {
+                                false
+                            }
                         else -> false
                     }
                 }
