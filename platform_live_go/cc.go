@@ -549,6 +549,10 @@ func ccQualityTiers(room map[string]interface{}) []ccTier {
 			continue
 		}
 		priority := map[string]bool{"hs": true, "ks": true, "ali": true, "fws": true, "wy": true}
+		// Go map 迭代顺序随机：同一档的 hs/ks 若按 range 顺序 append，默认线路会
+		// 每次 Resolve 都变——CI 上 shuffle/调度不同即偶发「首选 hs」断言失败，
+		// 线上则表现为同一房间每次进入的默认线路抖动。按固定优先级排序消除不确定性。
+		priorityRank := map[string]int{"hs": 0, "ks": 1, "ali": 2, "fws": 3, "wy": 4}
 		preferred := []LiveStreamCandidate{}
 		other := []LiveStreamCandidate{}
 		seen := map[string]bool{}
@@ -570,6 +574,22 @@ func ccQualityTiers(room map[string]interface{}) []ccTier {
 				other = append(other, candidate)
 			}
 		}
+		sortBy := func(list []LiveStreamCandidate, rank map[string]int) {
+			sort.SliceStable(list, func(i, j int) bool {
+				ri, iKnown := rank[strings.ToLower(list[i].CDN)]
+				rj, jKnown := rank[strings.ToLower(list[j].CDN)]
+				switch {
+				case iKnown && jKnown && ri != rj:
+					return ri < rj
+				case iKnown != jKnown:
+					return iKnown
+				default:
+					return list[i].CDN < list[j].CDN
+				}
+			})
+		}
+		sortBy(preferred, priorityRank)
+		sortBy(other, nil)
 		candidates := append(preferred, other...)
 		if len(candidates) == 0 {
 			continue

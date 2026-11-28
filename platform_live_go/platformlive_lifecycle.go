@@ -103,12 +103,16 @@ func (m *LifecycleManager) Init(ctx context.Context) error {
 	m.mu.Lock()
 	select {
 	case <-m.stopCh:
-		// 已关闭（CAS 已挡住并发初始化，理论不可达）。
+		// 初始化期间已被 Close：不再重置 stopCh，交给 Close 收尾。
 	default:
 		close(m.stopCh)
 	}
 	m.mu.Unlock()
-	m.state.Store(int32(StateReady))
+	// 必须用 CAS 而非 Store：并发 Close 会把状态推进到 Stopping/Stopped，
+	// 若这里无条件 Store(Ready) 会把已关闭状态覆盖回 Ready——CI 偶发
+	// 「并发结束后状态应为 Stopped，实际 Ready」即此竞态，线上则表现为
+	// 退出后 lifecycle 假就绪、后续请求被误放行。
+	m.state.CompareAndSwap(int32(StateInitializing), int32(StateReady))
 	return nil
 }
 
@@ -171,8 +175,12 @@ func (m *LifecycleManager) UnregisterRequest(id string, generation uint64) {
 func (m *LifecycleManager) Close(timeout time.Duration) error {
 	// CAS: Ready -> Stopping，只有赢家执行关闭流程。
 	if !m.state.CompareAndSwap(int32(StateReady), int32(StateStopping)) {
-		// 初始化中强制关闭：走同一套排空逻辑。
-		if !m.state.CompareAndSwap(int32(StateInitializing), int32(StateStopping)) {
+		// 初始化中或未初始化：同样推进到 Stopping。关闭是终态语义——
+		// 若 Close 先于 Init 发生（状态仍 Uninitialized）而在此返回错误，
+		// 后续 Init 就能 CAS 到 Initializing→Ready，把已关闭实例「复活」。
+		// CI 偶发「并发结束后状态应为 Stopped，实际 Ready」即由此路径产生。
+		if !m.state.CompareAndSwap(int32(StateInitializing), int32(StateStopping)) &&
+			!m.state.CompareAndSwap(int32(StateUninitialized), int32(StateStopping)) {
 			switch m.State() {
 			case StateStopped:
 				return nil

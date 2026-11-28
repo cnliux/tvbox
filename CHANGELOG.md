@@ -4,6 +4,22 @@
 > **修了什么**（技术条目，给贡献者看）、**已知问题**（敢写出来，信任倍增器）。
 > 版本号标题必须保持 `## vX.Y.Z` 开头，`release.yml` 会校验它与 tag 一致。
 
+## v1.0.56 - 2026-11-28 —「修复老张 EPG 读不出 + 消除 CI 偶发失败」
+
+**你会感觉到**：
+>- 内置默认节目单（老张的 EPG / 51zmt `.xml.gz`）恢复正常：此前 gzip 节目单从未被真正解压，导致直播页节目单长期空白；
+>- GitHub CI 的随机红叉大幅减少：两个偶发的 Go 单测竞态已修复，构建不再因 shuffle 顺序「看运气」失败。
+
+**修了什么**：
+>- **老张 EPG 读取失败（根因）**：`EpgRepository.isGzip()` 用 `data[1].toInt() == 0x8B` 探测 gzip magic，但 Kotlin `Byte` 有符号，`0x8B` 作为字节实际是 `-117`，该比较恒为 false——`.xml.gz` 节目单始终被当明文 UTF-8 解码成乱码、解析出空节目单。改用 `and 0xFF` 无符号比较；UTF-8 BOM 三字节探测有同样问题，一并修正。补 3 条 JVM 回归测试（真实 gzip 字节 + BOM + 解析出节目）。
+>- **CI 偶发失败（竞态 1）**：`cc.go` 展开网易 CC 同一画质档的 CDN 线路时按 map 迭代顺序 append，而 Go map 顺序随机，导致「首选 hs」断言在 shuffle 下偶发失败、线上默认线路抖动。改为按固定 CDN 优先级（hs/ks/ali/fws/wy）稳定排序。
+>- **CI 偶发失败（竞态 2）**：`LifecycleManager.Init` 收尾用 `State.Store(Ready)` 无条件覆盖状态，并发 `Close` 已推进到 Stopping/Stopped 时会被改回 Ready；且 `Close` 在 Uninitialized 状态直接返回错误、留下可被后续 `Init` 复活的窗口。改用 CAS 保护，并让 `Close` 从 Uninitialized 也推进到终态 Stopped。压测 150 次并发用例 0 失败。
+>- **发布清单去重**：`release.yml` 生成 `update.json` 时重复写了 `schema`/`kind`/`minReader`/`createdBy` 四组键，删除重复段落，避免第三方工具按首值解析时的歧义。
+
+**已知问题**：
+>- DIYP 专用按频道查询接口（`?ch=&date=`）与本项目「单地址批量拉取」模型不同，暂不支持。
+>- 焦点/双端适配类修复仍需真机验证。
+
 ## v1.0.55 - 2026-11-27 —「直播信息面板展示 EPG 源地址 + 遥控面板焦点修复」
 
 **你会感觉到**：
