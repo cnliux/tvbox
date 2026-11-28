@@ -50,8 +50,21 @@ jobs:
         env:
           CGO_ENABLED: "1"
         run: |
+          set -o pipefail
           go vet ./...
-          go test -race -shuffle=on -count=1 ./...
+          go test -race -shuffle=on -count=1 ./... 2>&1 | tee go-race-test.log
+
+      # -race 失败时把 DATA RACE / FAIL 关键行输出为 annotation：
+      # 无仓库管理员权限也能从 check-run API 读到具体竞态位置，不必下载 job 日志。
+      - name: Diagnose Go race failures
+        if: failure()
+        working-directory: platform_live_go
+        run: |
+          if [ -f go-race-test.log ]; then
+            grep -E "WARNING: DATA RACE|--- FAIL:|panic:|^FAIL" go-race-test.log | head -30 | while IFS= read -r line; do
+              echo "::error::$line"
+            done
+          fi
 
       - name: Restore platformlive AAR cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
