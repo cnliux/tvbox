@@ -1,0 +1,5 @@
+# Go 循环内 time.After/defer 已知债基线（T5-36 / 问题39）
+# 格式：<相对 go 路径>:<最大允许条数>；缺省条数为 1。
+# 某文件债务清零后请删除对应行；新增文件出现违规将直接 fail。
+
+platform_live_go/flv_proxy.go:6

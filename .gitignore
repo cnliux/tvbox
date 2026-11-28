@@ -57,6 +57,9 @@ tools/*
 !tools/release_verify.py
 # T-CI 诊断：Unit tests 失败时把失败断言打到 annotation，CI 需要随仓库复用。
 !tools/diagnose_failed_tests.py
+# goTimerAudit 门禁（挂 preBuild）：基线缺失会导致 CI 输入校验直接失败，必须入库。
+!tools/go_timer_audit_baseline.txt
+!tools/go_timer_audit.py
 # T4-30 APK 体积预算：BuildConfigGovernanceTest 在 Linux CI 上读取此文件，
 # tools/* 默认忽略导致 checkout 后缺失而测试失败，必须随仓库入库。
 !tools/apk_budget.json
