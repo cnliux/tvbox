@@ -15,12 +15,12 @@ class OtaCdnTest {
     @Test
     fun apkCandidatesKeepOfficialSourceFirstAndDeriveProxies() {
         val candidates = buildOtaApkCandidates(releaseUrl)
-        assertEquals(4, candidates.size) // 官方源 + 3 个实测可用代理
+        assertEquals(3, candidates.size) // 官方源 + 2 条实测完整返回 APK 的代理（ghproxy.net 因残缺已移除）
         assertEquals("官方源", candidates.first().label)
         assertEquals(releaseUrl, candidates.first().url)
         assertEquals("https://gh-proxy.org/$releaseUrl", candidates[1].url)
         assertEquals("https://gh-proxy.com/$releaseUrl", candidates[2].url)
-        assertEquals("https://ghproxy.net/$releaseUrl", candidates[3].url)
+        assertFalse(candidates.any { it.url.contains("ghproxy.net") })
         assertTrue(candidates.all { it.url.startsWith("https://") })
         assertEquals(candidates.size, candidates.distinctBy { it.id }.size)
     }
@@ -41,7 +41,7 @@ class OtaCdnTest {
         assertEquals("官方源", candidates[0].label)
         assertEquals(mirror, candidates[1].url)
         assertEquals("https://gh-proxy.org/$releaseUrl", candidates[2].url)
-        assertEquals(5, candidates.size) // 官方源 + mirror + 3 个代理（gh-proxy.org 与显式镜像去重）
+        assertEquals(4, candidates.size) // 官方源 + mirror + 2 条代理（gh-proxy.org 与显式镜像去重）
         assertEquals("gh-proxy.com", candidates[3].id)
         assertFalse(candidates.any { it.url.startsWith("http://") })
         assertEquals(1, candidates.count { it.url == mirror })
@@ -113,14 +113,13 @@ class OtaCdnTest {
             "origin" to 2_000L,
             "gh-proxy.org" to 900L,
             "gh-proxy.com" to 150L, // 最快
-            "ghproxy.net" to 500L,
         )
         val ranked = rankOtaCdnCandidates(
             candidates, emptyMap(), nowMs = 1_000L, latencyMs = latencyMs,
         )
         assertEquals("gh-proxy.com", ranked.first().id)
         assertEquals("origin", ranked.last().id)
-        assertEquals(listOf("gh-proxy.com", "ghproxy.net", "gh-proxy.org", "origin"), ranked.map { it.id })
+        assertEquals(listOf("gh-proxy.com", "gh-proxy.org", "origin"), ranked.map { it.id })
     }
 
     @Test
@@ -319,5 +318,21 @@ class OtaCdnTest {
         val text = summarizeOtaCdnFailures(attempts)
         assertTrue(text.contains("下载长时间无进展"))
         assertFalse(text.contains("github.com"))
+    }
+
+    @Test
+    fun badRangeStitchedApkIsRetryableAndMapsToVerifyFailureText() {
+        // 回归：gh-proxy 的 Range 续传可拼出「长度对但 SHA-256 错」的坏包。
+        // 系统 DownloadManager 校验失败后走自愈降级（app 内下载器从头重下），
+        // 若最终仍失败，失败分类必须允许换线路，且文案归到「安装包校验未通过」。
+        // 只有 verifyUpdateApk 硬失败 + 此处正确归因，用户才不会静默装上坏包。
+        val badApk = IOException("安装包校验失败，请重新下载")
+        assertEquals(OtaCdnFailureKind.RetryOnAnotherCdn, classifyOtaDownloadFailure(badApk))
+        assertEquals("安装包校验未通过，请重新下载", otaFailureReason(badApk.message))
+        val summary = summarizeOtaCdnFailures(
+            listOf(OtaCdnAttempt("gh-proxy.org", badApk.message), OtaCdnAttempt("ghproxy.net", "更新下载失败：HTTP 404")),
+        )
+        assertTrue(summary.contains("安装包校验未通过"))
+        assertFalse(summary.contains("github.com"))
     }
 }

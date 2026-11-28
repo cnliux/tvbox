@@ -270,8 +270,7 @@ jobs:
             "release_highlights": $HIGHLIGHTS,
             "apkMirrors": [
               "https://gh-proxy.org/$APK_URL",
-              "https://gh-proxy.com/$APK_URL",
-              "https://ghproxy.net/$APK_URL"
+              "https://gh-proxy.com/$APK_URL"
             ]
           }
           ENDJSON

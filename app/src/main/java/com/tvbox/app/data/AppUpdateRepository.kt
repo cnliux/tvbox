@@ -477,9 +477,26 @@ class DefaultAppUpdateRepository(
                 if (lastProgress != progress) { onProgress(progress); lastProgress = progress }
                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
                     val apk = File(currentTask.filePath)
-                    verifyUpdateApk(apk, update.apkSize, update.apkSha256)
-                    onProgress(100)
-                    return apk
+                    // 关键修复（v1.0.59）：系统 DownloadManager 的断点续传在 gh-proxy 等代理下
+                    // 可能被拼出「长度对但 SHA-256 错」的坏包。此前这条路径校验失败直接抛错换 CDN，
+                    // 从未走过 app 内下载器的「删坏包 + 禁 Range 从头重下 + 再校验」自愈——这正是
+                    // 用户始终看到「安装包校验未通过」的根因。既然包已坏，降级到自带完整自愈的
+                    // app 内下载器在同一线路重下一次；仍失败才由上层换 CDN。
+                    val verified = runCatching { verifyUpdateApk(apk, update.apkSize, update.apkSha256) }
+                    if (verified.isSuccess) {
+                        onProgress(100)
+                        return apk
+                    }
+                    android.util.Log.w(
+                        "TVBoxUpdate",
+                        "System downloader produced bad APK, degrading to self-healing app downloader: ${logSafeText(verified.exceptionOrNull()?.message)}",
+                    )
+                    // 清理系统任务与坏包，避免残留半成品被 app 内下载器误判为可复用。
+                    runCatching { if (currentTask.id > 0) downloadManager?.remove(currentTask.id) }
+                    cleanupDownloadFiles(currentTask.filePath)
+                    currentTask = currentTask.copy(id = 0L, appDownloader = true)
+                    downloadMutex.withLock { saveTask(currentTask) }
+                    return downloadInApp(currentTask, onProgress)
                 }
                 delay(750)
             }

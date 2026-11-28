@@ -17,17 +17,17 @@ import java.io.IOException
 
 /**
  * 默认用于 GitHub Release APK 的代理 CDN（按优先级排列）。
- * 2026-11-16 全量实测后重排：
- * - `gh-proxy.org` 为 gh-proxy.com 官方新域名（2025-11 起启用），2MB/2.5s，最快，置顶；
- * - `gh-proxy.com` 旧域名仍可用，2MB/8.8s，保留为第二候选；
- * - `ghproxy.net` 可用但偏慢（2MB/15s），留作兜底；
- * - 已移除 `ghfast.top`（30s 仅 720KB，20MB APK 实际下不完）、`ghproxy.link` 与
- *   `cf.ghproxy.cn`（HTTP 200 但返回 HTML 页面，非 APK）。
+ * 2026-11-28 重排：
+ * - `gh-proxy.org` 为 gh-proxy.com 官方新域名，实测完整返回 27MB 包且 SHA-256 与清单一致，置顶；
+ * - `gh-proxy.com` 旧域名同样实测完整正确，保留为第二候选；
+ * - 已移除 `ghproxy.net`：2026-11-28 实测下载 v1.0.58 APK 到 11.5MB 即连接中断（缺 15MB），
+ *   HTTP 层却未报错，拼出的包长度/校验都对不上，是「安装包校验未通过」反复出现的直接来源。
+ *   残缺线路上无论重试还是断点续传都拿不到完整包，留着只会消耗重试预算并误导健康度排序。
+ * - 已移除 `ghfast.top`（30s 仅 720KB）、`ghproxy.link` 与 `cf.ghproxy.cn`（HTTP 200 但返回 HTML 页面）。
  */
 val DEFAULT_OTA_APK_CDN_HOSTS: List<String> = listOf(
     "gh-proxy.org",
     "gh-proxy.com",
-    "ghproxy.net",
 )
 
 /** 连续失败的降权冷却时间：超过后惩罚衰减到 20%，给线路重新尝试的机会。 */
