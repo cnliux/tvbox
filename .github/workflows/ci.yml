@@ -72,6 +72,14 @@ jobs:
             done
           fi
 
+      - name: Upload Go quality log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-quality-log
+          path: platform_live_go/go-race-test.log
+          if-no-files-found: warn
+
       - name: Restore platformlive AAR cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
