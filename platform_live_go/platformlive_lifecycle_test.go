@@ -186,6 +186,63 @@ func TestLifecycleRegisterFailsWhenNotReady(t *testing.T) {
 	}
 }
 
+// 以下三个用例把 TestLifecycleConcurrentInitCloseRegister 依赖 goroutine 调度
+// 碰运气的交错，改成直接构造临界状态的确定性验证。这样即使 shuffle 换序、
+// CI 机器快慢不同，也必须稳定通过；一旦有人把 CAS 改回 Store 会立刻失败。
+
+// TestLifecycleInitCannotResurrectTerminalState 锁定不变量：
+// 处于 Stopping/Stopped 的实例，Init 必须幂等返回且不把状态改回 Ready。
+// 旧实现收尾用 Store(Ready)，并发 Close 时会把终态覆盖成 Ready（CI 偶发红）。
+func TestLifecycleInitCannotResurrectTerminalState(t *testing.T) {
+	for _, terminal := range []LifecycleState{StateStopping, StateStopped} {
+		m := NewLifecycleManager()
+		m.state.Store(int32(terminal))
+		if err := m.Init(context.Background()); err != nil {
+			t.Fatalf("Init 在 %s 状态应幂等返回 nil，实际 %v", terminal, err)
+		}
+		if got := m.State(); got != terminal {
+			t.Fatalf("Init 不得把 %s 复活为其它状态，实际 %s", terminal, got)
+		}
+	}
+}
+
+// TestLifecycleCloseFromInitializingIsTerminal 锁定不变量：
+// Close 与 Init 交错时，无论 Init 是否处于 Initializing，Close 都必须推进到
+// Stopped，且最后的 Init CAS(Initializing->Ready) 不能再覆盖终态。
+func TestLifecycleCloseFromInitializingIsTerminal(t *testing.T) {
+	m := NewLifecycleManager()
+	m.state.Store(int32(StateInitializing))
+	if err := m.Close(time.Second); err != nil {
+		t.Fatalf("Initializing 状态下 Close 不应报错，实际 %v", err)
+	}
+	if got := m.State(); got != StateStopped {
+		t.Fatalf("Initializing + Close 后状态应为 Stopped，实际 %s", got)
+	}
+	// 模拟迟到的 Init 收尾：CAS 必须失败，状态保持 Stopped。
+	m.state.CompareAndSwap(int32(StateInitializing), int32(StateReady))
+	if got := m.State(); got != StateStopped {
+		t.Fatalf("迟到的 Init 收尾不得覆盖 Close 终态，实际 %s", got)
+	}
+}
+
+// TestLifecycleCloseBeforeInitIsTerminal 锁定不变量：
+// Close 先于 Init 发生（Uninitialized）时必须进入终态，后续 Init 不得复活。
+func TestLifecycleCloseBeforeInitIsTerminal(t *testing.T) {
+	m := NewLifecycleManager()
+	if err := m.Close(time.Second); err != nil {
+		t.Fatalf("Uninitialized 状态下 Close 应成功（关闭是终态语义），实际 %v", err)
+	}
+	if got := m.State(); got != StateStopped {
+		t.Fatalf("Close 后状态应为 Stopped，实际 %s", got)
+	}
+	if err := m.Init(context.Background()); err != nil {
+		t.Fatalf("Close 后 Init 应幂等返回 nil，实际 %v", err)
+	}
+	if got := m.State(); got != StateStopped {
+		t.Fatalf("Close 后 Init 不得复活为 Ready，实际 %s", got)
+	}
+}
+
 func TestLifecycleConcurrentInitCloseRegister(t *testing.T) {
 	m := NewLifecycleManager()
 	var wg sync.WaitGroup

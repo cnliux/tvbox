@@ -196,6 +196,20 @@ func TestCCResolveChoosesBestQualityAndExpandsRelativeCDN(t *testing.T) {
 		!urls["https://cdn.163.com/live/original.flv"] {
 		t.Fatalf("candidates = %+v", stream.Candidates)
 	}
+
+	// 确定性兜底：Go map 迭代顺序每次进程都变。同一份数据连续解析 32 次，
+	// 首选线路必须恒为 hs。若有人回退掉 ccQualityTiers 里的稳定排序，
+	// 这里会以极高概率稳定失败，而不再依赖 CI 恰好抽到坏顺序。
+	for i := 0; i < 32; i++ {
+		again, err := resolver.Resolve(roomID)
+		if err != nil {
+			t.Fatalf("第 %d 次 Resolve error: %v", i, err)
+		}
+		if again.Candidates[0].CDN != "hs" {
+			t.Fatalf("第 %d 次 Resolve 首选线路漂移为 %q，候选=%+v",
+				i, again.Candidates[0].CDN, again.Candidates)
+		}
+	}
 }
 
 func TestCCResolveStreamListRelativeQueries(t *testing.T) {

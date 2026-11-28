@@ -42,11 +42,16 @@ jobs:
 
       # P41：AAR 由 Go 源码编译，CI 必须跑 Go 测试与静态检查，
       # 否则 Go 侧改动（包括 cmd 服务）可以绕过所有门禁。
-      - name: Go quality (test + vet)
+      # -race 是根治并发偶发失败的关键门禁：普通 go test 只能靠 shuffle 碰运气，
+      # 数据竞争与「CAS 被 Store 覆盖」这类状态机错误在慢/快 CI 上随机显现。
+      # race detector 会把跨 goroutine 的裸读写直接判失败，不再依赖调度运气。
+      - name: Go quality (test + vet + race)
         working-directory: platform_live_go
+        env:
+          CGO_ENABLED: "1"
         run: |
           go vet ./...
-          go test -shuffle=on -count=1 ./...
+          go test -race -shuffle=on -count=1 ./...
 
       - name: Restore platformlive AAR cache
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

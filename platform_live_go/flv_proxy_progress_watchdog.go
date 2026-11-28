@@ -11,11 +11,18 @@ package platformlive
 // 路径重新解析续流。阈值必须小于 Kotlin 硬阈值 12s，否则代理来不及自愈。
 
 import (
+	"sync/atomic"
 	"time"
 )
 
-// 用 var 而非 const：单测可临时调小以在百毫秒级验证看门狗行为。
-var flvProxyProgressStallMs int64 = 8000
+// 用 atomic.Int64 而非普通 int64：单测会临时调小阈值以在百毫秒级验证看门狗，
+// 而 watchProgress 是后台 goroutine，普通 int64 的跨 goroutine 读写会被
+// CI 的 -race 检测器抓成 data race（这正是 CI 偶发失败的一类隐藏来源）。
+var flvProxyProgressStallMs atomic.Int64
+
+func init() {
+	flvProxyProgressStallMs.Store(8000)
+}
 
 // markProgress 在每帧成功写给下游后调用，刷新健康时间戳。
 func (p *flvProxy) markProgress() {
@@ -62,7 +69,7 @@ func (p *flvProxy) watchProgress(stop <-chan struct{}) {
 			p.progressMu.Lock()
 			last := p.lastProgressAt
 			p.progressMu.Unlock()
-			if last.IsZero() || time.Since(last) >= time.Duration(flvProxyProgressStallMs)*time.Millisecond {
+			if last.IsZero() || time.Since(last) >= time.Duration(flvProxyProgressStallMs.Load())*time.Millisecond {
 				p.event("progressStallReconnect")
 				p.cancelSegmentOnStall()
 				return

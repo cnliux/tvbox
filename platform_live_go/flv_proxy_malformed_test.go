@@ -150,9 +150,9 @@ func TestTruncatedFlvTagTriggersSoftReconnect(t *testing.T) {
 func TestProgressWatchdogRecoversFrozenSegment(t *testing.T) {
 	resetHuyaTuning()
 	defer resetHuyaTuning()
-	oldStall := flvProxyProgressStallMs
-	flvProxyProgressStallMs = 300
-	defer func() { flvProxyProgressStallMs = oldStall }()
+	oldStall := flvProxyProgressStallMs.Load()
+	flvProxyProgressStallMs.Store(300)
+	defer func() { flvProxyProgressStallMs.Store(oldStall) }()
 
 	var sessions int64
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

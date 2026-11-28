@@ -184,4 +184,22 @@ class EpgHardeningTest {
         val result = parseXmltvEpg(benignMention)
         assertEquals("注释/CDATA 内 DOCTYPE 字面不应整份拒绝", 1, result["cctv1"].orEmpty().size)
     }
+
+    @Test
+    fun `真实老张EPG的gzip字节能完整解码并解析出节目`() {
+        // 用 51zmt.xml.gz 的真实字节（不是合成数据）跑完整链路，
+        // 覆盖 gzip magic（有符号 Byte）、gzip 解压、BOM、外部 DTD 放行、+0800 时间戳。
+        // 合成用例全绿但真实源仍空白时，这个用例能定位到是字节层还是解析层的问题。
+        val raw = javaClass.getResourceAsStream("/epg/51zmt.xml.gz")
+            ?: throw AssertionError("缺少测试资源 epg/51zmt.xml.gz")
+        val bytes = raw.use { it.readBytes() }
+        val decoded = com.tvbox.app.data.decodeEpgPayload(bytes)
+        assertTrue("解压后应为 XMLTV 文本", decoded.contains("<programme"))
+        assertFalse("不应残留乱码替换字符", decoded.contains('\uFFFD'))
+        val result = parseXmltvEpg(decoded, "Asia/Shanghai")
+        val total = result.values.sumOf { it.size }
+        assertTrue("真实源应解析出大量节目，实际 $total", total > 1000)
+        assertEquals("CCTV1 应命中", true, result.containsKey("CCTV1"))
+        assertTrue("CCTV1 应有节目", result["CCTV1"].orEmpty().isNotEmpty())
+    }
 }

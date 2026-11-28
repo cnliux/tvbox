@@ -198,7 +198,29 @@ class UpdateDownloadService : Service() {
                     if (rangeRetried) throw IOException("更新包断点续传失败，请稍后重试")
                     rangeRetried = true
                 }
-                verifyUpdateApk(partial, size, sha)
+                // 校验失败自愈：代理（gh-proxy 等）的 Range 实现常不可靠——可能回 206 但
+                // Content-Range 起点与真实内容错位，拼接出的 .part 长度恰好等于清单 size，
+                // 单靠 verifyUpdateApk 的长度检查放行、SHA-256 才失败。此时必须丢弃坏 .part
+                // 从头完整重下一次（禁用 Range），否则用户只会看到「安装包校验未通过」而无法升级。
+                // 最多重试一次：第二次仍失败说明源本身有问题，换线路（由上层 AppUpdateRepository 负责）。
+                var verifyRetried = false
+                while (true) {
+                    try {
+                        verifyUpdateApk(partial, size, sha)
+                        break
+                    } catch (verifyError: IOException) {
+                        if (verifyRetried || !partial.isFile) throw verifyError
+                        verifyRetried = true
+                        CrashHandler.recordOperation(
+                            "ota.download.verify.retry",
+                            "size=$size sha=${sha.take(8)} reason=${logSafeText(verifyError.message)}",
+                        )
+                        runCatching { partial.delete() }
+                        offset = 0L
+                        // 从头重新下载：复用上面的 while(true) 请求循环，但强制 offset=0（不带 Range）。
+                        downloadFreshInto(partial, url, size)
+                    }
+                }
                 if (!partial.renameTo(target)) throw IOException("无法保存已下载的安装包")
             }
             states[path] = AppDownloadStatus(target.length(), target.length(), complete = true)
@@ -216,6 +238,31 @@ class UpdateDownloadService : Service() {
                     stopSelf()
                 }
             }
+        }
+    }
+
+    /**
+     * 校验失败后的自愈下载：不带 Range 从头完整拉取，覆盖写入 [partial]。
+     * 与首轮下载共用 [writeDownloadStream]（append=false 截断旧内容），但不做任何断点续传
+     * 判断——代理断点拼接是坏包的来源，这一步必须拿到服务端从字节 0 开始的完整响应。
+     */
+    private suspend fun downloadFreshInto(partial: java.io.File, url: String, size: Long) {
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "TVBox-Android")
+            .build()
+        val call = client.newCall(request)
+        val cancellation = coroutineContext[Job]?.invokeOnCompletion { if (it != null) call.cancel() }
+        try {
+            call.execute().use { response ->
+                if (response.code != 200) {
+                    throw IOException("重新下载失败：HTTP ${response.code}")
+                }
+                writeDownloadStream(response, partial, partial.absolutePath,
+                    receivedBase = 0L, manifestSize = size, append = false)
+            }
+        } finally {
+            cancellation?.dispose()
         }
     }
 
