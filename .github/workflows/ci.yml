@@ -56,13 +56,19 @@ jobs:
 
       # -race 失败时把 DATA RACE / FAIL 关键行输出为 annotation：
       # 无仓库管理员权限也能从 check-run API 读到具体竞态位置，不必下载 job 日志。
-      - name: Diagnose Go race failures
+      - name: Diagnose Go quality failures
         if: failure()
         working-directory: platform_live_go
         run: |
           if [ -f go-race-test.log ]; then
-            grep -E "WARNING: DATA RACE|--- FAIL:|panic:|^FAIL" go-race-test.log | head -30 | while IFS= read -r line; do
-              echo "::error::$line"
+            echo "::error::go-race-test.log exists, size=$(wc -c < go-race-test.log)"
+            tail -50 go-race-test.log | while IFS= read -r line; do
+              if [ -n "$line" ]; then echo "::error::$line"; fi
+            done
+          else
+            echo "::error::go-race-test.log missing - go vet step failed"
+            go vet ./... 2>&1 | tail -40 | while IFS= read -r line; do
+              if [ -n "$line" ]; then echo "::error::$line"; fi
             done
           fi
 
