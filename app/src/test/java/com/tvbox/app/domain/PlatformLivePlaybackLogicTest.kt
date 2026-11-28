@@ -54,10 +54,15 @@ class PlatformLivePlaybackLogicTest {
     }
 
     @Test
-    fun resolveEffectiveEpgUrlFallsBackToBundledWhenUserBlank() {
-        // 用户未配置（空串/空白）时回落到订阅自带的 url-tvg，不启用内置默认。
-        assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("  ", " https://bundled.test/epg.xml "))
-        assertEquals("https://bundled.test/epg.xml", resolveEffectiveEpgUrl("", "https://bundled.test/epg.xml"))
+    fun resolveEffectiveEpgUrlPrefersDefaultOverBundledWhenUserBlank() {
+        // 用户未配置时优先内置默认：直播源 x-tvg-url 经常失效，不能压过开箱即用的节目单。
+        assertEquals(DEFAULT_EPG_URL, resolveEffectiveEpgUrl("  ", " https://bundled.test/epg.xml "))
+        assertEquals(DEFAULT_EPG_URL, resolveEffectiveEpgUrl("", "https://bundled.test/epg.xml"))
+        // 内置默认被显式置空时才回落订阅自带。
+        assertEquals(
+            "https://bundled.test/epg.xml",
+            resolveEffectiveEpgUrl("", "https://bundled.test/epg.xml", defaultUrl = ""),
+        )
     }
 
     @Test
@@ -68,9 +73,9 @@ class PlatformLivePlaybackLogicTest {
             resolveEffectiveEpgUrl("", "", defaultUrl = "https://default.test/epg.xml.gz"),
         )
         assertEquals(DEFAULT_EPG_URL, resolveEffectiveEpgUrl("", ""))
-        // 订阅自带优先于内置默认。
+        // 内置默认优先于订阅自带（订阅自带仍作为拉取失败时的备用候选）。
         assertEquals(
-            "https://bundled.test/epg.xml",
+            "https://default.test/epg.xml.gz",
             resolveEffectiveEpgUrl(" ", " https://bundled.test/epg.xml ", defaultUrl = "https://default.test/epg.xml.gz"),
         )
     }
@@ -96,15 +101,25 @@ class PlatformLivePlaybackLogicTest {
     }
 
     @Test
-    fun resolveEpgSourceLabelMarksBundledWhenUserBlank() {
-        // 用户未配置时回落源自带（M3U url-tvg），来源标为「源自带」。
+    fun resolveEpgSourceLabelMarksDefaultWhenUserBlankEvenIfBundledPresent() {
+        // 用户未配置且内置默认可用时，来源标为「内置默认」，不是源自带。
         val bundled = "https://bundled.test/epg.xml"
+        assertEquals(
+            "内置默认",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = "",
+                bundledUrl = bundled,
+                effectiveUrl = resolveEffectiveEpgUrl("", bundled),
+            ),
+        )
+        // 内置默认被置空、实际用源自带时才标「源自带」。
         assertEquals(
             "源自带",
             resolveEpgSourceLabel(
                 userConfiguredUrl = "",
                 bundledUrl = bundled,
-                effectiveUrl = resolveEffectiveEpgUrl("", bundled),
+                effectiveUrl = resolveEffectiveEpgUrl("", bundled, defaultUrl = ""),
+                defaultUrl = "",
             ),
         )
     }
@@ -128,6 +143,58 @@ class PlatformLivePlaybackLogicTest {
         assertEquals(
             "未设置",
             resolveEpgSourceLabel(userConfiguredUrl = "", bundledUrl = "", effectiveUrl = ""),
+        )
+    }
+
+    @Test
+    fun epgFetchCandidatesKeepsPriorityOrderAndDeduplicates() {
+        assertEquals(
+            listOf(
+                "https://user.test/epg.xml",
+                "https://default.test/epg.xml.gz",
+                "https://bundled.test/epg.xml",
+            ),
+            epgFetchCandidates(
+                " https://user.test/epg.xml ",
+                "https://bundled.test/epg.xml",
+                "https://default.test/epg.xml.gz",
+            ),
+        )
+        // 同一地址出现在多层时只保留首次，避免重复拉取同一个失效 URL。
+        assertEquals(
+            listOf("https://user.test/epg.xml", "https://default.test/epg.xml.gz"),
+            epgFetchCandidates(
+                "https://user.test/epg.xml",
+                " https://user.test/epg.xml ",
+                "https://default.test/epg.xml.gz",
+            ),
+        )
+        assertEquals(emptyList<String>(), epgFetchCandidates("  ", "", "  "))
+    }
+
+    @Test
+    fun epgSourceLabelUsesActuallyFetchedUrl() {
+        // 回退后展示实际使用的地址与来源：内置默认生效时标「内置默认」，不能沿用失效的用户配置标签。
+        val default = "https://default.test/epg.xml.gz"
+        assertEquals(
+            "内置默认",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = "",
+                bundledUrl = "http://epg.51zmt.top:8000/cc.xml.gz",
+                effectiveUrl = "http://epg.51zmt.top:8000/cc.xml.gz",
+                defaultUrl = default,
+                usedUrl = default,
+            ),
+        )
+        assertEquals(
+            "内置默认",
+            resolveEpgSourceLabel(
+                userConfiguredUrl = "https://user.test/epg.xml",
+                bundledUrl = "",
+                effectiveUrl = "https://user.test/epg.xml",
+                defaultUrl = default,
+                usedUrl = default,
+            ),
         )
     }
 

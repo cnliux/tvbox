@@ -87,6 +87,7 @@ import com.tvbox.app.domain.buildSearchFlow
 import com.tvbox.app.domain.SearchEmission
 import com.tvbox.app.domain.otaFailureReason
 import com.tvbox.app.domain.nextRotatedPlatformLiveCandidate
+import com.tvbox.app.domain.epgFetchCandidates
 import com.tvbox.app.domain.resolveEffectiveEpgUrl
 import com.tvbox.app.data.EpgRepository
 import com.tvbox.app.data.RemoteEpgRepository
@@ -397,6 +398,7 @@ data class TvBoxUiState(
         get() = apiLines.firstOrNull { it.id == selectedApiLineId }
 }
 
+@OptIn(kotlinx.coroutines.FlowPreview::class, kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TvBoxViewModel(
     /** Application Context：仅用于设备模式自动识别等系统特征读取，不持有 Activity。 */
     private val appContext: android.content.Context,
@@ -1539,7 +1541,6 @@ class TvBoxViewModel(
             videoSources = videoSources,
             customLiveUrls = settings.liveSourceUrls,
             liveDefaultIndex = settings.liveSourceDefaultIndex,
-            epgUrl = settings.epgUrl,
             sites = sites,
             blockedVideoCategories = settings.blockedVideoCategories,
             knownVideoCategories = if (remoteCategorySourceId.isNotBlank()) {
@@ -1671,11 +1672,6 @@ class TvBoxViewModel(
             "live-default-clear" -> {
                 clearLiveSourceDefaultIndex()
                 "已取消默认直播源。"
-            }
-            "live-epg" -> {
-                // 空串表示清除；与设置页同一入口，保存后立即重新拉取节目单。
-                updateEpgUrl(request.url.trim())
-                if (request.url.isBlank()) "已清除节目单地址。" else "已保存节目单地址，正在后台拉取。"
             }
             "site-toggle" -> {
                 togglePlatformLiveSiteBlocked(request.id)
@@ -3396,7 +3392,7 @@ class TvBoxViewModel(
             it.copy(
                 appSettings = settings,
                 // S3-19：EPG 地址变了，旧缓存的时间戳一并失效。
-                live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L),
+                live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L, epgUsedUrl = ""),
             )
         }
         saveSettings(settings)
@@ -4643,7 +4639,7 @@ class TvBoxViewModel(
                 if (adoptImportedEpg) {
                     _state.update {
                         it.copy(
-                            live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L),
+                            live = it.live.copy(epgByChannel = emptyMap(), epgLoaded = false, epgFetchedAtMs = 0L, epgUsedUrl = ""),
                         )
                     }
                     loadLiveEpg(force = true)
@@ -5478,8 +5474,8 @@ class TvBoxViewModel(
     /**
      * 采用直播源自带的 EPG 地址（M3U 头部 `url-tvg` / `x-tvg-url` / `tvg-url`）。
      *
-     * 优先级：用户手工配置的 [AppSettings.epgUrl] > 源自带地址。
-     * 即用户没配过 EPG 时自动启用源里的地址；配过则不覆盖（设置页可清除以回到自动）。
+     * 优先级：用户手工配置的 [AppSettings.epgUrl] > 内置默认节目单 > 源自带地址。
+     * 即用户没配过 EPG 时直接用内置默认；源自带地址仅作为内置默认也失效时的备用。
      */
     private fun adoptBundledLiveEpg() {
         val bundled = liveRepository.bundledEpgUrl?.trim().orEmpty()
@@ -5494,6 +5490,7 @@ class TvBoxViewModel(
                     epgLoaded = false,
                     // S3-19：换源即旧 EPG 时间戳失效。
                     epgFetchedAtMs = 0L,
+                    epgUsedUrl = "",
                 ),
             )
         }
@@ -5502,7 +5499,7 @@ class TvBoxViewModel(
         loadLiveEpg(force = true)
     }
 
-    /** 当前实际使用的 EPG 地址：用户配置优先，其次源自带（M3U 头部 url-tvg）。 */
+    /** 当前实际使用的 EPG 地址：用户配置 > 内置默认 > 源自带（M3U 头部 url-tvg）。 */
     private fun effectiveEpgUrl(state: TvBoxUiState): String =
         resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl)
 
@@ -5522,8 +5519,11 @@ class TvBoxViewModel(
     }
 
     private fun loadLiveEpg(force: Boolean = false) {
-        val url = effectiveEpgUrl(_state.value)
+        val stateSnapshot = _state.value
+        val url = effectiveEpgUrl(stateSnapshot)
         if (url.isBlank()) return
+        // 与 url 同一份状态快照：候选链和发起地址不能跨状态改写，否则过期响应判定会失效。
+        val candidates = epgFetchCandidates(stateSnapshot.appSettings.epgUrl, stateSnapshot.live.epgBundledUrl)
         // S3-19 stale-while-revalidate：仅 STALE（缓存超出 FRESH 窗口，默认 6 小时）时保持旧节目单继续展示
         // （UI 叠加「~」角标）并落入下方后台静默重拉；FRESH 直接复用，
         // LOADING（上次拉取失败）维持既有「不再反复重试慢源」语义。
@@ -5545,20 +5545,27 @@ class TvBoxViewModel(
             // 取消必须透传：否则被取消的旧请求会以空节目单写回 epgLoaded=true。
             val now = System.currentTimeMillis()
             // EPG UA 作用域与 EPG 时区来自设置页（此前是死配置）。
-            val epgSettings = _state.value.appSettings
-            val programs = try {
-                epgRepository.fetch(
-                    url,
-                    com.tvbox.app.domain.UaScope.resolve("epg", epgSettings),
-                    epgSettings.epgTimezone,
-                )
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Throwable) {
-                emptyMap()
+            val epgSettings = stateSnapshot.appSettings
+            val ua = com.tvbox.app.domain.UaScope.resolve("epg", epgSettings)
+            // 源自带 x-tvg-url 可能已失效（如 302 到被污染的域名），逐个候选尝试，
+            // 首个解析出节目的地址即为实际使用地址；全部失败才保持「暂无节目单」。
+            var programs = emptyMap<String, List<EpgProgram>>()
+            var usedUrl = url
+            for (candidate in candidates) {
+                programs = try {
+                    epgRepository.fetch(candidate, ua, epgSettings.epgTimezone)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    emptyMap()
+                }
+                if (programs.isNotEmpty()) {
+                    usedUrl = candidate
+                    break
+                }
             }
             val bounded = trimEpgToBudget(programs, epgHours, now)
-            _state.update { state -> state.applyEpgResult(url, bounded, now) }
+            _state.update { state -> state.applyEpgResult(url, bounded, now, usedUrl = usedUrl) }
         }
     }
 

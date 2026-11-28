@@ -54,8 +54,6 @@ data class RemoteManageSnapshot(
     val customLiveUrls: List<String> = emptyList(),
     /** 电视直播默认源下标（-1 表示未设置），与设置页同一份配置。 */
     val liveDefaultIndex: Int = -1,
-    /** 节目单（XMLTV）地址；空表示未配置，直播页将显示「暂无节目单」。 */
-    val epgUrl: String = "",
     val sites: List<RemoteManageSite> = emptyList(),
     val blockedVideoCategories: List<String> = emptyList(),
     val knownVideoCategories: List<String> = emptyList(),
@@ -511,8 +509,6 @@ class RemoteManageServer(
                   ${addForm("live-add", "", "直播源地址（M3U/TXT），每行一个", "添加直播源")}
                   <div class="divider"></div>
                   ${liveDefaultBlock(data)}
-                  <div class="divider"></div>
-                  ${epgBlock(data)}
                 </section>
 
                 <!-- ═══════════ 平台站点（虎牙/斗鱼等） ═══════════ -->
@@ -621,21 +617,6 @@ class RemoteManageServer(
         return """
             <div class="sub">默认直播源（优先使用；不可用时自动切换备用源）</div>
             $rows
-        """
-    }
-
-    /** 节目单（EPG）地址设置：直播页的节目单与 EPG 卡片来自该 XMLTV 接口。 */
-    private fun epgBlock(data: RemoteManageSnapshot): String {
-        return """
-            <div class="sub">节目单（EPG）</div>
-            <form method="post">
-              <input type="hidden" name="action" value="live-epg" />
-              <div class="form-row">
-                <input class="text" name="url" value="${data.epgUrl.htmlEscape()}" placeholder="https://example.com/epg.xml" autocomplete="off" />
-                <button>保存</button>
-              </div>
-            </form>
-            <p class="empty">留空则直播页显示「暂无节目单」，不影响播放；M3U 源自带 url-tvg 时会自动采用。</p>
         """
     }
 

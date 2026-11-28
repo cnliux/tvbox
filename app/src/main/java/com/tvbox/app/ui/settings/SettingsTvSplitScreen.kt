@@ -776,13 +776,13 @@ private fun TvLiveDetail(state: TvBoxUiState, actions: TvBoxViewModel) {
             },
         )
         SettingsGroupDivider()
-        // EPG 地址：用户显式配置优先，未配置时回落订阅自带（M3U url-tvg），再回落内置默认节目单。
+        // EPG 地址：用户显式配置优先，未配置时用内置默认节目单，内置不可用时再尝试订阅自带（M3U url-tvg）。
         // 复用 TvSourcesDetail 的 TextValueEditor 文本编辑模式，沿用 TvSettingsRow 焦点结构，不新增自定义焦点逻辑。
         TvSettingsRow(
             icon = Icons.Default.PlayArrow,
             title = "EPG 地址",
             subtitle = state.appSettings.epgUrl.ifBlank {
-                "未配置 · 自动使用订阅自带 EPG，都没有时用内置节目单（兼容 DIYP/百川/TVBox）；可在此填写自定义地址"
+                "未配置 · 使用内置节目单，内置不可用时再尝试订阅自带（兼容 DIYP/百川/TVBox）；可在此填写自定义地址"
             },
             trailing = {
                 TextValueEditor(

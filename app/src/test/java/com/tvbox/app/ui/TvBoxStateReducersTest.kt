@@ -2,6 +2,7 @@ package com.tvbox.app.ui
 
 import com.tvbox.app.domain.AppSettings
 import com.tvbox.app.domain.Category
+import com.tvbox.app.domain.DEFAULT_EPG_URL
 import com.tvbox.app.domain.EpgProgram
 import java.io.IOException
 import kotlinx.coroutines.CancellationException
@@ -56,6 +57,22 @@ class TvBoxStateReducersTest {
         assertTrue(result.live.epgLoaded)
         // S3-19：成功拉取记录抓取时刻，供 EpgCachePolicy 判定新鲜度。
         assertEquals(1_000L, result.live.epgFetchedAtMs)
+    }
+
+    /** 用户配置失效后回退内置默认：节目单写入且记录实际地址供信息面板展示。 */
+    @Test
+    fun fallbackEpgUrlIsRecorded() {
+        val deadUrl = "http://dead.example/epg.xml.gz"
+        val state = TvBoxUiState(appSettings = AppSettings(epgUrl = deadUrl))
+        val programs = mapOf("cctv1" to listOf(EpgProgram("节目", 0L, 60_000L)))
+        val result = state.applyEpgResult(
+            requestedUrl = deadUrl,
+            programs = programs,
+            fetchedAtMs = 1_000L,
+            usedUrl = DEFAULT_EPG_URL,
+        )
+        assertEquals(programs, result.live.epgByChannel)
+        assertEquals(DEFAULT_EPG_URL, result.live.epgUsedUrl)
     }
 
     /** S3-19：拉取失败（空节目单）时保留过期缓存继续展示，且时间戳不前进（角标继续 `~`）。 */

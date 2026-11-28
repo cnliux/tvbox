@@ -34,8 +34,11 @@ internal fun TvBoxUiState.applyEpgResult(
     requestedUrl: String,
     programs: Map<String, List<EpgProgram>>,
     fetchedAtMs: Long,
+    /** 实际拉取成功的地址；源自带/用户配置失效回退到内置默认时与 [requestedUrl] 不同。 */
+    usedUrl: String = requestedUrl,
 ): TvBoxUiState {
     val currentUrl = resolveEffectiveEpgUrl(appSettings.epgUrl, live.epgBundledUrl)
+    // requestedUrl 仍是发起时的地址：拉取期间地址被改掉时照旧丢弃过期响应。
     if (currentUrl != requestedUrl) return this
     if (programs.isEmpty() && live.epgByChannel.isNotEmpty()) return this
     return copy(
@@ -43,6 +46,7 @@ internal fun TvBoxUiState.applyEpgResult(
             epgByChannel = programs,
             epgLoaded = true,
             epgFetchedAtMs = if (programs.isEmpty()) 0L else fetchedAtMs,
+            epgUsedUrl = if (programs.isEmpty()) "" else usedUrl,
         ),
     )
 }

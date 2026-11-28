@@ -902,6 +902,10 @@ private fun LivePlayerScreen(
                 },
             )
         }
+        // EPG 信息面板展示「实际拉取成功」的地址：源自带 x-tvg-url 失效并回退内置默认时，
+        // 不能再显示那个失效地址，否则用户会看到有节目却显示不可用地址。
+        val epgEffectiveUrl = resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl)
+        val epgDisplayUrl = state.live.epgUsedUrl.ifBlank { epgEffectiveUrl }
         // ── 底部状态条与控制按钮：统一走共享 PlayerChrome（能力清单驱动，无 if (isLive) 分叉）──
         PlayerChrome(
             state = chrome,
@@ -921,11 +925,12 @@ private fun LivePlayerScreen(
                 epgNext = actions.liveEpgNext(currentChannel)?.title,
                 epgStale = actions.liveEpgStale(),
                 // EPG 源地址与来源标签：让用户在「信息」面板直接看到「当前生效的节目单地址是否存在、来自哪一层」。
-                epgUrl = resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl),
+                epgUrl = epgDisplayUrl,
                 epgSourceLabel = resolveEpgSourceLabel(
                     userConfiguredUrl = state.appSettings.epgUrl,
                     bundledUrl = state.live.epgBundledUrl,
-                    effectiveUrl = resolveEffectiveEpgUrl(state.appSettings.epgUrl, state.live.epgBundledUrl),
+                    effectiveUrl = epgEffectiveUrl,
+                    usedUrl = epgDisplayUrl,
                 ),
                 playbackUrls = listOf(
                     PlayerChromeUrl(
